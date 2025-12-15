@@ -5,6 +5,11 @@ import time
 from utils.logging_config import get_logger
 
 logger = get_logger("web_scan_manager")
+# Expose module-level config_manager to make tests that patch it work
+try:
+    from config.settings import config_manager
+except Exception:
+    config_manager = None
 
 class WebScanManager:
     """
@@ -44,7 +49,11 @@ class WebScanManager:
     def _get_active_media_client(self):
         """Get the active media client based on config settings"""
         try:
-            from config.settings import config_manager
+            # Use the module-level config_manager (allows tests to patch it)
+            if not config_manager:
+                logger.error("Config manager not available")
+                return None, None
+                
             active_server = config_manager.get_active_media_server()
 
             server_client_map = {

@@ -19,19 +19,14 @@ chmod +x docker-setup.sh
 ```
 
 ### 2. Configure
-Edit `config/config.json` with your API keys and server settings:
-```json
-{
-  "spotify": {
-    "client_id": "your_spotify_client_id",
-    "client_secret": "your_spotify_client_secret"
-  },
-  "plex": {
-    "url": "http://your-plex-server:32400",
-    "token": "your_plex_token"
-  }
-}
-```
+Configuration is now managed directly within the SoulSync web UI and stored securely in an encrypted database file (`database/music_library.db`).
+
+On first launch, SoulSync will start with a default configuration. To get started:
+1. Access the web UI at `http://localhost:8008`.
+2. Navigate to the **Settings** page.
+3. Enter your API keys and other server settings.
+
+If you are migrating from an older version of SoulSync, your existing `config/config.json` will be automatically imported into the new system on the first run. After migration, `config.json` is no longer used.
 
 ### 3. Deploy
 ```bash
@@ -47,13 +42,12 @@ open http://localhost:8008
 
 ## 📁 Volume Mounts
 
-SoulSync requires persistent storage for:
+SoulSync requires persistent storage for your configuration, database, and logs. It is designed to use a single data directory to make this easy.
 
-- **`./config`** → `/app/config` - Configuration files
-- **`./database`** → `/app/database` - SQLite database files  
-- **`./logs`** → `/app/logs` - Application logs
-- **`./downloads`** → `/app/downloads` - Downloaded music files
-- **`./Transfer`** → `/app/Transfer` - Processed/matched music files
+- **`./data`** → `/data` - Stores all configuration and the application database.
+- **`./logs`** → `/app/logs` - Application logs.
+
+You will also need to mount any directories you want SoulSync to access, such as your music library or download folders. The `docker-compose.yml` provides examples for this.
 
 ## 🔧 Configuration Options
 
@@ -62,8 +56,8 @@ SoulSync requires persistent storage for:
 environment:
   - FLASK_ENV=production              # Flask environment
   - PYTHONPATH=/app                   # Python path
-  - SOULSYNC_CONFIG_PATH=/app/config/config.json  # Config file location
   - TZ=America/New_York               # Timezone
+  - SOULSYNC_DATA_DIR=/data           # Location for config and database
 ```
 
 ### Port Configuration
@@ -222,22 +216,23 @@ version: '3.8'
 
 services:
   soulsync:
-    build: .
+    image: boulderbadgedad/soulsync:latest # or build: . if you build your own image
     container_name: soulsync-webui
     restart: unless-stopped
     ports:
-      - "8888:8888"
+      - "8008:8008"      # Main web app
+      - "8888:8888"      # Spotify OAuth callback
+      - "8889:8889"      # Tidal OAuth callback
     volumes:
-      - ./config:/app/config
-      - ./database:/app/database  
+      - ./data:/data
       - ./logs:/app/logs
-      - ./downloads:/app/downloads
-      - ./Transfer:/app/Transfer
-      - /mnt/music:/music:ro  # Your music library
+      - /path/to/your/music:/music:ro
+      - /path/to/your/downloads:/downloads
     environment:
-      - FLASK_ENV=production
+      - PUID=1000
+      - PGID=1000
       - TZ=America/New_York
-      - PYTHONPATH=/app
+      - SOULSYNC_DATA_DIR=/data
     deploy:
       resources:
         limits:
@@ -261,7 +256,7 @@ services:
 
 ## 🎯 Production Checklist
 
-- [ ] Configure proper API keys in `config/config.json`
+- [ ] Configure proper API keys in the Web UI settings page
 - [ ] Set appropriate resource limits
 - [ ] Configure proper volume mounts
 - [ ] Set up log rotation

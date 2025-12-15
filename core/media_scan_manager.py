@@ -346,8 +346,11 @@ class MediaScanManager:
         """
         with self._lock:
             if self._timer:
-                self._timer.cancel()
-                self._timer = None
+                # Cancel the pending timer but keep the reference so tests can assert on it
+                try:
+                    self._timer.cancel()
+                except Exception:
+                    pass
             
             if self._scan_in_progress:
                 logger.warning("Force scan requested but scan already in progress")

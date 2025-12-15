@@ -34,6 +34,10 @@ class MusicMatchingEngine:
             r'\sft\.?.*',
             r'\sfeaturing.*'
         ]
+        # Also remove parenthetical featuring blocks like "(feat. Artist)"
+        self.title_patterns.insert(0, r'\s*\((?:feat\.?|ft\.?|featuring).*?\)')
+        # Also remove bracketed featuring blocks like "[feat. Artist]"
+        self.title_patterns.insert(0, r'\s*\[(?:feat\.?|ft\.?|featuring).*?\]')
         
         self.artist_patterns = [
             # Only remove featured artists, not parts of main artist names
@@ -83,8 +87,10 @@ class MusicMatchingEngine:
         # Replace common separators with spaces to preserve word boundaries.
         text = re.sub(r'[._/]', ' ', text)
         
-        # Keep alphanumeric characters, spaces, hyphens, AND the '$' sign.
-        text = re.sub(r'[^a-z0-9\s$-]', '', text)
+        # Keep alphanumeric characters, spaces, hyphens, parentheses, brackets,
+        # ampersand and the '$' sign. Parentheses/brackets are preserved so
+        # version info like `(Remix)` remains visible for downstream cleaning.
+        text = re.sub(r'[^a-z0-9\s$\-\(\)\[\]&]', '', text)
         
         # Consolidate multiple spaces into one
         text = re.sub(r'\s+', ' ', text).strip()
@@ -95,8 +101,9 @@ class MusicMatchingEngine:
         """Returns a 'core' version of a string with only letters and numbers for a strict comparison."""
         if not text:
             return ""
-        # Use normalize_string first to get abbreviation expansion, then strip to core
-        normalized = self.normalize_string(text)
+        # Use clean_title first so parenthetical noise and feat/ft are removed
+        cleaned = self.clean_title(text)
+        normalized = self.normalize_string(cleaned)
         return re.sub(r'[^a-z0-9]', '', normalized)
 
     def clean_title(self, title: str) -> str:
@@ -217,7 +224,8 @@ class MusicMatchingEngine:
             score = self.similarity_score(spotify_artist, plex_artist_cleaned)
             if score > best_artist_score:
                 best_artist_score = score
-        artist_score = best_artist_score
+        # Require a stronger minimum artist similarity to avoid matching on common words
+        artist_score = best_artist_score if best_artist_score >= 0.9 else 0.0
         
         # --- Priority 1: Core Title Match (for exact matches like "Girls", "APT.", "LIL DEMON") ---
         spotify_core_title = self.get_core_string(spotify_track.name)
@@ -240,7 +248,7 @@ class MusicMatchingEngine:
         duration_score = self.duration_similarity(spotify_track.duration_ms, plex_track.duration if plex_track.duration else 0)
 
         # Use a standard weighted calculation if the core titles didn't match
-        confidence = (title_score * 0.60) + (artist_score * 0.30) + (duration_score * 0.10)
+        confidence = (title_score * 0.55) + (artist_score * 0.35) + (duration_score * 0.10)
         match_type = "standard_match"
 
         return confidence, match_type
@@ -452,12 +460,11 @@ class MusicMatchingEngine:
             elif is_version:
                 logger.debug(f"PRESERVED: Keeping parentheses content '({paren_content})' as it appears to be version info")
         
-        # PRIORITY 3: Original query (ONLY if no album was detected or if it's different)
+        # PRIORITY 3: Original query — always include the original (if not duplicate)
         original_track_clean = self.clean_title(original_title)
-        if not album_detected or not queries:  # Only add original if no album detected or no other queries
-            if original_track_clean not in [q.split(' ', 1)[1] for q in queries if ' ' in q]:
-                queries.append(f"{artist} {original_track_clean}".strip())
-                logger.debug(f"PRIORITY 3: Original query: '{artist} {original_track_clean}'")
+        if original_track_clean and original_track_clean not in [q.split(' ', 1)[1] for q in queries if ' ' in q]:
+            queries.append(f"{artist} {original_track_clean}".strip())
+            logger.debug(f"PRIORITY 3: Original query: '{artist} {original_track_clean}'")
         
         # Remove duplicates while preserving order
         unique_queries = []
@@ -515,18 +522,22 @@ class MusicMatchingEngine:
         quality_bonus = 0.0
         if slskd_track.quality:
             if slskd_track.quality.lower() == 'flac':
-                quality_bonus = 0.07  # Reduced from 0.1 to prevent low-confidence FLAC beating high-confidence MP3
+                quality_bonus = 0.10
             elif slskd_track.quality.lower() == 'mp3' and (slskd_track.bitrate or 0) >= 320:
-                quality_bonus = 0.05
+                quality_bonus = 0.03
 
         # --- Final Weighted Score ---
         # Title and Artist are the most important factors for an accurate match.
-        final_confidence = (title_score * 0.60) + (artist_score * 0.35) + (duration_score * 0.05)
-        
+        # If artist is weak or missing, reduce title contribution to avoid false positives
+        if artist_score < 0.6:
+            final_confidence = (title_score * 0.40) + (artist_score * 0.10) + (duration_score * 0.05)
+        else:
+            final_confidence = (title_score * 0.60) + (artist_score * 0.30) + (duration_score * 0.10)
+
         # Add the quality bonus to the final score
         final_confidence += quality_bonus
-        
-        # Ensure the final score doesn't exceed 1.0
+
+        # Cap at 1.0 for display, but allow slight numeric differences before capping
         return min(final_confidence, 1.0)
 
 
@@ -695,7 +706,7 @@ class MusicMatchingEngine:
 
         # Apply version penalty (for matching versions, slight penalty for quality differences)
         if version_type != 'original':
-            adjusted_confidence = max(0.0, base_confidence - (penalty * 0.5))  # Reduced penalty since it's a match
+            adjusted_confidence = max(0.0, base_confidence - (penalty * 0.25))  # Smaller penalty when versions match
             # Store version info on the track object for UI display
             slskd_track.version_type = version_type
             slskd_track.version_penalty = penalty

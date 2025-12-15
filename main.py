@@ -437,10 +437,6 @@ def main():
     
     logger.info("Starting Soulsync application")
     
-    if not config_manager.config_path.exists():
-        logger.error("Configuration file not found. Please check config/config.json")
-        sys.exit(1)
-    
     app = QApplication(sys.argv)
     app.setApplicationName("SoulSync")
     app.setApplicationVersion("0.6")

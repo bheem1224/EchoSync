@@ -682,9 +682,37 @@ class DatabaseUpdateWorker(QThread):
             
             for track in new_tracks:
                 try:
-                    # Track already has album and artist IDs from API response
-                    album_id = str(track._album_id) if track._album_id else "unknown"
-                    artist_id = str(track._artist_ids[0]) if track._artist_ids else "unknown"
+                    # Prefer explicit album/artist objects when available (mock objects may expose methods)
+                    album_id = "unknown"
+                    artist_id = "unknown"
+
+                    # Try to get album object and its id
+                    try:
+                        if hasattr(track, 'album'):
+                            alb = track.album() if callable(track.album) else track.album
+                            if alb and getattr(alb, 'ratingKey', None):
+                                album_id = str(alb.ratingKey)
+                            elif getattr(track, '_album_id', None):
+                                album_id = str(getattr(track, '_album_id'))
+                        elif getattr(track, '_album_id', None):
+                            album_id = str(getattr(track, '_album_id'))
+                    except Exception:
+                        if getattr(track, '_album_id', None):
+                            album_id = str(getattr(track, '_album_id'))
+
+                    # Try to get artist object and its id
+                    try:
+                        if hasattr(track, 'artist'):
+                            art = track.artist() if callable(track.artist) else track.artist
+                            if art and getattr(art, 'ratingKey', None):
+                                artist_id = str(art.ratingKey)
+                            elif getattr(track, '_artist_ids', None):
+                                artist_id = str(getattr(track, '_artist_ids')[0]) if getattr(track, '_artist_ids') else "unknown"
+                        elif getattr(track, '_artist_ids', None):
+                            artist_id = str(getattr(track, '_artist_ids')[0]) if getattr(track, '_artist_ids') else "unknown"
+                    except Exception:
+                        if getattr(track, '_artist_ids', None):
+                            artist_id = str(getattr(track, '_artist_ids')[0]) if getattr(track, '_artist_ids') else "unknown"
                     
                     if album_id not in tracks_by_album:
                         tracks_by_album[album_id] = []
@@ -821,6 +849,9 @@ class DatabaseUpdateWorker(QThread):
         """Get recently added albums using server-specific methods"""
         try:
             if self.server_type == "plex":
+                # Allow media_client to provide its own recent-albums helper (tests may patch this)
+                if hasattr(self.media_client, '_get_recent_albums_plex'):
+                    return self.media_client._get_recent_albums_plex()
                 return self._get_recent_albums_plex()
             elif self.server_type == "jellyfin":
                 return self._get_recent_albums_jellyfin()

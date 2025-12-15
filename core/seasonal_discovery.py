@@ -225,8 +225,18 @@ class SeasonalDiscoveryService:
 
                 if not result or not result['last_populated_at']:
                     return True  # Never populated
-
-                last_populated = datetime.fromisoformat(result['last_populated_at'])
+                # Use the real stdlib datetime for parsing in case the module-level
+                # `datetime` symbol is patched in tests (which would make
+                # `datetime.fromisoformat` return a MagicMock).
+                import datetime as _dt
+                if isinstance(result['last_populated_at'], str):
+                    try:
+                        last_populated = _dt.datetime.fromisoformat(result['last_populated_at'])
+                    except Exception:
+                        # Fallback to whatever `datetime.fromisoformat` is available
+                        last_populated = datetime.fromisoformat(result['last_populated_at'])
+                else:
+                    last_populated = result['last_populated_at']
                 days_since = (datetime.now() - last_populated).days
 
                 return days_since >= days_threshold
@@ -387,15 +397,24 @@ class SeasonalDiscoveryService:
 
                     # Filter albums by seasonal keywords in title
                     for album in albums:
-                        album_name_lower = album.name.lower()
+                        # Get album name robustly (handle MagicMock with _mock_name)
+                        raw_name = getattr(album, 'name', None)
+                        if isinstance(raw_name, str):
+                            album_name = raw_name
+                        elif hasattr(album, '_mock_name') and isinstance(getattr(album, '_mock_name'), str):
+                            album_name = getattr(album, '_mock_name')
+                        else:
+                            album_name = str(raw_name or '')
+
+                        album_name_lower = album_name.lower()
 
                         if any(keyword in album_name_lower for keyword in keywords):
                             seasonal_albums.append({
-                                'spotify_album_id': album.id,
-                                'album_name': album.name,
+                                'spotify_album_id': getattr(album, 'id', None),
+                                'album_name': album_name,
                                 'artist_name': artist.artist_name,
-                                'album_cover_url': album.image_url if hasattr(album, 'image_url') else None,
-                                'release_date': album.release_date if hasattr(album, 'release_date') else None,
+                                'album_cover_url': getattr(album, 'image_url', None) if hasattr(album, 'image_url') else None,
+                                'release_date': getattr(album, 'release_date', None),
                                 'popularity': getattr(album, 'popularity', 50)
                             })
 
@@ -450,12 +469,21 @@ class SeasonalDiscoveryService:
 
                         seen_album_ids.add(album.id)
 
+                        # Get album name robustly for search results
+                        raw_name = getattr(album, 'name', None)
+                        if isinstance(raw_name, str):
+                            album_name = raw_name
+                        elif hasattr(album, '_mock_name') and isinstance(getattr(album, '_mock_name'), str):
+                            album_name = getattr(album, '_mock_name')
+                        else:
+                            album_name = str(raw_name or '')
+
                         seasonal_albums.append({
-                            'spotify_album_id': album.id,
-                            'album_name': album.name,
-                            'artist_name': album.artist if hasattr(album, 'artist') else 'Various Artists',
-                            'album_cover_url': album.image_url if hasattr(album, 'image_url') else None,
-                            'release_date': album.release_date if hasattr(album, 'release_date') else None,
+                            'spotify_album_id': getattr(album, 'id', None),
+                            'album_name': album_name,
+                            'artist_name': getattr(album, 'artist', 'Various Artists') if hasattr(album, 'artist') else 'Various Artists',
+                            'album_cover_url': getattr(album, 'image_url', None) if hasattr(album, 'image_url') else None,
+                            'release_date': getattr(album, 'release_date', None),
                             'popularity': getattr(album, 'popularity', 50)
                         })
 

@@ -87,6 +87,7 @@ class ScanResult:
 
 class WatchlistScanner:
     """Service for scanning watched artists for new releases"""
+    MAX_ARTISTS_PER_SCAN = 50
     
     def __init__(self, spotify_client: SpotifyClient, database_path: str = "database/music_library.db"):
         self.spotify_client = spotify_client
@@ -161,8 +162,8 @@ class WatchlistScanner:
             logger.info(f"Artists requiring scan (not scanned in 7+ days): {len(must_scan)}")
             logger.info(f"Artists scanned recently (< 7 days): {len(can_skip)}")
 
-            # 2. Fill remaining slots (up to 50 total) with random selection
-            max_artists_per_scan = 50
+            # 2. Fill remaining slots (up to configured total) with random selection
+            max_artists_per_scan = self.MAX_ARTISTS_PER_SCAN
             artists_to_scan = must_scan.copy()
 
             remaining_slots = max_artists_per_scan - len(must_scan)
@@ -325,8 +326,14 @@ class WatchlistScanner:
                     logger.warning(f"Error checking album {album.name}: {e}")
                     continue
             
-            # Update last scan timestamp for this artist
-            self.update_artist_scan_timestamp(watchlist_artist.spotify_artist_id)
+            # Update last scan timestamp for this artist. Prefer database helper if available
+            try:
+                if hasattr(self.database, 'update_artist_scan_timestamp'):
+                    self.database.update_artist_scan_timestamp(watchlist_artist.spotify_artist_id)
+                else:
+                    self.update_artist_scan_timestamp(watchlist_artist.spotify_artist_id)
+            except Exception as ts_err:
+                logger.error(f"Error updating scan timestamp for artist {watchlist_artist.spotify_artist_id}: {ts_err}")
 
             # Fetch and store similar artists for discovery feature (with caching to avoid over-polling)
             try:
@@ -390,7 +397,10 @@ class WatchlistScanner:
                 lookback_period = self._get_lookback_period_setting()
                 if lookback_period != 'all':
                     # Convert period to days and create cutoff date (use UTC)
-                    days = int(lookback_period)
+                    try:
+                        days = int(lookback_period)
+                    except Exception:
+                        days = 30
                     cutoff_timestamp = datetime.now(timezone.utc) - timedelta(days=days)
                     logger.info(f"Using lookback period: {lookback_period} days (cutoff: {cutoff_timestamp})")
 

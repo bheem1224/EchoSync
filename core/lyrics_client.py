@@ -5,6 +5,12 @@ from utils.logging_config import get_logger
 
 logger = get_logger("lyrics_client")
 
+# Optional import of lrclib for testing and graceful fallback
+try:
+    from lrclib import LrcLibAPI
+except Exception:
+    LrcLibAPI = None
+
 class LyricsClient:
     """
     Minimal, elegant LRClib client for automatic lyrics fetching.
@@ -18,7 +24,10 @@ class LyricsClient:
     def _init_api(self):
         """Initialize LRClib API with graceful fallback"""
         try:
-            from lrclib import LrcLibAPI
+            if LrcLibAPI is None:
+                # Module not available
+                raise ImportError("lrclib not available")
+
             self.api = LrcLibAPI(user_agent="SoulSync/1.0 (WebUI)")
             logger.debug("LRClib API client initialized")
         except ImportError:
@@ -61,22 +70,21 @@ class LyricsClient:
 
             lyrics_data = None
 
-            # Strategy 1: Exact match with duration (most accurate)
-            if duration_seconds and album_name:
-                try:
-                    logger.debug(f"Trying exact match: {track_name} by {artist_name} from {album_name} ({duration_seconds}s)")
-                    lyrics_data = self.api.get_lyrics(
-                        track_name=track_name,
-                        artist_name=artist_name,
-                        album_name=album_name,
-                        duration=duration_seconds
-                    )
-                    if lyrics_data:
-                        logger.debug("Exact match found!")
-                except Exception as e:
-                    logger.debug(f"Exact match failed: {e}")
+            # Primary attempt: ask API for lyrics (pass album/duration if available)
+            try:
+                logger.debug(f"Attempting get_lyrics: {track_name} by {artist_name} (album={album_name}, duration={duration_seconds})")
+                lyrics_data = self.api.get_lyrics(
+                    track_name=track_name,
+                    artist_name=artist_name,
+                    album_name=album_name,
+                    duration=duration_seconds
+                )
+                if lyrics_data:
+                    logger.debug("get_lyrics returned a result")
+            except Exception as e:
+                logger.debug(f"get_lyrics failed: {e}")
 
-            # Strategy 2: Search without duration
+            # Fallback: search if get_lyrics didn't return anything
             if not lyrics_data:
                 try:
                     logger.debug(f"Trying search: {track_name} by {artist_name}")
@@ -120,5 +128,6 @@ class LyricsClient:
             return False
 
 
-# Global instance for easy import
-lyrics_client = LyricsClient()
+# Note: do not create a global LyricsClient instance at import time to allow
+# tests to patch `LrcLibAPI` before instantiation. Callers should instantiate
+# `LyricsClient()` where needed.

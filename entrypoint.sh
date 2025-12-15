@@ -49,14 +49,6 @@ umask "$UMASK"
 # Initialize config files if they don't exist (first-time setup)
 echo "🔍 Checking for configuration files..."
 
-if [ ! -f "/app/config/config.json" ]; then
-    echo "   📄 Creating default config.json..."
-    cp /defaults/config.json /app/config/config.json
-    chown soulsync:soulsync /app/config/config.json
-else
-    echo "   ✅ config.json already exists"
-fi
-
 if [ ! -f "/app/config/settings.py" ]; then
     echo "   📄 Creating default settings.py..."
     cp /defaults/settings.py /app/config/settings.py

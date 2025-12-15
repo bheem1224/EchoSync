@@ -207,7 +207,7 @@ class ListenBrainzClient:
                 playlist = data.get('playlist', {})
                 track_count = len(playlist.get('track', []))
                 logger.info(f"📋 Fetched playlist '{playlist.get('title')}' with {track_count} tracks")
-                return playlist
+                return data
             elif response and response.status_code == 404:
                 logger.warning(f"Playlist {playlist_mbid} not found")
                 return None

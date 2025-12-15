@@ -45,26 +45,6 @@ from beatport_unified_scraper import BeatportUnifiedScraper
 
 # --- Flask App Setup ---
 base_dir = os.path.abspath(os.path.dirname(__file__))
-project_root = os.path.dirname(base_dir) # Go up one level to the project root
-config_path = os.path.join(project_root, 'config', 'config.json')
-
-if os.path.exists(config_path):
-    print(f"Found config file at: {config_path}")
-    # Assuming your config_manager has a method to load from a specific path
-    if hasattr(config_manager, 'load_config'):
-        config_manager.load_config(config_path)
-        print("✅ Web server configuration loaded successfully.")
-    else:
-        # Fallback if no load_config method, try re-initializing with path
-        print("🔴 WARNING: config_manager does not have a 'load_config' method. Attempting re-init.")
-        try:
-            from config.settings import ConfigManager
-            config_manager = ConfigManager(config_path)
-            print("✅ Web server configuration re-initialized successfully.")
-        except Exception as e:
-            print(f"🔴 FAILED to re-initialize config_manager: {e}")
-else:
-    print(f"🔴 WARNING: config.json not found at {config_path}. Using default settings.")
 # Correctly point to the 'webui' directory for templates and static files
 app = Flask(
     __name__,

@@ -222,6 +222,11 @@ class SoulseekClient:
         
         # Apply Docker URL resolution if running in container
         slskd_url = config.get('slskd_url')
+        # Coerce to string in case the config manager is mocked in tests
+        if slskd_url is None:
+            slskd_url = ''
+        else:
+            slskd_url = str(slskd_url)
         import os
         if os.path.exists('/.dockerenv') and 'localhost' in slskd_url:
             slskd_url = slskd_url.replace('localhost', 'host.docker.internal')

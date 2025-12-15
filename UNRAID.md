@@ -19,8 +19,8 @@ docker run -d \
   -p 8008:8008 \
   -p 8888:8888 \
   -p 8889:8889 \
-  -v /mnt/user/appdata/soulsync/config.json:/app/config/config.json \
-  -v /mnt/user/appdata/soulsync/database:/app/data \
+  -e SOULSYNC_DATA_DIR=/data \
+  -v /mnt/user/appdata/soulsync/data:/data \
   -v /mnt/user/appdata/soulsync/logs:/app/logs \
   -v /mnt/user/Music:/host/music:rw \
   --restart unless-stopped \
@@ -58,10 +58,10 @@ Create `/boot/config/plugins/dockerMan/templates-user/soulsync.xml`:
   <Config Name="WebUI Port" Target="8008" Default="8008" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8008</Config>
   <Config Name="Spotify OAuth Port" Target="8888" Default="8888" Mode="tcp" Description="Spotify OAuth callback port" Type="Port" Display="always" Required="true" Mask="false">8888</Config>
   <Config Name="Tidal OAuth Port" Target="8889" Default="8889" Mode="tcp" Description="Tidal OAuth callback port" Type="Port" Display="always" Required="true" Mask="false">8889</Config>
-  <Config Name="Config" Target="/app/config" Default="/mnt/user/appdata/soulsync/config" Mode="rw" Description="Configuration files" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/soulsync/config</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/soulsync/data" Mode="rw" Description="Application data, config, and database." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/soulsync/data</Config>
   <Config Name="Logs" Target="/app/logs" Default="/mnt/user/appdata/soulsync/logs" Mode="rw" Description="Log files" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/appdata/soulsync/logs</Config>
   <Config Name="Music Share" Target="/host/music" Default="/mnt/user/Music" Mode="rw" Description="Your music share for downloads and library" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Music</Config>
-  <Config Name="Database Volume" Target="/app/database" Default="" Mode="" Description="Database volume (leave empty for named volume)" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Data Directory Env" Target="SOULSYNC_DATA_DIR" Default="/data" Mode="" Description="[ADVANCED] Container path for application data." Type="Variable" Display="advanced" Required="true" Mask="false">/data</Config>
 </Container>
 ```
 
@@ -75,7 +75,7 @@ Create `/boot/config/plugins/dockerMan/templates-user/soulsync.xml`:
 └── Transfer/                  # Processing folder
 
 /mnt/user/appdata/soulsync/    # App configuration
-├── config/                    # SoulSync settings
+├── data/                      # SoulSync settings & database
 └── logs/                      # Application logs
 ```
 
@@ -129,8 +129,8 @@ Add container manually with repository: boulderbadgedad/soulsync:latest
 
 ### 3. Configure Paths
 Map these volumes in Unraid Docker settings:
-- Container: `/app/config` → Host: `/mnt/user/appdata/soulsync/config`
-- Container: `/app/logs` → Host: `/mnt/user/appdata/soulsync/logs`  
+- Container: `/data` → Host: `/mnt/user/appdata/soulsync/data` (stores config and database)
+- Container: `/app/logs` → Host: `/mnt/user/appdata/soulsync/logs`
 - Container: `/host/music` → Host: `/mnt/user/Music` (or your music share)
 
 ### 4. Configure Ports
@@ -182,33 +182,31 @@ This ensures:
 
 ## 🛠️ Troubleshooting
 
-### ❌ ModuleNotFoundError: No module named 'config.settings' or 'database'
+### ❌ ModuleNotFoundError or other startup errors
 
-**Problem**: Most common error - mounting over Python modules
+**Problem**: A common error on Docker setups is caused by incorrectly mounting volumes. If you map a host directory to a container directory that contains application code (like `/app/config`), you will hide the application files and cause a crash.
 
-**Wrong**:
-```yaml
-- "/mnt/cache/appdata/soulsync:/app/config"         # ❌ Overwrites Python config module
-- "/mnt/cache/appdata/soulsync/config:/app/config"  # ❌ Still overwrites Python config module
-- "/mnt/cache/appdata/soulsync/database:/app/database"  # ❌ Overwrites Python database module
+**Correct Volume Setup**:
+
+To avoid this, SoulSync is now designed to use a single data directory inside the container at `/data`. All you need to do is map your Unraid appdata folder to this single volume.
+
+**Example**:
+- **Host Path:** `/mnt/user/appdata/soulsync/data`
+- **Container Path:** `/data`
+
+This single mapping provides a persistent location for the configuration, encryption key, and database, without interfering with the application code.
+
+The Unraid Community Applications template is already configured with the correct path. If you are setting up the container manually, ensure your volume mappings look like this:
+
+```
+-v /mnt/user/appdata/soulsync/data:/data      # ✅ Correct!
+-v /mnt/user/appdata/soulsync/logs:/app/logs
+-v /mnt/user/Music:/host/music
 ```
 
-**Correct**:
-```yaml
-- "/mnt/cache/appdata/soulsync/config.json:/app/config/config.json"  # ✅ Mount only the config file
-- "/mnt/cache/appdata/soulsync/database:/app/data"  # ✅ Mount database to different path
+**Do NOT do this**:
 ```
-
-**Why this happens**: Both `/app/config` and `/app/database` directories contain Python module files needed for the app to run. Mounting anything to these paths overwrites the modules. Mount config file specifically and database to `/app/data`.
-
-**Important**: If mounting database to `/app/data`, update your config.json:
-```json
-{
-  "database": {
-    "path": "data/music_library.db",
-    "max_workers": 5
-  }
-}
+-v /mnt/user/appdata/soulsync/config:/app/config  # ❌ WRONG! This will cause the app to crash.
 ```
 
 ### Container Won't Start

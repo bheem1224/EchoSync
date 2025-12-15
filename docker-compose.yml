@@ -12,8 +12,8 @@ services:
       # Web server configuration
       - FLASK_ENV=production
       - PYTHONPATH=/app
-      # Optional: Configure through environment variables
-      - SOULSYNC_CONFIG_PATH=/app/config/config.json
+      # Set the data directory for config and database
+      - SOULSYNC_DATA_DIR=/data
       # Set timezone
       - TZ=America/New_York
     ports:
@@ -21,12 +21,12 @@ services:
       - "8888:8888"      # Spotify OAuth callback
       - "8889:8889"      # Tidal OAuth callback
     volumes:
-      # Persistent data volumes
-      - ./config:/app/config
+      # Persistent data, config, and database
+      - ./data:/data
+      # Persistent logs
       - ./logs:/app/logs
+      # Persistent downloads
       - ./downloads:/app/downloads
-      # Use named volume for database persistence (separate from host database)
-      - soulsync_database:/app/database
       # IMPORTANT: Mount the drives containing your download and transfer folders
       # If your download/transfer paths are on E: drive, mount E: drive:
       - /mnt/e:/host/mnt/e:rw
@@ -59,10 +59,8 @@ services:
           cpus: '0.5'
           memory: 512M
 
-# Named volumes for persistent data
-volumes:
-  soulsync_database:
-    driver: local
+# Named volumes are not used in this configuration.
+# The 'data' volume is mapped to a local directory in the service definition.
 
 # Optional: Add external network for communication with other containers
 networks:
