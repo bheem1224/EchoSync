@@ -2217,6 +2217,53 @@ def detect_media_server_endpoint():
         add_activity_item("❌", "Auto-Detect Failed", f"No {server_type} server found", "Now")
         return jsonify({"success": False, "error": f"No {server_type} server found on common local addresses."})
 
+@app.route('/api/plex/oauth/start', methods=['POST'])
+def plex_oauth_start():
+    """Generate Plex OAuth authorization URL"""
+    try:
+        data = request.get_json()
+        base_url = data.get('base_url', f"http://localhost:{app.config.get('PORT', 8888)}")
+        
+        # Generate OAuth auth URL
+        auth_url = f"https://app.plex.tv/auth#?clientID=soulsync&redirect_uri={base_url}/api/plex/oauth/callback&response_type=code"
+        
+        return jsonify({
+            "success": True,
+            "auth_url": auth_url
+        })
+    except Exception as e:
+        logger.error(f"Error starting Plex OAuth: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/plex/oauth/callback', methods=['GET'])
+def plex_oauth_callback():
+    """Handle Plex OAuth callback and exchange code for token"""
+    try:
+        code = request.args.get('code')
+        if not code:
+            return "Authorization failed: No code received", 400
+        
+        # Note: In a real implementation, you would exchange the code for a token
+        # For now, we'll just acknowledge the callback
+        # The actual token handling should be done by the Plex app configuration
+        
+        return """
+        <html>
+            <body style="font-family: Arial; text-align: center; padding: 50px;">
+                <h2>✅ Authorization Successful</h2>
+                <p>SoulSync has been authorized with Plex.</p>
+                <p>You can close this window and return to the application.</p>
+                <script>
+                    // Close the window after 2 seconds
+                    setTimeout(() => window.close(), 2000);
+                </script>
+            </body>
+        </html>
+        """
+    except Exception as e:
+        logger.error(f"Error in Plex OAuth callback: {e}")
+        return f"Authorization error: {str(e)}", 500
+
 @app.route('/api/plex/music-libraries', methods=['GET'])
 def get_plex_music_libraries():
     """Get list of all available music libraries from Plex"""

@@ -2150,6 +2150,38 @@ class SettingsPage(QWidget):
         if selected_path:
             self.transfer_path_input.setText(selected_path)
     
+    def create_secret_input_with_toggle(self, placeholder_text=""):
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0,0,0,0)
+        layout.setSpacing(5)
+
+        line_edit = QLineEdit()
+        line_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        line_edit.setPlaceholderText(placeholder_text)
+        line_edit.setStyleSheet(self.get_input_style())
+        line_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        toggle_button = QPushButton("Show")
+        toggle_button.setCheckable(True)
+        toggle_button.setStyleSheet(self.get_test_button_style())
+        toggle_button.setFixedSize(50,30)
+
+        def toggle_password_visibility():
+            if toggle_button.isChecked():
+                line_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+                toggle_button.setText("Hide")
+            else:
+                line_edit.setEchoMode(QLineEdit.EchoMode.Password)
+                toggle_button.setText("Show")
+
+        toggle_button.clicked.connect(toggle_password_visibility)
+
+        layout.addWidget(line_edit)
+        layout.addWidget(toggle_button)
+        
+        return widget, line_edit
+
     def create_header(self):
         header = QWidget()
         layout = QVBoxLayout(header)
@@ -2205,23 +2237,18 @@ class SettingsPage(QWidget):
         client_id_label.setStyleSheet(self.get_label_style(11))
         spotify_layout.addWidget(client_id_label)
         
-        self.client_id_input = QLineEdit()
-        self.client_id_input.setStyleSheet(self.get_input_style())
-        self.client_id_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        client_id_widget, self.client_id_input = self.create_secret_input_with_toggle()
         self.form_inputs['spotify.client_id'] = self.client_id_input
-        spotify_layout.addWidget(self.client_id_input)
+        spotify_layout.addWidget(client_id_widget)
         
         # Client Secret
         client_secret_label = QLabel("Client Secret:")
         client_secret_label.setStyleSheet(self.get_label_style(11))
         spotify_layout.addWidget(client_secret_label)
         
-        self.client_secret_input = QLineEdit()
-        self.client_secret_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.client_secret_input.setStyleSheet(self.get_input_style())
-        self.client_secret_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        secret_widget, self.client_secret_input = self.create_secret_input_with_toggle()
         self.form_inputs['spotify.client_secret'] = self.client_secret_input
-        spotify_layout.addWidget(self.client_secret_input)
+        spotify_layout.addWidget(secret_widget)
         
         # Callback URL info
         callback_info_label = QLabel("Required Redirect URI:")
@@ -2271,23 +2298,18 @@ class SettingsPage(QWidget):
         tidal_client_id_label.setStyleSheet(self.get_label_style(11))
         tidal_layout.addWidget(tidal_client_id_label)
         
-        self.tidal_client_id_input = QLineEdit()
-        self.tidal_client_id_input.setStyleSheet(self.get_input_style())
-        self.tidal_client_id_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        tidal_client_id_widget, self.tidal_client_id_input = self.create_secret_input_with_toggle()
         self.form_inputs['tidal.client_id'] = self.tidal_client_id_input
-        tidal_layout.addWidget(self.tidal_client_id_input)
+        tidal_layout.addWidget(tidal_client_id_widget)
         
         # Client Secret
         tidal_client_secret_label = QLabel("Client Secret:")
         tidal_client_secret_label.setStyleSheet(self.get_label_style(11))
         tidal_layout.addWidget(tidal_client_secret_label)
         
-        self.tidal_client_secret_input = QLineEdit()
-        self.tidal_client_secret_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.tidal_client_secret_input.setStyleSheet(self.get_input_style())
-        self.tidal_client_secret_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        tidal_secret_widget, self.tidal_client_secret_input = self.create_secret_input_with_toggle()
         self.form_inputs['tidal.client_secret'] = self.tidal_client_secret_input
-        tidal_layout.addWidget(self.tidal_client_secret_input)
+        tidal_layout.addWidget(tidal_secret_widget)
         
         # Helper text for Tidal
         tidal_helper_text = QLabel("Configure Tidal API credentials for playlist sync functionality")
@@ -2440,12 +2462,9 @@ class SettingsPage(QWidget):
         plex_token_label.setStyleSheet(self.get_label_style(11))
         plex_layout.addWidget(plex_token_label)
         
-        self.plex_token_input = QLineEdit()
-        self.plex_token_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.plex_token_input.setStyleSheet(self.get_input_style())
-        self.plex_token_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        plex_token_widget, self.plex_token_input = self.create_secret_input_with_toggle()
         self.form_inputs['plex.token'] = self.plex_token_input
-        plex_layout.addWidget(self.plex_token_input)
+        plex_layout.addWidget(plex_token_widget)
         
         # Add Plex frame to its container
         plex_container_layout.addWidget(plex_frame)

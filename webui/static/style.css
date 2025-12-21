@@ -1240,6 +1240,38 @@ body {
     background: rgba(29, 185, 84, 0.05);
 }
 
+/* Password Input with Toggle Button */
+.input-with-button {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.input-with-button input {
+    flex: 1;
+}
+
+.toggle-password-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: #ffffff;
+    padding: 8px 10px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.toggle-password-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.toggle-password-btn:active {
+    transform: scale(0.95);
+}
+
 /* Checkbox Styling */
 .checkbox-label {
     display: flex !important;

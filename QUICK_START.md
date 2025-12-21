@@ -141,9 +141,8 @@ docker build -t soulsync:latest .
 docker run -d \
   --name soulsync-webui \
   -p 8008:8008 \
+  -v $(pwd)/config:/config \
   -v $(pwd)/data:/data \
-  -v $(pwd)/logs:/app/logs \
-  -v $(pwd)/downloads:/app/downloads \
   -e FLASK_ENV=production \
   soulsync:latest
 ```

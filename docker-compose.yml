@@ -12,7 +12,9 @@ services:
       # Web server configuration
       - FLASK_ENV=production
       - PYTHONPATH=/app
-      # Set the data directory for config and database
+      # Set the config directory for settings and encrypted secrets
+      - SOULSYNC_CONFIG_DIR=/config
+      # Set the data directory for database and logs
       - SOULSYNC_DATA_DIR=/data
       # Set timezone
       - TZ=America/New_York
@@ -21,12 +23,10 @@ services:
       - "8888:8888"      # Spotify OAuth callback
       - "8889:8889"      # Tidal OAuth callback
     volumes:
-      # Persistent data, config, and database
+      # Configuration and encrypted secrets
+      - ./config:/config
+      # Persistent data, logs, downloads
       - ./data:/data
-      # Persistent logs
-      - ./logs:/app/logs
-      # Persistent downloads
-      - ./downloads:/app/downloads
       # IMPORTANT: Mount the drives containing your download and transfer folders
       # If your download/transfer paths are on E: drive, mount E: drive:
       - /mnt/e:/host/mnt/e:rw

@@ -151,8 +151,8 @@ Transfer/
 **Path Configuration**
 ```yaml
 volumes:
-  - ./config:/app/config          # Settings persist
-  - ./logs:/app/logs              # Log files
+  - ./config:/config          # Settings and encrypted secrets
+  - ./data:/data              # Database and logs
   - /mnt/c:/host/mnt/c:rw        # Mount Windows drives
   - /mnt/d:/host/mnt/d:rw
 ```

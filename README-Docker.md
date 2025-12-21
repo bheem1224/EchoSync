@@ -42,10 +42,10 @@ open http://localhost:8008
 
 ## 📁 Volume Mounts
 
-SoulSync requires persistent storage for your configuration, database, and logs. It is designed to use a single data directory to make this easy.
+SoulSync requires persistent storage for your configuration, database, and logs. It uses two main directories:
 
-- **`./data`** → `/data` - Stores all configuration and the application database.
-- **`./logs`** → `/app/logs` - Application logs.
+- **`./config`** → `/config` - Stores application settings (config.json) and encrypted secrets (config.db).
+- **`./data`** → `/data` - Stores the music database, logs, downloads, and transfer directories.
 
 You will also need to mount any directories you want SoulSync to access, such as your music library or download folders. The `docker-compose.yml` provides examples for this.
 
@@ -225,7 +225,7 @@ services:
       - "8889:8889"      # Tidal OAuth callback
     volumes:
       - ./data:/data
-      - ./logs:/app/logs
+      - ./logs:/data/logs
       - /path/to/your/music:/music:ro
       - /path/to/your/downloads:/downloads
     environment:

@@ -128,6 +128,5 @@ class LyricsClient:
             return False
 
 
-# Note: do not create a global LyricsClient instance at import time to allow
-# tests to patch `LrcLibAPI` before instantiation. Callers should instantiate
-# `LyricsClient()` where needed.
+# Global instance for use in web_server
+lyrics_client = LyricsClient()

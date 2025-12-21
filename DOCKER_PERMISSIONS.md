@@ -222,9 +222,8 @@ services:
     ports:
       - "8008:8008"
     volumes:
-      - ./config:/app/config
-      - ./logs:/app/logs
-      - ./downloads:/app/downloads
+      - ./config:/config
+      - ./data:/data
       - /mnt/user/Music:/music:rw    # Shared music library
     restart: unless-stopped
 ```
@@ -234,5 +233,5 @@ services:
 If you're still experiencing permission issues:
 1. Check container logs: `docker logs soulsync-webui`
 2. Verify PUID/PGID: `docker exec soulsync-webui id`
-3. Check file permissions: `docker exec soulsync-webui ls -la /app/downloads`
+3. Check file permissions: `docker exec soulsync-webui ls -la /data`
 4. Open an issue on GitHub with the output of these commands

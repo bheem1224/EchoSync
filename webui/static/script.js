@@ -1573,6 +1573,23 @@ function validateFileOrganizationTemplates() {
     return errors;
 }
 
+/**
+ * Toggle password input visibility (show/hide password)
+ */
+function togglePasswordVisibility(fieldId) {
+    const field = document.getElementById(fieldId);
+    if (!field) return;
+    
+    const isPassword = field.type === 'password';
+    field.type = isPassword ? 'text' : 'password';
+    
+    // Update button appearance - the button is a sibling in input-with-button wrapper
+    const button = field.parentElement?.querySelector('.toggle-password-btn');
+    if (button) {
+        button.textContent = isPassword ? '🙈' : '👁️';
+    }
+}
+
 async function loadSettingsData() {
     try {
         const response = await fetch(API.settings);
@@ -2140,6 +2157,71 @@ async function testDashboardConnection(service) {
 }
 
 // Individual Auto-detect functions - same as GUI
+async function startPlexOAuth() {
+    try {
+        showLoadingOverlay('Starting Plex OAuth authorization...');
+        
+        // Get current hostname for redirect URI
+        const baseUrl = window.location.origin;
+        
+        const response = await fetch('/api/plex/oauth/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ base_url: baseUrl })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // Open auth URL in new window
+            const authWindow = window.open(result.auth_url, 'PlexAuth', 'width=600,height=700');
+            
+            // Poll for token every 2 seconds
+            let pollCount = 0;
+            const pollInterval = setInterval(async () => {
+                pollCount++;
+                
+                // Stop polling after 5 minutes
+                if (pollCount > 150) {
+                    clearInterval(pollInterval);
+                    showToast('Authorization timeout - please try again', 'error');
+                    return;
+                }
+                
+                // Check if user closed the window
+                if (authWindow.closed) {
+                    clearInterval(pollInterval);
+                    // Wait a moment then check if token was saved
+                    setTimeout(async () => {
+                        try {
+                            const statusResponse = await fetch('/api/status');
+                            const statusData = await statusResponse.json();
+                            if (statusData.plex && statusData.plex.token) {
+                                showToast('✅ Plex authorization successful! Token saved.', 'success');
+                                // Reload settings to show new token
+                                loadSettingsData();
+                            }
+                        } catch (e) {
+                            console.log('Token check failed:', e);
+                        }
+                    }, 1000);
+                    return;
+                }
+            }, 2000);
+            
+            showToast('Opening Plex authorization page...', 'info');
+        } else {
+            showToast(`OAuth error: ${result.error}`, 'error');
+        }
+        
+    } catch (error) {
+        console.error('Error starting Plex OAuth:', error);
+        showToast('Failed to start Plex authorization', 'error');
+    } finally {
+        hideLoadingOverlay();
+    }
+}
+
 async function autoDetectPlex() {
     try {
         showLoadingOverlay('Auto-detecting Plex server...');

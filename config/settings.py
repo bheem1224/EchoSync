@@ -21,25 +21,25 @@ SECRETS = [
 
 class ConfigManager:
     def __init__(self, config_path: str = "config/config.json"):
-        data_dir_env = os.environ.get('SOULSYNC_DATA_DIR')
-        if data_dir_env:
-            # Docker-friendly setup: use a dedicated, mountable /data directory
-            data_dir = Path(data_dir_env)
-            self.config_dir = data_dir / 'config'
-            self.database_dir = data_dir / 'database'
+        config_dir_env = os.environ.get('SOULSYNC_CONFIG_DIR')
+        if config_dir_env:
+            # Docker-friendly setup: use a dedicated /config directory
+            self.config_dir = Path(config_dir_env)
         else:
             # Default setup: paths relative to the application structure
             self.config_dir = Path(__file__).parent
-            self.database_dir = self.config_dir.parent / 'database'
 
-        # Ensure directories exist
+        # Ensure directory exists
         self.config_dir.mkdir(parents=True, exist_ok=True)
-        self.database_dir.mkdir(parents=True, exist_ok=True)
         
-        # Paths for key, legacy config, and database
+        # Paths for key and database
         self.key_path = self.config_dir / ".encryption_key"
         self.config_path = self.config_dir / 'config.json' # For migration
-        self.database_path = self.database_dir / 'config.db'
+        self.database_path = self.config_dir / 'config.db'  # Encrypted config database
+        
+        print(f"[INFO] Config directory: {self.config_dir}")
+        print(f"[INFO] Key file path: {self.key_path}")
+        print(f"[INFO] Database path: {self.database_path}")
         
         self.config_data: Dict[str, Any] = {}
         self.cipher: Optional[Fernet] = None
@@ -51,25 +51,46 @@ class ConfigManager:
         key = os.getenv("MASTER_KEY")
         if key:
             print("[INFO] Using MASTER_KEY from environment variable.")
-            self.cipher = Fernet(key.encode())
-            return
+            try:
+                self.cipher = Fernet(key.encode())
+                return
+            except Exception as e:
+                print(f"[ERROR] Invalid MASTER_KEY: {e}")
+                raise
 
         if self.key_path.exists():
-            with open(self.key_path, 'rb') as f:
-                key = f.read()
-            print(f"[INFO] Using encryption key from {self.key_path}.")
-        else:
-            print(f"[WARN] No MASTER_KEY found. Generating new key at {self.key_path}.")
-            key = Fernet.generate_key()
+            try:
+                with open(self.key_path, 'rb') as f:
+                    key = f.read()
+                print(f"[INFO] Using encryption key from {self.key_path}.")
+                self.cipher = Fernet(key)
+                return
+            except Exception as e:
+                print(f"[ERROR] Failed to load encryption key: {e}")
+                raise
+        
+        # Generate new key only if none exists
+        print(f"[WARN] No encryption key found. Generating new key at {self.key_path}.")
+        key = Fernet.generate_key()
+        try:
+            self.key_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.key_path, 'wb') as f:
                 f.write(key)
             self.key_path.chmod(0o600)
-            print(f"[OK] New key generated. For production, set this key as MASTER_KEY environment variable.")
+            print(f"[OK] New key generated and saved to {self.key_path}")
+            print(f"[IMPORTANT] For Docker deployments, export this key as MASTER_KEY environment variable:")
+            print(f"[IMPORTANT] MASTER_KEY={key.decode()}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save encryption key: {e}")
+            raise
         
         self.cipher = Fernet(key)
 
     def _encrypt_value(self, value: Any) -> Any:
         """Encrypts a single value if it's a non-empty string."""
+        # If it's already encrypted, don't encrypt again
+        if isinstance(value, str) and value.startswith("enc:"):
+            return value
         if isinstance(value, str) and value and self.cipher:
             return "enc:" + self.cipher.encrypt(value.encode()).decode()
         return value
@@ -79,24 +100,33 @@ class ConfigManager:
         if isinstance(value, str) and value.startswith("enc:") and self.cipher:
             try:
                 encrypted_val = value[4:]
-                return self.cipher.decrypt(encrypted_val.encode()).decode()
+                decrypted = self.cipher.decrypt(encrypted_val.encode()).decode()
+                print(f"[DEBUG] Decrypted value: {encrypted_val[:20]}... → {decrypted[:20] if len(decrypted) > 20 else decrypted}")
+                return decrypted
             except Exception as e:
-                print(f"[ERROR] Decryption failed for value '{value[:15]}...': {e}")
+                print(f"[ERROR] Decryption failed for value '{value[:20]}...': {e}")
+                print(f"[ERROR] This usually means the encryption key has changed.")
+                print(f"[ERROR] Make sure MASTER_KEY environment variable or /config/.encryption_key is consistent.")
+                print(f"[DEBUG] Cipher initialized: {self.cipher is not None}")
                 return ""  # Return empty string on decryption failure
+        elif isinstance(value, str) and value.startswith("enc:"):
+            print(f"[WARN] Found encrypted value but cipher is not initialized: {value[:20]}...")
+            return value
         return value
 
-    def _traverse_and_transform(self, data: Dict[str, Any], transform: Callable, keys_to_transform: list) -> Dict[str, Any]:
+    def _traverse_and_transform(self, data: Dict[str, Any], transform: Callable, keys_to_transform: list, path: str = "") -> Dict[str, Any]:
         """Recursively traverses a dict and applies a transformation to specified keys."""
         output = {}
         for key, value in data.items():
+            # Build the full path to this key (e.g., "spotify.client_id")
+            current_path = f"{path}.{key}" if path else key
+            
             if isinstance(value, dict):
-                output[key] = self._traverse_and_transform(value, transform, [k.split('.', 1)[1] for k in keys_to_transform if k.startswith(key + '.')])
-            elif key in [k.split('.')[-1] for k in keys_to_transform if not '.' in k]:
-                 output[key] = transform(value)
-            # handle nested keys
-            elif any(k.startswith(key + ".") for k in keys_to_transform):
-                nested_keys = [k.split(key + '.')[1] for k in keys_to_transform if k.startswith(key + '.')]
-                output[key] = self._traverse_and_transform(value, transform, nested_keys)
+                # Recursively process nested dicts
+                output[key] = self._traverse_and_transform(value, transform, keys_to_transform, current_path)
+            elif current_path in keys_to_transform:
+                # Transform this value because its path matches a secret key
+                output[key] = transform(value)
             else:
                 output[key] = value
         return output
@@ -131,13 +161,27 @@ class ConfigManager:
 
             if row and row[0]:
                 config_data = json.loads(row[0])
+                print(f"[INFO] Encrypted config loaded from database")
+                print(f"[DEBUG] Cipher available: {self.cipher is not None}")
+                
+                # Decrypt the data
                 decrypted_data = self._traverse_and_transform(config_data, self._decrypt_value, SECRETS)
-                print("[OK] Configuration loaded and decrypted from database")
+                
+                # Verify decryption worked
+                has_encrypted = self._has_undecrypted_secrets(decrypted_data)
+                if has_encrypted:
+                    print(f"[WARNING] Data still contains encrypted values after decryption attempt")
+                else:
+                    print(f"[OK] Successfully decrypted all secrets")
+                
                 return decrypted_data
             else:
+                print("[INFO] No config found in database")
                 return None
         except Exception as e:
-            print(f"Warning: Could not load config from database: {e}")
+            print(f"[WARNING] Could not load config from database: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _save_to_database(self, config_data: Dict[str, Any]) -> bool:
@@ -158,9 +202,12 @@ class ConfigManager:
 
             conn.commit()
             conn.close()
+            print(f"[OK] Configuration saved to {self.database_path}")
             return True
         except Exception as e:
-            print(f"Error: Could not save config to database: {e}")
+            print(f"[ERROR] Could not save config to database: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def _load_from_config_file(self) -> Optional[Dict[str, Any]]:
@@ -195,6 +242,18 @@ class ConfigManager:
             "settings": {"audio_quality": "flac"}
         }
 
+    def _has_undecrypted_secrets(self, config_data: Dict[str, Any]) -> bool:
+        """Check if config has encrypted values that weren't decrypted (bad cipher)."""
+        def check_for_encrypted(obj):
+            if isinstance(obj, dict):
+                for v in obj.values():
+                    if check_for_encrypted(v):
+                        return True
+            elif isinstance(obj, str) and obj.startswith("enc:"):
+                return True
+            return False
+        return check_for_encrypted(config_data)
+
     def _load_config(self):
         """
         Load configuration with priority:
@@ -204,6 +263,8 @@ class ConfigManager:
         """
         config_data = self._load_from_database()
         if config_data:
+            # Trust database as primary source; `_load_from_database` performs
+            # its own decryption and integrity checks.
             self.config_data = config_data
             return
 
@@ -264,11 +325,11 @@ class ConfigManager:
             config_level = config_level.setdefault(k, {})
         
         config_level[keys[-1]] = value
-        # Encrypt secrets before handing payload to the persistence layer so tests
-        # that mock the persistence method observe encrypted values.
+        # Persist by calling `_save_to_database` with a pre-encrypted payload.
+        # `_encrypt_value` is idempotent (skips values already prefixed with `enc:`),
+        # so the database layer will not double-encrypt.
         try:
             encrypted_payload = self._traverse_and_transform(copy.deepcopy(self.config_data), self._encrypt_value, SECRETS)
-            # Call the persistence method with the encrypted payload
             self._save_to_database(encrypted_payload)
         except Exception:
             # Fallback to normal save flow if encryption or direct save fails

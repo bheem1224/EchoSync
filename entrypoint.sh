@@ -37,7 +37,7 @@ if [ "$CURRENT_UID" != "$PUID" ] || [ "$CURRENT_GID" != "$PGID" ]; then
 
     # Fix ownership of app directories
     echo "🔒 Fixing permissions on app directories..."
-    chown -R soulsync:soulsync /app/config /app/database /app/logs /app/downloads /app/Transfer 2>/dev/null || true
+    chown -R soulsync:soulsync /config /data 2>/dev/null || true
 else
     echo "✅ User/Group IDs already correct"
 fi
@@ -49,19 +49,37 @@ umask "$UMASK"
 # Initialize config files if they don't exist (first-time setup)
 echo "🔍 Checking for configuration files..."
 
-if [ ! -f "/app/config/settings.py" ]; then
+if [ ! -f "/config/settings.py" ]; then
     echo "   📄 Creating default settings.py..."
-    cp /defaults/settings.py /app/config/settings.py
-    chown soulsync:soulsync /app/config/settings.py
+    cp /defaults/settings.py /config/settings.py
+    chown soulsync:soulsync /config/settings.py
 else
     echo "   ✅ settings.py already exists"
 fi
 
-# Ensure all directories exist and have proper permissions
-mkdir -p /app/config /app/database /app/logs /app/downloads /app/Transfer
-chown -R soulsync:soulsync /app/config /app/database /app/logs /app/downloads /app/Transfer
+# Check encryption key
+if [ ! -f "/config/.encryption_key" ]; then
+    echo "   ⚠️  WARNING: No encryption key found at /config/.encryption_key"
+    echo "   ⚠️  Make sure you have a volume mount: -v ./config:/config"
+    echo "   🔐 Key will be generated on first run and should persist to ./config/encryption_key"
+else
+    echo "   ✅ Encryption key found"
+fi
 
-echo "✅ Configuration initialized successfully"
+# Ensure all directories exist and have proper permissions
+mkdir -p /config /data/logs /data/downloads /data/Transfer
+chown -R soulsync:soulsync /config /data
+
+# Final check - verify config is actually mounted
+if [ ! -w "/config" ]; then
+    echo "❌ ERROR: /config directory is not writable!"
+    echo "❌ Check that you have the volume mount: -v ./config:/config"
+    echo "❌ And that ./config directory exists on the host"
+    exit 1
+fi
+
+echo "✅ Configuration directories initialized successfully"
+echo "✅ Config directory is writable: $(ls -ld /config)"
 
 # Display final user info
 echo "👤 Running as:"

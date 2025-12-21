@@ -2218,7 +2218,10 @@
                                     </div>
                                     <div class="form-group">
                                         <label>Client Secret:</label>
-                                        <input type="password" id="spotify-client-secret" placeholder="Spotify Client Secret">
+                                        <div class="input-with-button">
+                                            <input type="password" id="spotify-client-secret" placeholder="Spotify Client Secret">
+                                            <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('spotify-client-secret')" title="Show/Hide">👁️</button>
+                                        </div>
                                     </div>
                                     <div class="form-group">
                                         <label>Redirect URI:</label>
@@ -2243,7 +2246,10 @@
                                     </div>
                                     <div class="form-group">
                                         <label>Client Secret:</label>
-                                        <input type="password" id="tidal-client-secret" placeholder="Tidal Client Secret">
+                                        <div class="input-with-button">
+                                            <input type="password" id="tidal-client-secret" placeholder="Tidal Client Secret">
+                                            <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('tidal-client-secret')" title="Show/Hide">👁️</button>
+                                        </div>
                                     </div>
                                     <div class="form-group">
                                         <label>Redirect URI:</label>
@@ -2271,7 +2277,10 @@
                                     </div>
                                     <div class="form-group">
                                         <label>API Key:</label>
-                                        <input type="password" id="soulseek-api-key" placeholder="Slskd API Key">
+                                        <div class="input-with-button">
+                                            <input type="password" id="soulseek-api-key" placeholder="Slskd API Key">
+                                            <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('soulseek-api-key')" title="Show/Hide">👁️</button>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -2280,7 +2289,10 @@
                                     <h4 class="service-title listenbrainz-title">ListenBrainz</h4>
                                     <div class="form-group">
                                         <label>User Token:</label>
-                                        <input type="password" id="listenbrainz-token" placeholder="ListenBrainz User Token">
+                                        <div class="input-with-button">
+                                            <input type="password" id="listenbrainz-token" placeholder="ListenBrainz User Token">
+                                            <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('listenbrainz-token')" title="Show/Hide">👁️</button>
+                                        </div>
                                     </div>
                                     <div class="callback-info">
                                         <div class="callback-help">Get your token from <a href="https://listenbrainz.org/profile/" target="_blank" style="color: #eb743b;">ListenBrainz Settings</a></div>
@@ -2322,7 +2334,10 @@
                                     </div>
                                     <div class="form-group">
                                         <label>Plex Token:</label>
-                                        <input type="password" id="plex-token" placeholder="X-Plex-Token">
+                                        <div class="input-with-button">
+                                            <input type="password" id="plex-token" placeholder="X-Plex-Token">
+                                            <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('plex-token')" title="Show/Hide">👁️</button>
+                                        </div>
                                     </div>
                                     <div class="form-group" id="plex-library-selector-container" style="display: none;">
                                         <label>Music Library:</label>
@@ -2335,6 +2350,7 @@
                                     </div>
                                     <div class="form-actions">
                                         <button class="detect-button" onclick="autoDetectPlex()">Auto-detect</button>
+                                        <button class="oauth-button" onclick="startPlexOAuth()">🔐 Authorize</button>
                                         <button class="test-button" onclick="testConnection('plex')">Test</button>
                                     </div>
                                 </div>
@@ -2347,7 +2363,10 @@
                                     </div>
                                     <div class="form-group">
                                         <label>API Key:</label>
-                                        <input type="password" id="jellyfin-api-key" placeholder="Jellyfin API Key">
+                                        <div class="input-with-button">
+                                            <input type="password" id="jellyfin-api-key" placeholder="Jellyfin API Key">
+                                            <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('jellyfin-api-key')" title="Show/Hide">👁️</button>
+                                        </div>
                                     </div>
                                     <div class="form-actions">
                                         <button class="detect-button" onclick="autoDetectJellyfin()">Auto-detect</button>
@@ -2375,7 +2394,10 @@
                                     </div>
                                     <div class="form-group">
                                         <label>Password:</label>
-                                        <input type="password" id="navidrome-password" placeholder="Password">
+                                        <div class="input-with-button">
+                                            <input type="password" id="navidrome-password" placeholder="Password">
+                                            <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('navidrome-password')" title="Show/Hide">👁️</button>
+                                        </div>
                                     </div>
                                     <div class="form-actions">
                                         <button class="detect-button" onclick="autoDetectNavidrome()">Auto-detect</button>

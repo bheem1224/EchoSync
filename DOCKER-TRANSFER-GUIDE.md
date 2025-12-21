@@ -23,17 +23,17 @@ services:
       - "8889:8889"
     volumes:
       # Config and logs
-      - /home/myname/apps/soulsync/config:/app/config
-      - /home/myname/apps/soulsync/logs:/app/logs
+      - /home/myname/apps/soulsync/config:/data/config
+      - /home/myname/apps/soulsync/logs:/data/logs
 
       # Downloads from slskd
-      - /mnt/data/slskd/downloads:/app/downloads
+      - /mnt/data/slskd/downloads:/data/downloads
 
       # Your Plex music library (transfer destination)
-      - /mnt/data/media/music:/app/Transfer:rw
+      - /mnt/data/media/music:/data/Transfer:rw
 
       # Database - USE NAMED VOLUME (critical!)
-      - soulsync_database:/app/database
+      - soulsync_database:/data/database
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -46,18 +46,18 @@ volumes:
 ```
 
 **IMPORTANT**:
-- Do NOT mount `/app/database` to a host path
-- Use a named volume `soulsync_database:/app/database`
+- Do NOT mount `/data` to a host path for the database
+- Use a named volume `soulsync_database:/data`
 - Host path mounts cause database corruption
 
 ### 2. SoulSync Settings Configuration
 
 In SoulSync Web UI → Settings:
 
-1. **Download Path**: `/app/downloads`
-2. **Transfer Path**: `/app/Transfer`
+1. **Download Path**: `/data/downloads`
+2. **Transfer Path**: `/data/Transfer`
 
-**DO NOT use host paths** like `/mnt/data/...` in settings. Use the **container paths** (`/app/...`).
+**DO NOT use host paths** like `/mnt/data/...` in settings. Use the **container paths** (`/data/...`).
 
 ### 3. Enable Debug Logging
 

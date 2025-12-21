@@ -28,8 +28,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # Create necessary directories with proper permissions
-RUN mkdir -p /app/config /app/database /app/logs /app/downloads /app/Transfer && \
-    chown -R soulsync:soulsync /app
+RUN mkdir -p /config /data/logs /data/downloads /data/Transfer && \
+    chown -R soulsync:soulsync /config /data
 
 # Create defaults directory and copy template files
 # These will be used by entrypoint.sh to initialize empty volumes
@@ -39,7 +39,7 @@ RUN mkdir -p /defaults && \
     chmod 644 /defaults/config.json /defaults/settings.py
 
 # Create volume mount points
-VOLUME ["/app/config", "/app/database", "/app/logs", "/app/downloads", "/app/Transfer"]
+VOLUME ["/config", "/data"]
 
 # Copy and set up entrypoint script
 COPY entrypoint.sh /entrypoint.sh
@@ -62,6 +62,8 @@ ENV FLASK_ENV=production
 ENV PUID=1000
 ENV PGID=1000
 ENV UMASK=022
+ENV SOULSYNC_CONFIG_DIR=/config
+ENV SOULSYNC_DATA_DIR=/data
 
 # Set entrypoint and default command
 ENTRYPOINT ["/entrypoint.sh"]
