@@ -86,6 +86,10 @@ class ConfigManager:
         
         self.cipher = Fernet(key)
 
+    def _is_secret_path(self, key_path: str) -> bool:
+        """Check if a config key path is in the SECRETS list."""
+        return key_path in SECRETS
+
     def _encrypt_value(self, value: Any) -> Any:
         """Encrypts a single value if it's a non-empty string."""
         # If it's already encrypted, don't encrypt again
@@ -236,9 +240,36 @@ class ConfigManager:
             "soulseek": {"slskd_url": "", "api_key": "", "download_path": "./downloads", "transfer_path": "./Transfer"},
             "listenbrainz": {"token": ""},
             "logging": {"path": "logs/app.log", "level": "INFO"},
-            "database": {"path": "database/music_library.db", "max_workers": 5},
+            "database": {"path": "data/music_library.db", "max_workers": 5},
             "metadata_enhancement": {"enabled": True, "embed_album_art": True},
             "playlist_sync": {"create_backup": True},
+            "file_organization": {
+                "enabled": True,
+                "templates": {
+                    "album_path": "$albumartist/$albumartist - $album/$track - $title",
+                    "single_path": "$artist/$artist - $title/$title",
+                    "playlist_path": "$playlist/$artist - $title"
+                }
+            },
+            "download": {
+                "concurrency": 2,
+                "retry_count": 3,
+                "min_free_space_mb": 500
+            },
+            "discovery_pool": {
+                "lookback_period_days": 90,
+                "max_tracks": 5000,
+                "new_releases_only": False
+            },
+            "quality_profile": {
+                "preset": "balanced",
+                "allowed_file_types": ["flac", "mp3_320", "mp3_256"],
+                "min_file_size_mb": 0,
+                "max_file_size_mb": 150,
+                "min_bit_depth": 16,
+                "min_bitrate_kbps": 256,
+                "min_length_seconds": 0
+            },
             "settings": {"audio_quality": "flac"}
         }
 
@@ -257,48 +288,92 @@ class ConfigManager:
     def _load_config(self):
         """
         Load configuration with priority:
-        1. Database (primary storage)
-        2. config.json (migration from file-based config)
+        1. config.json (non-secrets, user-editable)
+        2. config.db (secrets only, encrypted)
         3. Defaults (fresh install)
         """
-        config_data = self._load_from_database()
-        if config_data:
-            # Trust database as primary source; `_load_from_database` performs
-            # its own decryption and integrity checks.
-            self.config_data = config_data
-            return
-
-        config_data = self._load_from_config_file()
-        if config_data:
-            print("[MIGRATE] Migrating configuration from config.json to database...")
-            if self._save_to_database(config_data):
-                print("[OK] Configuration migrated successfully")
-                self.config_data = self._traverse_and_transform(config_data, self._decrypt_value, SECRETS) # Ensure in-memory is decrypted
-            else:
-                print("[WARN] Migration failed - using file-based config")
-                self.config_data = config_data
-            return
-
-        print("[INFO] No existing configuration found - using defaults")
+        # Start with defaults as base
         config_data = self._get_default_config()
-        if self._save_to_database(config_data):
-            print("[OK] Default configuration saved to database")
-        else:
-            print("[WARN] Could not save defaults to database - using in-memory config")
+        
+        # Load non-secrets from config.json
+        json_data = self._load_from_config_file()
+        if json_data:
+            print("[OK] Loaded non-secrets from config.json")
+            config_data = self._deep_merge(config_data, json_data)
+        
+        # Load secrets from database (encrypted)
+        db_data = self._load_from_database()
+        if db_data:
+            print("[OK] Loaded secrets from database")
+            config_data = self._deep_merge(config_data, db_data)
+            # Verify decryption worked
+            if self._has_undecrypted_secrets(config_data):
+                print("[WARNING] Some encrypted values still encrypted after load - key mismatch?")
+        
         self.config_data = config_data
+        
+        # If we have no JSON file yet, save current config to JSON for future edits
+        if not json_data:
+            self._save_non_secrets_to_json()
+    
+    def _deep_merge(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively merge override dict into base dict."""
+        result = copy.deepcopy(base)
+        for key, value in override.items():
+            if isinstance(value, dict) and key in result and isinstance(result[key], dict):
+                result[key] = self._deep_merge(result[key], value)
+            else:
+                result[key] = value
+        return result
 
-    def _save_config(self):
-        """Save configuration to database with a fallback to the config file."""
-        if not self._save_to_database(self.config_data):
-            print("[WARN] Database save failed - attempting file fallback")
-            try:
-                self.config_path.parent.mkdir(parents=True, exist_ok=True)
-                encrypted_data = self._traverse_and_transform(copy.deepcopy(self.config_data), self._encrypt_value, SECRETS)
-                with open(self.config_path, 'w') as f:
-                    json.dump(encrypted_data, f, indent=2)
-                print("[OK] Configuration saved to config.json as fallback")
-            except Exception as e:
-                print(f"[ERROR] Failed to save configuration: {e}")
+    def _save_non_secrets_to_json(self) -> bool:
+        """Save only non-secret values to config.json for user editing."""
+        try:
+            # Extract only non-secrets from config_data
+            non_secrets = self._extract_non_secrets(self.config_data)
+            
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.config_path, 'w') as f:
+                json.dump(non_secrets, f, indent=2)
+            print(f"[OK] Non-secrets saved to {self.config_path}")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to save non-secrets to JSON: {e}")
+            return False
+    
+    def _extract_non_secrets(self, data: Dict[str, Any], path: str = "") -> Dict[str, Any]:
+        """Extract only non-secret values from config data."""
+        result = {}
+        for key, value in data.items():
+            current_path = f"{path}.{key}" if path else key
+            
+            if isinstance(value, dict):
+                # Recurse into nested dicts
+                nested = self._extract_non_secrets(value, current_path)
+                if nested:  # Only add non-empty nested dicts
+                    result[key] = nested
+            elif not self._is_secret_path(current_path):
+                # Include non-secret values
+                result[key] = value
+        
+        return result
+    
+    def _extract_secrets(self, data: Dict[str, Any], path: str = "") -> Dict[str, Any]:
+        """Extract only secret values from config data."""
+        result = {}
+        for key, value in data.items():
+            current_path = f"{path}.{key}" if path else key
+            
+            if isinstance(value, dict):
+                # Recurse into nested dicts
+                nested = self._extract_secrets(value, current_path)
+                if nested:  # Only add non-empty nested dicts
+                    result[key] = nested
+            elif self._is_secret_path(current_path):
+                # Include secret values
+                result[key] = value
+        
+        return result
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a configuration value, decrypting if necessary."""
@@ -319,21 +394,27 @@ class ConfigManager:
         return value
 
     def set(self, key: str, value: Any):
+        """Set a configuration value and persist it.
+        
+        Secrets are saved to encrypted config.db.
+        Non-secrets are saved to plaintext config.json.
+        """
         keys = key.split('.')
         config_level = self.config_data
         for k in keys[:-1]:
             config_level = config_level.setdefault(k, {})
         
         config_level[keys[-1]] = value
-        # Persist by calling `_save_to_database` with a pre-encrypted payload.
-        # `_encrypt_value` is idempotent (skips values already prefixed with `enc:`),
-        # so the database layer will not double-encrypt.
-        try:
-            encrypted_payload = self._traverse_and_transform(copy.deepcopy(self.config_data), self._encrypt_value, SECRETS)
-            self._save_to_database(encrypted_payload)
-        except Exception:
-            # Fallback to normal save flow if encryption or direct save fails
-            self._save_config()
+        
+        # Determine where to persist this value
+        if self._is_secret_path(key):
+            # Save secrets to encrypted database
+            secrets_only = self._extract_secrets(self.config_data)
+            encrypted_secrets = self._traverse_and_transform(secrets_only, self._encrypt_value, SECRETS)
+            self._save_to_database(encrypted_secrets)
+        else:
+            # Save non-secrets to plaintext JSON
+            self._save_non_secrets_to_json()
 
     # ... (rest of the getter methods remain the same) ...
     def get_spotify_config(self) -> Dict[str, str]:

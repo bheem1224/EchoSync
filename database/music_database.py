@@ -134,8 +134,17 @@ class RecentRelease:
 class MusicDatabase:
     """SQLite database manager for SoulSync music library data"""
     
-    def __init__(self, database_path: str = "database/music_library.db"):
-        self.database_path = Path(database_path)
+    def __init__(self, database_path: str = None):
+        # Resolve database path: prefer SOULSYNC_DATA_DIR, fallback to provided or default
+        data_dir = os.getenv("SOULSYNC_DATA_DIR")
+        if database_path:
+            resolved_path = Path(database_path)
+        elif data_dir:
+            resolved_path = Path(data_dir) / "music_library.db"
+        else:
+            resolved_path = Path("data") / "music_library.db"
+
+        self.database_path = resolved_path
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Initialize database

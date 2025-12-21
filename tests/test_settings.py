@@ -80,41 +80,44 @@ def test_initialize_encryption_generates_new_key(mock_exists, base_config_manage
 # --- Tests for Loading Logic ---
 
 def test_load_config_from_database(base_config_manager: ConfigManager, mocker):
-    """Test loading configuration from the database as the primary source."""
-    sample_data = {"spotify": {"client_id": "id", "client_secret": "enc:something"}}
+    """Test loading configuration from database (with JSON as base)."""
+    # With split persistence, JSON is loaded first (as non-secrets base),
+    # then DB secrets merge in
+    sample_db_data = {"spotify": {"client_id": "id", "client_secret": "enc:secret"}}
     
-    mock_load_db = mocker.patch.object(ConfigManager, "_load_from_database", return_value=sample_data)
-    mock_load_file = mocker.patch.object(ConfigManager, "_load_from_config_file")
+    mocker.patch.object(ConfigManager, "_load_from_database", return_value=sample_db_data)
+    mocker.patch.object(ConfigManager, "_load_from_config_file", return_value=None)
     
     base_config_manager._load_config()
 
-    mock_load_db.assert_called_once()
-    mock_load_file.assert_not_called()
+    # Verify data was loaded from DB
     assert base_config_manager.config_data['spotify']['client_id'] == 'id'
 
 def test_load_config_migrates_from_file(base_config_manager: ConfigManager, mocker):
-    """Test migration from a config.json file when the database is empty."""
-    sample_data = {"spotify": {"client_id": "id_from_file"}}
+    """Test that JSON-based non-secrets are loaded and merged with defaults."""
+    sample_json = {"logging": {"level": "DEBUG"}}  # Non-secret
     
     mocker.patch.object(ConfigManager, "_load_from_database", return_value=None)
-    mocker.patch.object(ConfigManager, "_load_from_config_file", return_value=sample_data)
-    mock_save_db = mocker.patch.object(ConfigManager, "_save_to_database", return_value=True)
+    mocker.patch.object(ConfigManager, "_load_from_config_file", return_value=sample_json)
+    mocker.patch.object(ConfigManager, "_save_non_secrets_to_json")  # Don't write during test
 
     base_config_manager._load_config()
 
-    mock_save_db.assert_called_once_with(sample_data)
-    assert base_config_manager.config_data['spotify']['client_id'] == 'id_from_file'
+    # Verify JSON data was merged in
+    assert base_config_manager.config_data['logging']['level'] == 'DEBUG'
 
 def test_load_config_uses_defaults(base_config_manager: ConfigManager, mocker):
-    """Test that default configuration is used when no other source is available."""
+    """Test that default configuration is used and saved to JSON when no config exists."""
     mocker.patch.object(ConfigManager, "_load_from_database", return_value=None)
     mocker.patch.object(ConfigManager, "_load_from_config_file", return_value=None)
-    mock_save_db = mocker.patch.object(ConfigManager, "_save_to_database", return_value=True)
+    mock_save_json = mocker.patch.object(ConfigManager, "_save_non_secrets_to_json", return_value=True)
 
     base_config_manager._load_config()
 
-    mock_save_db.assert_called_once()
-    assert base_config_manager.get('active_media_server') == 'plex' # Check a default value
+    # Verify defaults were loaded
+    assert base_config_manager.get('active_media_server') == 'plex'
+    # Verify non-secrets were saved to JSON for future edits
+    mock_save_json.assert_called_once()
     
 # --- Tests for Encryption/Decryption ---
 
