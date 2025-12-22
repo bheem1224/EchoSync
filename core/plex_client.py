@@ -82,17 +82,28 @@ class PlexClient:
         self._is_connecting = False
         self._last_connection_check = 0  # Cache connection checks
         self._connection_check_interval = 30  # Check every 30 seconds max
+        self._last_connection_attempt = 0
     
     def ensure_connection(self) -> bool:
         """Ensure connection to Plex server with lazy initialization."""
-        if self._connection_attempted:
-            return self.server is not None
-        
+        import time
+
+        # If already connected, keep it
+        if self.server is not None:
+            return True
+
+        # Avoid concurrent connection attempts
         if self._is_connecting:
             return False
+
+        # Back off if we just attempted recently and failed
+        now = time.time()
+        if self._connection_attempted and (now - self._last_connection_attempt < self._connection_check_interval):
+            return self.server is not None
         
         self._is_connecting = True
         try:
+            self._last_connection_attempt = now
             self._setup_client()
             return self.server is not None
         finally:
@@ -232,7 +243,7 @@ class PlexClient:
 
             self._last_connection_check = current_time
 
-            # Try to connect on first call, but don't block if already connecting
+            # Try to connect or reconnect if not already connecting
             if not self._is_connecting:
                 self.ensure_connection()
 

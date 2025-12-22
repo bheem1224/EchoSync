@@ -2159,67 +2159,126 @@ async function testDashboardConnection(service) {
 // Individual Auto-detect functions - same as GUI
 async function startPlexOAuth() {
     try {
-        showLoadingOverlay('Starting Plex OAuth authorization...');
+        showLoadingOverlay('Starting Plex authorization...');
         
-        // Get current hostname for redirect URI
-        const baseUrl = window.location.origin;
-        
+        // Request OAuth session from backend
         const response = await fetch('/api/plex/oauth/start', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ base_url: baseUrl })
+            headers: { 'Content-Type': 'application/json' }
         });
         
         const result = await response.json();
         
-        if (result.success) {
-            // Open auth URL in new window
-            const authWindow = window.open(result.auth_url, 'PlexAuth', 'width=600,height=700');
-            
-            // Poll for token every 2 seconds
-            let pollCount = 0;
-            const pollInterval = setInterval(async () => {
-                pollCount++;
-                
-                // Stop polling after 5 minutes
-                if (pollCount > 150) {
-                    clearInterval(pollInterval);
-                    showToast('Authorization timeout - please try again', 'error');
-                    return;
-                }
-                
-                // Check if user closed the window
-                if (authWindow.closed) {
-                    clearInterval(pollInterval);
-                    // Wait a moment then check if token was saved
-                    setTimeout(async () => {
-                        try {
-                            const statusResponse = await fetch('/api/status');
-                            const statusData = await statusResponse.json();
-                            if (statusData.plex && statusData.plex.token) {
-                                showToast('✅ Plex authorization successful! Token saved.', 'success');
-                                // Reload settings to show new token
-                                loadSettingsData();
-                            }
-                        } catch (e) {
-                            console.log('Token check failed:', e);
-                        }
-                    }, 1000);
-                    return;
-                }
-            }, 2000);
-            
-            showToast('Opening Plex authorization page...', 'info');
-        } else {
+        if (!result.success) {
             showToast(`OAuth error: ${result.error}`, 'error');
+            hideLoadingOverlay();
+            return;
         }
+        
+        const sessionId = result.session_id;
+        const oauthUrl = result.oauth_url;
+        const pollUrl = result.poll_url;
+        
+        console.log(`Plex OAuth session: ${sessionId}`);
+        console.log(`OAuth URL: ${oauthUrl}`);
+        
+        // Open Plex authorization page
+        showToast('Opening Plex authorization page...', 'info');
+        const authWindow = window.open(oauthUrl, 'PlexAuth', 'width=500,height=600');
+        
+        if (!authWindow) {
+            showToast('Please enable pop-ups to authorize with Plex', 'error');
+            hideLoadingOverlay();
+            return;
+        }
+        
+        // Poll backend for token
+        let pollCount = 0;
+        const maxPolls = 300; // 5 minutes at 1 second intervals
+        
+        const pollInterval = setInterval(async () => {
+            pollCount++;
+            
+            // Stop after timeout
+            if (pollCount > maxPolls) {
+                clearInterval(pollInterval);
+                authWindow.close();
+                hideLoadingOverlay();
+                showToast('Authorization timeout - please try again', 'error');
+                return;
+            }
+            
+            try {
+                const pollResponse = await fetch(pollUrl);
+                
+                // 202 = still pending
+                if (pollResponse.status === 202) {
+                    console.log(`Waiting for Plex authorization (${pollCount}s)...`);
+                    return;
+                }
+                
+                // 200 = success, 410 = expired, other = error
+                const pollResult = await pollResponse.json();
+                
+                if (pollResponse.status === 200 && pollResult.success) {
+                    // Token received!
+                    clearInterval(pollInterval);
+                    authWindow.close();
+                    hideLoadingOverlay();
+                    
+                    showToast('✅ Plex authorization successful! Token saved.', 'success');
+                    console.log('Plex token stored:', pollResult.token);
+                    
+                    // Reload settings to reflect new token
+                    setTimeout(() => loadSettingsData(), 500);
+                    
+                } else if (pollResponse.status === 410) {
+                    // PIN expired
+                    clearInterval(pollInterval);
+                    authWindow.close();
+                    hideLoadingOverlay();
+                    showToast('Authorization PIN expired - please try again', 'error');
+                } else if (pollResult.pending) {
+                    // Still waiting
+                    return;
+                } else {
+                    // Error
+                    clearInterval(pollInterval);
+                    authWindow.close();
+                    hideLoadingOverlay();
+                    showToast(`Authorization failed: ${pollResult.error || 'Unknown error'}`, 'error');
+                }
+            } catch (e) {
+                console.error('Poll error:', e);
+                // Continue polling on network errors
+            }
+        }, 1000); // Poll every second
+        
+        // Monitor if user closes auth window
+        const windowCheckInterval = setInterval(() => {
+            if (authWindow.closed) {
+                clearInterval(windowCheckInterval);
+                clearInterval(pollInterval);
+                hideLoadingOverlay();
+                showToast('Authorization window closed', 'info');
+            }
+        }, 500);
         
     } catch (error) {
         console.error('Error starting Plex OAuth:', error);
         showToast('Failed to start Plex authorization', 'error');
-    } finally {
         hideLoadingOverlay();
     }
+}
+
+// Toggle showing/hiding the Plex token field container
+function togglePlexTokenField() {
+    const group = document.getElementById('plex-token-group');
+    const btn = document.getElementById('plex-token-gear');
+    if (!group || !btn) return;
+    group.classList.toggle('hidden');
+    const showing = !group.classList.contains('hidden');
+    btn.title = showing ? 'Hide token' : 'Show token';
 }
 
 async function autoDetectPlex() {

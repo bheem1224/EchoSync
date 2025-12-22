@@ -136,6 +136,10 @@ db_update_state = {
     "error_message": ""
 }
 
+# Plex OAuth state tracking
+plex_oauth_pins = {}  # Maps PIN to MyPlexPinLogin instance
+plex_oauth_lock = threading.Lock()
+
 # Quality Scanner state
 quality_scanner_state = {
     "status": "idle",  # idle, running, finished, error
@@ -2219,50 +2223,306 @@ def detect_media_server_endpoint():
 
 @app.route('/api/plex/oauth/start', methods=['POST'])
 def plex_oauth_start():
-    """Generate Plex OAuth authorization URL"""
+    """Generate Plex OAuth URL and session"""
     try:
-        data = request.get_json()
-        base_url = data.get('base_url', f"http://localhost:{app.config.get('PORT', 8888)}")
+        from plexapi.myplex import MyPlexPinLogin
+        import uuid
         
-        # Generate OAuth auth URL
-        auth_url = f"https://app.plex.tv/auth#?clientID=soulsync&redirect_uri={base_url}/api/plex/oauth/callback&response_type=code"
+        # Create a new OAuth PIN login session
+        pin_login = MyPlexPinLogin(oauth=True)
+        
+        # Generate a unique session ID to track this OAuth flow
+        session_id = str(uuid.uuid4())
+        
+        # Store the PIN login object for later polling
+        with plex_oauth_lock:
+            plex_oauth_pins[session_id] = pin_login
+        
+        # Start the PIN login process (this calls _getCode() to get the PIN from Plex API)
+        # Use a timeout of 600 seconds (10 minutes) for the user to authorize
+        pin_login.run(timeout=600)
+        
+        # Now get the OAuth URL (the PIN code is populated after .run())
+        oauth_url = pin_login.oauthUrl()
+        
+        logger.info(f"Plex OAuth session started: {session_id}, OAuth URL generated")
+        
+        # Clean up old sessions after 15 minutes (gives user 10 min to auth + 5 min buffer)
+        def cleanup_session():
+            import time
+            time.sleep(900)  # 15 minutes
+            with plex_oauth_lock:
+                pin_login.abort()  # Stop polling
+                plex_oauth_pins.pop(session_id, None)
+        
+        cleanup_thread = threading.Thread(target=cleanup_session, daemon=True)
+        cleanup_thread.start()
         
         return jsonify({
             "success": True,
-            "auth_url": auth_url
+            "session_id": session_id,
+            "oauth_url": oauth_url,
+            "poll_url": f"/api/plex/oauth/poll/{session_id}"
         })
     except Exception as e:
-        logger.error(f"Error starting Plex OAuth: {e}")
+        logger.error(f"Error starting Plex OAuth: {e}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/plex/oauth/poll/<session_id>', methods=['GET'])
+def plex_oauth_poll(session_id):
+    """Poll for Plex OAuth authorization completion"""
+    try:
+        with plex_oauth_lock:
+            pin_login = plex_oauth_pins.get(session_id)
+        
+        if not pin_login:
+            return jsonify({"success": False, "error": "Session not found or expired"}), 404
+        
+        # Fast path: if token is already set, complete immediately
+        if getattr(pin_login, 'token', None):
+            auth_token = pin_login.token
+            
+            # Store token in config
+            config_manager.set('plex.token', auth_token)
+            
+            # Detect and store Plex base URL
+            try:
+                from plexapi.myplex import MyPlexAccount
+                import requests
+                account = MyPlexAccount(token=auth_token)
+                resources = account.resources()
+                preferred_name = config_manager.get('plex.server_name')
+                candidates = []
+                for r in resources:
+                    if getattr(r, 'product', '') != 'Plex Media Server' or not getattr(r, 'owned', False):
+                        continue
+                    if preferred_name and getattr(r, 'name', '') != preferred_name:
+                        continue
+                    conns = getattr(r, 'connections', []) or []
+                    conns_sorted = sorted(conns, key=lambda c: 0 if getattr(c, 'local', False) else 1)
+                    for c in conns_sorted:
+                        uri = getattr(c, 'uri', None) or getattr(c, 'address', None)
+                        if not uri:
+                            continue
+                        try:
+                            resolved = docker_resolve_url(uri)
+                        except Exception:
+                            resolved = uri
+                        candidates.append(resolved.rstrip('/'))
+                base_url = None
+                for url in candidates:
+                    test_url = f"{url}/identity?X-Plex-Token={auth_token}"
+                    try:
+                        resp = requests.get(test_url, timeout=5)
+                        if resp.status_code == 200:
+                            base_url = url
+                            break
+                    except Exception:
+                        continue
+                if not base_url:
+                    try:
+                        target = next((r for r in resources if getattr(r, 'product', '') == 'Plex Media Server' and getattr(r, 'owned', False)), None)
+                        if target:
+                            server = target.connect()
+                            base_url = getattr(server, 'baseurl', None) or getattr(server, '_baseurl', None)
+                    except Exception:
+                        pass
+                if base_url:
+                    config_manager.set('plex.base_url', base_url)
+                    logger.info(f"Plex base URL detected and saved: {base_url}")
+                else:
+                    logger.warning("Unable to auto-detect a reachable Plex base URL; please set plex.base_url manually in Settings.")
+            except Exception as e:
+                logger.warning(f"Plex base URL auto-detection failed: {e}")
+            
+            # Clean up session
+            with plex_oauth_lock:
+                try:
+                    pin_login.abort()
+                except Exception:
+                    pass
+                plex_oauth_pins.pop(session_id, None)
+            
+            return jsonify({
+                "success": True,
+                "token": auth_token,
+                "message": "Authorization successful"
+            })
+        
+        # Otherwise, trigger a login state check
+        if pin_login.checkLogin():
+            # Authorization successful - get the token
+            auth_token = pin_login.token
+            
+            if not auth_token:
+                return jsonify({"success": False, "error": "Token not available"}), 400
+            
+            # Store token in config
+            config_manager.set('plex.token', auth_token)
+            
+            # Try to auto-detect and store the Plex server base URL using the token
+            try:
+                from plexapi.myplex import MyPlexAccount
+                import requests
+                account = MyPlexAccount(token=auth_token)
+                resources = account.resources()
+                preferred_name = config_manager.get('plex.server_name')
+
+                # Build candidate connection URLs from owned Plex Media Server resources
+                candidates = []
+                for r in resources:
+                    if getattr(r, 'product', '') != 'Plex Media Server':
+                        continue
+                    if not getattr(r, 'owned', False):
+                        continue
+                    # Prefer user-specified server name
+                    if preferred_name and getattr(r, 'name', '') != preferred_name:
+                        continue
+
+                    # Gather connection URIs (local first, then remote)
+                    conns = getattr(r, 'connections', []) or []
+                    # Sort: local first, then non-local
+                    conns_sorted = sorted(conns, key=lambda c: 0 if getattr(c, 'local', False) else 1)
+                    for c in conns_sorted:
+                        uri = getattr(c, 'uri', None) or getattr(c, 'address', None)
+                        if not uri:
+                            continue
+                        # Resolve localhost to Docker host if needed
+                        try:
+                            resolved = docker_resolve_url(uri)
+                        except Exception:
+                            resolved = uri
+                        candidates.append(resolved.rstrip('/'))
+
+                # Try each candidate by probing /identity
+                base_url = None
+                for url in candidates:
+                    test_url = f"{url}/identity?X-Plex-Token={auth_token}"
+                    try:
+                        resp = requests.get(test_url, timeout=5)
+                        if resp.status_code == 200:
+                            base_url = url
+                            break
+                    except Exception:
+                        continue
+
+                if not base_url:
+                    # Fallback: connect via resource.connect() (may pick a working one)
+                    try:
+                        target = next((r for r in resources if getattr(r, 'product', '') == 'Plex Media Server' and getattr(r, 'owned', False)), None)
+                        if target:
+                            server = target.connect()
+                            base_url = getattr(server, 'baseurl', None) or getattr(server, '_baseurl', None)
+                    except Exception:
+                        pass
+
+                if base_url:
+                    config_manager.set('plex.base_url', base_url)
+                    logger.info(f"Plex base URL detected and saved: {base_url}")
+                else:
+                    logger.warning("Unable to auto-detect a reachable Plex base URL; please set plex.base_url manually in Settings.")
+            except Exception as e:
+                logger.warning(f"Plex base URL auto-detection failed: {e}")
+            
+            logger.info(f"Plex OAuth successful, token stored")
+            
+            # Clean up the session and stop polling
+            with plex_oauth_lock:
+                try:
+                    pin_login.abort()
+                except:
+                    pass  # abort might fail if not running
+                plex_oauth_pins.pop(session_id, None)
+            
+            return jsonify({
+                "success": True,
+                "token": auth_token,
+                "message": "Authorization successful"
+            })
+        elif getattr(pin_login, 'expired', False):
+            # PIN has expired
+            logger.warning(f"Plex OAuth session expired: {session_id}")
+            with plex_oauth_lock:
+                plex_oauth_pins.pop(session_id, None)
+            return jsonify({
+                "success": False,
+                "error": "Authorization expired - please try again"
+            }), 410  # HTTP 410 Gone
+        else:
+            # Still waiting for authorization
+            return jsonify({
+                "success": False,
+                "pending": True,
+                "message": "Waiting for user authorization",
+                "status": {
+                    "finished": getattr(pin_login, 'finished', False),
+                    "expired": getattr(pin_login, 'expired', False),
+                    "has_token": bool(getattr(pin_login, 'token', None))
+                }
+            }), 202  # HTTP 202 Accepted (processing)
+    
+    except Exception as e:
+        logger.error(f"Error polling Plex OAuth: {e}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/plex/oauth/callback', methods=['GET'])
 def plex_oauth_callback():
-    """Handle Plex OAuth callback and exchange code for token"""
+    """OAuth callback (mainly for display, actual token handled via polling)"""
     try:
-        code = request.args.get('code')
-        if not code:
-            return "Authorization failed: No code received", 400
-        
-        # Note: In a real implementation, you would exchange the code for a token
-        # For now, we'll just acknowledge the callback
-        # The actual token handling should be done by the Plex app configuration
-        
         return """
         <html>
-            <body style="font-family: Arial; text-align: center; padding: 50px;">
-                <h2>✅ Authorization Successful</h2>
-                <p>SoulSync has been authorized with Plex.</p>
-                <p>You can close this window and return to the application.</p>
-                <script>
-                    // Close the window after 2 seconds
-                    setTimeout(() => window.close(), 2000);
-                </script>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Plex Authorization</title>
+                <style>
+                    body {
+                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        min-height: 100vh;
+                        margin: 0;
+                    }
+                    .container {
+                        background: white;
+                        border-radius: 8px;
+                        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+                        padding: 40px;
+                        text-align: center;
+                        max-width: 400px;
+                    }
+                    h2 {
+                        color: #333;
+                        margin-top: 0;
+                    }
+                    .checkmark {
+                        font-size: 48px;
+                        margin: 20px 0;
+                    }
+                    p {
+                        color: #666;
+                        line-height: 1.6;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="checkmark">✅</div>
+                    <h2>Authorization Successful</h2>
+                    <p>SoulSync has been authorized with Plex.</p>
+                    <p>You can close this window and return to the application.</p>
+                    <script>
+                        setTimeout(() => window.close(), 3000);
+                    </script>
+                </div>
             </body>
         </html>
         """
     except Exception as e:
         logger.error(f"Error in Plex OAuth callback: {e}")
-        return f"Authorization error: {str(e)}", 500
+        return f"<p>Error: {str(e)}</p>", 500
 
 @app.route('/api/plex/music-libraries', methods=['GET'])
 def get_plex_music_libraries():

@@ -10,3 +10,5 @@ __pycache__/
 .env
 .encryption_key
 .database/config/.encry
+/config/.encryption_key
+/config/config.db
