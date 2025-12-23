@@ -14,7 +14,7 @@ logger = get_logger("wishlist_service")
 class WishlistService:
     """Service for managing the wishlist of failed download tracks"""
     
-    def __init__(self, database_path: str = "database/music_library.db"):
+    def __init__(self, database_path: Optional[str] = None):
         self.database_path = database_path
         self._database = None
     

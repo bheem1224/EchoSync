@@ -53,7 +53,7 @@ class DatabaseUpdateWorker(QThread):
         error = pyqtSignal(str)  # error_message
         phase_changed = pyqtSignal(str)  # current_phase (artists, albums, tracks)
     
-    def __init__(self, media_client, database_path: str = "database/music_library.db", full_refresh: bool = False, server_type: str = "plex", force_sequential: bool = False):
+    def __init__(self, media_client, database_path: Optional[str] = None, full_refresh: bool = False, server_type: str = "plex", force_sequential: bool = False):
         super().__init__()
 
         # Force sequential processing for web server mode to avoid threading issues
@@ -242,6 +242,12 @@ class DatabaseUpdateWorker(QThread):
                 self.successful_operations,
                 self.failed_operations
             )
+            # Flush WAL so the .db reflects the latest writes on disk
+            try:
+                if self.database and hasattr(self.database, 'wal_checkpoint'):
+                    self.database.wal_checkpoint('TRUNCATE')
+            except Exception as e:
+                logger.warning(f"Could not perform WAL checkpoint: {e}")
             
             update_type = "Full refresh" if self.full_refresh else "Incremental update"
             logger.info(f"{update_type} completed: {self.processed_artists} artists, "
@@ -1178,7 +1184,7 @@ class DatabaseStatsWorker(QThread):
     if QT_AVAILABLE:
         stats_updated = pyqtSignal(dict)  # Database statistics
     
-    def __init__(self, database_path: str = "database/music_library.db"):
+    def __init__(self, database_path: Optional[str] = None):
         super().__init__()
         self.database_path = database_path
         self.should_stop = False

@@ -89,7 +89,7 @@ class WatchlistScanner:
     """Service for scanning watched artists for new releases"""
     MAX_ARTISTS_PER_SCAN = 50
     
-    def __init__(self, spotify_client: SpotifyClient, database_path: str = "database/music_library.db"):
+    def __init__(self, spotify_client: SpotifyClient, database_path: Optional[str] = None):
         self.spotify_client = spotify_client
         self.database_path = database_path
         self._database = None

@@ -8796,6 +8796,10 @@ def _db_update_finished_callback(total_artists, total_albums, total_tracks, succ
     with db_update_lock:
         db_update_state["status"] = "finished"
         db_update_state["phase"] = f"Completed: {successful} successful, {failed} failed."
+        # Ensure final progress shows 100% and counts reflect totals
+        db_update_state["processed"] = total_artists
+        db_update_state["total"] = total_artists
+        db_update_state["progress"] = 100.0
     
     # Add activity for database update completion
     summary = f"{total_tracks} tracks, {total_albums} albums, {total_artists} artists processed"

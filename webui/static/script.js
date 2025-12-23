@@ -11830,6 +11830,7 @@ function updateDbUpdaterCardInfo(stats) {
     const albumsStatEl = document.getElementById('db-stat-albums');
     const tracksStatEl = document.getElementById('db-stat-tracks');
     const sizeStatEl = document.getElementById('db-stat-size');
+    const pathEl = document.getElementById('db-path');
 
     if (lastRefreshEl) {
         if (stats.last_full_refresh) {
@@ -11844,6 +11845,7 @@ function updateDbUpdaterCardInfo(stats) {
     if (albumsStatEl) albumsStatEl.textContent = stats.albums.toLocaleString() || '0';
     if (tracksStatEl) tracksStatEl.textContent = stats.tracks.toLocaleString() || '0';
     if (sizeStatEl) sizeStatEl.textContent = `${stats.database_size_mb.toFixed(2)} MB`;
+    if (pathEl) pathEl.textContent = stats.database_path || '(unknown)';
     
     // Update the title of the tool card to show which server is active
     const toolCardTitle = document.querySelector('#db-updater-card .tool-card-title');
@@ -11961,6 +11963,10 @@ function updateDbProgressUI(state) {
     const progressBar = document.getElementById('db-progress-bar');
     const refreshSelect = document.getElementById('db-refresh-type');
 
+    const processed = state.processed ?? 0;
+    const total = state.total ?? 0;
+    const pct = typeof state.progress === 'number' ? state.progress : (total > 0 ? (processed / total) * 100 : 0);
+
     if (!button || !phaseLabel || !progressLabel || !progressBar || !refreshSelect) return;
 
     if (state.status === 'running') {
@@ -11969,13 +11975,17 @@ function updateDbProgressUI(state) {
         refreshSelect.disabled = true;
 
         phaseLabel.textContent = state.phase || 'Processing...';
-        progressLabel.textContent = `${state.processed} / ${state.total} artists (${state.progress.toFixed(1)}%)`;
-        progressBar.style.width = `${state.progress}%`;
+        progressLabel.textContent = `${processed} / ${total} artists (${pct.toFixed(1)}%)`;
+        progressBar.style.width = `${pct}%`;
     } else { // idle, finished, or error
         stopDbUpdatePolling();
         button.textContent = 'Update Database';
         button.disabled = false;
         refreshSelect.disabled = false;
+
+        const finalPct = state.status === 'finished' ? 100 : pct;
+        progressBar.style.width = `${finalPct}%`;
+        progressLabel.textContent = `${processed} / ${total} artists (${finalPct.toFixed(1)}%)`;
 
         if (state.status === 'error') {
             phaseLabel.textContent = `Error: ${state.error_message}`;

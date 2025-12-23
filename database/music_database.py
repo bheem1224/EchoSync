@@ -3164,9 +3164,17 @@ class MusicDatabase:
         try:
             stats = self.get_statistics()
             
-            # Get database file size
-            db_size = self.database_path.stat().st_size if self.database_path.exists() else 0
-            db_size_mb = db_size / (1024 * 1024)
+            # Get database file size (include WAL/SHM for accurate on-disk footprint)
+            main_size = self.database_path.stat().st_size if self.database_path.exists() else 0
+            wal_path = Path(f"{self.database_path}-wal")
+            shm_path = Path(f"{self.database_path}-shm")
+            wal_size = wal_path.stat().st_size if wal_path.exists() else 0
+            shm_size = shm_path.stat().st_size if shm_path.exists() else 0
+            total_size = main_size + wal_size + shm_size
+            main_mb = main_size / (1024 * 1024)
+            wal_mb = wal_size / (1024 * 1024)
+            shm_mb = shm_size / (1024 * 1024)
+            total_mb = total_size / (1024 * 1024)
             
             # Get last update time (most recent updated_at timestamp)
             conn = self._get_connection()
@@ -3191,7 +3199,13 @@ class MusicDatabase:
             
             return {
                 **stats,
-                'database_size_mb': round(db_size_mb, 2),
+                'database_size_mb': round(total_mb, 2),
+                'database_size_breakdown': {
+                    'main_mb': round(main_mb, 2),
+                    'wal_mb': round(wal_mb, 2),
+                    'shm_mb': round(shm_mb, 2),
+                    'total_mb': round(total_mb, 2)
+                },
                 'database_path': str(self.database_path),
                 'last_update': last_update,
                 'last_full_refresh': last_full_refresh
@@ -3204,6 +3218,12 @@ class MusicDatabase:
                 'albums': 0,
                 'tracks': 0,
                 'database_size_mb': 0.0,
+                'database_size_breakdown': {
+                    'main_mb': 0.0,
+                    'wal_mb': 0.0,
+                    'shm_mb': 0.0,
+                    'total_mb': 0.0
+                },
                 'database_path': str(self.database_path),
                 'last_update': None,
                 'last_full_refresh': None
@@ -3221,9 +3241,17 @@ class MusicDatabase:
             
             stats = self.get_statistics_for_server(server_source)
             
-            # Get database file size (always total, not server-specific)
-            db_size = self.database_path.stat().st_size if self.database_path.exists() else 0
-            db_size_mb = db_size / (1024 * 1024)
+            # Get database file size (include WAL/SHM for accurate on-disk footprint)
+            main_size = self.database_path.stat().st_size if self.database_path.exists() else 0
+            wal_path = Path(f"{self.database_path}-wal")
+            shm_path = Path(f"{self.database_path}-shm")
+            wal_size = wal_path.stat().st_size if wal_path.exists() else 0
+            shm_size = shm_path.stat().st_size if shm_path.exists() else 0
+            total_size = main_size + wal_size + shm_size
+            main_mb = main_size / (1024 * 1024)
+            wal_mb = wal_size / (1024 * 1024)
+            shm_mb = shm_size / (1024 * 1024)
+            total_mb = total_size / (1024 * 1024)
             
             # Get last update time for this server
             conn = self._get_connection()
@@ -3248,7 +3276,13 @@ class MusicDatabase:
             
             return {
                 **stats,
-                'database_size_mb': round(db_size_mb, 2),
+                'database_size_mb': round(total_mb, 2),
+                'database_size_breakdown': {
+                    'main_mb': round(main_mb, 2),
+                    'wal_mb': round(wal_mb, 2),
+                    'shm_mb': round(shm_mb, 2),
+                    'total_mb': round(total_mb, 2)
+                },
                 'database_path': str(self.database_path),
                 'last_update': last_update,
                 'last_full_refresh': last_full_refresh,
@@ -3262,11 +3296,35 @@ class MusicDatabase:
                 'albums': 0,
                 'tracks': 0,
                 'database_size_mb': 0.0,
+                'database_size_breakdown': {
+                    'main_mb': 0.0,
+                    'wal_mb': 0.0,
+                    'shm_mb': 0.0,
+                    'total_mb': 0.0
+                },
                 'database_path': str(self.database_path),
                 'last_update': None,
                 'last_full_refresh': None,
                 'server_source': server_source
             }
+
+    def wal_checkpoint(self, mode: str = "TRUNCATE") -> bool:
+        """Perform a SQLite WAL checkpoint so the main DB reflects latest writes.
+
+        Args:
+            mode: One of PASSIVE|FULL|RESTART|TRUNCATE. Default TRUNCATE for compacting.
+
+        Returns:
+            True if checkpoint executed without raising, False on error.
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.execute(f"PRAGMA wal_checkpoint({mode})")
+            logger.info(f"SQLite WAL checkpoint completed with mode: {mode}")
+            return True
+        except Exception as e:
+            logger.warning(f"SQLite WAL checkpoint failed: {e}")
+            return False
 
     def get_library_artists(self, search_query: str = "", letter: str = "", page: int = 1, limit: int = 50) -> Dict[str, Any]:
         """
@@ -3581,7 +3639,7 @@ class MusicDatabase:
 _database_instances: Dict[int, MusicDatabase] = {}  # Thread ID -> Database instance
 _database_lock = threading.Lock()
 
-def get_database(database_path: str = "database/music_library.db") -> MusicDatabase:
+def get_database(database_path: Optional[str] = None) -> MusicDatabase:
     """Get thread-local database instance"""
     thread_id = threading.get_ident()
     
