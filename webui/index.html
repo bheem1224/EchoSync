@@ -2213,28 +2213,59 @@
                                 <!-- Spotify Settings -->
                                 <div class="api-service-frame">
                                     <h4 class="service-title spotify-title">Spotify</h4>
-                                    <div class="form-group">
-                                        <label>Client ID:</label>
-                                        <input type="text" id="spotify-client-id" placeholder="Spotify Client ID">
+                                    <div class="credentials-header">
+                                        <h5 style="margin: 10px 0;">Spotify App Credentials</h5>
+                                        <button class="refresh-button" id="spotify-credentials-toggle" onclick="toggleSpotifyCredentials()">Hide</button>
                                     </div>
-                                    <div class="form-group">
-                                        <label>Client Secret:</label>
-                                        <div class="input-with-button">
-                                            <input type="password" id="spotify-client-secret" placeholder="Spotify Client Secret">
-                                            <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('spotify-client-secret')" title="Show/Hide">👁️</button>
+                                    <div id="spotify-credentials-panel">
+                                        <div class="form-group">
+                                            <label>Client ID:</label>
+                                            <input type="text" id="spotify-client-id" placeholder="Spotify Client ID">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Client Secret:</label>
+                                            <div class="input-with-button">
+                                                <input type="password" id="spotify-client-secret" placeholder="Spotify Client Secret">
+                                                <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('spotify-client-secret')" title="Show/Hide">👁️</button>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Redirect URI:</label>
+                                            <input type="text" id="spotify-redirect-uri" placeholder="http://127.0.0.1:8008/api/spotify/callback">
+                                        </div>
+                                        <div class="callback-info">
+                                            <div class="callback-label">Current Redirect URI:</div>
+                                            <div class="callback-url" id="spotify-callback-display">http://127.0.0.1:8008/api/spotify/callback</div>
+                                            <div class="callback-help">Add this URL to your Spotify app's 'Redirect URIs' in the Spotify Developer Dashboard</div>
+                                        </div>
+                                        <div class="form-actions">
+                                            <button class="auth-button" onclick="authenticateSpotify()">🔐 Authenticate</button>
                                         </div>
                                     </div>
-                                    <div class="form-group">
-                                        <label>Redirect URI:</label>
-                                        <input type="text" id="spotify-redirect-uri" placeholder="http://127.0.0.1:8888/callback">
-                                    </div>
-                                    <div class="callback-info">
-                                        <div class="callback-label">Current Redirect URI:</div>
-                                        <div class="callback-url" id="spotify-callback-display">http://127.0.0.1:8888/callback</div>
-                                        <div class="callback-help">Add this URL to your Spotify app's 'Redirect URIs' in the Spotify Developer Dashboard</div>
-                                    </div>
-                                    <div class="form-actions">
-                                        <button class="auth-button" onclick="authenticateSpotify()">🔐 Authenticate</button>
+
+                                    <!-- Multi-Account Management -->
+                                    <div class="accounts-section">
+                                        <div class="accounts-header">
+                                            <h5 style="margin: 10px 0;">Spotify Accounts</h5>
+                                            <button class="refresh-button" id="spotify-accounts-refresh">🔄 Refresh</button>
+                                        </div>
+                                        <div class="accounts-tabs" id="spotify-accounts-tabs">
+                                            <!-- Populated dynamically -->
+                                            <div class="playlist-placeholder">No accounts yet. Add one below.</div>
+                                        </div>
+                                        <div class="add-account-container">
+                                            <button class="service-card-button" id="spotify-add-account-toggle">➕ Add Account</button>
+                                            <div class="add-account-form hidden" id="spotify-add-account-form">
+                                                <p class="form-help-text">Enter a name for this account, then click Save and Authorize to log in with your Spotify credentials.</p>
+                                                <div class="form-group">
+                                                    <label>Account Name:</label>
+                                                    <input type="text" id="spotify-add-account-name" placeholder="e.g., Personal, Work, etc.">
+                                                </div>
+                                                <div class="form-actions">
+                                                    <button class="service-card-button" id="spotify-add-account-submit">Save & Continue</button>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                                 
@@ -2263,6 +2294,45 @@
                                     </div>
                                     <div class="form-actions">
                                         <button class="auth-button" onclick="authenticateTidal()">🔐 Authenticate</button>
+                                    </div>
+
+                                    <!-- Multi-Account Management -->
+                                    <div class="accounts-section">
+                                        <div class="accounts-header">
+                                            <h5 style="margin: 10px 0;">Tidal Accounts</h5>
+                                            <button class="refresh-button tidal" id="tidal-accounts-refresh">🔄 Refresh</button>
+                                        </div>
+                                        <div class="accounts-tabs" id="tidal-accounts-tabs">
+                                            <!-- Populated dynamically -->
+                                            <div class="playlist-placeholder">No accounts yet. Add one below.</div>
+                                        </div>
+                                        <div class="add-account-container">
+                                            <button class="service-card-button" id="tidal-add-account-toggle">➕ Add Account</button>
+                                            <div class="add-account-form hidden" id="tidal-add-account-form">
+                                                <div class="form-group">
+                                                    <label>Account Name:</label>
+                                                    <input type="text" id="tidal-add-account-name" placeholder="e.g., Personal">
+                                                </div>
+                                                <div class="form-group">
+                                                    <label>Client ID:</label>
+                                                    <input type="text" id="tidal-add-account-client-id" placeholder="Tidal Client ID">
+                                                </div>
+                                                <div class="form-group">
+                                                    <label>Client Secret:</label>
+                                                    <div class="input-with-button">
+                                                        <input type="password" id="tidal-add-account-client-secret" placeholder="Tidal Client Secret">
+                                                        <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('tidal-add-account-client-secret')" title="Show/Hide">👁️</button>
+                                                    </div>
+                                                </div>
+                                                <div class="form-group">
+                                                    <label>Redirect URI:</label>
+                                                    <input type="text" id="tidal-add-account-redirect-uri" placeholder="http://127.0.0.1:8889/tidal/callback">
+                                                </div>
+                                                <div class="form-actions">
+                                                    <button class="service-card-button" id="tidal-add-account-submit">Save Account</button>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                                 

@@ -8,10 +8,23 @@ import copy
 
 # Defines which keys in the config dict should be encrypted.
 SECRETS = [
+    # Single-account legacy keys
     "spotify.client_id",
     "spotify.client_secret",
+    # Multi-account Spotify secrets (wildcards supported)
+    "spotify.accounts.*.client_id",
+    "spotify.accounts.*.client_secret",
+    "spotify.accounts.*.refresh_token",
+    "spotify.accounts.*.access_token",
+    # Tidal single-account legacy keys
     "tidal.client_id",
     "tidal.client_secret",
+    # Multi-account Tidal secrets (wildcards supported)
+    "tidal.accounts.*.client_id",
+    "tidal.accounts.*.client_secret",
+    "tidal.accounts.*.refresh_token",
+    "tidal.accounts.*.access_token",
+    # Other service secrets
     "plex.token",
     "jellyfin.api_key",
     "navidrome.password",
@@ -86,9 +99,18 @@ class ConfigManager:
         
         self.cipher = Fernet(key)
 
+    def _path_matches_any(self, key_path: str, patterns: list) -> bool:
+        """Return True if key_path matches any of the patterns (supports '*' wildcards)."""
+        try:
+            import fnmatch
+            return any(fnmatch.fnmatchcase(key_path, pattern) for pattern in patterns)
+        except Exception:
+            # Fallback to exact match if fnmatch isn't available
+            return key_path in patterns
+
     def _is_secret_path(self, key_path: str) -> bool:
-        """Check if a config key path is in the SECRETS list."""
-        return key_path in SECRETS
+        """Check if a config key path should be treated as secret (supports wildcards)."""
+        return self._path_matches_any(key_path, SECRETS)
 
     def _encrypt_value(self, value: Any) -> Any:
         """Encrypts a single value if it's a non-empty string."""
@@ -128,7 +150,7 @@ class ConfigManager:
             if isinstance(value, dict):
                 # Recursively process nested dicts
                 output[key] = self._traverse_and_transform(value, transform, keys_to_transform, current_path)
-            elif current_path in keys_to_transform:
+            elif self._path_matches_any(current_path, keys_to_transform):
                 # Transform this value because its path matches a secret key
                 output[key] = transform(value)
             else:
@@ -232,8 +254,14 @@ class ConfigManager:
         """Get default configuration"""
         return {
             "active_media_server": "plex",
-            "spotify": {"client_id": "", "client_secret": "", "redirect_uri": "http://127.0.0.1:8888/callback"},
+            "spotify": {"client_id": "", "client_secret": "", "redirect_uri": "http://127.0.0.1:8008/api/spotify/callback"},
+            # Multi-account Spotify support
+            "spotify_accounts": [],
+            "active_spotify_account_id": None,
             "tidal": {"client_id": "", "client_secret": "", "redirect_uri": "http://127.0.0.1:8889/tidal/callback"},
+            # Multi-account Tidal support
+            "tidal_accounts": [],
+            "active_tidal_account_id": None,
             "plex": {"base_url": "", "token": "", "auto_detect": True},
             "jellyfin": {"base_url": "", "api_key": "", "auto_detect": True},
             "navidrome": {"base_url": "", "username": "", "password": "", "auto_detect": True},
@@ -420,6 +448,129 @@ class ConfigManager:
     def get_spotify_config(self) -> Dict[str, str]:
         return self.get('spotify', {})
 
+    def get_spotify_accounts(self) -> list:
+        """Return list of Spotify account dicts."""
+        return self.get('spotify_accounts', []) or []
+
+    def add_spotify_account(self, account: Dict[str, Any]) -> Dict[str, Any]:
+        """Add a Spotify account entry. Auto-assign incremental id if missing."""
+        accounts = self.get_spotify_accounts()
+        # Determine next id
+        existing_ids = [acc.get('id') for acc in accounts if acc.get('id') is not None]
+        next_id = (max(existing_ids) + 1) if existing_ids else 1
+        account = dict(account)
+        if account.get('id') is None:
+            account['id'] = next_id
+        accounts.append(account)
+        self.set('spotify_accounts', accounts)
+        # If no active account, set this one
+        if not self.get('active_spotify_account_id'):
+            self.set('active_spotify_account_id', account['id'])
+        return account
+
+    def update_spotify_account(self, account_id: int, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update fields for a Spotify account by id."""
+        accounts = self.get_spotify_accounts()
+        updated = None
+        for i, acc in enumerate(accounts):
+            if acc.get('id') == account_id:
+                acc = {**acc, **updates}
+                accounts[i] = acc
+                updated = acc
+                break
+        if updated:
+            self.set('spotify_accounts', accounts)
+        return updated
+
+    def set_active_spotify_account(self, account_id: Optional[int]) -> None:
+        """Set active Spotify account id (or None)."""
+        self.set('active_spotify_account_id', account_id)
+
+    def get_active_spotify_account(self) -> Optional[Dict[str, Any]]:
+        """Return the active Spotify account dict, if set."""
+        active_id = self.get('active_spotify_account_id')
+        if not active_id:
+            return None
+        for acc in self.get_spotify_accounts():
+            if acc.get('id') == active_id:
+                return acc
+        return None
+
+    def get_spotify_active_credentials(self) -> Dict[str, Any]:
+        """Return global app credentials + active user's tokens."""
+        # Always use global app credentials
+        spotify_config = self.get_spotify_config()
+        client_id = spotify_config.get('client_id', '')
+        client_secret = spotify_config.get('client_secret', '')
+        redirect_uri = spotify_config.get('redirect_uri', "http://127.0.0.1:8008/api/spotify/callback")
+        
+        # Get active user's tokens
+        active = self.get_active_spotify_account()
+        if active:
+            return {
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'redirect_uri': redirect_uri,
+                'refresh_token': active.get('refresh_token'),
+                'access_token': active.get('access_token'),
+                'user_id': active.get('user_id'),
+                'id': active.get('id'),
+                'name': active.get('name')
+            }
+        # No active account
+        return {
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'redirect_uri': redirect_uri,
+            'refresh_token': None,
+            'access_token': None,
+            'user_id': None,
+            'id': None,
+            'name': None
+        }
+
+    # --- Tidal multi-account helpers ---
+    def get_tidal_accounts(self) -> list:
+        return self.get('tidal_accounts', []) or []
+
+    def add_tidal_account(self, account: Dict[str, Any]) -> Dict[str, Any]:
+        accounts = self.get_tidal_accounts()
+        existing_ids = [acc.get('id') for acc in accounts if acc.get('id') is not None]
+        next_id = (max(existing_ids) + 1) if existing_ids else 1
+        account = dict(account)
+        if account.get('id') is None:
+            account['id'] = next_id
+        accounts.append(account)
+        self.set('tidal_accounts', accounts)
+        if not self.get('active_tidal_account_id'):
+            self.set('active_tidal_account_id', account['id'])
+        return account
+
+    def update_tidal_account(self, account_id: int, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        accounts = self.get_tidal_accounts()
+        updated = None
+        for i, acc in enumerate(accounts):
+            if acc.get('id') == account_id:
+                acc = {**acc, **updates}
+                accounts[i] = acc
+                updated = acc
+                break
+        if updated:
+            self.set('tidal_accounts', accounts)
+        return updated
+
+    def set_active_tidal_account(self, account_id: Optional[int]) -> None:
+        self.set('active_tidal_account_id', account_id)
+
+    def get_active_tidal_account(self) -> Optional[Dict[str, Any]]:
+        active_id = self.get('active_tidal_account_id')
+        if not active_id:
+            return None
+        for acc in self.get_tidal_accounts():
+            if acc.get('id') == active_id:
+                return acc
+        return None
+
     def get_plex_config(self) -> Dict[str, str]:
         return self.get('plex', {})
 
@@ -463,7 +614,10 @@ class ConfigManager:
             return {}
 
     def is_configured(self) -> bool:
-        spotify = self.get_spotify_config()
+        # Check Spotify credentials (global or active account overrides)
+        spotify_creds = self.get_spotify_active_credentials()
+        spotify_configured = bool(spotify_creds.get('client_id')) and bool(spotify_creds.get('client_secret')) and bool(spotify_creds.get('redirect_uri'))
+        
         active_server = self.get_active_media_server()
         soulseek = self.get_soulseek_config()
 
@@ -480,8 +634,7 @@ class ConfigManager:
             media_server_configured = bool(navidrome.get('base_url')) and bool(navidrome.get('username')) and bool(navidrome.get('password'))
 
         return (
-            bool(spotify.get('client_id')) and
-            bool(spotify.get('client_secret')) and
+            spotify_configured and
             media_server_configured and
             bool(soulseek.get('slskd_url'))
         )
@@ -489,8 +642,11 @@ class ConfigManager:
     def validate_config(self) -> Dict[str, bool]:
         active_server = self.get_active_media_server()
 
+        # Check global Spotify app credentials
+        spotify_valid = bool(self.get('spotify.client_id')) and bool(self.get('spotify.client_secret'))
+
         validation = {
-            'spotify': bool(self.get('spotify.client_id')) and bool(self.get('spotify.client_secret')),
+            'spotify': spotify_valid,
             'soulseek': bool(self.get('soulseek.slskd_url'))
         }
 

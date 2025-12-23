@@ -177,9 +177,11 @@ def test_is_configured(live_cm: ConfigManager):
     # Initially, it's not configured
     assert live_cm.is_configured() is False
 
-    # Configure the required fields
-    live_cm.set("spotify.client_id", "sid")
-    live_cm.set("spotify.client_secret", "sec")
+    # Configure the required fields using multi-account structure
+    live_cm.set("spotify_accounts", [
+        {"id": 1, "client_id": "sid", "client_secret": "sec", "redirect_uri": "http://localhost:8008/api/spotify/callback"}
+    ])
+    live_cm.set("active_spotify_account_id", 1)
     live_cm.set("plex.base_url", "http://server")
     live_cm.set("plex.token", "tok")
     live_cm.set("soulseek.slskd_url", "http://slsk")
@@ -194,3 +196,57 @@ def test_is_configured(live_cm: ConfigManager):
     live_cm.set("jellyfin.base_url", "http://jelly")
     live_cm.set("jellyfin.api_key", "key")
     assert live_cm.is_configured() is True
+
+def test_spotify_multi_account_helpers(live_cm: ConfigManager):
+    """Test multi-account add/update/activate/get helpers."""
+    # Initially empty
+    assert live_cm.get_spotify_accounts() == []
+    assert live_cm.get_active_spotify_account() is None
+    
+    # Add first account
+    acc1 = live_cm.add_spotify_account({
+        'name': 'Personal',
+        'client_id': 'client1',
+        'client_secret': 'secret1',
+        'redirect_uri': 'http://localhost:8008/api/spotify/callback'
+    })
+    assert acc1['id'] == 1
+    assert acc1['name'] == 'Personal'
+    assert live_cm.get('active_spotify_account_id') == 1  # Auto-set active
+    
+    # Add second account
+    acc2 = live_cm.add_spotify_account({
+        'name': 'Work',
+        'client_id': 'client2',
+        'client_secret': 'secret2',
+        'redirect_uri': 'http://localhost:8008/api/spotify/callback'
+    })
+    assert acc2['id'] == 2
+    assert live_cm.get('active_spotify_account_id') == 1  # Remains first
+    
+    # Get all accounts
+    accounts = live_cm.get_spotify_accounts()
+    assert len(accounts) == 2
+    
+    # Get active account
+    active = live_cm.get_active_spotify_account()
+    assert active['id'] == 1
+    assert active['name'] == 'Personal'
+    
+    # Switch active account
+    live_cm.set_active_spotify_account(2)
+    active = live_cm.get_active_spotify_account()
+    assert active['id'] == 2
+    assert active['name'] == 'Work'
+    
+    # Update account
+    updated = live_cm.update_spotify_account(2, {'refresh_token': 'new_refresh'})
+    assert updated['refresh_token'] == 'new_refresh'
+    assert updated['name'] == 'Work'
+    
+    # Get active credentials
+    creds = live_cm.get_spotify_active_credentials()
+    assert creds['client_id'] == 'client2'
+    assert creds['refresh_token'] == 'new_refresh'
+    assert creds['id'] == 2
+    assert creds['name'] == 'Work'

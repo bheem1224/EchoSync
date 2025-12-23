@@ -1454,6 +1454,8 @@ function initializeSettings() {
 
     // Test connection buttons
     // Test button event listeners removed - they use onclick attributes in HTML to avoid double firing
+    // Bind account UI handlers
+    bindAccountUIHandlers();
 }
 
 function resetFileOrganizationTemplates() {
@@ -1598,8 +1600,8 @@ async function loadSettingsData() {
         // Populate Spotify settings
         document.getElementById('spotify-client-id').value = settings.spotify?.client_id || '';
         document.getElementById('spotify-client-secret').value = settings.spotify?.client_secret || '';
-        document.getElementById('spotify-redirect-uri').value = settings.spotify?.redirect_uri || 'http://127.0.0.1:8888/callback';
-        document.getElementById('spotify-callback-display').textContent = settings.spotify?.redirect_uri || 'http://127.0.0.1:8888/callback';
+        document.getElementById('spotify-redirect-uri').value = settings.spotify?.redirect_uri || 'http://127.0.0.1:8008/api/spotify/callback';
+        document.getElementById('spotify-callback-display').textContent = settings.spotify?.redirect_uri || 'http://127.0.0.1:8008/api/spotify/callback';
         
         // Populate Tidal settings  
         document.getElementById('tidal-client-id').value = settings.tidal?.client_id || '';
@@ -1695,6 +1697,10 @@ async function loadSettingsData() {
         } catch (error) {
             console.error('Error loading log level:', error);
         }
+
+        // Load multi-account lists
+        try { await loadSpotifyAccounts(); } catch (e) { console.error('Spotify accounts load failed', e); }
+        try { await loadTidalAccounts(); } catch (e) { console.error('Tidal accounts load failed', e); }
 
     } catch (error) {
         console.error('Error loading settings:', error);
@@ -2410,8 +2416,23 @@ function updateStatusDisplays() {
 async function authenticateSpotify() {
     try {
         showLoadingOverlay('Starting Spotify authentication...');
-        showToast('Spotify authentication started', 'success');
-        window.open('/auth/spotify', '_blank');
+        const res = await fetch('/api/spotify/accounts');
+        const data = await res.json();
+        const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+        const activeId = data.active_id || data.activeId || null;
+        if (!accounts.length) {
+            showToast('Add a Spotify account first', 'error');
+            return;
+        }
+        const targetId = activeId || accounts[0]?.id;
+        const urlRes = await fetch(`/api/spotify/accounts/${targetId}/authorize_url`);
+        const urlData = await urlRes.json();
+        if (urlRes.ok && urlData.authorize_url) {
+            showToast('Opening Spotify authorization…', 'success');
+            window.open(urlData.authorize_url, '_blank');
+        } else {
+            showToast(urlData.error || 'Failed to get authorize URL', 'error');
+        }
     } catch (error) {
         console.error('Error authenticating Spotify:', error);
         showToast('Failed to start Spotify authentication', 'error');
@@ -2433,6 +2454,305 @@ async function authenticateTidal() {
     } finally {
         hideLoadingOverlay();
     }
+}
+
+// ===============================
+// Accounts Management (Spotify/Tidal)
+// ===============================
+
+function bindAccountUIHandlers() {
+    const spToggle = document.getElementById('spotify-add-account-toggle');
+    if (spToggle) {
+        spToggle.addEventListener('click', () => {
+            document.getElementById('spotify-add-account-form')?.classList.toggle('hidden');
+        });
+    }
+    const spSubmit = document.getElementById('spotify-add-account-submit');
+    if (spSubmit) {
+        spSubmit.addEventListener('click', addSpotifyAccount);
+    }
+    const spRefresh = document.getElementById('spotify-accounts-refresh');
+    if (spRefresh) {
+        spRefresh.addEventListener('click', loadSpotifyAccounts);
+    }
+    const tdToggle = document.getElementById('tidal-add-account-toggle');
+    if (tdToggle) {
+        tdToggle.addEventListener('click', () => {
+            document.getElementById('tidal-add-account-form')?.classList.toggle('hidden');
+        });
+    }
+    const tdSubmit = document.getElementById('tidal-add-account-submit');
+    if (tdSubmit) {
+        tdSubmit.addEventListener('click', addTidalAccount);
+    }
+    const tdRefresh = document.getElementById('tidal-accounts-refresh');
+    if (tdRefresh) {
+        tdRefresh.addEventListener('click', loadTidalAccounts);
+    }
+}
+
+async function loadSpotifyAccounts() {
+    const tabs = document.getElementById('spotify-accounts-tabs');
+    if (!tabs) return;
+    tabs.innerHTML = '<div class="charts-loading-inline"><div class="loading-spinner-small"></div><p>Loading accounts...</p></div>';
+    const res = await fetch('/api/spotify/accounts');
+    const data = await res.json();
+    renderSpotifyAccounts(data);
+}
+
+function renderSpotifyAccounts(data) {
+    const tabs = document.getElementById('spotify-accounts-tabs');
+    if (!tabs) return;
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const activeId = data.active_id || data.activeId || null;
+    if (!accounts.length) {
+        tabs.innerHTML = '<div class="playlist-placeholder">No accounts yet. Add one below.</div>';
+        return;
+    }
+    const frag = document.createDocumentFragment();
+    accounts.forEach(acc => {
+        const btn = document.createElement('div');
+        btn.className = 'account-tab' + (acc.id === activeId ? ' active' : '');
+        const userInfo = acc.user_id ? `<div class="account-user-id">Spotify ID: ${acc.user_id}</div>` : '<div class="account-user-id" style="color: #ff6b6b;">Not authorized yet</div>';
+        btn.innerHTML = `
+            <div class="account-tab-header column-layout">
+                <div class="account-name-block">
+                    <span class="account-name">${acc.name || 'Unnamed'}${acc.id === activeId ? ' (active)' : ''}</span>
+                    ${userInfo}
+                </div>
+                <div class="account-actions row-actions">
+                    <button class="service-card-button" data-action="authorize" data-id="${acc.id}">🔐 ${acc.user_id ? 'Re-authorize' : 'Authorize'}</button>
+                    <button class="service-card-button" data-action="activate" data-id="${acc.id}">✅ Activate</button>
+                    <button class="service-card-button" data-action="delete" data-id="${acc.id}" style="background-color: #ff5555;">🗑️ Delete</button>
+                </div>
+            </div>`;
+        frag.appendChild(btn);
+    });
+    tabs.innerHTML = '';
+    tabs.appendChild(frag);
+    tabs.querySelectorAll('button[data-action="authorize"]').forEach(b => {
+        b.addEventListener('click', async (e) => {
+            const id = e.currentTarget.getAttribute('data-id');
+            await authorizeSpotifyAccount(id);
+        });
+    });
+    tabs.querySelectorAll('button[data-action="activate"]').forEach(b => {
+        b.addEventListener('click', async (e) => {
+            const id = e.currentTarget.getAttribute('data-id');
+            await activateSpotifyAccount(id);
+        });
+    });
+    tabs.querySelectorAll('button[data-action="delete"]').forEach(b => {
+        b.addEventListener('click', async (e) => {
+            const id = e.currentTarget.getAttribute('data-id');
+            await deleteSpotifyAccount(id);
+        });
+    });
+}
+
+async function addSpotifyAccount() {
+    const name = document.getElementById('spotify-add-account-name')?.value.trim();
+    if (!name) {
+        showToast('Please enter an account name', 'error');
+        return;
+    }
+    try {
+        const res = await fetch('/api/spotify/accounts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Account created! Redirecting to Spotify login...', 'success');
+            document.getElementById('spotify-add-account-form')?.classList.add('hidden');
+            await loadSpotifyAccounts();
+            // Auto-authorize the new account
+            const accountId = data.account?.id;
+            if (accountId) {
+                setTimeout(() => authorizeSpotifyAccount(accountId), 500);
+            }
+        } else {
+            showToast(data.error || 'Failed to add account', 'error');
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to add account', 'error');
+    }
+}
+
+async function activateSpotifyAccount(id) {
+    if (!id) return;
+    try {
+        const res = await fetch(`/api/spotify/accounts/${id}/activate`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Spotify account activated', 'success');
+            await loadSpotifyAccounts();
+        } else {
+            showToast(data.error || 'Activation failed', 'error');
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Activation failed', 'error');
+    }
+}
+
+async function authorizeSpotifyAccount(id) {
+    if (!id) return;
+    try {
+        const res = await fetch(`/api/spotify/accounts/${id}/authorize_url`);
+        const data = await res.json();
+        if (data.authorize_url) {
+            showToast('Opening Spotify authorization…', 'success');
+            window.open(data.authorize_url, '_blank');
+        } else {
+            showToast(data.error || 'Failed to get authorize URL', 'error');
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to start authorization', 'error');
+    }
+}
+
+async function deleteSpotifyAccount(id) {
+    if (!id) return;
+    if (!confirm('Are you sure you want to delete this Spotify account?')) return;
+    try {
+        const res = await fetch(`/api/spotify/accounts/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Spotify account deleted', 'success');
+            await loadSpotifyAccounts();
+        } else {
+            showToast(data.error || 'Failed to delete account', 'error');
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to delete account', 'error');
+    }
+}
+
+async function loadTidalAccounts() {
+    const tabs = document.getElementById('tidal-accounts-tabs');
+    if (!tabs) return;
+    tabs.innerHTML = '<div class="charts-loading-inline"><div class="loading-spinner-small"></div><p>Loading accounts...</p></div>';
+    const res = await fetch('/api/tidal/accounts');
+    const data = await res.json();
+    renderTidalAccounts(data);
+}
+
+function renderTidalAccounts(data) {
+    const tabs = document.getElementById('tidal-accounts-tabs');
+    if (!tabs) return;
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const activeId = data.active_id || data.activeId || null;
+    if (!accounts.length) {
+        tabs.innerHTML = '<div class="playlist-placeholder">No accounts yet. Add one below.</div>';
+        return;
+    }
+    const frag = document.createDocumentFragment();
+    accounts.forEach(acc => {
+        const btn = document.createElement('div');
+        btn.className = 'account-tab' + (acc.id === activeId ? ' active' : '');
+        btn.innerHTML = `
+            <div class="account-tab-header column-layout">
+                <div class="account-name-block">
+                    <span class="account-name">${acc.name || 'Unnamed'}${acc.id === activeId ? ' (active)' : ''}</span>
+                </div>
+                <div class="account-actions row-actions">
+                    <button class="service-card-button" data-action="activate-tidal" data-id="${acc.id}">✅ Activate</button>
+                    <button class="service-card-button" data-action="delete-tidal" data-id="${acc.id}" style="background-color: #ff5555;">🗑️ Delete</button>
+                </div>
+            </div>`;
+        frag.appendChild(btn);
+    });
+    tabs.innerHTML = '';
+    tabs.appendChild(frag);
+    tabs.querySelectorAll('button[data-action="activate-tidal"]').forEach(b => {
+        b.addEventListener('click', async (e) => {
+            const id = e.currentTarget.getAttribute('data-id');
+            await activateTidalAccount(id);
+        });
+    });
+    tabs.querySelectorAll('button[data-action="delete-tidal"]').forEach(b => {
+        b.addEventListener('click', async (e) => {
+            const id = e.currentTarget.getAttribute('data-id');
+            await deleteTidalAccount(id);
+        });
+    });
+}
+
+async function addTidalAccount() {
+    const name = document.getElementById('tidal-add-account-name')?.value.trim();
+    const client_id = document.getElementById('tidal-add-account-client-id')?.value.trim();
+    const client_secret = document.getElementById('tidal-add-account-client-secret')?.value.trim();
+    const redirect_uri = document.getElementById('tidal-add-account-redirect-uri')?.value.trim() || document.getElementById('tidal-redirect-uri')?.value.trim() || 'http://127.0.0.1:8889/tidal/callback';
+    if (!name || !client_id || !client_secret) {
+        showToast('Please fill name, client id and secret', 'error');
+        return;
+    }
+    try {
+        const res = await fetch('/api/tidal/accounts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, client_id, client_secret, redirect_uri })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Tidal account added', 'success');
+            document.getElementById('tidal-add-account-form')?.classList.add('hidden');
+            await loadTidalAccounts();
+        } else {
+            showToast(data.error || 'Failed to add account', 'error');
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to add account', 'error');
+    }
+}
+
+async function activateTidalAccount(id) {
+    if (!id) return;
+    try {
+        const res = await fetch(`/api/tidal/accounts/${id}/activate`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Tidal account activated', 'success');
+            await loadTidalAccounts();
+        } else {
+            showToast(data.error || 'Activation failed', 'error');
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Activation failed', 'error');
+    }
+}
+
+async function deleteTidalAccount(id) {
+    if (!id) return;
+    if (!confirm('Are you sure you want to delete this Tidal account?')) return;
+    try {
+        const res = await fetch(`/api/tidal/accounts/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Tidal account deleted', 'success');
+            await loadTidalAccounts();
+        } else {
+            showToast(data.error || 'Failed to delete account', 'error');
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to delete account', 'error');
+    }
+}
+
+function toggleSpotifyCredentials() {
+    const panel = document.getElementById('spotify-credentials-panel');
+    const toggle = document.getElementById('spotify-credentials-toggle');
+    if (!panel || !toggle) return;
+    const hidden = panel.classList.toggle('hidden');
+    toggle.textContent = hidden ? 'Show' : 'Hide';
 }
 
 function browsePath(pathType) {

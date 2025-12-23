@@ -22,6 +22,98 @@ body {
     display: none !important;
 }
 
+/* Accounts management UI styles */
+.accounts-section {
+    margin-top: 16px;
+    padding: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+}
+.accounts-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.accounts-tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.account-tab {
+    padding: 10px 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.04);
+}
+.account-tab.active {
+    border-color: rgba(29,185,84,0.35);
+    box-shadow: 0 2px 8px rgba(29,185,84,0.2);
+}
+.account-tab-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.account-name {
+    font-weight: 600;
+    color: #fff;
+}
+.account-actions {
+    display: flex;
+    gap: 8px;
+}
+.add-account-container {
+    margin-top: 12px;
+}
+.add-account-form {
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px dashed rgba(255,255,255,0.12);
+    border-radius: 10px;
+}
+.refresh-button {
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.06);
+    color: #fff;
+    cursor: pointer;
+}
+.refresh-button.tidal {
+    border-color: rgba(30,144,255,0.35);
+}
+.account-user-id {
+    font-size: 11px;
+    color: rgba(255,255,255,0.6);
+    margin-top: 4px;
+}
+
+.column-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.account-name-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.form-help-text {
+    font-size: 12px;
+    color: rgba(255,255,255,0.7);
+    margin-bottom: 12px;
+    line-height: 1.4;
+}
+
 /* Main Container Layout */
 .main-container {
     display: flex;

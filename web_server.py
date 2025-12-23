@@ -2111,6 +2111,308 @@ def handle_log_level():
             logger.error(f"Error getting log level: {e}")
             return jsonify({"success": False, "error": str(e)}), 500
 
+# --- Spotify Accounts Management & OAuth ---
+@app.route('/api/spotify/accounts', methods=['GET'])
+def get_spotify_accounts():
+    try:
+        accounts = config_manager.get_spotify_accounts()
+        # Note: Legacy migration removed; accounts now only store user tokens, not app credentials
+        active_id = config_manager.get('active_spotify_account_id')
+        return jsonify({"accounts": accounts, "active_id": active_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/spotify/accounts', methods=['POST'])
+def add_spotify_account():
+    try:
+        payload = request.get_json(force=True) or {}
+        name = payload.get('name', '').strip()
+        if not name:
+            return jsonify({"error": "Missing required field: name"}), 400
+        # Create account with just name; user_id and tokens filled during OAuth
+        account = config_manager.add_spotify_account({
+            'name': name,
+            'user_id': None,
+            'refresh_token': None,
+            'access_token': None,
+            'token_expires_at': None
+        })
+        return jsonify({"account": account}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/spotify/accounts/<int:account_id>/activate', methods=['POST'])
+def activate_spotify_account(account_id: int):
+    try:
+        config_manager.set_active_spotify_account(account_id)
+        # Reinitialize Spotify client with new active account
+        if spotify_client:
+            try:
+                spotify_client.account_id = account_id
+                spotify_client._setup_client()
+            except Exception:
+                pass
+        return jsonify({"status": "ok", "active_id": account_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/spotify/accounts/<int:account_id>', methods=['DELETE'])
+def delete_spotify_account(account_id: int):
+    try:
+        accounts = config_manager.get_spotify_accounts()
+        remaining = [a for a in accounts if a.get('id') != account_id]
+        if len(remaining) == len(accounts):
+            return jsonify({"error": "Account not found"}), 404
+        config_manager.set('spotify_accounts', remaining)
+        # If this was the active account, set a new active one
+        active_id = config_manager.get('active_spotify_account_id')
+        if active_id == account_id:
+            if remaining:
+                config_manager.set('active_spotify_account_id', remaining[0].get('id'))
+            else:
+                config_manager.set('active_spotify_account_id', None)
+        return jsonify({"status": "ok", "message": "Account deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/spotify/accounts/<int:account_id>/authorize_url', methods=['GET'])
+def spotify_authorize_url(account_id: int):
+    try:
+        # Verify account exists
+        accounts = config_manager.get_spotify_accounts()
+        account = next((a for a in accounts if a.get('id') == account_id), None)
+        if not account:
+            return jsonify({"error": "Account not found"}), 404
+        # Use global app credentials for OAuth
+        spotify_config = config_manager.get_spotify_config()
+        client_id = spotify_config.get('client_id')
+        client_secret = spotify_config.get('client_secret')
+        redirect_uri = spotify_config.get('redirect_uri', "http://127.0.0.1:8008/api/spotify/callback")
+
+        # Normalize legacy redirect URIs to the Flask callback
+        try:
+            if redirect_uri and (
+                "127.0.0.1:8888/callback" in redirect_uri or
+                "localhost:8888/callback" in redirect_uri or
+                redirect_uri.rstrip('/').endswith(":8888/callback")
+            ):
+                redirect_uri = "http://127.0.0.1:8008/api/spotify/callback"
+                # Persist normalized value for future requests
+                config_manager.set('spotify.redirect_uri', redirect_uri)
+                logger.info("Normalized Spotify redirect_uri to %s", redirect_uri)
+        except Exception as _e:
+            # Don't block auth on normalization failures
+            pass
+
+        if not client_id or not client_secret:
+            return jsonify({"error": "Spotify client_id/client_secret not configured"}), 400
+        from spotipy.oauth2 import SpotifyOAuth
+        scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email"
+        auth_manager = SpotifyOAuth(
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            scope=scope,
+            state=str(account_id),
+            show_dialog=True  # Force login dialog so user can choose account
+        )
+        url = auth_manager.get_authorize_url()
+        logger.info(f"Generated authorize URL for account {account_id}: {url[:100]}...")  # Log first 100 chars of URL
+        return jsonify({"authorize_url": url})
+    except Exception as e:
+        logger.error(f"Spotify authorize URL error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/spotify/callback', methods=['GET'])
+def spotify_callback():
+    try:
+        code = request.args.get('code')
+        state = request.args.get('state')
+        error = request.args.get('error')
+        
+        # Check for Spotify-side errors (e.g., user denied access)
+        if error:
+            error_description = request.args.get('error_description', error)
+            logger.error(f"Spotify OAuth error: {error_description}")
+            error_html = f"""
+            <html><body style='font-family: Arial, sans-serif;'>
+                <h2>Spotify Authentication Failed</h2>
+                <p><strong>Error:</strong> {error_description}</p>
+                <p>Please try again or check your Spotify app settings.</p>
+            </body></html>
+            """
+            return error_html, 400, {"Content-Type": "text/html"}
+        
+        if not code:
+            logger.error("OAuth callback missing code parameter")
+            return jsonify({"error": "Missing authorization code"}), 400
+        
+        if not state:
+            logger.error("OAuth callback missing state parameter")
+            return jsonify({"error": "Missing state parameter (account ID)"}), 400
+        
+        # Parse account_id from state
+        try:
+            account_id = int(state)
+        except (ValueError, TypeError):
+            logger.error(f"Invalid state parameter (not an integer): {state}")
+            return jsonify({"error": "Invalid state parameter"}), 400
+        
+        # Verify account exists - strict, no fallback
+        accounts = config_manager.get_spotify_accounts()
+        account = next((a for a in accounts if a.get('id') == account_id), None)
+        if not account:
+            logger.error(f"Account ID {account_id} not found in configured accounts")
+            return jsonify({"error": f"Account ID {account_id} not found"}), 404
+        
+        # Use global app credentials for token exchange
+        spotify_config = config_manager.get_spotify_config()
+        client_id = spotify_config.get('client_id')
+        client_secret = spotify_config.get('client_secret')
+        redirect_uri = spotify_config.get('redirect_uri', "http://127.0.0.1:8008/api/spotify/callback")
+        # Ensure redirect_uri is normalized here as well
+        try:
+            if redirect_uri and (
+                "127.0.0.1:8888/callback" in redirect_uri or
+                "localhost:8888/callback" in redirect_uri or
+                redirect_uri.rstrip('/').endswith(":8888/callback")
+            ):
+                redirect_uri = "http://127.0.0.1:8008/api/spotify/callback"
+                config_manager.set('spotify.redirect_uri', redirect_uri)
+                logger.info("Normalized Spotify redirect_uri (callback) to %s", redirect_uri)
+        except Exception:
+            pass
+        if not client_id or not client_secret:
+            return jsonify({"error": "Spotify client_id/client_secret not configured"}), 400
+        from spotipy.oauth2 import SpotifyOAuth
+        import spotipy
+        scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email"
+        
+        # Use cache handler to persist tokens to config
+        from core.spotify_client import ConfigCacheHandler
+        auth_manager = SpotifyOAuth(
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            scope=scope,
+            cache_handler=ConfigCacheHandler(account_id)
+        )
+        token_info = auth_manager.get_access_token(code, as_dict=True)
+        if not token_info:
+            return jsonify({"error": "Failed to exchange code for token"}), 400
+        
+        # Get Spotify user_id from the token
+        sp_temp = spotipy.Spotify(auth_manager=auth_manager)
+        try:
+            user_info = sp_temp.current_user()
+            spotify_user_id = user_info.get('id') if user_info else None
+        except Exception as e:
+            logger.warning(f"Could not fetch user_id: {e}")
+            spotify_user_id = None
+        
+        # Log token info for debugging
+        logger.info(f"OAuth callback: account_id={account_id}, user_id={spotify_user_id}, has_refresh_token={bool(token_info.get('refresh_token'))}")
+        
+        # Store only user tokens in account (not app credentials)
+        updates = {
+            'refresh_token': token_info.get('refresh_token'),
+            'access_token': token_info.get('access_token'),
+            'token_expires_at': token_info.get('expires_at'),
+            'user_id': spotify_user_id
+        }
+        config_manager.update_spotify_account(account_id, updates)
+        logger.info(f"Tokens saved to account {account_id}")
+        
+        # Mark account as active
+        config_manager.set_active_spotify_account(account_id)
+        
+        # Reinitialize client
+        if spotify_client:
+            try:
+                spotify_client.account_id = account_id
+                spotify_client._setup_client()
+            except Exception as e:
+                logger.error(f"Client reinit failed: {e}")
+        
+        success_html = """
+        <html><body style='font-family: Arial, sans-serif;'>
+            <h2>Spotify Authentication Successful</h2>
+            <p>You can close this window and return to SoulSync.</p>
+        </body></html>
+        """
+        return success_html, 200, {"Content-Type": "text/html"}
+    except Exception as e:
+        logger.error(f"Spotify callback error: {e}", exc_info=True)
+        error_html = f"""
+        <html><body style='font-family: Arial, sans-serif;'>
+            <h2>Spotify Authentication Failed</h2>
+            <p>{str(e)}</p>
+        </body></html>
+        """
+        return error_html, 500, {"Content-Type": "text/html"}
+
+# --- Tidal Accounts Management (OAuth flow to be added later) ---
+@app.route('/api/tidal/accounts', methods=['GET'])
+def get_tidal_accounts():
+    try:
+        accounts = config_manager.get_tidal_accounts()
+        active_id = config_manager.get('active_tidal_account_id')
+        return jsonify({"accounts": accounts, "active_id": active_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/tidal/accounts', methods=['POST'])
+def add_tidal_account():
+    try:
+        payload = request.get_json(force=True) or {}
+        required = ['name', 'client_id', 'client_secret']
+        if not all(payload.get(k) for k in required):
+            return jsonify({"error": "Missing required fields: name, client_id, client_secret"}), 400
+        account = config_manager.add_tidal_account({
+            'name': payload.get('name'),
+            'client_id': payload.get('client_id'),
+            'client_secret': payload.get('client_secret'),
+            'redirect_uri': payload.get('redirect_uri') or config_manager.get('tidal.redirect_uri', "http://127.0.0.1:8889/tidal/callback")
+        })
+        return jsonify({"account": account}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/tidal/accounts/<int:account_id>/activate', methods=['POST'])
+def activate_tidal_account(account_id: int):
+    try:
+        config_manager.set_active_tidal_account(account_id)
+        # Reinitialize Tidal client if needed
+        try:
+            # Replace instance to pick new settings
+            from core.tidal_client import TidalClient
+            global tidal_client
+            tidal_client = TidalClient()
+        except Exception:
+            pass
+        return jsonify({"status": "ok", "active_id": account_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/tidal/accounts/<int:account_id>', methods=['DELETE'])
+def delete_tidal_account(account_id: int):
+    try:
+        accounts = config_manager.get_tidal_accounts()
+        remaining = [a for a in accounts if a.get('id') != account_id]
+        if len(remaining) == len(accounts):
+            return jsonify({"error": "Account not found"}), 404
+        config_manager.set('tidal_accounts', remaining)
+        # If this was the active account, set a new active one
+        active_id = config_manager.get('active_tidal_account_id')
+        if active_id == account_id:
+            if remaining:
+                config_manager.set('active_tidal_account_id', remaining[0].get('id'))
+            else:
+                config_manager.set('active_tidal_account_id', None)
+        return jsonify({"status": "ok", "message": "Account deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/test-connection', methods=['POST'])
 def test_connection_endpoint():
     data = request.get_json()
@@ -21843,9 +22145,8 @@ if __name__ == '__main__':
     print("🚀 Starting SoulSync Web UI Server...")
     print("Open your browser and navigate to http://127.0.0.1:8008")
     
-    # Start OAuth callback servers
-    print("🔧 Starting OAuth callback servers...")
-    start_oauth_callback_servers()
+    # Modern OAuth flow uses Flask callbacks; skip legacy 8888 servers
+    print("🔧 Skipping legacy OAuth callback servers; using Flask routes")
     
     # Startup diagnostics: Check and recover stuck flags
     print("🔍 Running startup diagnostics...")

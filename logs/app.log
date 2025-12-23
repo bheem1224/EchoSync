@@ -1,0 +1,375 @@
+2025-12-22 21:06:30 - newmusic - [92mINFO[0m - setup_logging:87 - Logging initialized with level: INFO
+2025-12-22 21:06:47 - newmusic.plex_client - [93mWARNING[0m - _setup_client:117 - Plex server URL not configured
+2025-12-22 21:06:47 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:06:47 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:06:48 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:06:48 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:06:48 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:06:48 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:06:48 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:06:49 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:06:49 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:06:49 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:06:49 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:06:49 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:06:49 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:06:50 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:06:50 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:06:50 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:06:50 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:06:51 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:06:51 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:06:51 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3095 - 🎯 Fetching Beatport hero tracks...
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_homepage_top10_lists:19951 - 🏆 API request for Beatport homepage Top 10 Lists
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_new_releases:3241 - 🆕 Fetching Beatport new releases...
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_homepage_top10_releases_cards:20002 - 💿 API request for Beatport homepage Top 10 Releases CARDS
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_hype_picks:20216 - 🔥 Fetching Beatport hype picks...
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3105 - 🔄 Cache miss - scraping fresh hero tracks data...
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_homepage_top10_lists:19961 - 🔄 Cache miss - scraping fresh top 10 lists data...
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_new_releases:3251 - 🔄 Cache miss - scraping fresh new releases data...
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_homepage_top10_releases_cards:20012 - 🔄 Cache miss - scraping fresh top 10 releases data...
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_hype_picks:20226 - 🔄 Cache miss - scraping fresh hype picks data...
+2025-12-22 21:06:54 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:06:54 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3352 - 🔥 Fetching Beatport featured charts...
+2025-12-22 21:06:54 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3362 - 🔄 Cache miss - scraping fresh featured charts data...
+2025-12-22 21:06:57 - newmusic - [92mINFO[0m - get_beatport_homepage_top10_lists:19969 - ✅ Successfully extracted Beatport Top 10: 10, Hype Top 10: 10
+2025-12-22 21:06:57 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3501 - 🎧 Fetching Beatport DJ charts...
+2025-12-22 21:06:57 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3511 - 🔄 Cache miss - scraping fresh DJ charts data...
+2025-12-22 21:06:57 - newmusic - [92mINFO[0m - get_beatport_homepage_top10_releases_cards:20020 - ✅ API extracted 10 Top 10 Release Cards
+2025-12-22 21:06:57 - newmusic - [92mINFO[0m - get_beatport_homepage_top10_releases_cards:20024 - First release: Craving What Ain't Mine by M-High
+2025-12-22 21:06:58 - newmusic - [92mINFO[0m - get_beatport_hype_picks:20240 - 🔍 Found 107 hype pick cards
+2025-12-22 21:06:58 - newmusic - [92mINFO[0m - get_beatport_hype_picks:20297 - ✅ Successfully extracted 100 hype picks
+2025-12-22 21:06:58 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:06:59 - newmusic - [92mINFO[0m - get_beatport_new_releases:3265 - 🔍 Found 0 release cards
+2025-12-22 21:06:59 - newmusic - [92mINFO[0m - get_beatport_new_releases:3322 - ✅ Successfully extracted 0 new releases
+2025-12-22 21:06:59 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3117 - 🔍 Processing 8 raw tracks from scraper (SMART FILTERING)...
+2025-12-22 21:06:59 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3120 -    Track 1: Ignite EP - Prunk
+2025-12-22 21:06:59 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3121 -       URL: https://beatport.com/release/ignite-ep/5661019
+2025-12-22 21:06:59 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3122 -       Image: YES
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3211 -       ✅ Track 1 added: Ignite EP - Prunk
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3120 -    Track 2: Sweet Dreams Exos Mutual - Exos Mutual Rytm
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3121 -       URL: https://beatport.com/release/sweet-dreams/5642665
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3122 -       Image: YES
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3211 -       ✅ Track 2 added: Sweet Dreams Exos Mutual - Exos Mutual Rytm
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3120 -    Track 3: The - Adam Ten
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3121 -       URL: https://beatport.com/release/the-queen-303-retouch/5656427
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3122 -       Image: YES
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3211 -       ✅ Track 3 added: The - Adam Ten
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3376 - 🔍 Checking 3 GridSlider containers for featured charts...
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3120 -    Track 4: Fyrah EPViot - Viot Moan
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3382 - 📋 Found section: 'New Releases'
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3121 -       URL: https://beatport.com/release/fyrah-ep/5625901
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3382 - 📋 Found section: 'Featured Charts'
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3122 -       Image: YES
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3386 - 🔥 FOUND FEATURED CHARTS: 'Featured Charts'
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3211 -       ✅ Track 4 added: Fyrah EPViot - Viot Moan
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3401 - 📊 Found 100 chart links in Featured Charts section
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3120 -    Track 5: This media contains explicit material. - Truncate Truncate
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 1: Exclusives Only: week 52 by Beatport
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3121 -       URL: https://beatport.com/release/forgotten/5672440
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 2: Hype LOTM: Trust Audio by Trex
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3122 -       Image: YES
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 3: Demuir Beats Non-Stop Chart - December 2025 by Demuir
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3211 -       ✅ Track 5 added: This media contains explicit material. - Truncate Truncate
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 4: Sweet Collapse 2025 Chart by Natalia Roth
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3120 -    Track 6: Double Shot Lexlay - Lexlay Happy
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 5: Xmas CharTucci's 2025 by Tuccillo
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3121 -       URL: https://beatport.com/release/double-shot/5647239
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 6: Sometimes it hurts by Mona Lee
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3122 -       Image: YES
+2025-12-22 21:07:00 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 7: WINTER AFFAIRS by Vintage Culture
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3211 -       ✅ Track 6 added: Double Shot Lexlay - Lexlay Happy
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 8: The Giant Energy by Awen
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3120 -    Track 7: Years of Moon Harbour Part III - Steve Bug
+2025-12-22 21:07:00 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 9: Pan-Pot PHANTAXXXY Chart by Pan-Pot
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3121 -       URL: https://beatport.com/release/25-years-of-moon-harbour-part-iii/5639085
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 10: Possessed 10 by Ace Ventura
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3122 -       Image: YES
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 11: Deep Connection by Porat
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3211 -       ✅ Track 7 added: Years of Moon Harbour Part III - Steve Bug
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 12: The Checkup's Sometimes It Hurts Chart by The Checkup
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3120 -    Track 8: Sascha - ABEL UK
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 13: 'ZARABANDA' CHART by DIM3NSION
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3121 -       URL: https://beatport.com/release/friends-vii/5685598
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 14: The Underground Chart by Avalon
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3122 -       Image: YES
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 15: FUTURE FREQUENCY by Radio Slave
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3211 -       ✅ Track 8 added: Sascha - ABEL UK
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 16: Panic Room Remix by Unfazed
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_hero_tracks:3213 - ✅ Retrieved 8 valid unique Beatport tracks (SMART FILTERING)
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 17: 'Hello' chart by UUFO
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 18: House Selection 2025 by Quarterhead
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 19: All Things Must Come To An End by AFFKT
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 20: What Day Is It? by Ryan Crosson
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 21: The Brooklyn Project by Zone+
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 22: wintermoods 2025 by Kollektiv Elektra
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 23: Dec25 Chart by Carlo
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 24: Best of 2025 by Alan Dixon
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 25: Bring That Beat by Janika Tenn
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 26: DecemberDaze by Deer Jade
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 27: ONFAYA's Musow Ka Jeya Chart by ONFAYA
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 28: Nine Lives by L¥O
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 29: Lemons Chart by RAMI (Mx)
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 30: December Afro Chart by Sounds Human (US)
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 31: Deep Afro Latin Grooves by Master
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 32: AfroGroove by Matty S.
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 33: REVENGE EP - CHART by Maike Depas
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 34: Back in Time by Disaszt
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 35: MULITPLAYER SLAPPERS!! by Turno
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 36: Top 10 Killerz by Tantrum Desire
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 37: December 2025 by Burnie
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 38: Autumn 2025 Top 40 Chart by F-Word
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 39: Front Row Seats on the Block by Average Citizens
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 40: COCONUT CHART by Antinomy
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 41: DALÛ Favorites by DALÛ
+2025-12-22 21:07:00 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 42: This Feeling Chart by Sentre
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 43: Event Horizon by Ivan
+2025-12-22 21:07:00 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 44: TWO OF YOU FAVORITE IDs by TWO OF YOU (GER)
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 45: Indian Flair Chart by Augusto Yepes
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 46: Caramelle by Mesto
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 47: open world mood by Fakear
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 48: HOUSEQUAKE KEEPS ON RISING CHART by Housequake
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 49: Below The Radar Chart by Brizman
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 50: PAS Chart by Mila Journée
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 51: YOLA - DO U LIKE MY FACE? by Yola
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 52: My Best of 2025 by Singular Anomalies
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 53: Night Tales by Franz Matthews
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 54: Heisenberg selection 2025 by Saktu
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 55: Make It High Top 10 by Earth n Days
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 56: Transmission Chart by Karla Blum
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 57: Wanna Feel U Chart by ManyFew
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 58: People Can Fly by Innēr Sense (ofc)
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 59: MENA Mezze by Yazz Ahmed
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 60: "No One" Chart by Tim Engelhardt
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 61: GROJ PLUGS - DECEMBER by GROJ
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 62: Lakshmi by Marcelo Demarco
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 63: Too Shy To Dance by Afem Syko
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 64: December 25 Charts by Jean Claude Ades
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 65: 11th Avenue by Parallelle
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 66: Let Me See You Work! by Bingo Players
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 67: Set You Free by Sian
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 68: MORNING CLUB Chart by Fran Ares
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 69: Jungle by Carlo Whale
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 70: Jungle Charts by Guzy
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 71: Sancta Chart by Antho Decks
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 72: Winter Selection by Echonomist
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 73: STORIES Sampler Vol.1 by Sarah Story
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 74: Make U Move by Calvit
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 75: Sunset In Ibiza Chart by Ioan
+2025-12-22 21:07:00 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 76: Rock The Disco chart by Easttown
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 77: SCIENTISTS CHART by Bruno Furlan
+2025-12-22 21:07:00 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 78: In My Head Chart by Aimoon
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 79: December Chart by M.O.S.
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 80: Underground Trance Essentials Vol.12 by Daniel Lesden
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 81: Topo Chart by Alice Youngling
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 82: December Chart by Ryan Luciano
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 83: Sébastien Léger December 2025 by Sebastien Leger
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 84: Pusher by Anja Schneider
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 85: Addicted to You Chart by Marie Vaunt
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 86: PLAY IT BACK CHART by Urbi (UK)
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 87: Vuma Chart by Dum K
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 88: Ven A Bailar by WarinD
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 89: Serum's Christmas Crackers by Serum
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 90: DIC.2025 by Javi Bosch
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 91: LAST CHART OF 2025 by DJ Chus
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 92: December Chart by Karretero
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 93: December'25 Heaters by BYOR
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 94: Steve Bug Beatsember Chart by Steve Bug
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 95: Craving What Ain't Mine - Chart by M-High
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 96: VISIONS CHART by Mindbenderz
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 97: Winter Warmers :) by Sammy Dean
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 98: The Land of Cosmic Remixes by Magik (UK)
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 99: Falling Deeply Charts Dec 2025 by Ronski Speed
+2025-12-22 21:07:00 - newmusic.seasonal_discovery - [92mINFO[0m - _ensure_database_schema:159 - Seasonal discovery database schema initialized
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3469 - ✅ Chart 100: Fresh Fish Volume 1 by GoldFish
+2025-12-22 21:07:00 - newmusic - [92mINFO[0m - get_beatport_featured_charts:3471 - 📊 Successfully extracted 100 featured charts
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3525 - 🔍 Checking 6 Carousel containers for DJ charts...
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3530 - 📋 Carousel 1: 0 chart links
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3530 - 📋 Carousel 2: 9 chart links
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3535 - 🔥 FOUND DJ CHARTS: Carousel 2 with 9 charts
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3550 - 📊 Found 9 DJ chart links
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3609 - ✅ DJ Chart 1: Slim Soledad by Slim Soledad
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3609 - ✅ DJ Chart 2: Deer Jade by Deer Jade
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3609 - ✅ DJ Chart 3: Sebastien Leger by Sebastien Leger
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3609 - ✅ DJ Chart 4: Etienne De Crecy by Etienne De Crecy
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3609 - ✅ DJ Chart 5: Yulia Niko by Yulia Niko
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3609 - ✅ DJ Chart 6: Nick Curly by Nick Curly
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3609 - ✅ DJ Chart 7: Emanuel Satie by Emanuel Satie
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3609 - ✅ DJ Chart 8: Mochakk by Mochakk
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3609 - ✅ DJ Chart 9: Indira Paganotto by Indira Paganotto
+2025-12-22 21:07:01 - newmusic - [92mINFO[0m - get_beatport_dj_charts:3611 - 📊 Successfully extracted 9 DJ charts
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.personalized_playlists - [93mWARNING[0m - get_recently_added:132 - Recently Added requires Spotify-linked library tracks - returning empty
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.personalized_playlists - [92mINFO[0m - get_popular_picks:534 - Popular Picks: Selected 0 tracks with diversity
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.personalized_playlists - [93mWARNING[0m - get_top_tracks:147 - Top Tracks requires Spotify-linked library tracks - returning empty
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.personalized_playlists - [93mWARNING[0m - get_forgotten_favorites:162 - Forgotten Favorites requires Spotify-linked library tracks - returning empty
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.personalized_playlists - [93mWARNING[0m - get_familiar_favorites:632 - Familiar Favorites requires Spotify-linked library tracks - returning empty
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.personalized_playlists - [93mWARNING[0m - get_available_genres:290 - No genres found in discovery pool - genres may not be populated yet
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:01 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:01 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:02 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:02 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:02 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:02 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:02 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:02 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:03 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:03 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:03 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:03 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:03 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:03 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:04 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:04 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:08 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:11 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:14 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:14 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:17 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:17 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:18 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:48 - newmusic - [92mINFO[0m - setup_logging:87 - Logging initialized with level: INFO
+2025-12-22 21:07:48 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:48 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:48 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:48 - newmusic.plex_client - [93mWARNING[0m - _setup_client:117 - Plex server URL not configured
+2025-12-22 21:07:48 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:51 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:51 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:51 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:51 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:51 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:54 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:54 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:54 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:54 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:55 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:55 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:55 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:55 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:55 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:56 - newmusic - [92mINFO[0m - get_beatport_charts:20914 - 📊 Returning 0 Beatport charts for hydration
+2025-12-22 21:07:57 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.seasonal_discovery - [92mINFO[0m - _ensure_database_schema:159 - Seasonal discovery database schema initialized
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.personalized_playlists - [93mWARNING[0m - get_recently_added:132 - Recently Added requires Spotify-linked library tracks - returning empty
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.personalized_playlists - [92mINFO[0m - get_popular_picks:534 - Popular Picks: Selected 0 tracks with diversity
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.personalized_playlists - [93mWARNING[0m - get_top_tracks:147 - Top Tracks requires Spotify-linked library tracks - returning empty
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.personalized_playlists - [93mWARNING[0m - get_forgotten_favorites:162 - Forgotten Favorites requires Spotify-linked library tracks - returning empty
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.personalized_playlists - [93mWARNING[0m - get_familiar_favorites:632 - Familiar Favorites requires Spotify-linked library tracks - returning empty
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:57 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:57 - newmusic.personalized_playlists - [93mWARNING[0m - get_available_genres:290 - No genres found in discovery pool - genres may not be populated yet
+2025-12-22 21:07:58 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:07:58 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:58 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:58 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:58 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:58 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:58 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:58 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:58 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:58 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:07:58 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:07:59 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:00 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:01 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:02 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:03 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:03 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:08:03 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:08:04 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:04 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:04 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:05 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:05 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:06 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:07 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:08 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:09 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:10 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:11 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:12 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:13 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:14 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:14 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:14 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:15 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:15 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:16 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:17 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:18 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:19 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:20 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:21 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:22 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:23 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:24 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:08:24 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:08:24 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:24 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:24 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:25 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:25 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:08:25 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:08:25 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:08:26 - newmusic.soulseek_client - [91mERROR[0m - _make_request:295 - Soulseek client not configured
+2025-12-22 21:11:30 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:11:30 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-22 21:12:48 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
+2025-12-22 21:12:48 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully

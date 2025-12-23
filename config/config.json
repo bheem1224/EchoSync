@@ -1,17 +1,23 @@
 {
-  "active_media_server": "jellyfin",
+  "active_media_server": "plex",
   "spotify": {
-    "redirect_uri": "http://127.0.0.1:8888/callback"
+    "client_id": "",
+    "client_secret": "",
+    "redirect_uri": "http://127.0.0.1:8008/api/spotify/callback"
   },
+  "spotify_accounts": [],
+  "active_spotify_account_id": null,
   "tidal": {
     "redirect_uri": "http://127.0.0.1:8889/tidal/callback"
   },
+  "tidal_accounts": [],
+  "active_tidal_account_id": null,
   "plex": {
-    "base_url": "http://server",
+    "base_url": "",
     "auto_detect": true
   },
   "jellyfin": {
-    "base_url": "http://jelly",
+    "base_url": "",
     "auto_detect": true
   },
   "navidrome": {
@@ -20,7 +26,7 @@
     "auto_detect": true
   },
   "soulseek": {
-    "slskd_url": "http://slsk",
+    "slskd_url": "",
     "download_path": "./downloads",
     "transfer_path": "./Transfer"
   },

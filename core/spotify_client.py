@@ -1,5 +1,9 @@
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth, SpotifyClientCredentials
+try:
+    from spotipy.cache_handler import CacheHandler
+except Exception:
+    CacheHandler = object  # Fallback if import path differs
 from typing import Dict, List, Optional, Any
 import time
 import threading
@@ -155,33 +159,94 @@ class Playlist:
             total_tracks=playlist_data['tracks']['total']
         )
 
+class ConfigCacheHandler(CacheHandler):
+    """Spotipy CacheHandler that persists tokens into ConfigManager for the active Spotify account."""
+    def __init__(self, account_id: Optional[int]):
+        self.account_id = account_id
+
+    def get_cached_token(self):
+        try:
+            # Read token fields from active account
+            from config.settings import config_manager
+            active = config_manager.get_active_spotify_account()
+            if not active or (self.account_id and active.get('id') != self.account_id):
+                # If a specific account_id was requested and is not active, try to fetch it
+                accounts = config_manager.get_spotify_accounts()
+                for acc in accounts:
+                    if acc.get('id') == self.account_id:
+                        active = acc
+                        break
+            if not active:
+                return None
+            access_token = active.get('access_token')
+            refresh_token = active.get('refresh_token')
+            expires_at = active.get('token_expires_at')
+            # If we have an access token and expiry, return it
+            if access_token and expires_at:
+                return {
+                    'access_token': access_token,
+                    'refresh_token': refresh_token,
+                    'expires_at': expires_at,
+                    'scope': "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email",
+                    'token_type': 'Bearer'
+                }
+            # If we have only a refresh token, return minimal info to allow refresh
+            if refresh_token:
+                return {
+                    'access_token': None,
+                    'refresh_token': refresh_token,
+                    'expires_at': 0,
+                    'scope': "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email",
+                    'token_type': 'Bearer'
+                }
+            return None
+        except Exception:
+            return None
+
+    def save_token_to_cache(self, token_info):
+        try:
+            from config.settings import config_manager
+            active = config_manager.get_active_spotify_account()
+            target_id = self.account_id or (active.get('id') if active else None)
+            if target_id is None:
+                # No account to save to
+                return
+            # Persist token fields
+            updates = {
+                'access_token': token_info.get('access_token'),
+                'refresh_token': token_info.get('refresh_token') or (active.get('refresh_token') if active else None),
+                'token_expires_at': token_info.get('expires_at')
+            }
+            config_manager.update_spotify_account(target_id, updates)
+        except Exception:
+            pass
+
 class SpotifyClient:
-    def __init__(self):
+    def __init__(self, account_id: Optional[int] = None):
         self.sp: Optional[spotipy.Spotify] = None
         self.user_id: Optional[str] = None
+        self.account_id: Optional[int] = account_id
         self._setup_client()
     
     def _setup_client(self):
-        config = config_manager.get_spotify_config()
-        
-        if not config.get('client_id') or not config.get('client_secret'):
+        # Prefer active multi-account credentials, fallback to single-account
+        creds = config_manager.get_spotify_active_credentials()
+        if not creds.get('client_id') or not creds.get('client_secret'):
             logger.warning("Spotify credentials not configured")
             return
-        
+
         try:
             auth_manager = SpotifyOAuth(
-                client_id=config['client_id'],
-                client_secret=config['client_secret'],
-                redirect_uri=config.get('redirect_uri', "http://127.0.0.1:8888/callback"),
+                client_id=creds['client_id'],
+                client_secret=creds['client_secret'],
+                redirect_uri=creds.get('redirect_uri', "http://127.0.0.1:8008/api/spotify/callback"),
                 scope="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email",
-                cache_path='config/.spotify_cache'
+                cache_handler=ConfigCacheHandler(self.account_id)
             )
-            
             self.sp = spotipy.Spotify(auth_manager=auth_manager)
-            # Don't fetch user info on startup - do it lazily to avoid blocking UI
+            # Lazy-load user info to avoid blocking UI
             self.user_id = None
-            logger.info("Spotify client initialized (user info will be fetched when needed)")
-            
+            logger.info("Spotify client initialized (multi-account ready; user info will be fetched when needed)")
         except Exception as e:
             logger.error(f"Failed to authenticate with Spotify: {e}")
             self.sp = None

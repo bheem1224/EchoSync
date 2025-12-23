@@ -15,10 +15,18 @@ class TestSpotifyClientFinal(unittest.TestCase):
     @patch('core.spotify_client.SpotifyOAuth')
     def test_initialization_success(self, mock_spotify_oauth, mock_spotipy, mock_config_manager):
         """Test client initializes correctly."""
-        mock_config_manager.get_spotify_config.return_value = {'client_id': 'id', 'client_secret': 'secret'}
+        mock_config_manager.get_spotify_active_credentials.return_value = {
+            'client_id': 'id', 
+            'client_secret': 'secret', 
+            'redirect_uri': 'http://127.0.0.1:8008/api/spotify/callback',
+            'refresh_token': 'refresh_tok',
+            'access_token': None,
+            'id': 1,
+            'name': 'Test'
+        }
         client = SpotifyClient()
         self.assertIsNotNone(client.sp)
-        mock_config_manager.get_spotify_config.assert_called_once()
+        mock_config_manager.get_spotify_active_credentials.assert_called_once()
         mock_spotify_oauth.assert_called_once()
         mock_spotipy.Spotify.assert_called_once()
 
@@ -27,10 +35,18 @@ class TestSpotifyClientFinal(unittest.TestCase):
     @patch('core.spotify_client.SpotifyOAuth')
     def test_initialization_no_credentials(self, mock_spotify_oauth, mock_spotipy, mock_config_manager):
         """Test client does not initialize without credentials."""
-        mock_config_manager.get_spotify_config.return_value = {}
+        mock_config_manager.get_spotify_active_credentials.return_value = {
+            'client_id': '', 
+            'client_secret': '', 
+            'redirect_uri': 'http://127.0.0.1:8008/api/spotify/callback',
+            'refresh_token': None,
+            'access_token': None,
+            'id': None,
+            'name': None
+        }
         client = SpotifyClient()
         self.assertIsNone(client.sp)
-        mock_config_manager.get_spotify_config.assert_called_once()
+        mock_config_manager.get_spotify_active_credentials.assert_called_once()
         mock_spotify_oauth.assert_not_called()
 
     @patch('core.spotify_client.config_manager')
@@ -38,7 +54,15 @@ class TestSpotifyClientFinal(unittest.TestCase):
     @patch('core.spotify_client.SpotifyOAuth')
     def test_get_user_playlists_metadata_only(self, mock_spotify_oauth, mock_spotipy, mock_config_manager):
         """Test fetching playlist metadata."""
-        mock_config_manager.get_spotify_config.return_value = {'client_id': 'id', 'client_secret': 'secret'}
+        mock_config_manager.get_spotify_active_credentials.return_value = {
+            'client_id': 'id', 
+            'client_secret': 'secret', 
+            'redirect_uri': 'http://127.0.0.1:8008/api/spotify/callback',
+            'refresh_token': 'refresh_tok',
+            'access_token': None,
+            'id': 1,
+            'name': 'Test'
+        }
         mock_sp_instance = mock_spotipy.Spotify.return_value
         
         client = SpotifyClient()
@@ -65,7 +89,15 @@ class TestSpotifyClientFinal(unittest.TestCase):
     @patch('core.spotify_client.SpotifyOAuth')
     def test_get_saved_tracks(self, mock_spotify_oauth, mock_spotipy, mock_config_manager):
         """Test fetching saved tracks."""
-        mock_config_manager.get_spotify_config.return_value = {'client_id': 'id', 'client_secret': 'secret'}
+        mock_config_manager.get_spotify_active_credentials.return_value = {
+            'client_id': 'id', 
+            'client_secret': 'secret', 
+            'redirect_uri': 'http://127.0.0.1:8008/api/spotify/callback',
+            'refresh_token': 'refresh_tok',
+            'access_token': None,
+            'id': 1,
+            'name': 'Test'
+        }
         mock_sp_instance = mock_spotipy.Spotify.return_value
         
         client = SpotifyClient()
@@ -84,7 +116,15 @@ class TestSpotifyClientFinal(unittest.TestCase):
     @patch('core.spotify_client.SpotifyOAuth')
     def test_is_authenticated_true(self, mock_spotify_oauth, mock_spotipy, mock_config_manager):
         """Test is_authenticated returns True."""
-        mock_config_manager.get_spotify_config.return_value = {'client_id': 'id', 'client_secret': 'secret'}
+        mock_config_manager.get_spotify_active_credentials.return_value = {
+            'client_id': 'id', 
+            'client_secret': 'secret', 
+            'redirect_uri': 'http://127.0.0.1:8008/api/spotify/callback',
+            'refresh_token': 'refresh_tok',
+            'access_token': None,
+            'id': 1,
+            'name': 'Test'
+        }
         mock_sp_instance = mock_spotipy.Spotify.return_value
         
         client = SpotifyClient()
@@ -97,7 +137,15 @@ class TestSpotifyClientFinal(unittest.TestCase):
     @patch('core.spotify_client.SpotifyOAuth')
     def test_is_authenticated_false(self, mock_spotify_oauth, mock_spotipy, mock_config_manager):
         """Test is_authenticated returns False on exception."""
-        mock_config_manager.get_spotify_config.return_value = {'client_id': 'id', 'client_secret': 'secret'}
+        mock_config_manager.get_spotify_active_credentials.return_value = {
+            'client_id': 'id', 
+            'client_secret': 'secret', 
+            'redirect_uri': 'http://127.0.0.1:8008/api/spotify/callback',
+            'refresh_token': 'refresh_tok',
+            'access_token': None,
+            'id': 1,
+            'name': 'Test'
+        }
         mock_sp_instance = mock_spotipy.Spotify.return_value
         
         client = SpotifyClient()
