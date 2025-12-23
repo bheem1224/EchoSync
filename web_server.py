@@ -2175,6 +2175,22 @@ def delete_spotify_account(account_id: int):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/spotify/accounts/<int:account_id>', methods=['PATCH'])
+def update_spotify_account_name(account_id: int):
+    try:
+        payload = request.get_json(force=True) or {}
+        new_name = payload.get('name', '').strip()
+        if not new_name:
+            return jsonify({"error": "Name cannot be empty"}), 400
+        
+        updated = config_manager.update_spotify_account(account_id, {'name': new_name})
+        if not updated:
+            return jsonify({"error": "Account not found"}), 404
+        
+        return jsonify({"status": "ok", "account": updated})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/spotify/accounts/<int:account_id>/authorize_url', methods=['GET'])
 def spotify_authorize_url(account_id: int):
     try:

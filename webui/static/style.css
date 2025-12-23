@@ -60,6 +60,27 @@ body {
     font-weight: 600;
     color: #fff;
 }
+.account-name-editable {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.edit-name-btn {
+    opacity: 0;
+    transition: opacity 0.2s;
+    background: rgba(255,255,255,0.1);
+    border: none;
+    border-radius: 4px;
+    padding: 2px 6px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.account-name-editable:hover .edit-name-btn {
+    opacity: 1;
+}
+.edit-name-btn:hover {
+    background: rgba(255,255,255,0.2);
+}
 .account-actions {
     display: flex;
     gap: 8px;
@@ -80,6 +101,11 @@ body {
     background: rgba(255,255,255,0.06);
     color: #fff;
     cursor: pointer;
+}
+.service-card-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: rgba(76, 175, 80, 0.3);
 }
 .refresh-button.tidal {
     border-color: rgba(30,144,255,0.35);

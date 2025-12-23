@@ -1603,6 +1603,17 @@ async function loadSettingsData() {
         document.getElementById('spotify-redirect-uri').value = settings.spotify?.redirect_uri || 'http://127.0.0.1:8008/api/spotify/callback';
         document.getElementById('spotify-callback-display').textContent = settings.spotify?.redirect_uri || 'http://127.0.0.1:8008/api/spotify/callback';
         
+        // Auto-hide credentials panel if populated
+        const spotifyConfigured = settings.spotify?.client_id && settings.spotify?.client_secret;
+        if (spotifyConfigured) {
+            const panel = document.getElementById('spotify-credentials-panel');
+            const toggle = document.getElementById('spotify-credentials-toggle');
+            if (panel && toggle) {
+                panel.classList.add('hidden');
+                toggle.textContent = 'Show';
+            }
+        }
+        
         // Populate Tidal settings  
         document.getElementById('tidal-client-id').value = settings.tidal?.client_id || '';
         document.getElementById('tidal-client-secret').value = settings.tidal?.client_secret || '';
@@ -2509,20 +2520,27 @@ function renderSpotifyAccounts(data) {
         tabs.innerHTML = '<div class="playlist-placeholder">No accounts yet. Add one below.</div>';
         return;
     }
+    // Sort accounts by name
+    accounts.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    
     const frag = document.createDocumentFragment();
     accounts.forEach(acc => {
         const btn = document.createElement('div');
         btn.className = 'account-tab' + (acc.id === activeId ? ' active' : '');
         const userInfo = acc.user_id ? `<div class="account-user-id">Spotify ID: ${acc.user_id}</div>` : '<div class="account-user-id" style="color: #ff6b6b;">Not authorized yet</div>';
+        const isActive = acc.id === activeId;
         btn.innerHTML = `
             <div class="account-tab-header column-layout">
                 <div class="account-name-block">
-                    <span class="account-name">${acc.name || 'Unnamed'}${acc.id === activeId ? ' (active)' : ''}</span>
+                    <span class="account-name-editable" data-id="${acc.id}">
+                        <span class="account-name">${acc.name || 'Unnamed'}</span>
+                        <button class="edit-name-btn" data-id="${acc.id}" title="Edit name">✏️</button>
+                    </span>
                     ${userInfo}
                 </div>
                 <div class="account-actions row-actions">
                     <button class="service-card-button" data-action="authorize" data-id="${acc.id}">🔐 ${acc.user_id ? 'Re-authorize' : 'Authorize'}</button>
-                    <button class="service-card-button" data-action="activate" data-id="${acc.id}">✅ Activate</button>
+                    <button class="service-card-button" data-action="activate" data-id="${acc.id}" ${isActive ? 'disabled' : ''}>✅ ${isActive ? 'Active' : 'Activate'}</button>
                     <button class="service-card-button" data-action="delete" data-id="${acc.id}" style="background-color: #ff5555;">🗑️ Delete</button>
                 </div>
             </div>`;
@@ -2546,6 +2564,13 @@ function renderSpotifyAccounts(data) {
         b.addEventListener('click', async (e) => {
             const id = e.currentTarget.getAttribute('data-id');
             await deleteSpotifyAccount(id);
+        });
+    });
+    tabs.querySelectorAll('.edit-name-btn').forEach(b => {
+        b.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const id = e.currentTarget.getAttribute('data-id');
+            await editSpotifyAccountName(id);
         });
     });
 }
@@ -2633,6 +2658,35 @@ async function deleteSpotifyAccount(id) {
     }
 }
 
+async function editSpotifyAccountName(id) {
+    if (!id) return;
+    const res = await fetch('/api/spotify/accounts');
+    const data = await res.json();
+    const account = data.accounts.find(a => a.id == id);
+    if (!account) return;
+    
+    const newName = prompt('Enter new account name:', account.name || '');
+    if (!newName || newName === account.name) return;
+    
+    try {
+        const updateRes = await fetch(`/api/spotify/accounts/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName })
+        });
+        const updateData = await updateRes.json();
+        if (updateRes.ok) {
+            showToast('Account name updated', 'success');
+            await loadSpotifyAccounts();
+        } else {
+            showToast(updateData.error || 'Failed to update name', 'error');
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to update account name', 'error');
+    }
+}
+
 async function loadTidalAccounts() {
     const tabs = document.getElementById('tidal-accounts-tabs');
     if (!tabs) return;
@@ -2651,6 +2705,9 @@ function renderTidalAccounts(data) {
         tabs.innerHTML = '<div class="playlist-placeholder">No accounts yet. Add one below.</div>';
         return;
     }
+    // Sort accounts by name
+    accounts.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    
     const frag = document.createDocumentFragment();
     accounts.forEach(acc => {
         const btn = document.createElement('div');
