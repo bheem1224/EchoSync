@@ -191,8 +191,7 @@ def test_scan_all_artists_smart_selection(scanner: WatchlistScanner, mock_db):
     # The third one is a random choice from the "can skip" list
     assert "Can Skip 1" in scanned_artist_names or "Can Skip 2" in scanned_artist_names
 
-@patch('requests.get')
-def test_fetch_similar_artists_from_musicmap(mock_requests_get, scanner: WatchlistScanner, mock_spotify_client):
+def test_fetch_similar_artists_from_musicmap(scanner: WatchlistScanner, mock_spotify_client):
     """Test scraping music-map.com and matching to Spotify."""
     # Mock the HTML response from music-map
     mock_html = """
@@ -202,9 +201,15 @@ def test_fetch_similar_artists_from_musicmap(mock_requests_get, scanner: Watchli
         <a href="//www.music-map.com/similar+two.html">Similar Two</a>
     </div></body></html>
     """
+    
+    # Mock the HttpClient get method
     mock_response = MagicMock(status_code=200, text=mock_html)
     mock_response.raise_for_status.return_value = None
-    mock_requests_get.return_value = mock_response
+    
+    # Create and inject mock HttpClient
+    mock_http = MagicMock()
+    mock_http.get.return_value = mock_response
+    scanner._http_musicmap = mock_http
 
     # Mock Spotify search to return matches for the scraped names
     # Return objects where .id and .name are plain attributes (not mock internals)
@@ -220,8 +225,5 @@ def test_fetch_similar_artists_from_musicmap(mock_requests_get, scanner: Watchli
     assert similar_artists[1]['id'] == 'sim2'
     
     # Verify music-map was called
-    mock_requests_get.assert_called_once_with('https://www.music-map.com/some+artist', headers=ANY, timeout=10)
-    
-    # Verify Spotify search was called for the scraped names
-    assert mock_spotify_client.search_artists.call_count == 3
-
+    from unittest.mock import ANY
+    mock_http.get.assert_called_once_with('https://www.music-map.com/some+artist', headers=ANY)

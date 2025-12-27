@@ -36,24 +36,27 @@ def mock_config_manager():
         yield mock_manager
 
 @pytest.fixture
-def mock_requests():
-    """Fixture to mock the requests library."""
-    with patch('core.navidrome_client.requests.get') as mock_get:
-        # Default successful response
-        mock_response = MagicMock()
-        mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = SAMPLE_PING
-        mock_get.return_value = mock_response
-        yield mock_get
-
-@pytest.fixture
-def navidrome_client(mock_config_manager, mock_requests):
+def navidrome_client(mock_config_manager):
     """Fixture for a NavidromeClient instance with mocked dependencies."""
     # Mock the auth generation to be deterministic
     with patch('core.navidrome_client.secrets.token_hex', return_value='somesalt'), \
          patch('core.navidrome_client.hashlib.md5') as mock_md5:
         mock_md5.return_value.hexdigest.return_value = 'sometoken'
+        
         client = NavidromeClient()
+        
+        # Replace the real HttpClient with a mock
+        mock_http = MagicMock()
+        # Default successful response
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = SAMPLE_PING
+        mock_http.get.return_value = mock_response
+        
+        # Replace the HttpClient instance with our mock
+        client._http = mock_http
+        client._http_mock = mock_http  # Store mock for test access
+        
         yield client
 
 # --- Tests ---
@@ -63,7 +66,7 @@ def test_initialization(navidrome_client):
     assert navidrome_client.base_url is None
     assert navidrome_client._connection_attempted is False
 
-def test_ensure_connection_success(navidrome_client, mock_requests):
+def test_ensure_connection_success(navidrome_client):
     """Test a successful connection to the Navidrome server."""
     connected = navidrome_client.ensure_connection()
 
@@ -72,8 +75,8 @@ def test_ensure_connection_success(navidrome_client, mock_requests):
     assert navidrome_client.base_url == 'http://navidrome.test'
     
     # Verify the 'ping' endpoint was called
-    mock_requests.assert_called_once()
-    args, kwargs = mock_requests.call_args
+    navidrome_client._http_mock.get.assert_called_once()
+    args, kwargs = navidrome_client._http_mock.get.call_args
     assert 'ping' in args[0]
     assert 'u' in kwargs['params']
 
@@ -84,24 +87,24 @@ def test_ensure_connection_no_config(mock_config_manager):
     assert client.ensure_connection() is False
     assert client.is_connected() is False
 
-def test_make_request_api_error(navidrome_client, mock_requests):
+def test_make_request_api_error(navidrome_client):
     """Test that the client handles Subsonic API errors gracefully."""
     navidrome_client.ensure_connection() # Connect first
     
-    mock_requests.return_value.json.return_value = create_error_response("Permission denied")
+    navidrome_client._http_mock.get.return_value.json.return_value = create_error_response("Permission denied")
     
     response = navidrome_client._make_request('getArtists')
     assert response is None
 
-def test_get_all_artists(navidrome_client, mock_requests):
+def test_get_all_artists(navidrome_client):
     """Test fetching all artists."""
     navidrome_client.ensure_connection()
-    mock_requests.return_value.json.return_value = SAMPLE_ARTISTS
+    navidrome_client._http_mock.get.return_value.json.return_value = SAMPLE_ARTISTS
 
     artists = navidrome_client.get_all_artists()
 
     # Verify the correct endpoint was called
-    args, kwargs = mock_requests.call_args
+    args, kwargs = navidrome_client._http_mock.get.call_args
     assert 'getArtists' in args[0]
     
     assert len(artists) == 1
@@ -110,15 +113,15 @@ def test_get_all_artists(navidrome_client, mock_requests):
     assert artist.title == 'Test Artist'
     assert artist.ratingKey == 'artist1'
 
-def test_get_albums_for_artist(navidrome_client, mock_requests):
+def test_get_albums_for_artist(navidrome_client):
     """Test fetching albums for a specific artist."""
     navidrome_client.ensure_connection()
-    mock_requests.return_value.json.return_value = SAMPLE_ARTIST_DETAILS
+    navidrome_client._http_mock.get.return_value.json.return_value = SAMPLE_ARTIST_DETAILS
 
     albums = navidrome_client.get_albums_for_artist('artist1')
 
     # Verify the correct endpoint and parameters were called
-    args, kwargs = mock_requests.call_args
+    args, kwargs = navidrome_client._http_mock.get.call_args
     assert 'getArtist' in args[0]
     assert kwargs['params']['id'] == 'artist1'
     
@@ -128,14 +131,14 @@ def test_get_albums_for_artist(navidrome_client, mock_requests):
     assert album.title == 'Test Album'
     assert album.ratingKey == 'album1'
 
-def test_get_tracks_for_album(navidrome_client, mock_requests):
+def test_get_tracks_for_album(navidrome_client):
     """Test fetching tracks for a specific album."""
     navidrome_client.ensure_connection()
-    mock_requests.return_value.json.return_value = SAMPLE_ALBUM_DETAILS
+    navidrome_client._http_mock.get.return_value.json.return_value = SAMPLE_ALBUM_DETAILS
 
     tracks = navidrome_client.get_tracks_for_album('album1')
     
-    args, kwargs = mock_requests.call_args
+    args, kwargs = navidrome_client._http_mock.get.call_args
     assert 'getAlbum' in args[0]
     assert kwargs['params']['id'] == 'album1'
 
@@ -145,23 +148,23 @@ def test_get_tracks_for_album(navidrome_client, mock_requests):
     assert track.title == 'Test Track'
     assert track.ratingKey == 'track1'
 
-def test_get_all_playlists(navidrome_client, mock_requests):
+def test_get_all_playlists(navidrome_client):
     """Test fetching all playlists."""
     navidrome_client.ensure_connection()
-    mock_requests.return_value.json.return_value = SAMPLE_PLAYLISTS
+    navidrome_client._http_mock.get.return_value.json.return_value = SAMPLE_PLAYLISTS
 
     playlists = navidrome_client.get_all_playlists()
 
-    args, kwargs = mock_requests.call_args
+    args, kwargs = navidrome_client._http_mock.get.call_args
     assert 'getPlaylists' in args[0]
 
     assert len(playlists) == 1
     assert playlists[0].title == 'My Playlist'
 
-def test_create_playlist(navidrome_client, mock_requests):
+def test_create_playlist(navidrome_client):
     """Test creating a new playlist."""
     navidrome_client.ensure_connection()
-    mock_requests.return_value.json.return_value = SAMPLE_CREATE_PLAYLIST
+    navidrome_client._http_mock.return_value.json.return_value = SAMPLE_CREATE_PLAYLIST
     
     # Mock tracks (can be simple objects with a ratingKey)
     mock_tracks = [MagicMock(ratingKey='track1'), MagicMock(ratingKey='track2')]
@@ -169,20 +172,20 @@ def test_create_playlist(navidrome_client, mock_requests):
     success = navidrome_client.create_playlist("New Playlist", mock_tracks)
     
     assert success is True
-    args, kwargs = mock_requests.call_args
+    args, kwargs = navidrome_client._http_mock.get.call_args
     assert 'createPlaylist' in args[0]
     assert kwargs['params']['name'] == 'New Playlist'
     assert kwargs['params']['songId'] == ['track1', 'track2']
 
-def test_update_playlist_new(navidrome_client, mock_requests):
+def test_update_playlist_new(navidrome_client):
     """Test updating a playlist that doesn't exist (should create it)."""
     navidrome_client.ensure_connection()
 
     # Clear any calls from initialization (ping) so assertions are about the update flow
-    mock_requests.reset_mock()
+    navidrome_client._http_mock.get.reset_mock()
 
     # Mock getPlaylists to return an empty list first
-    mock_requests.side_effect = [
+    navidrome_client._http_mock.get.side_effect = [
         MagicMock(json=lambda: create_success_response('playlists', {})), # for get_playlist_by_name
         MagicMock(json=lambda: SAMPLE_CREATE_PLAYLIST) # for create_playlist
     ]
@@ -193,23 +196,23 @@ def test_update_playlist_new(navidrome_client, mock_requests):
     assert success is True
     
     # Check that getPlaylists was called, then createPlaylist
-    call1 = mock_requests.call_args_list[0]
+    call1 = navidrome_client._http_mock.get.call_args_list[0]
     assert 'getPlaylists' in call1.args[0]
     
-    call2 = mock_requests.call_args_list[1]
+    call2 = navidrome_client._http_mock.get.call_args_list[1]
     assert 'createPlaylist' in call2.args[0]
     assert call2.kwargs['params']['name'] == 'A New One'
 
 @patch('core.navidrome_client.config_manager')
-def test_update_playlist_existing(mock_cfg, navidrome_client, mock_requests):
+def test_update_playlist_existing(mock_cfg, navidrome_client):
     """Test updating an existing playlist."""
     navidrome_client.ensure_connection()
     # Clear any calls from initialization (ping) so assertions are about the update flow
-    mock_requests.reset_mock()
+    navidrome_client._http_mock.get.reset_mock()
     mock_cfg.get.return_value = True # Enable backups
 
     # Mock the sequence of API calls
-    mock_requests.side_effect = [
+    navidrome_client._http_mock.get.side_effect = [
         # 1. get_playlist_by_name finds the existing playlist
         MagicMock(json=lambda: SAMPLE_PLAYLISTS),
         # 2. copy_playlist -> get_playlist_by_name
@@ -232,7 +235,7 @@ def test_update_playlist_existing(mock_cfg, navidrome_client, mock_requests):
     assert success is True
     
     # Verify the key API calls were made in order
-    api_calls = [call[0][0] for call in mock_requests.call_args_list]
+    api_calls = [call[0][0] for call in navidrome_client._http_mock.get.call_args_list]
     assert 'rest/getPlaylists' in api_calls[0]
     assert 'rest/getPlaylist' in api_calls[2] # get tracks for backup
     assert 'rest/createPlaylist' in api_calls[4] # create backup
@@ -250,3 +253,5 @@ def test_clear_cache(navidrome_client):
     assert navidrome_client._artist_cache == {}
     assert navidrome_client._album_cache == {}
     assert navidrome_client._track_cache == {}
+
+

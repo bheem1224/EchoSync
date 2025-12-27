@@ -244,14 +244,14 @@ def test_update_artist_biography(plex_client):
     # Verify reload was called to fetch the changes
     mock_artist.reload.assert_called_once()
 
-@patch('core.plex_client.requests.post')
+@patch('sdk.http_client.HttpClient.post')
 def test_update_artist_poster(mock_post, plex_client, mock_plex_server):
     """Test uploading a new poster for an artist."""
     plex_client.ensure_connection()
     mock_server, _ = mock_plex_server
     mock_artist = MagicMock(ratingKey='artist1', title='Test Artist')
     
-    # Mock the requests.post call
+    # Mock the HttpClient.post call
     mock_response = MagicMock(status_code=200)
     mock_response.raise_for_status.return_value = None
     mock_post.return_value = mock_response

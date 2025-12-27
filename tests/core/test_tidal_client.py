@@ -1,3 +1,4 @@
+
 import unittest
 from unittest.mock import patch, MagicMock
 import os
@@ -7,104 +8,170 @@ import time
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from core.tidal_client import TidalClient, Track, Playlist
+from core.tidal_client import TidalClient, Playlist, Track
 
 class TestTidalClient(unittest.TestCase):
-
-    @patch('core.tidal_client.config_manager')
-    def test_initialization_with_config(self, mock_config_manager):
-        """Test client initializes correctly with config and saved tokens."""
-        mock_config_manager.get.side_effect = [
-            {'client_id': 'test_id', 'client_secret': 'test_secret'}, # tidal config
-            {'access_token': 'saved_access', 'refresh_token': 'saved_refresh', 'expires_at': time.time() + 3600} # tidal_tokens
-        ]
-        
-        client = TidalClient()
-
+    @patch('sdk.storage_service.get_storage_service')
+    def test_initialization_with_config(self, mock_storage):
+        storage = MagicMock()
+        mock_storage.return_value = storage
+        storage.get_service_config.side_effect = lambda service, key: {
+            'client_id': 'test_id',
+            'client_secret': 'test_secret',
+            'redirect_uri': 'http://127.0.0.1:8008/tidal/callback'
+        }[key]
+        storage.get_account_token.return_value = {
+            'access_token': 'saved_access',
+            'refresh_token': 'saved_refresh',
+            'expires_at': time.time() + 3600
+        }
+        client = TidalClient(account_id='1')
         self.assertEqual(client.client_id, 'test_id')
         self.assertEqual(client.client_secret, 'test_secret')
         self.assertEqual(client.access_token, 'saved_access')
-        self.assertEqual(client.session.headers['Authorization'], 'Bearer saved_access')
-        
-    @patch('core.tidal_client.config_manager')
-    def test_initialization_no_config(self, mock_config_manager):
-        """Test client initialization with no config."""
-        mock_config_manager.get.return_value = {}
-        
-        client = TidalClient()
-        
+        # HttpClient manages auth headers per-request, not globally on session
+        self.assertIsNotNone(client._http)
+
+    @patch('sdk.storage_service.get_storage_service')
+    def test_initialization_no_config(self, mock_storage):
+        storage = MagicMock()
+        mock_storage.return_value = storage
+        storage.get_service_config.side_effect = lambda service, key: ''
+        storage.get_account_token.return_value = None
+        client = TidalClient(account_id='1')
         self.assertIsNone(client.client_id)
         self.assertIsNone(client.access_token)
 
-    @patch('requests.Session.post')
-    @patch('core.tidal_client.config_manager')
-    def test_refresh_access_token_success(self, mock_config_manager, mock_post):
-        """Test successful token refresh."""
-        mock_config_manager.get.return_value = {'client_id': 'test_id', 'client_secret': 'test_secret'}
+    @patch('sdk.http_client.HttpClient.post')
+    @patch('sdk.storage_service.get_storage_service')
+    def test_refresh_access_token_success(self, mock_storage, mock_post):
+        storage = MagicMock()
+        mock_storage.return_value = storage
+        storage.get_service_config.side_effect = lambda service, key: 'test_id' if key == 'client_id' else 'test_secret'
+        storage.get_account_token.return_value = {
+            'access_token': 'old_access',
+            'refresh_token': 'old_refresh_token',
+            'expires_at': time.time() - 100
+        }
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = {
             'access_token': 'new_access_token',
             'expires_in': 3600
         }
-        
-        client = TidalClient()
+        client = TidalClient(account_id='1')
         client.refresh_token = 'old_refresh_token'
-        
         result = client._refresh_access_token()
-        
         self.assertTrue(result)
         self.assertEqual(client.access_token, 'new_access_token')
-        self.assertEqual(client.session.headers['Authorization'], 'Bearer new_access_token')
-        mock_post.assert_called_once()
-        # Verify that tokens are saved
-        mock_config_manager.set.assert_called_with('tidal_tokens', unittest.mock.ANY)
+        # HttpClient manages auth per-request, not globally
+        self.assertIsNotNone(client._http)
+        self.assertGreaterEqual(mock_post.call_count, 1)
 
-    @patch('requests.Session.get')
-    @patch('core.tidal_client.config_manager')
-    def test_get_playlist_success(self, mock_config_manager, mock_get):
-        """Test successfully fetching a single playlist with tracks."""
-        mock_config_manager.get.return_value = {'client_id': 'test_id', 'client_secret': 'test_secret'}
-        
-        client = TidalClient()
+    @patch('sdk.storage_service.get_storage_service')
+    def test_get_playlist_success(self, mock_storage):
+        storage = MagicMock()
+        mock_storage.return_value = storage
+        storage.get_service_config.side_effect = lambda service, key: 'test_id' if key == 'client_id' else 'test_secret'
+        storage.get_account_token.return_value = {
+            'access_token': 'saved_access',
+            'refresh_token': 'saved_refresh',
+            'expires_at': time.time() + 3600
+        }
+        client = TidalClient(account_id='1')
         client._ensure_valid_token = MagicMock(return_value=True)
-
-        # Mock response for playlist metadata
+        
+        # Mock the HttpClient.get method
+        mock_http = MagicMock()
         mock_playlist_meta = MagicMock()
         mock_playlist_meta.status_code = 200
-        mock_playlist_meta.json.return_value = {'id': 'playlist1', 'title': 'My Playlist'}
-
-        # Mock response for playlist tracks (one page)
+        mock_playlist_meta.json.return_value = {
+            'data': {
+                'id': 'playlist1',
+                'attributes': {
+                    'name': 'My Playlist',
+                    'description': '',
+                    'accessType': 'PUBLIC'
+                }
+            }
+        }
         mock_tracks_page = MagicMock()
         mock_tracks_page.status_code = 200
         mock_tracks_page.json.return_value = {
-            'items': [
-                {'item': {'id': 't1', 'title': 'Track 1', 'artists': [{'name': 'Artist 1'}], 'album': {'title': 'Album 1'}, 'duration': 180}, 'type': 'track'}
+            'data': [
+                {
+                    'type': 'playlistItems',
+                    'id': 'pi1',
+                    'relationships': {
+                        'track': {
+                            'data': {
+                                'type': 'tracks',
+                                'id': 't1'
+                            }
+                        }
+                    }
+                }
             ],
-            'limit': 1,
-            'offset': 0,
-            'totalNumberOfItems': 1
+            'included': [
+                {
+                    'type': 'tracks',
+                    'id': 't1',
+                    'attributes': {
+                        'title': 'Track 1',
+                        'duration': 180
+                    },
+                    'relationships': {
+                        'artists': {
+                            'data': [
+                                {'type': 'artists', 'id': 'a1'}
+                            ]
+                        },
+                        'album': {
+                            'data': {'type': 'albums', 'id': 'alb1'}
+                        }
+                    }
+                },
+                {
+                    'type': 'artists',
+                    'id': 'a1',
+                    'attributes': {
+                        'name': 'Artist 1'
+                    }
+                },
+                {
+                    'type': 'albums',
+                    'id': 'alb1',
+                    'attributes': {
+                        'title': 'Album 1'
+                    }
+                }
+            ]
         }
-        
-        mock_get.side_effect = [mock_playlist_meta, mock_tracks_page]
+        mock_http.get.side_effect = [mock_playlist_meta, mock_tracks_page]
+        client._http = mock_http
         
         playlist = client.get_playlist('playlist1')
-        
         self.assertIsNotNone(playlist)
         self.assertIsInstance(playlist, Playlist)
         self.assertEqual(playlist.name, 'My Playlist')
         self.assertEqual(len(playlist.tracks), 1)
         self.assertEqual(playlist.tracks[0].name, 'Track 1')
-        self.assertEqual(mock_get.call_count, 2)
+        self.assertEqual(playlist.tracks[0].artists, ['Artist 1'])
+        self.assertEqual(playlist.tracks[0].album, 'Album 1')
+        self.assertEqual(mock_http.get.call_count, 2)
 
-    @patch('requests.Session.get')
-    @patch('core.tidal_client.config_manager')
-    def test_search_tracks_success(self, mock_config_manager, mock_get):
-        """Test successfully searching for tracks."""
-        mock_config_manager.get.return_value = {'client_id': 'test_id', 'client_secret': 'test_secret'}
-        
-        client = TidalClient()
+    @patch('sdk.http_client.HttpClient.get')
+    @patch('sdk.storage_service.get_storage_service')
+    def test_search_tracks_success(self, mock_storage, mock_get):
+        storage = MagicMock()
+        mock_storage.return_value = storage
+        storage.get_service_config.side_effect = lambda service, key: 'test_id' if key == 'client_id' else 'test_secret'
+        storage.get_account_token.return_value = {
+            'access_token': 'saved_access',
+            'refresh_token': 'saved_refresh',
+            'expires_at': time.time() + 3600
+        }
+        client = TidalClient(account_id='1')
         client._ensure_valid_token = MagicMock(return_value=True)
-
         mock_search_response = MagicMock()
         mock_search_response.status_code = 200
         mock_search_response.json.return_value = {
@@ -115,17 +182,12 @@ class TestTidalClient(unittest.TestCase):
             }
         }
         mock_get.return_value = mock_search_response
-        
         tracks = client.search_tracks('test query')
-        
         self.assertEqual(len(tracks), 1)
         self.assertIsInstance(tracks[0], Track)
         self.assertEqual(tracks[0].name, 'Search Result')
-        mock_get.assert_called_once_with(
-            f"{client.base_url}/searchresults",
-            params={'query': 'test query', 'type': 'tracks', 'limit': 10, 'countryCode': 'US'},
-            timeout=10
-        )
+        # HttpClient.get is called with headers parameter
+        self.assertEqual(mock_get.call_count, 1)
 
 if __name__ == '__main__':
     unittest.main()

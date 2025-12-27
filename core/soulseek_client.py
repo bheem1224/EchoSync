@@ -1,4 +1,3 @@
-import requests
 import asyncio
 import aiohttp
 import os
@@ -199,18 +198,46 @@ class DownloadStatus:
     speed: int
     time_remaining: Optional[int] = None
 
-class SoulseekClient:
+from .provider_types import DownloaderProvider
+
+class SoulseekClient(DownloaderProvider):
+    name = "soulseek"
+
+    def authenticate(self, **kwargs) -> bool:
+        # Stub implementation
+        return False
+
+    def get_album(self, album_id: str) -> dict:
+        # Stub implementation
+        return {}
+
+    def get_artist(self, artist_id: str) -> dict:
+        # Stub implementation
+        return {}
+
+    def get_logo_url(self) -> str:
+        return "/static/img/soulseek_logo.png"
+
+    def get_playlist_tracks(self, playlist_id: str) -> list:
+        # Stub implementation
+        return []
+
+    def get_track(self, track_id: str) -> dict:
+        # Stub implementation
+        return {}
+
+    def get_user_playlists(self, user_id: str = None) -> list:
+        # Stub implementation
+        return []
+
     def __init__(self):
         self.base_url: Optional[str] = None
         self.api_key: Optional[str] = None
         self.download_path: Path = Path("./downloads")
-        self.active_searches: Dict[str, bool] = {}  # search_id -> still_active
-        
-        # Rate limiting for searches
-        self.search_timestamps: List[float] = []  # Track search timestamps
-        self.max_searches_per_window = 35  # Conservative limit to prevent Soulseek bans
-        self.rate_limit_window = 220  # seconds (3 minutes 40 seconds)
-        
+        self.active_searches: Dict[str, bool] = {}
+        self.search_timestamps: List[float] = []
+        self.max_searches_per_window = 35
+        self.rate_limit_window = 220
         self._setup_client()
     
     def _setup_client(self):

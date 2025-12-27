@@ -373,3 +373,5 @@
 2025-12-22 21:11:30 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
 2025-12-22 21:12:48 - newmusic.music_database - [92mINFO[0m - _add_discovery_tables:589 - Discovery tables created successfully
 2025-12-22 21:12:48 - newmusic.music_database - [92mINFO[0m - _initialize_database:281 - Database initialized successfully
+2025-12-23 17:37:31 - newmusic - [92mINFO[0m - setup_logging:87 - Logging initialized with level: INFO
+2025-12-23 17:37:31 - newmusic.main - [92mINFO[0m - main:438 - Starting Soulsync application

@@ -535,10 +535,16 @@ class ServiceTestThread(QThread):
             if not self.test_config.get('client_id') or not self.test_config.get('client_secret'):
                 return False, "✗ Please enter both Client ID and Client Secret"
             
-            # Save temporarily to test
+            # NOTE: TIDAL credentials are now DB-only (via web API)
+            # This test function is deprecated for TIDAL
+            # Instead, use the web UI to manage TIDAL accounts via /api/tidal/accounts
+            
+            # For backward compatibility, we'll still try to load config values
             original_client_id = config_manager.get('tidal.client_id')
             original_client_secret = config_manager.get('tidal.client_secret')
             
+            # IMPORTANT: Do NOT permanently save credentials to config.json
+            # Temporarily set for testing only (will be restored below)
             config_manager.set('tidal.client_id', self.test_config['client_id'])
             config_manager.set('tidal.client_secret', self.test_config['client_secret'])
             
@@ -550,7 +556,7 @@ class ServiceTestThread(QThread):
                 if client.is_authenticated() or client._ensure_valid_token():
                     user_info = client.get_user_info()
                     username = user_info.get('display_name', 'Tidal User') if user_info else 'Tidal User'
-                    message = f"✓ Tidal connection successful!\nConnected as: {username}\nOAuth flow completed."
+                    message = f"✓ Tidal connection successful!\nConnected as: {username}\nOAuth flow completed.\n\nNOTE: Credentials are now managed via web API"
                     success = True
                 else:
                     message = "✗ Tidal authentication failed.\nPlease complete the OAuth flow in your browser.\nCheck your credentials and redirect URI."
@@ -560,7 +566,7 @@ class ServiceTestThread(QThread):
                 message = f"✗ Failed to create Tidal client:\n{str(client_e)}"
                 success = False
             
-            # Restore original values
+            # IMPORTANT: Restore original values - DO NOT save credentials to config.json
             config_manager.set('tidal.client_id', original_client_id)
             config_manager.set('tidal.client_secret', original_client_secret)
             
@@ -1281,9 +1287,10 @@ class SettingsPage(QWidget):
             config_manager.set('spotify.client_id', self.client_id_input.text())
             config_manager.set('spotify.client_secret', self.client_secret_input.text())
             
-            # Save Tidal settings
-            config_manager.set('tidal.client_id', self.tidal_client_id_input.text())
-            config_manager.set('tidal.client_secret', self.tidal_client_secret_input.text())
+            # TIDAL: Credentials are now managed via database/web API only
+            # DO NOT save TIDAL credentials to config.json
+            # config_manager.set('tidal.client_id', self.tidal_client_id_input.text())
+            # config_manager.set('tidal.client_secret', self.tidal_client_secret_input.text())
             
             # Save Plex settings
             config_manager.set('plex.base_url', self.plex_url_input.text())
@@ -1321,8 +1328,9 @@ class SettingsPage(QWidget):
             # Emit signals for service configuration changes to reinitialize clients
             self.settings_changed.emit('spotify.client_id', self.client_id_input.text())
             self.settings_changed.emit('spotify.client_secret', self.client_secret_input.text())
-            self.settings_changed.emit('tidal.client_id', self.tidal_client_id_input.text())
-            self.settings_changed.emit('tidal.client_secret', self.tidal_client_secret_input.text())
+            # TIDAL: Credentials are now DB-only, do not emit signals for them
+            # self.settings_changed.emit('tidal.client_id', self.tidal_client_id_input.text())
+            # self.settings_changed.emit('tidal.client_secret', self.tidal_client_secret_input.text())
             self.settings_changed.emit('plex.base_url', self.plex_url_input.text())
             self.settings_changed.emit('plex.token', self.plex_token_input.text())
             self.settings_changed.emit('soulseek.slskd_url', self.slskd_url_input.text())
@@ -1386,33 +1394,26 @@ class SettingsPage(QWidget):
         self.start_service_test('tidal', test_config)
     
     def authenticate_tidal(self):
-        """Manually trigger Tidal OAuth authentication"""
+        """DEPRECATED: Tidal authentication is now web-based via /api/tidal/accounts"""
         try:
-            from core.tidal_client import TidalClient
+            # TIDAL credentials are now managed via the web API
+            # This button/function is maintained for backward compatibility but:
+            # 1. Does NOT save credentials to config.json
+            # 2. Redirects user to web UI for account management
             
-            # Make sure we have the current settings
-            config_manager.set('tidal.client_id', self.tidal_client_id_input.text())
-            config_manager.set('tidal.client_secret', self.tidal_client_secret_input.text())
-            
-            # Create client and authenticate
-            client = TidalClient()
-            
-            self.tidal_auth_btn.setText("🔐 Authenticating...")
-            self.tidal_auth_btn.setEnabled(False)
-            
-            if client.authenticate():
-                QMessageBox.information(self, "Success", "✓ Tidal authentication successful!\nYou can now use Tidal playlists.")
-                self.tidal_auth_btn.setText("✅ Authenticated")
-            else:
-                QMessageBox.warning(self, "Authentication Failed", "✗ Tidal authentication failed.\nPlease check your credentials and try again.")
-                self.tidal_auth_btn.setText("🔐 Authenticate")
-            
-            self.tidal_auth_btn.setEnabled(True)
+            QMessageBox.information(
+                self, 
+                "TIDAL Account Management",
+                "TIDAL accounts are now managed via the web interface.\n\n"
+                "Please use the web dashboard to:\n"
+                "1. Add TIDAL accounts with your credentials\n"
+                "2. Manage OAuth authentication\n"
+                "3. Switch between accounts\n\n"
+                "Credentials are stored securely in the database."
+            )
             
         except Exception as e:
-            self.tidal_auth_btn.setText("🔐 Authenticate")
-            self.tidal_auth_btn.setEnabled(True)
-            QMessageBox.critical(self, "Error", f"Failed to authenticate with Tidal:\n{str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to process TIDAL authentication:\n{str(e)}")
     
     def test_active_server_connection(self):
         """Test the currently active (or pending) media server connection"""

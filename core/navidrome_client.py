@@ -1,4 +1,3 @@
-import requests
 import hashlib
 import secrets
 from typing import List, Optional, Dict, Any
@@ -7,6 +6,7 @@ from datetime import datetime
 import json
 from utils.logging_config import get_logger
 from config.settings import config_manager
+from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig, HttpError
 
 logger = get_logger("navidrome_client")
 
@@ -136,7 +136,60 @@ class NavidromeTrack:
             return self._client.get_album_by_id(self._album_id)
         return None
 
-class NavidromeClient:
+from .provider_types import MediaServerProvider
+
+class NavidromeClient(MediaServerProvider):
+    name = "navidrome"
+    def authenticate(self, **kwargs) -> bool:
+        return self.ensure_connection()
+
+    def search(self, query: str, limit: int = 10) -> list:
+        if not self.ensure_connection():
+            return []
+        # Stub: implement actual search logic
+        return []
+
+    def get_library_stats(self) -> Dict[str, int]:
+        # Stub implementation
+        return {}
+
+    def get_all_artists(self) -> list:
+        # Stub implementation
+        return []
+
+    def get_all_albums(self) -> list:
+        # Stub implementation
+        return []
+
+    def get_all_tracks(self) -> list:
+        # Stub implementation
+        return []
+
+    def get_track(self, track_id: str) -> dict:
+        # Stub implementation
+        return None
+
+    def get_album(self, album_id: str) -> dict:
+        # Stub implementation
+        return None
+
+    def get_artist(self, artist_id: str) -> dict:
+        # Stub implementation
+        return None
+
+    def get_user_playlists(self, user_id: Optional[str] = None) -> list:
+        # Stub implementation
+        return []
+
+    def get_playlist_tracks(self, playlist_id: str) -> list:
+        # Stub implementation
+        return []
+
+    def get_logo_url(self) -> str:
+        return "/static/img/navidrome_logo.png"
+
+    def is_configured(self) -> bool:
+        return self.base_url is not None
     def __init__(self):
         self.base_url: Optional[str] = None
         self.username: Optional[str] = None
@@ -151,6 +204,13 @@ class NavidromeClient:
 
         # Progress callback for UI updates
         self._progress_callback = None
+        
+        # Initialize centralized HTTP client for Navidrome (10 requests/second)
+        self._http = HttpClient(
+            provider='navidrome',
+            retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
+            rate=RateLimitConfig(requests_per_second=10.0)
+        )
 
     def set_progress_callback(self, callback):
         """Set callback function for progress updates"""
@@ -238,7 +298,7 @@ class NavidromeClient:
             auth_params.update(params)
 
         try:
-            response = requests.get(url, params=auth_params, timeout=10)
+            response = self._http.get(url, params=auth_params)
             response.raise_for_status()
 
             data = response.json()
@@ -253,7 +313,7 @@ class NavidromeClient:
 
             return subsonic_response
 
-        except requests.exceptions.RequestException as e:
+        except HttpError as e:
             logger.error(f"Navidrome API request failed: {e}")
             return None
         except json.JSONDecodeError as e:

@@ -2269,28 +2269,20 @@
                                 <!-- Tidal Settings -->
                                 <div class="api-service-frame">
                                     <h4 class="service-title tidal-title">Tidal</h4>
-                                    <div class="form-group">
-                                        <label>Client ID:</label>
-                                        <input type="text" id="tidal-client-id" placeholder="Tidal Client ID">
+                                    <div class="credentials-header">
+                                        <h5 style="margin: 10px 0;">Tidal App Redirect</h5>
+                                        <button class="refresh-button tidal" id="tidal-credentials-toggle" onclick="toggleTidalCredentials()">Hide</button>
                                     </div>
-                                    <div class="form-group">
-                                        <label>Client Secret:</label>
-                                        <div class="input-with-button">
-                                            <input type="password" id="tidal-client-secret" placeholder="Tidal Client Secret">
-                                            <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('tidal-client-secret')" title="Show/Hide">👁️</button>
+                                    <div id="tidal-credentials-panel">
+                                        <div class="form-group">
+                                            <label>Redirect URI:</label>
+                                            <input type="text" id="tidal-redirect-uri" placeholder="http://127.0.0.1:8008/tidal/callback">
                                         </div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Redirect URI:</label>
-                                        <input type="text" id="tidal-redirect-uri" placeholder="http://127.0.0.1:8889/tidal/callback">
-                                    </div>
-                                    <div class="callback-info">
-                                        <div class="callback-label">Current Redirect URI:</div>
-                                        <div class="callback-url" id="tidal-callback-display">http://127.0.0.1:8889/tidal/callback</div>
-                                        <div class="callback-help">Add this URL to your Tidal app configuration</div>
-                                    </div>
-                                    <div class="form-actions">
-                                        <button class="auth-button" onclick="authenticateTidal()">🔐 Authenticate</button>
+                                        <div class="callback-info">
+                                            <div class="callback-label">Current Redirect URI:</div>
+                                            <div class="callback-url" id="tidal-callback-display">http://127.0.0.1:8008/tidal/callback</div>
+                                            <div class="callback-help">Add this URL to your Tidal app configuration (must match the running SoulSync server port)</div>
+                                        </div>
                                     </div>
 
                                     <!-- Multi-Account Management -->
@@ -2320,10 +2312,6 @@
                                                         <input type="password" id="tidal-add-account-client-secret" placeholder="Tidal Client Secret">
                                                         <button type="button" class="toggle-password-btn" onclick="togglePasswordVisibility('tidal-add-account-client-secret')" title="Show/Hide">👁️</button>
                                                     </div>
-                                                </div>
-                                                <div class="form-group">
-                                                    <label>Redirect URI:</label>
-                                                    <input type="text" id="tidal-add-account-redirect-uri" placeholder="http://127.0.0.1:8889/tidal/callback">
                                                 </div>
                                                 <div class="form-actions">
                                                     <button class="service-card-button" id="tidal-add-account-submit">Save Account</button>

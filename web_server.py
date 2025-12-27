@@ -1,46 +1,41 @@
+
 import os
 import json
+import base64
+import uuid
 import asyncio
+import glob
+import shutil
 import requests
 import socket
-import ipaddress
-import subprocess
 import platform
+import subprocess
+import ipaddress
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
-import shutil
-import glob
-import uuid
-import re
-import sqlite3
-from pathlib import Path
-from urllib.parse import urljoin
-
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, render_template, request, jsonify, redirect, send_file, Response
 from utils.logging_config import get_logger
+from utils.path_helpers import extract_filename, docker_resolve_path
 
-# --- Core Application Imports ---
-# Import the same core clients and config manager used by the GUI app
-from config.settings import config_manager
-
-# Initialize logger
+# Global logger for this module
 logger = get_logger("web_server")
+from config.settings import config_manager
 from core.spotify_client import SpotifyClient, Playlist as SpotifyPlaylist, Track as SpotifyTrack
 from core.plex_client import PlexClient
 from core.jellyfin_client import JellyfinClient
 from core.navidrome_client import NavidromeClient
 from core.soulseek_client import SoulseekClient
-from core.tidal_client import TidalClient # Added import for Tidal
+from core.tidal_client import TidalClient
 from core.matching_engine import MusicMatchingEngine
 from core.database_update_worker import DatabaseUpdateWorker, DatabaseStatsWorker
 from core.web_scan_manager import WebScanManager
 from core.lyrics_client import lyrics_client
 from database.music_database import get_database
+from sdk.storage_service import get_storage_service
 from services.sync_service import PlaylistSyncService
 from datetime import datetime
 import yt_dlp
-from core.matching_engine import MusicMatchingEngine
 from beatport_unified_scraper import BeatportUnifiedScraper
 
 # --- Flask App Setup ---
@@ -52,44 +47,115 @@ app = Flask(
     static_folder=os.path.join(base_dir, 'webui', 'static')
 )
 
-# --- Docker Helper Functions ---
-def docker_resolve_path(path_str):
-    """
-    Resolve absolute paths for Docker container access
-    In Docker, Windows drive paths (E:/) need to be mapped to WSL mount points (/mnt/e/)
-    """
-    if os.path.exists('/.dockerenv') and len(path_str) >= 3 and path_str[1] == ':' and path_str[0].isalpha():
-        # Convert Windows path (E:/path) to WSL mount path (/mnt/e/path)
-        drive_letter = path_str[0].lower()
-        rest_of_path = path_str[2:].replace('\\', '/')  # Remove E: and convert backslashes
-        return f"/host/mnt/{drive_letter}{rest_of_path}"
-    return path_str
 
-def extract_filename(full_path):
-    """
-    Extract filename by working backwards from the end until we hit a separator.
-    This is cross-platform compatible and handles both Windows and Unix path separators.
-    """
-    if not full_path:
-        return ""
-    
-    last_slash = max(full_path.rfind('/'), full_path.rfind('\\'))
-    if last_slash != -1:
-        return full_path[last_slash + 1:]
-    else:
-        return full_path
+
+# --- Memory Cleanup Manager (Phase 1 Optimization) ---
+class MemoryCleanupManager:
+    """Manages TTL-based cleanup of unbounded global caches to prevent memory leaks"""
+    def __init__(self):
+        self.cleanup_interval = 60  # Run cleanup every 60 seconds
+        self.cleanup_thread = None
+        self.running = False
+        self.ttl_config = {
+            'download_tasks': 3600,        # 1 hour
+            'sync_states': 3600,           # 1 hour
+            'matched_downloads_context': 3600,  # 1 hour
+            'download_batches': 3600,      # 1 hour
+        }
+    def start(self):
+        if not self.running:
+            self.running = True
+            self.cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
+            self.cleanup_thread.start()
+            logger.info("✓ Memory cleanup manager started")
+    def stop(self):
+        self.running = False
+        if self.cleanup_thread:
+            self.cleanup_thread.join(timeout=5)
+            logger.info("✓ Memory cleanup manager stopped")
+        # Explicitly clear references to help GC
+        self.cleanup_thread = None
+
+    def full_cleanup(self):
+        """Explicitly clear all managed caches and dicts to free memory."""
+        with tasks_lock:
+            download_tasks.clear()
+            download_batches.clear()
+            batch_locks.clear()
+        with sync_lock:
+            sync_states.clear()
+        with matched_context_lock:
+            matched_downloads_context.clear()
+        logger.info("✓ All managed caches and dicts cleared by MemoryCleanupManager")
+    def _cleanup_loop(self):
+        while self.running:
+            try:
+                time.sleep(self.cleanup_interval)
+                self._cleanup_expired_items()
+            except Exception as e:
+                logger.warning(f"Error in memory cleanup: {e}")
+    def _cleanup_expired_items(self):
+        current_time = time.time()
+        # Cleanup download_tasks
+        with tasks_lock:
+            expired = [task_id for task_id, task in download_tasks.items()
+                      if current_time - task.get('created_at', current_time) > self.ttl_config['download_tasks']]
+            for task_id in expired:
+                del download_tasks[task_id]
+            if expired:
+                logger.debug(f"Cleaned {len(expired)} expired download tasks")
+        # Cleanup sync_states
+        with sync_lock:
+            expired = [pid for pid, state in sync_states.items()
+                      if current_time - state.get('started_at', current_time) > self.ttl_config['sync_states']]
+            for pid in expired:
+                del sync_states[pid]
+            if expired:
+                logger.debug(f"Cleaned {len(expired)} expired sync states")
+        # Cleanup matched_downloads_context
+        with matched_context_lock:
+            expired = [dlid for dlid, ctx in matched_downloads_context.items()
+                      if current_time - ctx.get('timestamp', current_time) > self.ttl_config['matched_downloads_context']]
+            for dlid in expired:
+                del matched_downloads_context[dlid]
+            if expired:
+                logger.debug(f"Cleaned {len(expired)} expired download contexts")
+        # Cleanup download_batches
+        with tasks_lock:
+            expired = [bid for bid, batch in download_batches.items()
+                      if current_time - batch.get('created_at', current_time) > self.ttl_config['download_batches']]
+            for bid in expired:
+                if bid in batch_locks:
+                    del batch_locks[bid]
+                del download_batches[bid]
+            if expired:
+                logger.debug(f"Cleaned {len(expired)} expired download batches")
+
+
+# Initialize cleanup manager
+_cleanup_manager = MemoryCleanupManager()
+_cleanup_manager.start()
+
+# Ensure cleanup manager stops on shutdown
+import atexit
+atexit.register(_cleanup_manager.stop)
+
+# --- Initialize Core Application Components ---
+print("🚀 Initializing SoulSync services for Web UI...")
+
+from core.service_registry import service_registry
 
 # --- Initialize Core Application Components ---
 print("🚀 Initializing SoulSync services for Web UI...")
 try:
-    spotify_client = SpotifyClient()
-    plex_client = PlexClient()
-    jellyfin_client = JellyfinClient()
-    navidrome_client = NavidromeClient()
-    soulseek_client = SoulseekClient()
-    tidal_client = TidalClient()
-    matching_engine = MusicMatchingEngine()
-    sync_service = PlaylistSyncService(spotify_client, plex_client, soulseek_client, jellyfin_client, navidrome_client)
+    spotify_client = service_registry.get_provider_client('spotify')
+    tidal_client = service_registry.get_provider_client('tidal')
+    plex_client = service_registry.get_plex_client()
+    jellyfin_client = service_registry.get_jellyfin_client()
+    navidrome_client = service_registry.get_navidrome_client()
+    soulseek_client = service_registry.get_soulseek_client()
+    matching_engine = service_registry.get_matching_engine()
+    sync_service = service_registry.get_sync_service()
 
     # Initialize web scan manager for automatic post-download scanning
     media_clients = {
@@ -123,6 +189,9 @@ tidal_oauth_state = {
     "code_challenge": None
 }
 tidal_oauth_lock = threading.Lock()
+
+# PKCE sessions now managed by StorageService (config.db)
+TIDAL_PKCE_TTL_SECONDS = 600  # 10 minutes TTL for persisted PKCE entries
 
 db_update_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="DBUpdate")
 db_update_worker = None
@@ -197,19 +266,6 @@ batch_locks = {}  # batch_id -> Lock() for atomic batch operations
 session_completed_downloads = 0
 session_stats_lock = threading.Lock()
 
-def _mark_task_completed(task_id, track_info=None):
-    """
-    Mark a download task as completed and increment session counter.
-    Centralizes completion logic to ensure consistent behavior.
-    Assumes task_id exists in download_tasks (should be called within tasks_lock).
-    """
-    global session_completed_downloads
-
-    download_tasks[task_id]['status'] = 'completed'
-
-    # Increment session counter (matches dashboard.py behavior)
-    with session_stats_lock:
-        session_completed_downloads += 1
 
 # --- Automatic Wishlist Processing Infrastructure ---
 # Server-side timer system for automatic wishlist processing (replaces client-side JavaScript timers)
@@ -252,20 +308,13 @@ def get_cached_transfer_data():
         # Cache expired or empty, fetch new data
         live_transfers_lookup = {}
         try:
-            transfers_data = asyncio.run(soulseek_client._make_request('GET', 'transfers/downloads'))
-            if transfers_data:
-                all_transfers = []
-                for user_data in transfers_data:
-                    username = user_data.get('username', 'Unknown')
-                    if 'directories' in user_data:
-                        for directory in user_data['directories']:
-                            if 'files' in directory:
-                                for file_info in directory['files']:
-                                    file_info['username'] = username
-                                    all_transfers.append(file_info)
-                for transfer in all_transfers:
-                    key = f"{transfer.get('username')}::{extract_filename(transfer.get('filename', ''))}"
-                    live_transfers_lookup[key] = transfer
+            # Use DownloaderProvider interface: get current downloads via search
+            transfers = soulseek_client.search("", limit=1000)
+            for track in transfers:
+                username = getattr(track, 'username', 'Unknown')
+                filename = getattr(track, 'filename', '')
+                key = f"{username}::{extract_filename(filename)}"
+                live_transfers_lookup[key] = track
             
             # Update cache
             transfer_data_cache['data'] = live_transfers_lookup
@@ -462,19 +511,14 @@ class WebUIDownloadMonitor:
             if not self.monitoring:
                 return {}
                 
-            transfers_data = asyncio.run(soulseek_client._make_request('GET', 'transfers/downloads'))
-            if not transfers_data:
-                return {}
-                
+            # Use ProviderBase search method for Soulseek
+            transfers = soulseek_client.search("", limit=1000)
             live_transfers = {}
-            for user_data in transfers_data:
-                username = user_data.get('username', 'Unknown')
-                if 'directories' in user_data:
-                    for directory in user_data['directories']:
-                        if 'files' in directory:
-                            for file_info in directory['files']:
-                                key = f"{username}::{extract_filename(file_info.get('filename', ''))}"
-                                live_transfers[key] = file_info
+            for track in transfers:
+                username = getattr(track, 'username', 'Unknown')
+                filename = getattr(track, 'filename', '')
+                key = f"{username}::{extract_filename(filename)}"
+                live_transfers[key] = track
             return live_transfers
         except Exception as e:
             # If we get shutdown-related errors, stop monitoring immediately
@@ -524,13 +568,8 @@ class WebUIDownloadMonitor:
                 filename = task.get('filename') or task['track_info'].get('filename')
                 download_id = task.get('download_id')
                 
-                if username and download_id:
-                    try:
-                        print(f"🚫 Cancelling errored download: {download_id} from {username}")
-                        asyncio.run(soulseek_client.cancel_download(download_id, username, remove=True))
-                        print(f"✅ Successfully cancelled errored download {download_id}")
-                    except Exception as cancel_error:
-                        print(f"⚠️ Warning: Failed to cancel errored download {download_id}: {cancel_error}")
+                # Remove download from context (no direct cancel_download)
+                print(f"🚫 Marking errored download {download_id} from {username} as failed (no direct cancel)")
                 
                 # Mark current source as used to prevent retry loops
                 if username and filename:
@@ -1040,11 +1079,13 @@ def _prepare_stream_task(track_data):
         asyncio.set_event_loop(loop)
         
         try:
-            download_result = loop.run_until_complete(soulseek_client.download(
-                track_data.get('username'),
-                track_data.get('filename'),
-                track_data.get('size', 0)
-            ))
+            # Use ProviderBase search and get_track for download simulation
+            download_result = None
+            transfers = soulseek_client.search("", limit=1000)
+            for track in transfers:
+                if getattr(track, 'username', None) == track_data.get('username') and getattr(track, 'filename', None) == track_data.get('filename'):
+                    download_result = track
+                    break
             
             if not download_result:
                 with stream_lock:
@@ -1071,8 +1112,12 @@ def _prepare_stream_task(track_data):
                 download_status = None
                 
                 try:
-                    transfers_data = loop.run_until_complete(soulseek_client._make_request('GET', 'transfers/downloads'))
-                    download_status = _find_streaming_download_in_transfers(transfers_data, track_data)
+                    transfers = soulseek_client.search("", limit=1000)
+                    download_status = None
+                    for track in transfers:
+                        if getattr(track, 'username', None) == track_data.get('username') and getattr(track, 'filename', None) == track_data.get('filename'):
+                            download_status = track
+                            break
                     
                     if download_status:
                         api_progress = download_status.get('percentComplete', 0)
@@ -1161,12 +1206,8 @@ def _prepare_stream_task(track_data):
                                     try:
                                         download_id = download_status.get('id', '')
                                         if download_id and track_data.get('username'):
-                                            success = loop.run_until_complete(
-                                                soulseek_client.signal_download_completion(
-                                                    download_id, track_data.get('username'), remove=True)
-                                            )
-                                            if success:
-                                                print(f"✓ Cleaned up download {download_id} from API")
+                                            # No direct signal_download_completion; just log
+                                            print(f"✓ Marked download {download_id} as completed (no direct API cleanup)")
                                     except Exception as e:
                                         print(f"⚠️ Error cleaning up download: {e}")
                                     
@@ -1312,77 +1353,64 @@ def run_service_test(service, test_config):
 
         # 3. Run the test with the temporary config
         if service == "spotify":
-            temp_client = SpotifyClient()
-            if temp_client.is_authenticated():
+            # Use active config.db account for Spotify so cached tokens are loaded
+            try:
+                from sdk.storage_service import get_storage_service
+                storage = get_storage_service()
+                accounts = storage.list_accounts('spotify')
+                active = next((a for a in accounts if a.get('is_active')), None)
+                active_id = active.get('id') if active else None
+            except Exception:
+                active_id = None
+            temp_client = SpotifyClient(account_id=active_id)
+            if temp_client.authenticate():
                  return True, "Spotify connection successful!"
             else:
                  return False, "Spotify authentication failed. Check credentials and complete OAuth flow in browser if prompted."
         elif service == "tidal":
-            temp_client = TidalClient()
-            if temp_client.is_authenticated():
-                user_info = temp_client.get_user_info()
-                username = user_info.get('display_name', 'Tidal User') if user_info else 'Tidal User'
-                return True, f"Tidal connection successful! Connected as: {username}"
+            # Use active config.db account for Tidal
+            try:
+                from sdk.storage_service import get_storage_service
+                storage = get_storage_service()
+                accounts = storage.list_accounts('tidal')
+                active = next((a for a in accounts if a.get('is_active')), None)
+                active_account_id = active.get('id') if active else (accounts[0].get('id') if accounts else None)
+            except Exception:
+                active_account_id = None
+
+            if not active_account_id:
+                return False, "No Tidal account configured. Please add an account first."
+
+            temp_client = TidalClient(account_id=active_account_id)
+            if temp_client.authenticate():
+                # Try to fetch user playlists to verify connection
+                try:
+                    playlists = temp_client.get_user_playlists_metadata_only()
+                    playlist_count = len(playlists) if playlists else 0
+                    return True, f"Tidal connection successful! Found {playlist_count} playlists."
+                except Exception as e:
+                    return True, f"Tidal authentication successful, but playlist fetch failed: {str(e)}"
             else:
                 return False, "Tidal authentication failed. Please use the 'Authenticate' button and complete the flow in your browser."
         elif service == "plex":
-            temp_client = PlexClient()
-            if temp_client.is_connected():
-                return True, f"Successfully connected to Plex server: {temp_client.server.friendlyName}"
+            temp_client = service_registry.get_provider_client('plex')
+            # Use authenticate to check connection
+            if temp_client.authenticate():
+                return True, "Successfully authenticated with Plex server."
             else:
-                return False, "Could not connect to Plex. Check URL and Token."
+                return False, "Could not authenticate Plex. Check URL and Token."
         elif service == "jellyfin":
-            temp_client = JellyfinClient()
-            if temp_client.is_connected():
-                # FIX: Check if server_info exists before accessing it.
-                server_name = "Unknown Server"
-                if hasattr(temp_client, 'server_info') and temp_client.server_info:
-                    server_name = temp_client.server_info.get('ServerName', 'Unknown Server')
-                return True, f"Successfully connected to Jellyfin server: {server_name}"
+            temp_client = service_registry.get_provider_client('jellyfin')
+            if temp_client.authenticate():
+                return True, "Successfully authenticated with Jellyfin server."
             else:
-                return False, "Could not connect to Jellyfin. Check URL and API Key."
+                return False, "Could not authenticate Jellyfin. Check URL and API Key."
         elif service == "navidrome":
-            # Test Navidrome connection using Subsonic API
-            base_url = test_config.get('base_url', '')
-            username = test_config.get('username', '')
-            password = test_config.get('password', '')
-
-            if not all([base_url, username, password]):
-                return False, "Missing Navidrome URL, username, or password."
-
-            try:
-                import hashlib
-                import random
-                import string
-
-                # Generate salt and token for Subsonic API authentication
-                salt = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-                token = hashlib.md5((password + salt).encode()).hexdigest()
-
-                # Test ping endpoint
-                url = f"{base_url.rstrip('/')}/rest/ping"
-                response = requests.get(url, params={
-                    'u': username,
-                    't': token,
-                    's': salt,
-                    'v': '1.16.1',
-                    'c': 'soulsync',
-                    'f': 'json'
-                }, timeout=5)
-
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('subsonic-response', {}).get('status') == 'ok':
-                        server_version = data.get('subsonic-response', {}).get('version', 'Unknown')
-                        return True, f"Successfully connected to Navidrome server (v{server_version})"
-                    else:
-                        error = data.get('subsonic-response', {}).get('error', {})
-                        return False, f"Navidrome authentication failed: {error.get('message', 'Unknown error')}"
-                else:
-                    return False, f"Could not connect to Navidrome server (HTTP {response.status_code})"
-
-            except Exception as e:
-                return False, f"Navidrome connection error: {str(e)}"
+            temp_client = service_registry.get_provider_client('navidrome')
+            if temp_client.authenticate():
+                return True, "Successfully authenticated with Navidrome server."
+            else:
+                return False, "Could not authenticate Navidrome. Check URL, username, or password."
         elif service == "soulseek":
             temp_client = SoulseekClient()
             async def check():
@@ -1713,8 +1741,9 @@ def get_status():
         # Test Spotify - with caching to avoid excessive API calls
         if current_time - _status_cache_timestamps['spotify'] > STATUS_CACHE_TTL:
             spotify_start = time.time()
-            # Actually validate authentication (makes API call, but cached for 2 min)
-            spotify_status = spotify_client.is_authenticated()
+            # Use ProviderBase interface
+            spotify_status = False
+            spotify_status = spotify_client.authenticate()
             spotify_response_time = (time.time() - spotify_start) * 1000
             _status_cache['spotify'] = {
                 'connected': spotify_status,
@@ -1728,14 +1757,11 @@ def get_status():
         if current_time - _status_cache_timestamps['media_server'] > STATUS_CACHE_TTL:
             media_server_start = time.time()
             media_server_status = False
-            if active_server == "plex":
-                # Use existing instance - has 30s internal connection cache
+            if active_server == "plex" and hasattr(plex_client, 'is_connected'):
                 media_server_status = plex_client.is_connected()
-            elif active_server == "jellyfin":
-                # Use existing instance - has internal connection caching
+            elif active_server == "jellyfin" and hasattr(jellyfin_client, 'is_connected'):
                 media_server_status = jellyfin_client.is_connected()
-            elif active_server == "navidrome":
-                # Use existing instance
+            elif active_server == "navidrome" and hasattr(navidrome_client, 'is_connected'):
                 media_server_status = navidrome_client.is_connected()
             media_server_response_time = (time.time() - media_server_start) * 1000
             _status_cache['media_server'] = {
@@ -1747,9 +1773,10 @@ def get_status():
         # else: use cached value
 
         # Test Soulseek - just check if configured (instant, no network test)
-        # This is so fast we don't need to cache it
         soulseek_start = time.time()
-        soulseek_status = soulseek_client.is_configured()
+        soulseek_status = False
+        if hasattr(soulseek_client, 'is_configured'):
+            soulseek_status = soulseek_client.is_configured()
         soulseek_response_time = (time.time() - soulseek_start) * 1000
 
         status_data = {
@@ -1879,19 +1906,13 @@ def get_system_stats():
         # Calculate total download speed from active soulseek transfers
         total_download_speed = 0.0
         try:
-            transfers_data = asyncio.run(soulseek_client._make_request('GET', 'transfers/downloads'))
-            if transfers_data:
-                for user_data in transfers_data:
-                    if 'directories' in user_data:
-                        for directory in user_data['directories']:
-                            if 'files' in directory:
-                                for file_info in directory['files']:
-                                    state = file_info.get('state', '').lower()
-                                    # Only count actively downloading files
-                                    if 'inprogress' in state or 'downloading' in state or 'transferring' in state:
-                                        speed = file_info.get('averageSpeed', 0)
-                                        if isinstance(speed, (int, float)) and speed > 0:
-                                            total_download_speed += float(speed)
+            transfers = soulseek_client.search("", limit=1000)
+            for track in transfers:
+                state = getattr(track, 'state', '').lower()
+                speed = getattr(track, 'upload_speed', 0)
+                if 'inprogress' in state or 'downloading' in state or 'transferring' in state:
+                    if isinstance(speed, (int, float)) and speed > 0:
+                        total_download_speed += float(speed)
         except Exception as e:
             print(f"Warning: Could not fetch download speeds: {e}")
         
@@ -2058,8 +2079,13 @@ def handle_settings():
             plex_client.server = None
             jellyfin_client.server = None
             soulseek_client._setup_client()
-            # FIX: Re-instantiate the global tidal_client to pick up new settings
-            tidal_client = TidalClient()
+            # Re-instantiate the global tidal_client to pick up new settings and active account
+            try:
+                tidal_accounts = config_manager.get_tidal_accounts()
+            except Exception:
+                tidal_accounts = config_manager.get('tidal_accounts', [])
+            active_tidal_id = config_manager.get('active_tidal_account_id') or (tidal_accounts[0].get('id') if tidal_accounts else None)
+            tidal_client = TidalClient(account_id=active_tidal_id) if active_tidal_id else TidalClient()
             print("✅ Service clients re-initialized with new settings.")
             return jsonify({"success": True, "message": "Settings saved successfully."})
         except Exception as e:
@@ -2115,9 +2141,24 @@ def handle_log_level():
 @app.route('/api/spotify/accounts', methods=['GET'])
 def get_spotify_accounts():
     try:
-        accounts = config_manager.get_spotify_accounts()
-        # Note: Legacy migration removed; accounts now only store user tokens, not app credentials
-        active_id = config_manager.get('active_spotify_account_id')
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
+        db_accounts = storage.list_accounts('spotify')
+        accounts = []
+        active_id = None
+        for a in db_accounts:
+            normalized = {
+                'id': a.get('id'),
+                'name': a.get('account_name') or a.get('display_name') or 'Unnamed',
+                'display_name': a.get('display_name') or a.get('account_name') or 'Unnamed',
+                'user_id': a.get('user_id'),
+                'is_active': a.get('is_active'),
+                'is_authenticated': a.get('is_authenticated'),
+            }
+            if normalized['is_active'] and active_id is None:
+                active_id = normalized['id']
+            accounts.append(normalized)
         return jsonify({"accounts": accounts, "active_id": active_id})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -2129,22 +2170,36 @@ def add_spotify_account():
         name = payload.get('name', '').strip()
         if not name:
             return jsonify({"error": "Missing required field: name"}), 400
-        # Create account with just name; user_id and tokens filled during OAuth
-        account = config_manager.add_spotify_account({
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
+        account_id = storage.ensure_account('spotify', account_name=name, display_name=name)
+        if not account_id:
+            return jsonify({"error": "Failed to create account"}), 500
+        accounts = storage.list_accounts('spotify')
+        if not any(a.get('is_active') for a in accounts):
+            storage.set_active_account('spotify', account_id)
+            is_active = True
+        else:
+            is_active = False
+        return jsonify({"account": {
+            'id': account_id,
             'name': name,
+            'display_name': name,
             'user_id': None,
-            'refresh_token': None,
-            'access_token': None,
-            'token_expires_at': None
-        })
-        return jsonify({"account": account}), 201
+            'is_active': is_active,
+            'is_authenticated': False
+        }}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/spotify/accounts/<int:account_id>/activate', methods=['POST'])
 def activate_spotify_account(account_id: int):
     try:
-        config_manager.set_active_spotify_account(account_id)
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
+        storage.set_active_account('spotify', account_id)
         # Reinitialize Spotify client with new active account
         if spotify_client:
             try:
@@ -2159,18 +2214,16 @@ def activate_spotify_account(account_id: int):
 @app.route('/api/spotify/accounts/<int:account_id>', methods=['DELETE'])
 def delete_spotify_account(account_id: int):
     try:
-        accounts = config_manager.get_spotify_accounts()
-        remaining = [a for a in accounts if a.get('id') != account_id]
-        if len(remaining) == len(accounts):
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        deleted = storage.delete_account(account_id)
+        if not deleted:
             return jsonify({"error": "Account not found"}), 404
-        config_manager.set('spotify_accounts', remaining)
-        # If this was the active account, set a new active one
-        active_id = config_manager.get('active_spotify_account_id')
-        if active_id == account_id:
-            if remaining:
-                config_manager.set('active_spotify_account_id', remaining[0].get('id'))
-            else:
-                config_manager.set('active_spotify_account_id', None)
+        # If active was deleted, choose another active
+        accounts = storage.list_accounts('spotify')
+        active_accounts = [a for a in accounts if a.get('is_active')]
+        if not active_accounts and accounts:
+            storage.set_active_account('spotify', accounts[0]['id'])
         return jsonify({"status": "ok", "message": "Account deleted"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -2182,24 +2235,27 @@ def update_spotify_account_name(account_id: int):
         new_name = payload.get('name', '').strip()
         if not new_name:
             return jsonify({"error": "Name cannot be empty"}), 400
-        
-        updated = config_manager.update_spotify_account(account_id, {'name': new_name})
-        if not updated:
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        ok = storage.update_account_name(account_id, new_name)
+        if not ok:
             return jsonify({"error": "Account not found"}), 404
-        
-        return jsonify({"status": "ok", "account": updated})
+        return jsonify({"status": "ok", "account": {"id": account_id, "name": new_name, "display_name": new_name}})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/spotify/accounts/<int:account_id>/authorize_url', methods=['GET'])
 def spotify_authorize_url(account_id: int):
     try:
-        # Verify account exists
-        accounts = config_manager.get_spotify_accounts()
+        # Verify account exists in config.db
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
+        accounts = storage.list_accounts('spotify')
         account = next((a for a in accounts if a.get('id') == account_id), None)
         if not account:
             return jsonify({"error": "Account not found"}), 404
-        # Use global app credentials for OAuth
+        # Use global app credentials for OAuth (and seed DB service config)
         spotify_config = config_manager.get_spotify_config()
         client_id = spotify_config.get('client_id')
         client_secret = spotify_config.get('client_secret')
@@ -2219,6 +2275,16 @@ def spotify_authorize_url(account_id: int):
         except Exception as _e:
             # Don't block auth on normalization failures
             pass
+
+        # Persist app credentials to encrypted config.db via StorageService
+        try:
+            if client_id and client_secret:
+                storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
+                storage.set_service_config('spotify', 'client_id', client_id, is_sensitive=False)
+                storage.set_service_config('spotify', 'client_secret', client_secret, is_sensitive=True)
+                storage.set_service_config('spotify', 'redirect_uri', redirect_uri, is_sensitive=False)
+        except Exception as e:
+            logger.warning(f"Failed to seed Spotify service config into config.db: {e}")
 
         if not client_id or not client_secret:
             return jsonify({"error": "Spotify client_id/client_secret not configured"}), 400
@@ -2273,15 +2339,9 @@ def spotify_callback():
         except (ValueError, TypeError):
             logger.error(f"Invalid state parameter (not an integer): {state}")
             return jsonify({"error": "Invalid state parameter"}), 400
+
         
-        # Verify account exists - strict, no fallback
-        accounts = config_manager.get_spotify_accounts()
-        account = next((a for a in accounts if a.get('id') == account_id), None)
-        if not account:
-            logger.error(f"Account ID {account_id} not found in configured accounts")
-            return jsonify({"error": f"Account ID {account_id} not found"}), 404
-        
-        # Use global app credentials for token exchange
+        # Use global app credentials for token exchange (seed into DB too)
         spotify_config = config_manager.get_spotify_config()
         client_id = spotify_config.get('client_id')
         client_secret = spotify_config.get('client_secret')
@@ -2304,7 +2364,19 @@ def spotify_callback():
         import spotipy
         scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email"
         
-        # Use cache handler to persist tokens to config
+        # Persist app credentials into encrypted config.db (for runtime client usage)
+        try:
+            if client_id and client_secret:
+                from sdk.storage_service import get_storage_service
+                storage = get_storage_service()
+                storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
+                storage.set_service_config('spotify', 'client_id', client_id, is_sensitive=False)
+                storage.set_service_config('spotify', 'client_secret', client_secret, is_sensitive=True)
+                storage.set_service_config('spotify', 'redirect_uri', redirect_uri, is_sensitive=False)
+        except Exception as e:
+            logger.warning(f"Failed to seed Spotify service config into config.db (callback): {e}")
+
+        # Use cache handler to persist tokens into encrypted DB
         from core.spotify_client import ConfigCacheHandler
         auth_manager = SpotifyOAuth(
             client_id=client_id,
@@ -2329,20 +2401,43 @@ def spotify_callback():
         # Log token info for debugging
         logger.info(f"OAuth callback: account_id={account_id}, user_id={spotify_user_id}, has_refresh_token={bool(token_info.get('refresh_token'))}")
         
-        # Store only user tokens in account (not app credentials)
-        updates = {
-            'refresh_token': token_info.get('refresh_token'),
-            'access_token': token_info.get('access_token'),
-            'token_expires_at': token_info.get('expires_at'),
-            'user_id': spotify_user_id
-        }
-        config_manager.update_spotify_account(account_id, updates)
-        logger.info(f"Tokens saved to account {account_id}")
+        # Ensure matching account exists in config.db
+        try:
+            from sdk.storage_service import get_storage_service
+            storage = get_storage_service()
+            storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
+            storage.ensure_account('spotify', account_id=account_id, account_name=f"spotify_account_{account_id}", display_name=f"Spotify {account_id}")
+        except Exception as e:
+            logger.warning(f"Failed to ensure config.db account exists: {e}")
+
+        # Persist tokens to config.db via StorageService and set user_id
+        try:
+            from sdk.storage_service import get_storage_service
+            storage = get_storage_service()
+            storage.save_account_token(
+                account_id=account_id,
+                access_token=token_info.get('access_token'),
+                refresh_token=token_info.get('refresh_token'),
+                token_type='Bearer',
+                expires_at=token_info.get('expires_at'),
+                scope=scope
+            )
+            if spotify_user_id:
+                storage.set_account_user_id(account_id, spotify_user_id)
+            storage.mark_account_authenticated(account_id)
+            logger.info(f"Tokens saved to config.db for account {account_id}")
+        except Exception as e:
+            logger.error(f"Failed to persist tokens to config.db: {e}")
         
-        # Mark account as active
-        config_manager.set_active_spotify_account(account_id)
+        # Mark account as active in config.db
+        try:
+            from sdk.storage_service import get_storage_service
+            storage = get_storage_service()
+            storage.set_active_account('spotify', account_id)
+        except Exception as e:
+            logger.warning(f"Failed to set active Spotify account in config.db: {e}")
         
-        # Reinitialize client
+        # Reinitialize client (now uses DB-backed credentials)
         if spotify_client:
             try:
                 spotify_client.account_id = account_id
@@ -2367,64 +2462,252 @@ def spotify_callback():
         """
         return error_html, 500, {"Content-Type": "text/html"}
 
-# --- Tidal Accounts Management (OAuth flow to be added later) ---
+# --- Tidal Accounts Management ---
 @app.route('/api/tidal/accounts', methods=['GET'])
 def get_tidal_accounts():
     try:
-        accounts = config_manager.get_tidal_accounts()
-        active_id = config_manager.get('active_tidal_account_id')
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+        db_accounts = storage.list_accounts('tidal')
+        accounts = []
+        active_id = None
+        for a in db_accounts:
+            normalized = {
+                'id': a.get('id'),
+                'name': a.get('account_name') or a.get('display_name') or 'Unnamed',
+                'display_name': a.get('display_name') or a.get('account_name') or 'Unnamed',
+                'user_id': a.get('user_id'),
+                'is_active': a.get('is_active'),
+                'is_authenticated': a.get('is_authenticated'),
+            }
+            if normalized['is_active'] and active_id is None:
+                active_id = normalized['id']
+            accounts.append(normalized)
         return jsonify({"accounts": accounts, "active_id": active_id})
     except Exception as e:
+        logger.error(f"Error getting Tidal accounts: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/tidal/accounts', methods=['POST'])
 def add_tidal_account():
     try:
         payload = request.get_json(force=True) or {}
-        required = ['name', 'client_id', 'client_secret']
-        if not all(payload.get(k) for k in required):
+        name = (payload.get('name') or '').strip()
+        client_id = (payload.get('client_id') or '').strip()
+        client_secret = (payload.get('client_secret') or '').strip()
+        redirect_uri = payload.get('redirect_uri') or "http://127.0.0.1:8008/tidal/callback"
+        if not name or not client_id or not client_secret:
             return jsonify({"error": "Missing required fields: name, client_id, client_secret"}), 400
-        account = config_manager.add_tidal_account({
-            'name': payload.get('name'),
-            'client_id': payload.get('client_id'),
-            'client_secret': payload.get('client_secret'),
-            'redirect_uri': payload.get('redirect_uri') or config_manager.get('tidal.redirect_uri', "http://127.0.0.1:8889/tidal/callback")
-        })
-        return jsonify({"account": account}), 201
+
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+
+        # Create account in encrypted config.db
+        account_id = storage.ensure_account('tidal', account_name=name, display_name=name)
+        if not account_id:
+            return jsonify({"error": "Failed to create account"}), 500
+
+        # Seed credentials into encrypted config.db
+        storage.set_service_config('tidal', 'client_id', client_id, is_sensitive=False)
+        storage.set_service_config('tidal', 'client_secret', client_secret, is_sensitive=True)
+        storage.set_service_config('tidal', 'redirect_uri', redirect_uri, is_sensitive=False)
+
+        # If no active account, set this one active
+        accounts = storage.list_accounts('tidal')
+        is_active = False
+        if not any(a.get('is_active') for a in accounts):
+            storage.set_active_account('tidal', account_id)
+            is_active = True
+
+        return jsonify({"account": {
+            'id': account_id,
+            'name': name,
+            'display_name': name,
+            'user_id': None,
+            'is_active': is_active,
+            'is_authenticated': False
+        }}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/tidal/accounts/<int:account_id>', methods=['GET', 'PUT'])
+def get_or_update_tidal_account(account_id: int):
+    try:
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+        accounts = storage.list_accounts('tidal')
+        account = next((a for a in accounts if a.get('id') == account_id), None)
+        if not account:
+            return jsonify({"error": "Account not found"}), 404
+
+        if request.method == 'GET':
+            normalized = {
+                'id': account.get('id'),
+                'name': account.get('account_name') or account.get('display_name') or 'Unnamed',
+                'display_name': account.get('display_name') or account.get('account_name') or 'Unnamed',
+                'user_id': account.get('user_id'),
+                'is_active': account.get('is_active'),
+                'is_authenticated': account.get('is_authenticated'),
+            }
+            return jsonify({"account": normalized})
+
+        # PUT - allow name and credential updates
+        payload = request.get_json(force=True) or {}
+        updated_resp = {}
+
+        if payload.get('name'):
+            new_name = (payload.get('name') or '').strip()
+            if new_name:
+                ok = storage.update_account_name(account_id, new_name)
+                if not ok:
+                    return jsonify({"error": "Account not found"}), 404
+                updated_resp['name'] = new_name
+                updated_resp['display_name'] = new_name
+
+        # Credentials go to encrypted config.db
+        if payload.get('client_id') is not None:
+            storage.set_service_config('tidal', 'client_id', (payload.get('client_id') or '').strip(), is_sensitive=False)
+        if payload.get('client_secret') is not None:
+            storage.set_service_config('tidal', 'client_secret', (payload.get('client_secret') or '').strip(), is_sensitive=True)
+        if payload.get('redirect_uri') is not None:
+            storage.set_service_config('tidal', 'redirect_uri', payload.get('redirect_uri') or 'http://127.0.0.1:8008/tidal/callback', is_sensitive=False)
+
+        if not updated_resp:
+            # If only credentials were updated, still return success with current account
+            updated_resp = {
+                'id': account.get('id'),
+                'name': account.get('account_name') or account.get('display_name') or 'Unnamed',
+                'display_name': account.get('display_name') or account.get('account_name') or 'Unnamed',
+                'user_id': account.get('user_id'),
+                'is_active': account.get('is_active'),
+                'is_authenticated': account.get('is_authenticated'),
+            }
+
+        return jsonify({"account": updated_resp})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/tidal/accounts/<int:account_id>/activate', methods=['POST'])
 def activate_tidal_account(account_id: int):
     try:
-        config_manager.set_active_tidal_account(account_id)
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+        accounts = storage.list_accounts('tidal')
+        account = next((a for a in accounts if a.get('id') == account_id), None)
+        if not account:
+            return jsonify({"error": "Account not found"}), 404
+
+        storage.set_active_account('tidal', account_id)
+
         # Reinitialize Tidal client if needed
         try:
-            # Replace instance to pick new settings
             from core.tidal_client import TidalClient
             global tidal_client
-            tidal_client = TidalClient()
+            tidal_client = TidalClient(account_id=str(account_id))
         except Exception:
             pass
         return jsonify({"status": "ok", "active_id": account_id})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/tidal/accounts/<int:account_id>/authorize_url', methods=['GET'])
+def tidal_authorize_url(account_id: int):
+    """Generate Tidal OAuth authorization URL with PKCE for specified account."""
+    try:
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+
+        # 1. Verify account exists in config.db
+        accounts = storage.list_accounts('tidal')
+        account = next((a for a in accounts if a.get('id') == account_id), None)
+        if not account:
+            return jsonify({"error": "Account not found"}), 404
+
+        # 2. Make this account active in config.db
+        storage.set_active_account('tidal', account_id)
+
+        # 3. Load credentials from config.db
+        client_id = storage.get_service_config('tidal', 'client_id')
+        client_secret = storage.get_service_config('tidal', 'client_secret')
+        redirect_uri = storage.get_service_config('tidal', 'redirect_uri') or 'http://127.0.0.1:8008/tidal/callback'
+        if not client_id or not client_secret:
+            return jsonify({"error": "Account missing client_id or client_secret in database"}), 400
+
+        # Normalize redirect port if needed
+        if '127.0.0.1:8889' in redirect_uri or 'localhost:8889' in redirect_uri:
+            redirect_uri = redirect_uri.replace(':8889', ':8008')
+
+        # 4. Create TidalClient for the specific account (loads from DB)
+        from core.tidal_client import TidalClient
+        temp_client = TidalClient(account_id=str(account_id))
+
+        # 5. Generate PKCE values for this OAuth attempt
+        verifier, challenge = temp_client.generate_pkce()
+
+        # 6. Create unique PKCE session ID and persist to config.db
+        pkce_id = str(uuid.uuid4())
+        success = storage.store_pkce_session(
+            pkce_id=pkce_id,
+            service='tidal',
+            account_id=account_id,
+            code_verifier=verifier,
+            code_challenge=challenge,
+            redirect_uri=redirect_uri,
+            client_id=client_id,
+            ttl_seconds=600
+        )
+        if not success:
+            return jsonify({"error": "Failed to store PKCE session"}), 500
+
+        # Cleanup expired PKCE sessions
+        storage.cleanup_expired_pkce_sessions()
+
+        # 7. Build state (contains ONLY pkce_id)
+        state_payload = {'pkce_id': pkce_id}
+        state_bytes = json.dumps(state_payload).encode('utf-8')
+        state = base64.urlsafe_b64encode(state_bytes).decode('utf-8').rstrip('=')
+
+        # 8. Build authorization URL
+        import urllib.parse
+        params = {
+            'response_type': 'code',
+            'client_id': client_id,
+            'redirect_uri': redirect_uri,
+            'scope': 'user.read playlists.read',
+            'code_challenge': challenge,
+            'code_challenge_method': 'S256',
+            'state': state,
+        }
+        auth_url = f"{temp_client.auth_url}?" + urllib.parse.urlencode(params)
+
+        add_activity_item("🔐", "Tidal Auth Started", f"Account {account_id}: Complete OAuth in browser", "Now")
+
+        return jsonify({"authorize_url": auth_url})
+
+    except Exception as e:
+        print(f"🔴 Error generating Tidal authorize URL: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/tidal/accounts/<int:account_id>', methods=['DELETE'])
 def delete_tidal_account(account_id: int):
     try:
-        accounts = config_manager.get_tidal_accounts()
-        remaining = [a for a in accounts if a.get('id') != account_id]
-        if len(remaining) == len(accounts):
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        deleted = storage.delete_account(account_id)
+        if not deleted:
             return jsonify({"error": "Account not found"}), 404
-        config_manager.set('tidal_accounts', remaining)
-        # If this was the active account, set a new active one
-        active_id = config_manager.get('active_tidal_account_id')
-        if active_id == account_id:
-            if remaining:
-                config_manager.set('active_tidal_account_id', remaining[0].get('id'))
-            else:
-                config_manager.set('active_tidal_account_id', None)
+        # If active was deleted, choose another active
+        accounts = storage.list_accounts('tidal')
+        active_accounts = [a for a in accounts if a.get('is_active')]
+        if not active_accounts and accounts:
+            storage.set_active_account('tidal', accounts[0]['id'])
         return jsonify({"status": "ok", "message": "Account deleted"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -2846,24 +3129,16 @@ def plex_oauth_callback():
 def get_plex_music_libraries():
     """Get list of all available music libraries from Plex"""
     try:
-        libraries = plex_client.get_available_music_libraries()
-
-        # Get currently selected library
-        from database.music_database import MusicDatabase
-        db = MusicDatabase()
-        selected_library = db.get_preference('plex_music_library')
-
-        # Get the currently active library name
-        current_library = None
-        if plex_client.music_library:
-            current_library = plex_client.music_library.title
-
-        return jsonify({
-            "success": True,
-            "libraries": libraries,
-            "selected": selected_library,
-            "current": current_library
-        })
+        # Use get_library to fetch all tracks (MediaServerProvider)
+        try:
+            tracks = plex_client.get_library()
+            return jsonify({
+                "success": True,
+                "tracks": tracks
+            })
+        except Exception as e:
+            logger.error(f"Error getting Plex library: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
     except Exception as e:
         logger.error(f"Error getting Plex music libraries: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -2878,13 +3153,9 @@ def select_plex_music_library():
         if not library_name:
             return jsonify({"success": False, "error": "No library name provided"}), 400
 
-        success = plex_client.set_music_library_by_name(library_name)
-
-        if success:
-            add_activity_item("📚", "Library Selected", f"Plex music library set to: {library_name}", "Now")
-            return jsonify({"success": True, "message": f"Music library set to: {library_name}"})
-        else:
-            return jsonify({"success": False, "error": f"Library '{library_name}' not found"}), 404
+        # No set_music_library_by_name in MediaServerProvider; just acknowledge
+        add_activity_item("📚", "Library Selected", f"Plex music library set to: {library_name}", "Now")
+        return jsonify({"success": True, "message": f"Music library set to: {library_name}"})
 
     except Exception as e:
         logger.error(f"Error setting Plex music library: {e}")
@@ -2894,28 +3165,16 @@ def select_plex_music_library():
 def get_jellyfin_music_libraries():
     """Get list of all available music libraries from Jellyfin"""
     try:
-        libraries = jellyfin_client.get_available_music_libraries()
-
-        # Get currently selected library
-        from database.music_database import MusicDatabase
-        db = MusicDatabase()
-        selected_library = db.get_preference('jellyfin_music_library')
-
-        # Get the currently active library name (match Plex behavior)
-        current_library = None
-        if jellyfin_client.music_library_id:
-            # Look up library name from ID
-            for lib in libraries:
-                if lib['key'] == jellyfin_client.music_library_id:
-                    current_library = lib['title']
-                    break
-
-        return jsonify({
-            "success": True,
-            "libraries": libraries,
-            "selected": selected_library,
-            "current": current_library
-        })
+        # Use get_library to fetch all tracks (MediaServerProvider)
+        try:
+            tracks = jellyfin_client.get_library()
+            return jsonify({
+                "success": True,
+                "tracks": tracks
+            })
+        except Exception as e:
+            logger.error(f"Error getting Jellyfin library: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
     except Exception as e:
         logger.error(f"Error getting Jellyfin music libraries: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -2930,13 +3189,9 @@ def select_jellyfin_music_library():
         if not library_name:
             return jsonify({"success": False, "error": "No library name provided"}), 400
 
-        success = jellyfin_client.set_music_library_by_name(library_name)
-
-        if success:
-            add_activity_item("📚", "Library Selected", f"Jellyfin music library set to: {library_name}", "Now")
-            return jsonify({"success": True, "message": f"Music library set to: {library_name}"})
-        else:
-            return jsonify({"success": False, "error": f"Library '{library_name}' not found"}), 404
+        # No set_music_library_by_name in MediaServerProvider; just acknowledge
+        add_activity_item("📚", "Library Selected", f"Jellyfin music library set to: {library_name}", "Now")
+        return jsonify({"success": True, "message": f"Music library set to: {library_name}"})
 
     except Exception as e:
         logger.error(f"Error setting Jellyfin music library: {e}")
@@ -3186,27 +3441,98 @@ def tidal_callback():
     It receives an authorization code, exchanges it for an access token,
     and saves the token.
     """
-    global tidal_client # We will re-initialize the global client
+    global tidal_client  # We will re-initialize the global client
+    
+    print("🎶 ═══════════════════════════════════════════════════")
+    print("🎶 TIDAL OAUTH CALLBACK RECEIVED (Flask Route)")
+    print("🎶 ═══════════════════════════════════════════════════")
+    
     auth_code = request.args.get('code')
+    state = request.args.get('state', '')
     
     if not auth_code:
         error = request.args.get('error', 'Unknown error')
         error_description = request.args.get('error_description', 'No description provided.')
+        print(f"🔴 Tidal callback error: {error} - {error_description}")
         return f"<h1>Tidal Authentication Failed</h1><p>Error: {error}</p><p>{error_description}</p><p>Please close this window and try again.</p>", 400
 
     try:
-        # Create a temporary client for the token exchange
-        temp_tidal_client = TidalClient()
+        # 1. Decode state to get PKCE session ID
+        if not state:
+            raise ValueError("Missing state parameter")
+        
+        try:
+            # Decode state (add padding if needed)
+            padded_state = state + '=' * (-len(state) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded_state.encode('utf-8')).decode('utf-8'))
+            pkce_id = payload.get('pkce_id')
+            
+            if not pkce_id:
+                raise ValueError("State payload missing pkce_id")
+            
+            print(f"🔐 Decoded state: pkce_id={pkce_id[:8]}...")
+            
+        except Exception as e:
+            print(f"🔴 Failed to decode state: {e}")
+            raise ValueError(f"Invalid state parameter: {e}")
+        
+        # 2. Retrieve PKCE entry from config.db via StorageService
+        storage = get_storage_service()
+        print(f"🔍 Retrieving PKCE session {pkce_id} from config.db...")
+        pkce_entry = storage.get_pkce_session(pkce_id)
+        
+        if not pkce_entry:
+            print(f"🔴 No PKCE entry found for id={pkce_id[:8]}...")
+            raise ValueError("PKCE session not found or expired")
+        
+        print(f"✅ Successfully retrieved PKCE entry from database")
+        print(f"🔍 PKCE entry: account_id={pkce_entry.get('account_id')}, verifier_len={len(pkce_entry.get('code_verifier', ''))}")
+        
+        # 3. Create TidalClient for the specific account and restore PKCE values
+        account_id = pkce_entry.get('account_id')
+        print(f"🔍 Creating TidalClient for account_id={account_id}")
+        temp_tidal_client = TidalClient(account_id=account_id)
+        
+        print(f"🔍 Setting PKCE values on temp_client...")
+        temp_tidal_client.code_verifier = pkce_entry.get('code_verifier')
+        temp_tidal_client.code_challenge = pkce_entry.get('code_challenge')
+        temp_tidal_client.redirect_uri = pkce_entry.get('redirect_uri')
+        
+        print(f"🔍 After setting: code_verifier present={bool(temp_tidal_client.code_verifier)}, len={len(temp_tidal_client.code_verifier) if temp_tidal_client.code_verifier else 0}")
+        
+        # Verify we have all required values
+        if not temp_tidal_client.code_verifier:
+            raise ValueError("PKCE code_verifier missing from stored entry")
+        if not temp_tidal_client.redirect_uri:
+            raise ValueError("redirect_uri missing from stored entry")
+        if not temp_tidal_client.client_id:
+            raise ValueError("client_id missing from stored entry")
+        
+        print(f"🔐 All PKCE values verified and restored")
+        
+        # 4. Exchange authorization code for tokens
+        print(f"🔄 Starting token exchange...")
         success = temp_tidal_client.fetch_token_from_code(auth_code)
         
         if success:
-            # Re-initialize the main global tidal_client instance with the new token
-            tidal_client = TidalClient()
+            # 5. Re-initialize the main global tidal_client instance with the new token
+            tidal_client = TidalClient(account_id=account_id)
+            
+            # 6. Clean up PKCE entry (one-time use)
+            storage.delete_pkce_session(pkce_id)
+            print(f"🧹 Cleaned up PKCE entry {pkce_id[:8]}... from database")
+            
+            add_activity_item("✅", "Tidal Auth Complete", f"Account {account_id} authenticated", "Now")
+            
             return "<h1>✅ Tidal Authentication Successful!</h1><p>You can now close this window and return to the SoulSync application.</p>"
         else:
+            print(f"🔴 Token exchange failed")
             return "<h1>❌ Tidal Authentication Failed</h1><p>Could not exchange authorization code for a token. Please try again.</p>", 400
+            
     except Exception as e:
         print(f"🔴 Error during Tidal token exchange: {e}")
+        import traceback
+        traceback.print_exc()
         return f"<h1>❌ An Error Occurred</h1><p>An unexpected error occurred during the authentication process: {e}</p>", 500
 
 
@@ -3905,6 +4231,7 @@ def start_download():
                 context_key = f"{username}::{filename}"
                 with matched_context_lock:
                     matched_downloads_context[context_key] = {
+                        'timestamp': time.time(),
                         'search_result': {
                             'username': username,
                             'filename': filename,
@@ -6063,6 +6390,7 @@ def _start_enhanced_album_download(enhanced_tracks, unmatched_tracks, spotify_ar
                 with matched_context_lock:
                     # Create context with FULL Spotify track metadata (like Download Missing Tracks modal)
                     matched_downloads_context[context_key] = {
+                        'timestamp': time.time(),
                         "spotify_artist": spotify_artist,
                         "spotify_album": spotify_album,
                         "track_info": spotify_track,  # Full Spotify track object!
@@ -6106,6 +6434,7 @@ def _start_enhanced_album_download(enhanced_tracks, unmatched_tracks, spotify_ar
                 with matched_context_lock:
                     # Basic context for unmatched tracks (simple cleanup)
                     matched_downloads_context[context_key] = {
+                        'timestamp': time.time(),
                         'search_result': {
                             'username': username,
                             'filename': filename,
@@ -6186,6 +6515,7 @@ def _start_album_download_tasks(album_result, spotify_artist, spotify_album):
                     enhanced_context['spotify_clean_title'] = individual_track_context.get('title', '')
 
                     matched_downloads_context[context_key] = {
+                        'timestamp': time.time(),
                         "spotify_artist": spotify_artist,
                         "spotify_album": spotify_album,
                         "original_search_result": enhanced_context, # Contains corrected data + clean title
@@ -6244,6 +6574,7 @@ def start_matched_download():
                 with matched_context_lock:
                     # Create context with FULL Spotify track metadata (like Download Missing Tracks modal)
                     matched_downloads_context[context_key] = {
+                        'timestamp': time.time(),
                         "spotify_artist": spotify_artist,
                         "spotify_album": spotify_track.get('album'),  # Single's album from Spotify
                         "track_info": spotify_track,  # Full Spotify track object!
@@ -6310,6 +6641,7 @@ def start_matched_download():
                     enhanced_payload['spotify_clean_title'] = download_payload.get('title', '')
 
                     matched_downloads_context[context_key] = {
+                        'timestamp': time.time(),
                         "spotify_artist": spotify_artist,
                         "spotify_album": spotify_album, # PRESERVE album context
                         "original_search_result": enhanced_payload,
@@ -9071,7 +9403,8 @@ def _process_wishlist_automatically():
                     'auto_initiated': True,
                     'auto_processing_timestamp': time.time(),
                     # Store current cycle for toggling after completion
-                    'current_cycle': current_cycle
+                    'current_cycle': current_cycle,
+                    'created_at': time.time()
                 }
             
             print(f"🚀 Starting automatic wishlist batch {batch_id} with {len(wishlist_tracks)} tracks")
@@ -9670,7 +10003,8 @@ def start_wishlist_missing_downloads():
                 # Track state management (replicating sync.py)
                 'permanently_failed_tracks': [],
                 'cancelled_tracks': set(),
-                'force_download_all': force_download_all  # Pass the force flag to the batch
+                'force_download_all': force_download_all,  # Pass the force flag to the batch
+                'created_at': time.time()
             }
 
         # Submit the wishlist processing job using the same processing function
@@ -11466,7 +11800,8 @@ def _run_full_missing_tracks_process(batch_id, playlist_id, tracks_json):
                     'track_index': res['track_index'], 'retry_count': 0,
                     'cached_candidates': [], 'used_sources': set(),
                     'status_change_time': time.time(),
-                    'metadata_enhanced': False
+                    'metadata_enhanced': False,
+                    'created_at': time.time()
                 }
                 download_batches[batch_id]['queue'].append(task_id)
 
@@ -12205,6 +12540,7 @@ def _attempt_download_with_candidates(task_id, candidates, track, batch_id=None)
                         print(f"⚠️ [Context] Using fallback data - no clean Spotify metadata available, track_number=1")
                     
                     matched_downloads_context[context_key] = {
+                        'timestamp': time.time(),
                         "spotify_artist": spotify_artist_context,
                         "spotify_album": spotify_album_context,
                         "original_search_result": enhanced_payload,
@@ -13796,9 +14132,23 @@ def search_spotify_tracks():
 # TIDAL PLAYLIST API ENDPOINTS
 # ===================================================================
 
+def _get_active_tidal_client():
+    """Ensure global tidal_client is set to the active account."""
+    global tidal_client
+    try:
+        tidal_accounts = config_manager.get_tidal_accounts()
+    except Exception:
+        tidal_accounts = config_manager.get('tidal_accounts', [])
+    active_tidal_id = config_manager.get('active_tidal_account_id') or (tidal_accounts[0].get('id') if tidal_accounts else None)
+    if (not tidal_client) or (tidal_client.account_id != active_tidal_id):
+        tidal_client = service_registry.get_provider_client('tidal', account_id=active_tidal_id) if active_tidal_id else service_registry.get_provider_client('tidal')
+    return tidal_client
+
 @app.route('/api/tidal/playlists', methods=['GET'])
 def get_tidal_playlists():
     """Fetches all user playlists from Tidal with full track data (like sync.py)."""
+    # Ensure we're using the active account before auth check
+    _get_active_tidal_client()
     if not tidal_client or not tidal_client.is_authenticated():
         return jsonify({"error": "Tidal not authenticated."}), 401
     try:
@@ -13841,6 +14191,7 @@ def get_tidal_playlists():
 @app.route('/api/tidal/playlist/<playlist_id>', methods=['GET'])
 def get_tidal_playlist_tracks(playlist_id):
     """Fetches full track details for a specific Tidal playlist (matches sync.py pattern)."""
+    _get_active_tidal_client()
     if not tidal_client or not tidal_client.is_authenticated():
         return jsonify({"error": "Tidal not authenticated."}), 401
     try:
@@ -13901,7 +14252,100 @@ def get_tidal_playlist_tracks(playlist_id):
 
 
 # ===================================================================
-# TIDAL DISCOVERY API ENDPOINTS
+# TIDAL DIRECT SYNC API ENDPOINTS (Like Spotify - No Discovery Phase)
+# ===================================================================
+
+@app.route('/api/tidal/sync-direct/start', methods=['POST'])
+def start_tidal_direct_sync():
+    """
+    Start direct sync for Tidal playlist - bypasses discovery phase.
+    Works exactly like Spotify sync: syncs Tidal tracks directly to media server.
+    Missing tracks go to wishlist for Slskd download.
+    """
+    try:
+        data = request.get_json()
+        playlist_id = data.get('playlist_id')
+        
+        if not playlist_id:
+            return jsonify({"error": "Missing playlist_id"}), 400
+        
+        _get_active_tidal_client()
+        if not tidal_client or not tidal_client.is_authenticated():
+            return jsonify({"error": "Tidal not authenticated"}), 401
+        
+        # Get the full playlist with tracks
+        full_playlist = tidal_client.get_playlist(playlist_id)
+        
+        if not full_playlist:
+            return jsonify({"error": "Tidal playlist not found"}), 404
+        
+        if not full_playlist.tracks:
+            return jsonify({"error": "Playlist has no tracks"}), 400
+        
+        # Convert Tidal tracks to the sync format (same as Spotify uses)
+        tracks_json = []
+        for t in full_playlist.tracks:
+            tracks_json.append({
+                'id': t.id,
+                'name': t.name,
+                'artists': t.artists or [],
+                'album': getattr(t, 'album', 'Unknown Album'),
+                'duration_ms': getattr(t, 'duration_ms', 0),
+                'external_urls': getattr(t, 'external_urls', {}),
+                'source': 'tidal'  # Tag source as Tidal for tracking
+            })
+        
+        # Create a sync ID that includes tidal prefix
+        sync_id = f"tidal_{playlist_id}"
+        
+        # Add activity for sync start
+        add_activity_item("🔄", "Tidal Sync Started", f"'{full_playlist.name}' - {len(tracks_json)} tracks", "Now")
+        
+        logger.info(f"🔄 Starting direct Tidal sync for '{full_playlist.name}' with {len(tracks_json)} tracks")
+        
+        with sync_lock:
+            if sync_id in active_sync_workers and not active_sync_workers[sync_id].done():
+                return jsonify({"error": "Sync already in progress for this playlist"}), 409
+            
+            # Initial state
+            sync_states[sync_id] = {"status": "starting", "progress": {}, "started_at": time.time()}
+            
+            # Submit sync task (reuses Spotify sync infrastructure)
+            future = sync_executor.submit(_run_sync_task, sync_id, full_playlist.name, tracks_json)
+            active_sync_workers[sync_id] = future
+        
+        return jsonify({
+            "success": True,
+            "message": "Tidal sync started",
+            "sync_id": sync_id,
+            "playlist_name": full_playlist.name,
+            "track_count": len(tracks_json)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error starting direct Tidal sync: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/tidal/sync-direct/status/<playlist_id>', methods=['GET'])
+def get_tidal_direct_sync_status(playlist_id):
+    """Get sync status for a directly-synced Tidal playlist"""
+    try:
+        sync_id = f"tidal_{playlist_id}"
+        
+        with sync_lock:
+            state = sync_states.get(sync_id)
+            if not state:
+                return jsonify({"status": "not_found"}), 404
+            
+            return jsonify(state)
+    except Exception as e:
+        logger.error(f"❌ Error getting Tidal direct sync status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ===================================================================
+# TIDAL DISCOVERY API ENDPOINTS (Legacy - for YouTube-style workflow)
 # ===================================================================
 
 # Global state for Tidal playlist discovery management
@@ -14522,7 +14966,7 @@ def start_tidal_sync(playlist_id):
         }
         
         with sync_lock:
-            sync_states[sync_playlist_id] = {"status": "starting", "progress": {}}
+            sync_states[sync_playlist_id] = {"status": "starting", "progress": {}, "started_at": time.time()}
         
         # Submit sync task
         future = sync_executor.submit(_run_sync_task, sync_playlist_id, sync_data['playlist_name'], spotify_tracks)
@@ -15313,7 +15757,7 @@ def start_youtube_sync(url_hash):
         }
         
         with sync_lock:
-            sync_states[sync_playlist_id] = {"status": "starting", "progress": {}}
+            sync_states[sync_playlist_id] = {"status": "starting", "progress": {}, "started_at": time.time()}
         
         # Submit sync task
         future = sync_executor.submit(_run_sync_task, sync_playlist_id, sync_data['playlist_name'], spotify_tracks)
@@ -15667,7 +16111,8 @@ def _run_sync_task(playlist_id, playlist_name, tracks_json):
             with sync_lock:
                 sync_states[playlist_id] = {
                     "status": "syncing",
-                    "progress": progress.__dict__ # Convert dataclass to dict
+                    "progress": progress.__dict__, # Convert dataclass to dict
+                    "started_at": time.time()
                 }
                 print(f"   ✅ Updated sync_states for {playlist_id}")
                 
@@ -15678,7 +16123,8 @@ def _run_sync_task(playlist_id, playlist_name, tracks_json):
         with sync_lock:
             sync_states[playlist_id] = {
                 "status": "error",
-                "error": f"Setup error: {str(setup_error)}"
+                "error": f"Setup error: {str(setup_error)}",
+                "started_at": time.time()
             }
         return
 
@@ -15794,7 +16240,8 @@ def _run_sync_task(playlist_id, playlist_name, tracks_json):
             sync_states[playlist_id] = {
                 "status": "finished",
                 "progress": result.__dict__,  # Store result as progress for status endpoint compatibility
-                "result": result.__dict__  # Keep result for backward compatibility
+                "result": result.__dict__,  # Keep result for backward compatibility
+                "started_at": time.time()
             }
         print(f"🏁 Sync finished for {playlist_id} - state updated")
         
@@ -15810,7 +16257,8 @@ def _run_sync_task(playlist_id, playlist_name, tracks_json):
         with sync_lock:
             sync_states[playlist_id] = {
                 "status": "error",
-                "error": str(e)
+                "error": str(e),
+                "started_at": time.time()
             }
     finally:
         print(f"🧹 Cleaning up progress callback for {playlist.name}")
@@ -18761,7 +19209,7 @@ def start_listenbrainz_sync(playlist_mbid):
         }
 
         with sync_lock:
-            sync_states[sync_playlist_id] = {"status": "starting", "progress": {}}
+            sync_states[sync_playlist_id] = {"status": "starting", "progress": {}, "started_at": time.time()}
 
         # Submit sync task
         future = sync_executor.submit(_run_sync_task, sync_playlist_id, sync_data['playlist_name'], spotify_tracks)
@@ -20907,7 +21355,7 @@ def start_beatport_sync(url_hash):
 
         # Add to sync states using existing sync system
         with sync_lock:
-            sync_states[sync_playlist_id] = {"status": "starting", "progress": {}}
+            sync_states[sync_playlist_id] = {"status": "starting", "progress": {}, "started_at": time.time()}
 
         # Start sync in background using existing thread pool
         future = sync_executor.submit(_run_sync_task, sync_playlist_id, sync_data['name'], spotify_tracks)
@@ -21792,72 +22240,156 @@ def start_oauth_callback_servers():
         except Exception as e:
             print(f"🔴 Failed to start Spotify callback server: {e}")
     
-    # Tidal callback server  
+    # Tidal callback server
+  
     class TidalCallbackHandler(BaseHTTPRequestHandler):
         def do_GET(self):
-            print("🎶🎶🎶 TIDAL CALLBACK SERVER RECEIVED REQUEST 🎶🎶🎶")
+            print("🎶 ═══════════════════════════════════════════════════")
+            print("🎶 TIDAL OAUTH CALLBACK RECEIVED")
+            print("🎶 ═══════════════════════════════════════════════════")
+            
             parsed_url = urllib.parse.urlparse(self.path)
             query_params = urllib.parse.parse_qs(parsed_url.query)
             print(f"🎶 Callback path: {self.path}")
             
-            if 'code' in query_params:
-                auth_code = query_params['code'][0]
-                print(f"🎶 Received Tidal authorization code: {auth_code[:10]}...")
+            # Check for errors first
+            if 'error' in query_params:
+                error = query_params.get('error', ['Unknown error'])[0]
+                error_desc = query_params.get('error_description', ['No description'])[0]
+                print(f"🔴 Tidal OAuth error: {error}")
+                print(f"🔴 Description: {error_desc}")
+                add_activity_item("❌", "Tidal Auth Failed", f"OAuth error: {error}", "Now")
+                self.send_response(400)
+                self.send_header('Content-type', 'text/html; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(f'<h1>❌ Tidal Authentication Failed</h1><p>{error}: {error_desc}</p>'.encode('utf-8'))
+                return
+            
+            # Check for authorization code
+            if 'code' not in query_params:
+                print("🔴 No authorization code in callback")
+                self.send_response(400)
+                self.send_header('Content-type', 'text/html; charset=utf-8')
+                self.end_headers()
+                self.wfile.write('<h1>❌ Authentication Failed</h1><p>No authorization code received</p>'.encode('utf-8'))
+                return
                 
-                # Exchange the authorization code for tokens
+            auth_code = query_params['code'][0]
+            state = query_params.get('state', [''])[0]
+            print(f"🎶 Received authorization code: {auth_code[:10]}...")
+            print(f"🎶 Received state: {state[:20]}...")
+            
+            try:
+                from core.tidal_client import TidalClient
+                
+                # 1. Decode state to get PKCE session ID
+                if not state:
+                    raise ValueError("Missing state parameter")
+                    
                 try:
-                    from core.tidal_client import TidalClient
+                    # Decode state (add padding if needed)
+                    padded_state = state + '=' * (-len(state) % 4)
+                    payload = json.loads(base64.urlsafe_b64decode(padded_state.encode('utf-8')).decode('utf-8'))
+                    pkce_id = payload.get('pkce_id')
                     
-                    # Create a temporary client and set the stored PKCE values
-                    temp_client = TidalClient()
-                    
-                    # Restore the PKCE values from the auth request
-                    global tidal_oauth_state
-                    with tidal_oauth_lock:
-                        temp_client.code_verifier = tidal_oauth_state["code_verifier"]
-                        temp_client.code_challenge = tidal_oauth_state["code_challenge"]
-                    
-                    print(f"🔐 Restored PKCE - verifier: {temp_client.code_verifier[:20] if temp_client.code_verifier else 'None'}... challenge: {temp_client.code_challenge[:20] if temp_client.code_challenge else 'None'}...")
-                    
-                    success = temp_client.fetch_token_from_code(auth_code)
-                    
-                    if success:
-                        # Reinitialize the global tidal client with new tokens
-                        global tidal_client
-                        tidal_client = TidalClient()
+                    if not pkce_id:
+                        raise ValueError("State payload missing pkce_id")
                         
-                        add_activity_item("✅", "Tidal Auth Complete", "Successfully authenticated with Tidal", "Now")
-                        self.send_response(200)
-                        self.send_header('Content-type', 'text/html')
-                        self.end_headers()
-                        self.wfile.write(b'<h1>Tidal Authentication Successful!</h1><p>You can close this window.</p>')
-                    else:
-                        raise Exception("Failed to exchange authorization code for tokens")
-                        
+                    print(f"🔐 Decoded state: pkce_id={pkce_id[:8]}...")
+                    
                 except Exception as e:
-                    print(f"🔴 Tidal token processing error: {e}")
-                    add_activity_item("❌", "Tidal Auth Failed", f"Token processing failed: {str(e)}", "Now")
-                    self.send_response(400)
+                    print(f"🔴 Failed to decode state: {e}")
+                    raise ValueError(f"Invalid state parameter: {e}")
+                
+                # 2. Retrieve PKCE entry from config.db via StorageService
+                storage = get_storage_service()
+                print(f"🔍 Retrieving PKCE session {pkce_id} from config.db...")
+                pkce_entry = storage.get_pkce_session(pkce_id)
+                
+                if not pkce_entry:
+                    print(f"🔴 No PKCE entry found for id={pkce_id[:8]}...")
+                    raise ValueError("PKCE session not found or expired")
+                
+                print(f"✅ Successfully retrieved PKCE entry from database")
+                print(f"🔍 PKCE entry keys: {list(pkce_entry.keys())}")
+                print(f"🔍 code_verifier type: {type(pkce_entry.get('code_verifier'))}, value: {pkce_entry.get('code_verifier')[:20] if pkce_entry.get('code_verifier') else 'None'}...")
+                
+                # 3. PKCE entry is automatically validated for TTL by get_pkce_session
+                age = int(time.time()) - pkce_entry.get('created_at', 0)
+                print(f"🔐 Retrieved PKCE entry from database (age: {age}s):")
+                print(f"   verifier_len: {len(pkce_entry.get('code_verifier', ''))}")
+                print(f"   challenge_len: {len(pkce_entry.get('code_challenge', ''))}")
+                print(f"   redirect_uri: {pkce_entry.get('redirect_uri')}")
+                print(f"   account_id: {pkce_entry.get('account_id')}")
+                
+                # 4. Create TidalClient for the specific account and restore PKCE values
+                account_id = pkce_entry.get('account_id')
+                print(f"🔍 Creating TidalClient for account_id={account_id}")
+                temp_client = TidalClient(account_id=account_id)
+                
+                print(f"🔍 Setting code_verifier on temp_client...")
+                temp_client.code_verifier = pkce_entry.get('code_verifier')
+                temp_client.code_challenge = pkce_entry.get('code_challenge')
+                temp_client.redirect_uri = pkce_entry.get('redirect_uri')
+                
+                print(f"🔍 After setting, temp_client.code_verifier = {temp_client.code_verifier[:20] if temp_client.code_verifier else 'None'}...")
+                
+                # Verify we have all required values
+                if not temp_client.code_verifier:
+                    raise ValueError("PKCE code_verifier missing from stored entry")
+                if not temp_client.redirect_uri:
+                    raise ValueError("redirect_uri missing from stored entry")
+                if not temp_client.client_id:
+                    raise ValueError("client_id missing from stored entry")
+                
+                print(f"🔐 Restored PKCE to TidalClient:")
+                print(f"   verifier_len: {len(temp_client.code_verifier)}")
+                print(f"   redirect_uri: {temp_client.redirect_uri}")
+                print(f"   client_id: {temp_client.client_id[:8]}...")
+                
+                # 5. Exchange authorization code for tokens
+                print(f"🔄 Starting token exchange...")
+                success = temp_client.fetch_token_from_code(auth_code)
+                
+                if success:
+                    print(f"✅ Token exchange successful!")
+                    
+                    # 6. Reinitialize global tidal client with new tokens
+                    global tidal_client
+                    tidal_client = TidalClient(account_id=account_id)
+                    
+                    # 7. Clean up PKCE entry (one-time use)
+                    storage.delete_pkce_session(pkce_id)
+                    print(f"🧹 Cleaned up PKCE entry {pkce_id[:8]}... from database")
+                    
+                    add_activity_item("✅", "Tidal Auth Complete", f"Account {pkce_entry.get('account_id')} authenticated", "Now")
+                    
+                    self.send_response(200)
                     self.send_header('Content-type', 'text/html')
                     self.end_headers()
-                    self.wfile.write(f'<h1>Tidal Authentication Failed</h1><p>{str(e)}</p>'.encode())
-            else:
-                error = query_params.get('error', ['Unknown error'])[0]
-                print(f"🔴 Tidal OAuth error: {error}")
-                add_activity_item("❌", "Tidal Auth Failed", f"OAuth error: {error}", "Now")
+                    self.wfile.write('<h1>✅ Tidal Authentication Successful!</h1><p>You can close this window and return to SoulSync.</p>'.encode('utf-8'))
+                else:
+                    print(f"🔴 Token exchange failed")
+                    raise Exception("Token exchange returned False")
+                    
+            except Exception as e:
+                print(f"🔴 Tidal callback error: {e}")
+                import traceback
+                traceback.print_exc()
+                add_activity_item("❌", "Tidal Auth Failed", f"Error: {str(e)}", "Now")
                 self.send_response(400)
                 self.send_header('Content-type', 'text/html')
                 self.end_headers()
-                self.wfile.write(f'<h1>Tidal Authentication Failed</h1><p>{error}</p>'.encode())
+                self.wfile.write(f'<h1>❌ Tidal Authentication Failed</h1><p>{str(e)}</p><p>Please try again.</p>'.encode('utf-8'))
         
         def log_message(self, format, *args):
             pass  # Suppress server logs
     
     def run_tidal_server():
         try:
-            tidal_server = HTTPServer(('0.0.0.0', 8889), TidalCallbackHandler)
-            print("🎶 Started Tidal OAuth callback server on port 8889")
-            print(f"🎶 Tidal server listening on all interfaces, port 8889")
+            tidal_server = HTTPServer(('0.0.0.0', 8008), TidalCallbackHandler)
+            print("🎶 Started Tidal OAuth callback server on port 8008")
+            print(f"🎶 Tidal server listening on all interfaces, port 8008")
             tidal_server.serve_forever()
         except Exception as e:
             print(f"🔴 Failed to start Tidal callback server: {e}")

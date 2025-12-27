@@ -32,7 +32,48 @@ SECRETS = [
     "listenbrainz.token",
 ]
 
+
 class ConfigManager:
+    def set_service_credentials(self, service_name: str, credentials: dict, sensitive_keys=None, register_if_missing=True) -> bool:
+        """
+        Centralized helper to store service credentials/configs in the database.
+        - service_name: e.g. 'spotify', 'tidal'
+        - credentials: dict of key/values to store (e.g. client_id, client_secret, redirect_uri)
+        - sensitive_keys: list of keys to mark as sensitive (default: ['client_secret', 'access_token', 'refresh_token'])
+        - register_if_missing: auto-register service if not present
+        Returns True if all writes succeed, False otherwise.
+        """
+        from database.music_database import get_database
+        db = get_database()
+        sensitive_keys = sensitive_keys or ['client_secret', 'access_token', 'refresh_token']
+        try:
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT id FROM services WHERE name = ?", (service_name,))
+                row = c.fetchone()
+                service_id = row[0] if row else None
+                if not service_id and register_if_missing:
+                    service_id = db.register_service(
+                        name=service_name,
+                        display_name=service_name.capitalize(),
+                        service_type='streaming',
+                        description=f'{service_name.capitalize()} music streaming service'
+                    )
+                if not service_id:
+                    print(f"[ERROR] Could not find or register service: {service_name}")
+                    return False
+                all_ok = True
+                for k, v in credentials.items():
+                    is_sensitive = k in sensitive_keys
+                    ok = db.set_service_config(service_id, k, v, is_sensitive=is_sensitive)
+                    if not ok:
+                        print(f"[ERROR] Failed to set {k} for {service_name}")
+                        all_ok = False
+                return all_ok
+        except Exception as e:
+            print(f"[ERROR] set_service_credentials failed: {e}")
+            return False
+
     def __init__(self, config_path: str = "config/config.json"):
         config_dir_env = os.environ.get('SOULSYNC_CONFIG_DIR')
         if config_dir_env:
@@ -497,19 +538,17 @@ class ConfigManager:
         return None
 
     def get_spotify_active_credentials(self) -> Dict[str, Any]:
-        """Return global app credentials + active user's tokens."""
-        # Always use global app credentials
+        """
+        Return the credentials for the active Spotify account, falling back to global only for redirect_uri.
+        In practice, client_id and client_secret are at the account level, and global tokens are not used.
+        """
         spotify_config = self.get_spotify_config()
-        client_id = spotify_config.get('client_id', '')
-        client_secret = spotify_config.get('client_secret', '')
         redirect_uri = spotify_config.get('redirect_uri', "http://127.0.0.1:8008/api/spotify/callback")
-        
-        # Get active user's tokens
         active = self.get_active_spotify_account()
         if active:
             return {
-                'client_id': client_id,
-                'client_secret': client_secret,
+                'client_id': active.get('client_id', ''),
+                'client_secret': active.get('client_secret', ''),
                 'redirect_uri': redirect_uri,
                 'refresh_token': active.get('refresh_token'),
                 'access_token': active.get('access_token'),
@@ -517,10 +556,10 @@ class ConfigManager:
                 'id': active.get('id'),
                 'name': active.get('name')
             }
-        # No active account
+        # No active account: return empty credentials except for redirect_uri
         return {
-            'client_id': client_id,
-            'client_secret': client_secret,
+            'client_id': '',
+            'client_secret': '',
             'redirect_uri': redirect_uri,
             'refresh_token': None,
             'access_token': None,
@@ -654,7 +693,8 @@ class ConfigManager:
         validation['plex'] = bool(self.get('plex.base_url')) and bool(self.get('plex.token'))
         validation['jellyfin'] = bool(self.get('jellyfin.base_url')) and bool(self.get('jellyfin.api_key'))
         validation['navidrome'] = bool(self.get('navidrome.base_url')) and bool(self.get('navidrome.username')) and bool(self.get('navidrome.password'))
-        validation['active_media_server'] = active_server
+        # Set to True if the active media server is configured, False otherwise
+        validation['active_media_server'] = bool(active_server)
 
         return validation
 

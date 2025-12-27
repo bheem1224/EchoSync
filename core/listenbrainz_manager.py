@@ -10,7 +10,6 @@ from datetime import datetime
 from pathlib import Path
 from utils.logging_config import get_logger
 from core.listenbrainz_client import ListenBrainzClient
-import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = get_logger("listenbrainz_manager")
@@ -246,7 +245,10 @@ class ListenBrainzManager:
 
             try:
                 url = f"https://coverartarchive.org/release/{release_mbid}"
-                response = requests.get(url, timeout=3)
+                # Use HttpClient for cover art fetching
+                from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
+                http = HttpClient('coverart', retry=RetryConfig(max_retries=2), rate=RateLimitConfig(requests_per_second=5.0))
+                response = http.get(url, timeout=3)
 
                 if response.status_code == 200:
                     data = response.json()

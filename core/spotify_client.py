@@ -1,3 +1,4 @@
+
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth, SpotifyClientCredentials
 try:
@@ -6,54 +7,13 @@ except Exception:
     CacheHandler = object  # Fallback if import path differs
 from typing import Dict, List, Optional, Any
 import time
-import threading
-from functools import wraps
 from dataclasses import dataclass
 from utils.logging_config import get_logger
 from config.settings import config_manager
+from .provider_base import ProviderBase
+from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
 
 logger = get_logger("spotify_client")
-
-# Global rate limiting variables
-_last_api_call_time = 0
-_api_call_lock = threading.Lock()
-MIN_API_INTERVAL = 0.2  # 200ms between API calls (more conservative to avoid bans)
-
-# Request queuing for burst handling
-import queue
-_request_queue = queue.Queue()
-_queue_processor_running = False
-
-def rate_limited(func):
-    """Decorator to enforce rate limiting on Spotify API calls"""
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        global _last_api_call_time
-        
-        with _api_call_lock:
-            current_time = time.time()
-            time_since_last_call = current_time - _last_api_call_time
-            
-            if time_since_last_call < MIN_API_INTERVAL:
-                sleep_time = MIN_API_INTERVAL - time_since_last_call
-                time.sleep(sleep_time)
-            
-            _last_api_call_time = time.time()
-            
-        try:
-            result = func(*args, **kwargs)
-            return result
-        except Exception as e:
-            # Implement exponential backoff for API errors
-            if "rate limit" in str(e).lower() or "429" in str(e):
-                logger.warning(f"Rate limit hit, implementing backoff: {e}")
-                # Use longer backoff to avoid getting banned
-                time.sleep(3.0)  # Wait 3 seconds before retrying
-            elif "503" in str(e) or "502" in str(e):
-                logger.warning(f"Spotify service error, backing off: {e}")
-                time.sleep(2.0)  # Wait 2 seconds for service errors
-            raise e
-    return wrapper
 
 @dataclass
 class Track:
@@ -166,28 +126,29 @@ class ConfigCacheHandler(CacheHandler):
 
     def get_cached_token(self):
         try:
-            # Read token fields from active account
-            from config.settings import config_manager
-            active = config_manager.get_active_spotify_account()
-            if not active or (self.account_id and active.get('id') != self.account_id):
-                # If a specific account_id was requested and is not active, try to fetch it
-                accounts = config_manager.get_spotify_accounts()
-                for acc in accounts:
-                    if acc.get('id') == self.account_id:
-                        active = acc
-                        break
-            if not active:
+            if not self.account_id:
                 return None
-            access_token = active.get('access_token')
-            refresh_token = active.get('refresh_token')
-            expires_at = active.get('token_expires_at')
+            
+            # Read token fields from config.db via StorageService
+            from sdk.storage_service import get_storage_service
+            storage = get_storage_service()
+            token_data = storage.get_account_token(self.account_id)
+            
+            if not token_data:
+                return None
+            
+            access_token = token_data.get('access_token')
+            refresh_token = token_data.get('refresh_token')
+            expires_at = token_data.get('expires_at')
+            scope = token_data.get('scope', "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email")
+            
             # If we have an access token and expiry, return it
             if access_token and expires_at:
                 return {
                     'access_token': access_token,
                     'refresh_token': refresh_token,
                     'expires_at': expires_at,
-                    'scope': "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email",
+                    'scope': scope,
                     'token_type': 'Bearer'
                 }
             # If we have only a refresh token, return minimal info to allow refresh
@@ -196,55 +157,140 @@ class ConfigCacheHandler(CacheHandler):
                     'access_token': None,
                     'refresh_token': refresh_token,
                     'expires_at': 0,
-                    'scope': "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email",
+                    'scope': scope,
                     'token_type': 'Bearer'
                 }
             return None
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error loading cached Spotify token: {e}")
             return None
 
     def save_token_to_cache(self, token_info):
         try:
-            from config.settings import config_manager
-            active = config_manager.get_active_spotify_account()
-            target_id = self.account_id or (active.get('id') if active else None)
-            if target_id is None:
-                # No account to save to
+            if not self.account_id:
+                logger.warning("No account_id specified; cannot save Spotify tokens")
                 return
-            # Persist token fields
-            updates = {
-                'access_token': token_info.get('access_token'),
-                'refresh_token': token_info.get('refresh_token') or (active.get('refresh_token') if active else None),
-                'token_expires_at': token_info.get('expires_at')
-            }
-            config_manager.update_spotify_account(target_id, updates)
-        except Exception:
-            pass
+            
+            # Save token fields to config.db via StorageService
+            from sdk.storage_service import get_storage_service
+            storage = get_storage_service()
+            
+            access_token = token_info.get('access_token')
+            refresh_token = token_info.get('refresh_token')
+            expires_at = token_info.get('expires_at')
+            scope = token_info.get('scope', "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email")
+            
+            if not access_token:
+                logger.warning(f"No access token to save for Spotify account {self.account_id}")
+                return
+            
+            # If refresh_token is not in token_info, try to preserve existing one
+            if not refresh_token:
+                existing_token = storage.get_account_token(self.account_id)
+                if existing_token:
+                    refresh_token = existing_token.get('refresh_token')
+            
+            success = storage.save_account_token(
+                account_id=self.account_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                token_type='Bearer',
+                expires_at=expires_at,
+                scope=scope
+            )
+            
+            if success:
+                logger.info(f"Saved Spotify tokens for account {self.account_id} to encrypted database")
+                # Mark account as authenticated
+                storage.mark_account_authenticated(self.account_id)
+            else:
+                logger.error(f"Failed to save Spotify tokens for account {self.account_id}")
+        except Exception as e:
+            logger.error(f"Error saving Spotify token to cache: {e}")
 
-class SpotifyClient:
+class SpotifyClient(ProviderBase):
+    name = "spotify"
+
+    def authenticate(self, **kwargs) -> bool:
+        """Attempt to verify Spotify authentication status."""
+        return self.is_authenticated()
+
+    def search(self, query: str, limit: int = 10) -> list:
+        # Stub implementation
+        return []
+
+    def get_user_playlists(self, user_id: Optional[str] = None) -> list:
+        # Stub implementation
+        return []
+
+    def get_playlist_tracks(self, playlist_id: str) -> list:
+        # Stub implementation
+        return []
+
+    def sync_playlist(self, playlist_id: str, target_provider: str) -> bool:
+        # Stub implementation
+        return False
+
+    def get_track(self, track_id: str) -> dict:
+        # Stub implementation
+        return None
+
+    def get_album(self, album_id: str) -> dict:
+        # Stub implementation
+        return None
+
+    def get_artist(self, artist_id: str) -> dict:
+        # Stub implementation
+        return None
+
+    def is_configured(self) -> bool:
+        return bool(getattr(self, 'client_id', None) and getattr(self, 'client_secret', None) and getattr(self, 'redirect_uri', None))
+
+    def get_logo_url(self) -> str:
+        return "/static/img/spotify_logo.png"
+    
     def __init__(self, account_id: Optional[int] = None):
         self.sp: Optional[spotipy.Spotify] = None
         self.user_id: Optional[str] = None
+        from .provider_registry import ProviderRegistry
         self.account_id: Optional[int] = account_id
+        # Initialize centralized HTTP client for Spotify (5 requests/second rate limit)
+        self._http = HttpClient(
+            provider='spotify',
+            retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
+            rate=RateLimitConfig(requests_per_second=5.0)
+        )
         self._setup_client()
+        ProviderRegistry.register(SpotifyClient)
     
     def _setup_client(self):
-        # Prefer active multi-account credentials, fallback to single-account
-        creds = config_manager.get_spotify_active_credentials()
-        if not creds.get('client_id') or not creds.get('client_secret'):
-            logger.warning("Spotify credentials not configured")
-            return
-
         try:
+            # Load credentials strictly from config.db via StorageService
+            creds = {'client_id': None, 'client_secret': None, 'redirect_uri': None}
+            from sdk.storage_service import get_storage_service
+            storage = get_storage_service()
+            creds['client_id'] = storage.get_service_config('spotify', 'client_id')
+            creds['client_secret'] = storage.get_service_config('spotify', 'client_secret')
+            creds['redirect_uri'] = storage.get_service_config('spotify', 'redirect_uri')
+            if not creds['client_id'] or not creds['client_secret']:
+                logger.warning("Spotify credentials not configured in config.db")
+                return
             auth_manager = SpotifyOAuth(
                 client_id=creds['client_id'],
                 client_secret=creds['client_secret'],
-                redirect_uri=creds.get('redirect_uri', "http://127.0.0.1:8008/api/spotify/callback"),
+                redirect_uri=creds['redirect_uri'],
                 scope="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email",
                 cache_handler=ConfigCacheHandler(self.account_id)
             )
+            try:
+                cached = auth_manager.get_cached_token()
+                if cached:
+                    logger.debug(f"Loaded cached Spotify token for account {self.account_id}: has_access={bool(cached.get('access_token'))} has_refresh={bool(cached.get('refresh_token'))} expires_at={cached.get('expires_at')}")
+                else:
+                    logger.debug(f"No cached Spotify token found for account {self.account_id}")
+            except Exception as _e:
+                pass
             self.sp = spotipy.Spotify(auth_manager=auth_manager)
-            # Lazy-load user info to avoid blocking UI
             self.user_id = None
             logger.info("Spotify client initialized (multi-account ready; user info will be fetched when needed)")
         except Exception as e:
@@ -277,7 +323,6 @@ class SpotifyClient:
                 return False
         return self.user_id is not None
     
-    @rate_limited
     def get_user_playlists(self) -> List[Playlist]:
         if not self.is_authenticated():
             logger.error("Not authenticated with Spotify")
@@ -309,7 +354,6 @@ class SpotifyClient:
             logger.error(f"Error fetching user playlists: {e}")
             return []
     
-    @rate_limited
     def get_user_playlists_metadata_only(self) -> List[Playlist]:
         """Get playlists without fetching all track details for faster loading"""
         if not self.is_authenticated():
@@ -358,7 +402,6 @@ class SpotifyClient:
             logger.error(f"Error fetching user playlists metadata: {e}")
             return []
 
-    @rate_limited
     def get_saved_tracks_count(self) -> int:
         """Get the total count of user's saved/liked songs without fetching all tracks"""
         if not self.is_authenticated():
@@ -377,7 +420,6 @@ class SpotifyClient:
             logger.error(f"Error fetching saved tracks count: {e}")
             return 0
 
-    @rate_limited
     def get_saved_tracks(self) -> List[Track]:
         """Fetch all user's saved/liked songs from Spotify"""
         if not self.is_authenticated():
@@ -420,7 +462,6 @@ class SpotifyClient:
             logger.error(f"Error fetching saved tracks: {e}")
             return []
 
-    @rate_limited
     def _get_playlist_tracks(self, playlist_id: str) -> List[Track]:
         if not self.is_authenticated():
             return []
@@ -444,7 +485,6 @@ class SpotifyClient:
             logger.error(f"Error fetching playlist tracks: {e}")
             return []
     
-    @rate_limited
     def get_playlist_by_id(self, playlist_id: str) -> Optional[Playlist]:
         if not self.is_authenticated():
             return None
@@ -458,7 +498,6 @@ class SpotifyClient:
             logger.error(f"Error fetching playlist {playlist_id}: {e}")
             return None
     
-    @rate_limited
     def search_tracks(self, query: str, limit: int = 20) -> List[Track]:
         if not self.is_authenticated():
             return []
@@ -477,7 +516,6 @@ class SpotifyClient:
             logger.error(f"Error searching tracks: {e}")
             return []
     
-    @rate_limited
     def search_artists(self, query: str, limit: int = 20) -> List[Artist]:
         """Search for artists using Spotify API"""
         if not self.is_authenticated():
@@ -497,7 +535,6 @@ class SpotifyClient:
             logger.error(f"Error searching artists: {e}")
             return []
     
-    @rate_limited
     def search_albums(self, query: str, limit: int = 20) -> List[Album]:
         """Search for albums using Spotify API"""
         if not self.is_authenticated():
@@ -517,7 +554,6 @@ class SpotifyClient:
             logger.error(f"Error searching albums: {e}")
             return []
     
-    @rate_limited
     def get_track_details(self, track_id: str) -> Optional[Dict[str, Any]]:
         """Get detailed track information including album data and track number"""
         if not self.is_authenticated():
@@ -555,7 +591,6 @@ class SpotifyClient:
             logger.error(f"Error fetching track details: {e}")
             return None
     
-    @rate_limited
     def get_track_features(self, track_id: str) -> Optional[Dict[str, Any]]:
         if not self.is_authenticated():
             return None
@@ -568,7 +603,6 @@ class SpotifyClient:
             logger.error(f"Error fetching track features: {e}")
             return None
     
-    @rate_limited
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
         """Get album information including tracks"""
         if not self.is_authenticated():
@@ -582,7 +616,6 @@ class SpotifyClient:
             logger.error(f"Error fetching album: {e}")
             return None
     
-    @rate_limited
     def get_album_tracks(self, album_id: str) -> Optional[Dict[str, Any]]:
         """Get album tracks with pagination to fetch all tracks"""
         if not self.is_authenticated():
@@ -619,7 +652,6 @@ class SpotifyClient:
             logger.error(f"Error fetching album tracks: {e}")
             return None
     
-    @rate_limited
     def get_artist_albums(self, artist_id: str, album_type: str = 'album,single', limit: int = 50) -> List[Album]:
         """Get albums by artist ID"""
         if not self.is_authenticated():
@@ -644,7 +676,6 @@ class SpotifyClient:
             logger.error(f"Error fetching artist albums: {e}")
             return []
 
-    @rate_limited
     def get_user_info(self) -> Optional[Dict[str, Any]]:
         if not self.is_authenticated():
             return None
@@ -655,7 +686,6 @@ class SpotifyClient:
             logger.error(f"Error fetching user info: {e}")
             return None
 
-    @rate_limited
     def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
         """
         Get full artist details from Spotify API.

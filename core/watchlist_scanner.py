@@ -9,7 +9,6 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 import re
 import time
-import requests
 from bs4 import BeautifulSoup
 from database.music_database import get_database, WatchlistArtist
 from core.spotify_client import SpotifyClient
@@ -705,8 +704,8 @@ class WatchlistScanner:
                 'Accept-Language': 'en-US,en;q=0.5',
             }
 
-            # Fetch MusicMap page
-            response = requests.get(musicmap_url, headers=headers, timeout=10)
+            # Use HttpClient for the request
+            response = self._http_musicmap.get(musicmap_url, headers=headers)
             response.raise_for_status()
 
             # Parse HTML
@@ -781,9 +780,6 @@ class WatchlistScanner:
             logger.info(f"Matched {len(matched_artists)} similar artists to Spotify")
             return matched_artists
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching from MusicMap: {e}")
-            return []
         except Exception as e:
             logger.error(f"Error fetching similar artists from MusicMap: {e}")
             return []

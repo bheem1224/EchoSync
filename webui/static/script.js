@@ -1614,11 +1614,20 @@ async function loadSettingsData() {
             }
         }
         
-        // Populate Tidal settings  
-        document.getElementById('tidal-client-id').value = settings.tidal?.client_id || '';
-        document.getElementById('tidal-client-secret').value = settings.tidal?.client_secret || '';
-        document.getElementById('tidal-redirect-uri').value = settings.tidal?.redirect_uri || 'http://127.0.0.1:8889/tidal/callback';
-        document.getElementById('tidal-callback-display').textContent = settings.tidal?.redirect_uri || 'http://127.0.0.1:8889/tidal/callback';
+        // Populate Tidal settings (global redirect only)
+        document.getElementById('tidal-redirect-uri').value = settings.tidal?.redirect_uri || 'http://127.0.0.1:8008/tidal/callback';
+        document.getElementById('tidal-callback-display').textContent = settings.tidal?.redirect_uri || 'http://127.0.0.1:8008/tidal/callback';
+        
+        // Auto-hide Tidal redirect panel if redirect is configured (similar to Spotify)
+        const tidalConfigured = !!settings.tidal?.redirect_uri;
+        if (tidalConfigured) {
+            const tidalPanel = document.getElementById('tidal-credentials-panel');
+            const tidalToggle = document.getElementById('tidal-credentials-toggle');
+            if (tidalPanel && tidalToggle) {
+                tidalPanel.classList.add('hidden');
+                tidalToggle.textContent = 'Show';
+            }
+        }
         
         // Add event listeners to update display URLs when input changes
         document.getElementById('spotify-redirect-uri').addEventListener('input', function() {
@@ -1626,7 +1635,7 @@ async function loadSettingsData() {
         });
         
         document.getElementById('tidal-redirect-uri').addEventListener('input', function() {
-            document.getElementById('tidal-callback-display').textContent = this.value || 'http://127.0.0.1:8889/tidal/callback';
+            document.getElementById('tidal-callback-display').textContent = this.value || 'http://127.0.0.1:8008/tidal/callback';
         });
         
         // Populate Plex settings
@@ -2017,8 +2026,6 @@ async function saveSettings() {
             redirect_uri: document.getElementById('spotify-redirect-uri').value
         },
         tidal: {
-            client_id: document.getElementById('tidal-client-id').value,
-            client_secret: document.getElementById('tidal-client-secret').value,
             redirect_uri: document.getElementById('tidal-redirect-uri').value
         },
         plex: {
@@ -2711,31 +2718,58 @@ function renderTidalAccounts(data) {
     const frag = document.createDocumentFragment();
     accounts.forEach(acc => {
         const btn = document.createElement('div');
-        btn.className = 'account-tab' + (acc.id === activeId ? ' active' : '');
+        const isActive = acc.id === activeId;
+        btn.className = 'account-tab' + (isActive ? ' active' : '');
+        const userInfo = acc.user_id ? `<div class="account-user-id">Tidal ID: ${acc.user_id}</div>` : '<div class="account-user-id" style="color: #ff6b6b;">Not authorized yet</div>';
         btn.innerHTML = `
             <div class="account-tab-header column-layout">
                 <div class="account-name-block">
-                    <span class="account-name">${acc.name || 'Unnamed'}${acc.id === activeId ? ' (active)' : ''}</span>
+                    <span class="account-name-editable" data-id="${acc.id}">
+                        <span class="account-name">${acc.name || 'Unnamed'}</span>
+                        <button class="edit-name-btn" data-id="${acc.id}" title="Edit name">✏️</button>
+                    </span>
+                    ${userInfo}
                 </div>
                 <div class="account-actions row-actions">
-                    <button class="service-card-button" data-action="activate-tidal" data-id="${acc.id}">✅ Activate</button>
-                    <button class="service-card-button" data-action="delete-tidal" data-id="${acc.id}" style="background-color: #ff5555;">🗑️ Delete</button>
+                    <button class="service-card-button" data-action="authorize" data-id="${acc.id}">🔐 ${acc.user_id ? 'Re-authorize' : 'Authorize'}</button>
+                    <button class="service-card-button" data-action="edit-creds" data-id="${acc.id}">⚙️ Edit Creds</button>
+                    <button class="service-card-button" data-action="activate" data-id="${acc.id}" ${isActive ? 'disabled' : ''}>✅ ${isActive ? 'Active' : 'Activate'}</button>
+                    <button class="service-card-button" data-action="delete" data-id="${acc.id}" style="background-color: #ff5555;">🗑️ Delete</button>
                 </div>
             </div>`;
         frag.appendChild(btn);
     });
     tabs.innerHTML = '';
     tabs.appendChild(frag);
-    tabs.querySelectorAll('button[data-action="activate-tidal"]').forEach(b => {
+    tabs.querySelectorAll('button[data-action="authorize"]').forEach(b => {
+        b.addEventListener('click', async (e) => {
+            const id = e.currentTarget.getAttribute('data-id');
+            await authorizeTidalAccount(id);
+        });
+    });
+    tabs.querySelectorAll('button[data-action="edit-creds"]').forEach(b => {
+        b.addEventListener('click', async (e) => {
+            const id = e.currentTarget.getAttribute('data-id');
+            await editTidalAccountCredentials(id);
+        });
+    });
+    tabs.querySelectorAll('button[data-action="activate"]').forEach(b => {
         b.addEventListener('click', async (e) => {
             const id = e.currentTarget.getAttribute('data-id');
             await activateTidalAccount(id);
         });
     });
-    tabs.querySelectorAll('button[data-action="delete-tidal"]').forEach(b => {
+    tabs.querySelectorAll('button[data-action="delete"]').forEach(b => {
         b.addEventListener('click', async (e) => {
             const id = e.currentTarget.getAttribute('data-id');
             await deleteTidalAccount(id);
+        });
+    });
+    tabs.querySelectorAll('.edit-name-btn').forEach(b => {
+        b.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const id = e.currentTarget.getAttribute('data-id');
+            await editTidalAccountName(id);
         });
     });
 }
@@ -2744,21 +2778,23 @@ async function addTidalAccount() {
     const name = document.getElementById('tidal-add-account-name')?.value.trim();
     const client_id = document.getElementById('tidal-add-account-client-id')?.value.trim();
     const client_secret = document.getElementById('tidal-add-account-client-secret')?.value.trim();
-    const redirect_uri = document.getElementById('tidal-add-account-redirect-uri')?.value.trim() || document.getElementById('tidal-redirect-uri')?.value.trim() || 'http://127.0.0.1:8889/tidal/callback';
     if (!name || !client_id || !client_secret) {
-        showToast('Please fill name, client id and secret', 'error');
+        showToast('Please fill in account name, client ID, and client secret', 'error');
         return;
     }
     try {
         const res = await fetch('/api/tidal/accounts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, client_id, client_secret, redirect_uri })
+            body: JSON.stringify({ name, client_id, client_secret })
         });
         const data = await res.json();
         if (res.ok) {
             showToast('Tidal account added', 'success');
             document.getElementById('tidal-add-account-form')?.classList.add('hidden');
+            document.getElementById('tidal-add-account-name').value = '';
+            document.getElementById('tidal-add-account-client-id').value = '';
+            document.getElementById('tidal-add-account-client-secret').value = '';
             await loadTidalAccounts();
         } else {
             showToast(data.error || 'Failed to add account', 'error');
@@ -2804,9 +2840,107 @@ async function deleteTidalAccount(id) {
     }
 }
 
+async function authorizeTidalAccount(id) {
+    if (!id) return;
+    try {
+        const res = await fetch(`/api/tidal/accounts/${id}/authorize_url`);
+        const data = await res.json();
+        if (data.authorize_url) {
+            // Open in new tab (same behavior as Spotify)
+            window.open(data.authorize_url, '_blank');
+        } else {
+            showToast('Failed to get authorization URL', 'error');
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to authorize account', 'error');
+    }
+}
+
+async function editTidalAccountCredentials(id) {
+    if (!id) return;
+    try {
+        const res = await fetch(`/api/tidal/accounts/${id}`);
+        const data = await res.json();
+        if (data.account) {
+            const account = data.account;
+            const newClientId = prompt('Enter Client ID:', account.client_id || '');
+            if (newClientId === null) return;
+            if (!newClientId.trim()) {
+                showToast('Client ID cannot be empty', 'error');
+                return;
+            }
+            const newClientSecret = prompt('Enter Client Secret:', account.client_secret || '');
+            if (newClientSecret === null) return;
+            if (!newClientSecret.trim()) {
+                showToast('Client Secret cannot be empty', 'error');
+                return;
+            }
+            const updateRes = await fetch(`/api/tidal/accounts/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_id: newClientId.trim(),
+                    client_secret: newClientSecret.trim()
+                })
+            });
+            const updateData = await updateRes.json();
+            if (updateRes.ok) {
+                showToast('Tidal credentials updated', 'success');
+                await loadTidalAccounts();
+            } else {
+                showToast(updateData.error || 'Failed to update credentials', 'error');
+            }
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to edit credentials', 'error');
+    }
+}
+
+async function editTidalAccountName(id) {
+    if (!id) return;
+    try {
+        const res = await fetch(`/api/tidal/accounts/${id}`);
+        const data = await res.json();
+        if (data.account) {
+            const account = data.account;
+            const newName = prompt('Enter account name:', account.name || '');
+            if (newName === null) return;
+            if (!newName.trim()) {
+                showToast('Account name cannot be empty', 'error');
+                return;
+            }
+            const updateRes = await fetch(`/api/tidal/accounts/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newName.trim() })
+            });
+            const updateData = await updateRes.json();
+            if (updateRes.ok) {
+                showToast('Account name updated', 'success');
+                await loadTidalAccounts();
+            } else {
+                showToast(updateData.error || 'Failed to update name', 'error');
+            }
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to edit name', 'error');
+    }
+}
+
 function toggleSpotifyCredentials() {
     const panel = document.getElementById('spotify-credentials-panel');
     const toggle = document.getElementById('spotify-credentials-toggle');
+    if (!panel || !toggle) return;
+    const hidden = panel.classList.toggle('hidden');
+    toggle.textContent = hidden ? 'Show' : 'Hide';
+}
+
+function toggleTidalCredentials() {
+    const panel = document.getElementById('tidal-credentials-panel');
+    const toggle = document.getElementById('tidal-credentials-toggle');
     if (!panel || !toggle) return;
     const hidden = panel.classList.toggle('hidden');
     toggle.textContent = hidden ? 'Show' : 'Hide';
@@ -4149,7 +4283,7 @@ function getActionButtonText(phase) {
 
 function getPhaseText(phase) {
     switch (phase) {
-        case 'fresh': return 'Ready to discover';
+        case 'fresh': return 'Ready to sync';  // Changed from "Ready to discover" - Tidal syncs directly
         case 'discovering': return 'Discovering...';
         case 'discovered': return 'Discovery Complete';
         case 'syncing': return 'Syncing...';
@@ -12448,8 +12582,17 @@ function createTidalCard(playlist) {
     const state = tidalPlaylistStates[playlist.id];
     const phase = state.phase;
     
-    // Get phase-specific button text (like YouTube cards)
-    let buttonText = getActionButtonText(phase);
+    // Get phase-specific button text - Tidal uses "Sync" instead of "Discover"
+    let buttonText;
+    switch (phase) {
+        case 'fresh': buttonText = 'Sync'; break;  // Tidal syncs directly like Spotify
+        case 'syncing': buttonText = 'Syncing...'; break;
+        case 'sync_complete': buttonText = 'Download'; break;
+        case 'downloading': buttonText = 'Downloading...'; break;
+        case 'download_complete': buttonText = 'Complete'; break;
+        default: buttonText = getActionButtonText(phase);
+    }
+    
     let phaseText = getPhaseText(phase);
     let phaseColor = getPhaseColor(phase);
     
@@ -12495,73 +12638,58 @@ async function handleTidalCardClick(playlistId) {
     
     console.log(`🎵 [Card Click] Tidal card clicked: ${playlistId}, Phase: ${state.phase}`);
     
+    // NEW WORKFLOW: Tidal uses direct sync like Spotify (no discovery phase)
     if (state.phase === 'fresh') {
-        // No need to fetch data - we already have all tracks from initial load (like sync.py)
-        console.log(`🎵 Using pre-loaded Tidal playlist data for: ${state.playlist.name}`);
-        console.log(`🎵 Ready with ${state.playlist.tracks.length} Tidal tracks for discovery`);
+        // Start direct sync immediately (like Spotify)
+        console.log(`🎵 Starting direct sync for Tidal playlist: ${state.playlist.name}`);
         
-        // Open discovery modal - phase will be updated when discovery actually starts
-        openTidalDiscoveryModal(playlistId, state.playlist);
-        
-    } else if (state.phase === 'discovering' || state.phase === 'discovered' || state.phase === 'syncing' || state.phase === 'sync_complete') {
-        // Reopen existing modal with preserved discovery results (like GUI sync.py)
-        console.log(`🎵 [Card Click] Opening Tidal discovery modal for ${state.phase} phase`);
-        
-        // Validate that we have discovery results to show
-        if (state.phase === 'discovered' && (!state.discovery_results || state.discovery_results.length === 0)) {
-            console.warn(`⚠️ [Card Click] Discovered phase but no discovery results found - attempting to reload from backend`);
+        try {
+            const response = await fetch(`/api/tidal/sync-direct/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ playlist_id: playlistId })
+            });
             
-            // Try to fetch from backend as fallback
-            try {
-                const stateResponse = await fetch(`/api/tidal/state/${playlistId}`);
-                if (stateResponse.ok) {
-                    const fullState = await stateResponse.json();
-                    if (fullState.discovery_results) {
-                        // Merge backend state with current state
-                        state.discovery_results = fullState.discovery_results;
-                        state.spotify_matches = fullState.spotify_matches || state.spotify_matches;
-                        state.discovery_progress = fullState.discovery_progress || state.discovery_progress;
-                        tidalPlaylistStates[playlistId] = {...tidalPlaylistStates[playlistId], ...state};
-                        console.log(`✅ [Card Click] Restored ${fullState.discovery_results.length} discovery results from backend`);
-                    }
-                }
-            } catch (error) {
-                console.error(`❌ [Card Click] Failed to fetch discovery results from backend: ${error}`);
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                console.log(`✅ Tidal direct sync started for: ${result.playlist_name}`);
+                state.phase = 'syncing';
+                state.sync_id = result.sync_id;
+                tidalPlaylistStates[playlistId] = state;
+                
+                // Update card UI to show syncing
+                updateTidalPlaylistCard(playlistId);
+                
+                // Start polling for sync status
+                startTidalDirectSyncPolling(playlistId, result.sync_id);
+                
+                showToast(`Syncing "${result.playlist_name}" to media server...`, 'success');
+            } else {
+                console.error('❌ Failed to start Tidal direct sync:', result.error);
+                showToast(`Failed to start sync: ${result.error}`, 'error');
             }
+        } catch (error) {
+            console.error('❌ Error starting Tidal direct sync:', error);
+            showToast('Error starting sync - check console for details', 'error');
         }
         
-        openTidalDiscoveryModal(playlistId, state.playlist);
-    } else if (state.phase === 'downloading' || state.phase === 'download_complete') {
-        // Open download modal if we have the converted playlist ID
-        if (state.convertedSpotifyPlaylistId) {
-            console.log(`🔍 [Card Click] Opening download modal for Tidal playlist: ${state.playlist.name} (phase: ${state.phase})`);
-            // Check if modal already exists, if not create it
-            if (activeDownloadProcesses[state.convertedSpotifyPlaylistId]) {
-                const process = activeDownloadProcesses[state.convertedSpotifyPlaylistId];
-                if (process.modalElement) {
-                    console.log(`📱 [Card Click] Showing existing download modal for ${state.phase} phase`);
-                    process.modalElement.style.display = 'flex';
-                } else {
-                    console.warn(`⚠️ [Card Click] Download process exists but modal element missing - rehydrating`);
-                    await rehydrateTidalDownloadModal(playlistId, state);
-                }
-            } else {
-                // Need to create the download modal - fetch the discovery results
-                console.log(`🔧 [Card Click] Rehydrating Tidal download modal for ${state.phase} phase`);
-                await rehydrateTidalDownloadModal(playlistId, state);
-            }
-        } else {
-            console.error('❌ [Card Click] No converted Spotify playlist ID found for Tidal download modal');
-            console.log('📊 [Card Click] Available state data:', Object.keys(state));
-            
-            // Fallback: try to open discovery modal if we have discovery results
-            if (state.discovery_results && state.discovery_results.length > 0) {
-                console.log(`🔄 [Card Click] Fallback: Opening discovery modal with ${state.discovery_results.length} results`);
-                openTidalDiscoveryModal(playlistId, state.playlist);
-            } else {
-                showToast('Unable to open download modal - missing playlist data', 'error');
-            }
-        }
+    } else if (state.phase === 'syncing') {
+        // Show sync progress modal
+        console.log(`📊 Opening sync status for Tidal playlist`);
+        showToast('Sync in progress - check activity feed for details', 'info');
+        
+    } else if (state.phase === 'sync_complete') {
+        // Show completion message
+        console.log(`✅ Tidal playlist sync complete`);
+        showToast(`Sync complete! Missing tracks added to wishlist.`, 'success');
+        
+    } else {
+        // Legacy phases from old discovery workflow - reset to fresh
+        console.warn(`⚠️ Unknown phase "${state.phase}" - resetting to fresh`);
+        state.phase = 'fresh';
+        tidalPlaylistStates[playlistId] = state;
+        updateTidalPlaylistCard(playlistId);
     }
 }
 
@@ -12795,6 +12923,35 @@ function updateTidalCardPhase(playlistId, phase) {
     console.log(`🎵 Updated Tidal card phase: ${playlistId} -> ${phase}`);
 }
 
+// NEW: Update Tidal card with direct sync progress (for new sync workflow)
+function updateTidalPlaylistCard(playlistId) {
+    const state = tidalPlaylistStates[playlistId];
+    if (!state) return;
+    
+    const card = document.getElementById(`tidal-card-${playlistId}`);
+    if (!card) return;
+    
+    // Get updated button text and phase text
+    const buttonText = getActionButtonText(state.phase);
+    const phaseText = getPhaseText(state.phase);
+    const phaseColor = getPhaseColor(state.phase);
+    
+    // Update button
+    const button = card.querySelector('.playlist-card-action-btn');
+    if (button) {
+        button.textContent = buttonText;
+    }
+    
+    // Update phase text
+    const phaseElement = card.querySelector('.playlist-card-phase-text');
+    if (phaseElement) {
+        phaseElement.textContent = phaseText;
+        phaseElement.style.color = phaseColor;
+    }
+    
+    console.log(`🔄 Updated Tidal card: ${playlistId} - Phase: ${state.phase}, Button: ${buttonText}`);
+}
+
 async function openTidalDiscoveryModal(playlistId, playlistData) {
     console.log(`🎵 Opening Tidal discovery modal (reusing YouTube modal): ${playlistData.name}`);
     
@@ -13000,6 +13157,65 @@ function startTidalDiscoveryPolling(fakeUrlHash, playlistId) {
     
     // Store poller reference (reuse YouTube poller storage)
     activeYouTubePollers[fakeUrlHash] = pollInterval;
+}
+
+// NEW: Direct sync polling for Tidal (works like Spotify sync)
+function startTidalDirectSyncPolling(playlistId, syncId) {
+    console.log(`🔄 Starting Tidal direct sync polling for: ${playlistId}`);
+    
+    const pollInterval = setInterval(async () => {
+        try {
+            const response = await fetch(`/api/tidal/sync-direct/status/${playlistId}`);
+            if (!response.ok) {
+                console.error('❌ Failed to poll Tidal direct sync status');
+                clearInterval(pollInterval);
+                return;
+            }
+            
+            const status = await response.json();
+            
+            if (status.status === 'not_found') {
+                console.error('❌ Tidal sync not found');
+                clearInterval(pollInterval);
+                return;
+            }
+            
+            // Update state
+            const state = tidalPlaylistStates[playlistId];
+            if (state) {
+                state.sync_status = status.status;
+                state.sync_progress = status.progress || {};
+                
+                // Update card to show progress
+                updateTidalPlaylistCard(playlistId);
+                
+                console.log(`🔄 Tidal sync progress: ${status.status}`, status.progress);
+            }
+            
+            // Stop polling when complete
+            if (status.status === 'finished') {
+                console.log(`✅ Tidal sync complete for: ${playlistId}`);
+                if (state) {
+                    state.phase = 'sync_complete';
+                    updateTidalPlaylistCard(playlistId);
+                }
+                showToast('Tidal playlist sync complete! Missing tracks added to wishlist.', 'success');
+                clearInterval(pollInterval);
+            } else if (status.status === 'error') {
+                console.error(`❌ Tidal sync failed for: ${playlistId}`, status.error);
+                if (state) {
+                    state.phase = 'fresh'; // Reset on error
+                    updateTidalPlaylistCard(playlistId);
+                }
+                showToast(`Sync failed: ${status.error || 'Unknown error'}`, 'error');
+                clearInterval(pollInterval);
+            }
+            
+        } catch (error) {
+            console.error('❌ Error polling Tidal direct sync:', error);
+            clearInterval(pollInterval);
+        }
+    }, 1000); // Poll every second
 }
 
 async function loadTidalPlaylistStatesFromBackend() {

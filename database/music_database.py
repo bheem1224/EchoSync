@@ -561,6 +561,128 @@ class MusicDatabase:
                 )
             """)
 
+            # OAuth PKCE Sessions - temporary storage for OAuth PKCE flows
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_pkce_sessions (
+                    pkce_id TEXT PRIMARY KEY,
+                    service TEXT NOT NULL,
+                    account_id INTEGER NOT NULL,
+                    code_verifier TEXT NOT NULL,
+                    code_challenge TEXT NOT NULL,
+                    redirect_uri TEXT NOT NULL,
+                    client_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL
+                )
+            """)
+
+            # OAuth Tokens - persistent storage for OAuth access/refresh tokens
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    service TEXT NOT NULL,
+                    account_id INTEGER NOT NULL,
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT,
+                    token_type TEXT DEFAULT 'Bearer',
+                    expires_at INTEGER NOT NULL,
+                    scope TEXT,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    UNIQUE(service, account_id)
+                )
+            """)
+
+            # Modern Account Management Schema (v2)
+            # Services - Registry of available services (Spotify, TIDAL, Jellyfin, etc.)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS services (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    display_name TEXT NOT NULL,
+                    service_type TEXT NOT NULL,
+                    description TEXT,
+                    is_enabled BOOLEAN DEFAULT 1,
+                    is_plugin BOOLEAN DEFAULT 0,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+                )
+            """)
+
+            # Service Config - OAuth/connection settings per service (client_id, redirect_uri, etc.)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS service_config (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    service_id INTEGER NOT NULL,
+                    config_key TEXT NOT NULL,
+                    config_value TEXT,
+                    is_sensitive BOOLEAN DEFAULT 0,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE,
+                    UNIQUE(service_id, config_key)
+                )
+            """)
+
+            # Accounts - User accounts per service
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    service_id INTEGER NOT NULL,
+                    account_name TEXT NOT NULL,
+                    display_name TEXT,
+                    user_id TEXT,
+                    account_email TEXT,
+                    is_active BOOLEAN DEFAULT 1,
+                    is_authenticated BOOLEAN DEFAULT 0,
+                    last_authenticated_at INTEGER,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE,
+                    UNIQUE(service_id, account_name)
+                )
+            """)
+
+            # Account Tokens - OAuth tokens for each account
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS account_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_id INTEGER NOT NULL,
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT,
+                    token_type TEXT DEFAULT 'Bearer',
+                    expires_at INTEGER,
+                    scope TEXT,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+                    UNIQUE(account_id)
+                )
+            """)
+
+            # Account Metadata - Service-specific metadata per account (playlists, collections, etc.)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS account_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_id INTEGER NOT NULL,
+                    metadata_key TEXT NOT NULL,
+                    metadata_value TEXT,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+                    UNIQUE(account_id, metadata_key)
+                )
+            """)
+
+            # Service Indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services (name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_service_config_service ON service_config (service_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts (service_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_active ON accounts (is_active)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_authenticated ON accounts (is_authenticated)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_tokens_account ON account_tokens (account_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_metadata_account ON account_metadata (account_id)")
+
             # Create indexes for performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_similar_artists_source ON similar_artists (source_artist_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_similar_artists_spotify ON similar_artists (similar_artist_spotify_id)")
@@ -3634,6 +3756,507 @@ class MusicDatabase:
                 'success': False,
                 'error': str(e)
             }
+
+    # ==========================================
+    # OAuth PKCE Session Management
+    # ==========================================
+
+    def store_pkce_session(self, pkce_id: str, service: str, account_id: int, 
+                          code_verifier: str, code_challenge: str, redirect_uri: str, 
+                          client_id: str, ttl_seconds: int = 600) -> bool:
+        """Store PKCE session in database with TTL"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            created_at = int(time.time())
+            expires_at = created_at + ttl_seconds
+            
+            cursor.execute("""
+                INSERT OR REPLACE INTO oauth_pkce_sessions 
+                (pkce_id, service, account_id, code_verifier, code_challenge, 
+                 redirect_uri, client_id, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (pkce_id, service, account_id, code_verifier, code_challenge,
+                  redirect_uri, client_id, created_at, expires_at))
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"Stored {service} PKCE session {pkce_id[:8]}... for account {account_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error storing PKCE session: {e}")
+            return False
+    
+    def get_pkce_session(self, pkce_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve PKCE session from database"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT pkce_id, service, account_id, code_verifier, code_challenge,
+                       redirect_uri, client_id, created_at, expires_at
+                FROM oauth_pkce_sessions
+                WHERE pkce_id = ?
+            """, (pkce_id,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row:
+                logger.warning(f"PKCE session {pkce_id[:8]}... not found")
+                return None
+            
+            # Check if expired
+            if int(time.time()) >= row['expires_at']:
+                logger.warning(f"PKCE session {pkce_id[:8]}... expired")
+                self.delete_pkce_session(pkce_id)
+                return None
+            
+            return {
+                'pkce_id': row['pkce_id'],
+                'service': row['service'],
+                'account_id': row['account_id'],
+                'code_verifier': row['code_verifier'],
+                'code_challenge': row['code_challenge'],
+                'redirect_uri': row['redirect_uri'],
+                'client_id': row['client_id'],
+                'created_at': row['created_at'],
+                'expires_at': row['expires_at']
+            }
+            
+        except Exception as e:
+            logger.error(f"Error retrieving PKCE session: {e}")
+            return None
+    
+    def delete_pkce_session(self, pkce_id: str) -> bool:
+        """Delete PKCE session from database"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM oauth_pkce_sessions WHERE pkce_id = ?", (pkce_id,))
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"Deleted PKCE session {pkce_id[:8]}...")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting PKCE session: {e}")
+            return False
+    
+    def cleanup_expired_pkce_sessions(self) -> int:
+        """Clean up expired PKCE sessions and return count of deleted sessions"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            current_time = int(time.time())
+            cursor.execute("DELETE FROM oauth_pkce_sessions WHERE expires_at < ?", (current_time,))
+            
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} expired PKCE sessions")
+            
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up expired PKCE sessions: {e}")
+            return 0
+
+    def save_oauth_tokens(self, service: str, account_id: int, access_token: str, 
+                         refresh_token: Optional[str], expires_in: int, 
+                         token_type: str = 'Bearer', scope: Optional[str] = None) -> bool:
+        """Save OAuth tokens to database"""
+        try:
+            from core.security import get_cipher
+            cipher = get_cipher()
+            
+            # Encrypt tokens
+            encrypted_access_token = cipher.encrypt(access_token.encode()).decode()
+            encrypted_refresh_token = cipher.encrypt(refresh_token.encode()).decode() if refresh_token else None
+            
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            expires_at = int(time.time()) + expires_in
+            updated_at = int(time.time())
+            
+            cursor.execute("""
+                INSERT INTO oauth_tokens 
+                (service, account_id, access_token, refresh_token, token_type, expires_at, scope, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(service, account_id) 
+                DO UPDATE SET 
+                    access_token=excluded.access_token,
+                    refresh_token=excluded.refresh_token,
+                    token_type=excluded.token_type,
+                    expires_at=excluded.expires_at,
+                    scope=excluded.scope,
+                    updated_at=excluded.updated_at
+            """, (service, account_id, encrypted_access_token, encrypted_refresh_token, 
+                  token_type, expires_at, scope, updated_at))
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"Saved encrypted {service} OAuth tokens for account {account_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving OAuth tokens: {e}")
+            return False
+    
+    # ============ Modern Account Management API (v2) ============
+    
+    def register_service(self, name: str, display_name: str, service_type: str, 
+                        description: str = "", is_plugin: bool = False) -> Optional[int]:
+        """Register a new service (Spotify, TIDAL, Jellyfin, etc.)"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR IGNORE INTO services (name, display_name, service_type, description, is_plugin)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (name, display_name, service_type, description, is_plugin))
+                conn.commit()
+                
+                cursor.execute("SELECT id FROM services WHERE name = ?", (name,))
+                result = cursor.fetchone()
+                service_id = result[0] if result else None
+                
+                if service_id:
+                    logger.info(f"Registered service: {name} (ID: {service_id})")
+                return service_id
+        except Exception as e:
+            logger.error(f"Error registering service {name}: {e}")
+            return None
+    
+    def set_service_config(self, service_id: int, config_key: str, config_value: str, 
+                          is_sensitive: bool = False) -> bool:
+        """Store service configuration (client_id, redirect_uri, etc.)"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO service_config (service_id, config_key, config_value, is_sensitive)
+                    VALUES (?, ?, ?, ?)
+                """, (service_id, config_key, config_value, is_sensitive))
+                conn.commit()
+                logger.debug(f"Set config {config_key} for service {service_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Error setting service config: {e}")
+            return False
+    
+    def get_service_config(self, service_id: int, config_key: str) -> Optional[str]:
+        """Retrieve service configuration"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT config_value FROM service_config 
+                    WHERE service_id = ? AND config_key = ?
+                """, (service_id, config_key))
+                result = cursor.fetchone()
+                return result[0] if result else None
+        except Exception as e:
+            logger.error(f"Error getting service config: {e}")
+            return None
+    
+    def create_account(self, service_id: int, account_name: str, display_name: str = None,
+                      user_id: str = None, account_email: str = None, explicit_id: Optional[int] = None) -> Optional[int]:
+        """Create a new account for a service.
+        If explicit_id is provided, use it as the account's ID to align with external config IDs.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                display_name = display_name or account_name
+                
+                if explicit_id is not None:
+                    cursor.execute("""
+                        INSERT INTO accounts (id, service_id, account_name, display_name, user_id, account_email)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (explicit_id, service_id, account_name, display_name, user_id, account_email))
+                else:
+                    cursor.execute("""
+                        INSERT INTO accounts (service_id, account_name, display_name, user_id, account_email)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (service_id, account_name, display_name, user_id, account_email))
+                conn.commit()
+                
+                account_id = explicit_id if explicit_id is not None else cursor.lastrowid
+                logger.info(f"Created account {account_name} for service {service_id} (ID: {account_id})")
+                return account_id
+        except Exception as e:
+            logger.error(f"Error creating account: {e}")
+            return None
+    
+    def get_accounts(self, service_id: int = None, is_active: bool = None) -> List[Dict[str, Any]]:
+        """List all accounts, optionally filtered by service or active status"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                query = "SELECT id, service_id, account_name, display_name, user_id, account_email, is_active, is_authenticated, last_authenticated_at FROM accounts WHERE 1=1"
+                params = []
+                
+                if service_id is not None:
+                    query += " AND service_id = ?"
+                    params.append(service_id)
+                if is_active is not None:
+                    query += " AND is_active = ?"
+                    params.append(is_active)
+                
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                
+                accounts = []
+                for row in rows:
+                    accounts.append({
+                        'id': row[0],
+                        'service_id': row[1],
+                        'account_name': row[2],
+                        'display_name': row[3],
+                        'user_id': row[4],
+                        'account_email': row[5],
+                        'is_active': bool(row[6]),
+                        'is_authenticated': bool(row[7]),
+                        'last_authenticated_at': row[8]
+                    })
+                return accounts
+        except Exception as e:
+            logger.error(f"Error getting accounts: {e}")
+            return []
+    
+    def save_account_token(self, account_id: int, access_token: str, refresh_token: Optional[str] = None,
+                          token_type: str = 'Bearer', expires_at: Optional[int] = None, scope: Optional[str] = None) -> bool:
+        """Save OAuth tokens for an account"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    INSERT OR REPLACE INTO account_tokens 
+                    (account_id, access_token, refresh_token, token_type, expires_at, scope)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (account_id, access_token, refresh_token, token_type, expires_at, scope))
+                conn.commit()
+                
+                logger.info(f"Saved tokens for account {account_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Error saving account token: {e}")
+            return False
+
+    def set_account_user_id(self, account_id: int, user_id: str) -> bool:
+        """Update the user_id for an existing account."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE accounts SET user_id = ?, updated_at = strftime('%s','now')
+                    WHERE id = ?
+                """, (user_id, account_id))
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error setting account user_id: {e}")
+            return False
+    
+    def get_account_token(self, account_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve OAuth tokens for an account"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT access_token, refresh_token, token_type, expires_at, scope
+                    FROM account_tokens WHERE account_id = ?
+                """, (account_id,))
+                result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        'access_token': result[0],
+                        'refresh_token': result[1],
+                        'token_type': result[2],
+                        'expires_at': result[3],
+                        'scope': result[4]
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Error getting account token: {e}")
+            return None
+    
+    def set_account_metadata(self, account_id: int, key: str, value: str) -> bool:
+        """Store metadata for an account (playlists, collections, preferences, etc.)"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO account_metadata (account_id, metadata_key, metadata_value)
+                    VALUES (?, ?, ?)
+                """, (account_id, key, value))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error setting account metadata: {e}")
+            return False
+    
+    def get_account_metadata(self, account_id: int, key: str = None) -> Dict[str, str]:
+        """Get metadata for an account"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                if key:
+                    cursor.execute("""
+                        SELECT metadata_value FROM account_metadata 
+                        WHERE account_id = ? AND metadata_key = ?
+                    """, (account_id, key))
+                    result = cursor.fetchone()
+                    return {key: result[0]} if result else {}
+                else:
+                    cursor.execute("""
+                        SELECT metadata_key, metadata_value FROM account_metadata 
+                        WHERE account_id = ?
+                    """, (account_id,))
+                    return {row[0]: row[1] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.error(f"Error getting account metadata: {e}")
+            return {}
+    
+    def mark_account_authenticated(self, account_id: int) -> bool:
+        """Mark account as successfully authenticated"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE accounts SET is_authenticated = 1, last_authenticated_at = ?
+                    WHERE id = ?
+                """, (int(time.time()), account_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error marking account authenticated: {e}")
+            return False
+    
+    def deactivate_account(self, account_id: int) -> bool:
+        """Deactivate an account"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE accounts SET is_active = 0 WHERE id = ?", (account_id,))
+                conn.commit()
+                logger.info(f"Deactivated account {account_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Error deactivating account: {e}")
+            return False
+    def set_active_account(self, service_id: int, account_id: int) -> bool:
+        """Set the active account for a service (single-active model)."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE accounts SET is_active = 0 WHERE service_id = ?", (service_id,))
+                cursor.execute("UPDATE accounts SET is_active = 1 WHERE id = ? AND service_id = ?", (account_id, service_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error setting active account: {e}")
+            return False
+
+    def delete_account(self, account_id: int) -> bool:
+        """Delete an account and cascade tokens/metadata."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting account: {e}")
+            return False
+
+    def update_account_name(self, account_id: int, new_name: str) -> bool:
+        """Rename an account."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE accounts SET account_name = ?, display_name = ?, updated_at = strftime('%s','now') WHERE id = ?",
+                               (new_name, new_name, account_id))
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error updating account name: {e}")
+            return False
+            logger.error(f"Error saving OAuth tokens: {e}")
+            return False
+    
+    def get_oauth_tokens(self, service: str, account_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve OAuth tokens from database"""
+        try:
+            from core.security import get_cipher
+            cipher = get_cipher()
+            
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT access_token, refresh_token, token_type, expires_at, scope, created_at, updated_at
+                FROM oauth_tokens
+                WHERE service = ? AND account_id = ?
+            """, (service, account_id))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row:
+                logger.info(f"No {service} OAuth tokens found for account {account_id}")
+                return None
+            
+            # Decrypt tokens
+            access_token = cipher.decrypt(row['access_token'].encode()).decode()
+            refresh_token = None
+            if row['refresh_token']:
+                refresh_token = cipher.decrypt(row['refresh_token'].encode()).decode()
+            
+            return {
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'token_type': row['token_type'],
+                'expires_at': row['expires_at'],
+                'scope': row['scope'],
+                'created_at': row['created_at'],
+                'updated_at': row['updated_at']
+            }
+            
+        except Exception as e:
+            logger.error(f"Error retrieving OAuth tokens: {e}")
+            return None
+    
+    def delete_oauth_tokens(self, service: str, account_id: int) -> bool:
+        """Delete OAuth tokens from database"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM oauth_tokens WHERE service = ? AND account_id = ?", 
+                          (service, account_id))
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"Deleted {service} OAuth tokens for account {account_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting OAuth tokens: {e}")
+            return False
 
 # Thread-safe singleton pattern for database access
 _database_instances: Dict[int, MusicDatabase] = {}  # Thread ID -> Database instance

@@ -1,3 +1,4 @@
+from .provider_types import MediaServerProvider
 from plexapi.server import PlexServer
 from plexapi.library import LibrarySection, MusicSection
 from plexapi.audio import Track as PlexTrack, Album as PlexAlbum, Artist as PlexArtist
@@ -5,11 +6,11 @@ from plexapi.playlist import Playlist as PlexPlaylist
 from plexapi.exceptions import PlexApiException, NotFound
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
-import requests
 from datetime import datetime, timedelta
 import re
 from utils.logging_config import get_logger
 from config.settings import config_manager
+from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
 import threading
 
 logger = get_logger("plex_client")
@@ -74,7 +75,58 @@ class PlexPlaylistInfo:
             tracks=tracks
         )
 
-class PlexClient:
+class PlexClient(MediaServerProvider):
+    name = "plex"
+    def authenticate(self, **kwargs) -> bool:
+        return self.ensure_connection()
+
+    def search(self, query: str, limit: int = 10) -> list:
+        if not self.ensure_connection():
+            return []
+        # Stub: implement actual search logic
+        return []
+
+    def get_library_stats(self) -> Dict[str, int]:
+        # Stub implementation
+        return {}
+
+    def get_all_artists(self) -> list:
+        # Stub implementation
+        return []
+
+    def get_all_albums(self) -> list:
+        # Stub implementation
+        return []
+
+    def get_all_tracks(self) -> list:
+        # Stub implementation
+        return []
+
+    def get_track(self, track_id: str) -> dict:
+        # Stub implementation
+        return None
+
+    def get_album(self, album_id: str) -> dict:
+        # Stub implementation
+        return None
+
+    def get_artist(self, artist_id: str) -> dict:
+        # Stub implementation
+        return None
+
+    def get_user_playlists(self, user_id: Optional[str] = None) -> list:
+        # Stub implementation
+        return []
+
+    def get_playlist_tracks(self, playlist_id: str) -> list:
+        # Stub implementation
+        return []
+
+    def get_logo_url(self) -> str:
+        return "/static/img/plex_logo.png"
+
+    def is_configured(self) -> bool:
+        return self.server is not None
     def __init__(self):
         self.server: Optional[PlexServer] = None
         self.music_library: Optional[MusicSection] = None
@@ -83,6 +135,12 @@ class PlexClient:
         self._last_connection_check = 0  # Cache connection checks
         self._connection_check_interval = 30  # Check every 30 seconds max
         self._last_connection_attempt = 0
+        # Initialize centralized HTTP client for Plex (10 requests/second)
+        self._http = HttpClient(
+            provider='plex',
+            retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
+            rate=RateLimitConfig(requests_per_second=10.0)
+        )
     
     def ensure_connection(self) -> bool:
         """Ensure connection to Plex server with lazy initialization."""
@@ -644,7 +702,7 @@ class PlexClient:
                 'Content-Type': 'image/jpeg'
             }
             
-            response = requests.post(upload_url, data=image_data, headers=headers)
+            response = self._http.post(upload_url, data=image_data, headers=headers)
             response.raise_for_status()
             
             # Refresh artist to see changes
@@ -666,7 +724,7 @@ class PlexClient:
                 'Content-Type': 'image/jpeg'
             }
             
-            response = requests.post(upload_url, data=image_data, headers=headers)
+            response = self._http.post(upload_url, data=image_data, headers=headers)
             response.raise_for_status()
             
             # Refresh album to see changes

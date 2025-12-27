@@ -144,16 +144,16 @@ def test_update_playlist_skipped(lb_manager, mock_db_conn):
         mock_cache_tracks.assert_not_called()
         mock_conn.commit.assert_not_called()
 
-@patch('requests.get')
-def test_fetch_cover_art_parallel(mock_requests_get, lb_manager):
+def test_fetch_cover_art_parallel(lb_manager):
     """Test the parallel fetching of cover art URLs."""
-    # Mock a successful response from coverartarchive
+    # Mock HttpClient to avoid actual network calls
+    mock_http = MagicMock()
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
         "images": [{"front": True, "thumbnails": {"small": "http://example.com/cover.jpg"}}]
     }
-    mock_requests_get.return_value = mock_response
+    mock_http.get.return_value = mock_response
 
     # Sample track data list
     track_data_list = [
@@ -162,12 +162,14 @@ def test_fetch_cover_art_parallel(mock_requests_get, lb_manager):
         {'position': 2, 'release_mbid': 'release2', 'album_cover_url': None},
     ]
 
-    lb_manager._fetch_cover_art_parallel(track_data_list)
+    # Patch HttpClient constructor to return our mock (patch at the import location)
+    with patch('sdk.http_client.HttpClient', return_value=mock_http):
+        lb_manager._fetch_cover_art_parallel(track_data_list)
     
     # Should have been called twice (for the two tracks with release_mbid)
-    assert mock_requests_get.call_count == 2
-    mock_requests_get.assert_any_call("https://coverartarchive.org/release/release1", timeout=3)
-    mock_requests_get.assert_any_call("https://coverartarchive.org/release/release2", timeout=3)
+    assert mock_http.get.call_count == 2
+    mock_http.get.assert_any_call("https://coverartarchive.org/release/release1", timeout=3)
+    mock_http.get.assert_any_call("https://coverartarchive.org/release/release2", timeout=3)
     
     # Check that the URLs were updated in the list
     assert track_data_list[0]['album_cover_url'] == "http://example.com/cover.jpg"

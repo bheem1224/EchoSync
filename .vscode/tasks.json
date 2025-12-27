@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build SoulSync (pre-test)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-m",
+				"compileall",
+				"."
+			],
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

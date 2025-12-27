@@ -1,7 +1,7 @@
-import requests
 from typing import Dict, List, Optional, Any
 from utils.logging_config import get_logger
 from config.settings import config_manager
+from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
 import time
 
 logger = get_logger("listenbrainz_client")
@@ -14,9 +14,13 @@ class ListenBrainzClient:
         self.token = config_manager.get("listenbrainz.token", "")
         self.username = None
 
-        # Create a session for connection pooling
-        self.session = requests.Session()
-        self.session.headers.update({
+        # Create HttpClient with rate limiting
+        self._http = HttpClient(
+            provider='listenbrainz',
+            retry=RetryConfig(max_retries=3, base_backoff=0.5),
+            rate=RateLimitConfig(requests_per_second=2.0)
+        )
+        self._http._session.headers.update({
             'User-Agent': 'SoulSync/1.0'
         })
 
@@ -25,36 +29,27 @@ class ListenBrainzClient:
             self._validate_and_get_username()
 
     def _make_request_with_retry(self, method: str, url: str, max_retries: int = 3, **kwargs):
-        """Make HTTP request with retry logic"""
-        for attempt in range(max_retries):
-            try:
-                if method.lower() == 'get':
-                    response = self.session.get(url, **kwargs)
-                elif method.lower() == 'post':
-                    response = self.session.post(url, **kwargs)
-                else:
-                    response = self.session.request(method, url, **kwargs)
-
-                return response
-            except (requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    ConnectionResetError) as e:
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2  # Exponential backoff
-                    logger.warning(f"Connection error (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s: {e}")
-                    time.sleep(wait_time)
-                else:
-                    logger.error(f"Failed after {max_retries} attempts: {e}")
-                    raise
-
-        return None
+        """Make HTTP request with retry logic - now delegated to HttpClient"""
+        # HttpClient already handles retries, so this is just a wrapper
+        try:
+            if method.lower() == 'get':
+                response = self._http.get(url, **kwargs)
+            elif method.lower() == 'post':
+                response = self._http.post(url, **kwargs)
+            else:
+                # For other methods, use the request method directly
+                response = self._http.request(method, url, **kwargs)
+            return response
+        except Exception as e:
+            logger.error(f"Request failed: {e}")
+            raise
 
     def _validate_and_get_username(self):
         """Validate token and retrieve username"""
         try:
             url = f"{self.base_url}/validate-token"
             headers = {'Authorization': f'Token {self.token}'}
-            response = self._make_request_with_retry('get', url, headers=headers, timeout=10)
+            response = self._make_request_with_retry('get', url, headers=headers)
 
             if response and response.status_code == 200:
                 data = response.json()
@@ -243,7 +238,7 @@ class ListenBrainzClient:
             if self.token:
                 headers['Authorization'] = f'Token {self.token}'
 
-            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response = self._http.get(url, headers=headers, params=params)
 
             if response.status_code == 200:
                 data = response.json()
