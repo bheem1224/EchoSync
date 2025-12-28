@@ -141,6 +141,35 @@ class PlexClient(MediaServerProvider):
             retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
             rate=RateLimitConfig(requests_per_second=10.0)
         )
+        from core.provider_capabilities import get_provider_capabilities
+
+        # Capability flags
+        self.capabilities = get_provider_capabilities('plex')
+        
+        # Register as plugin with explicit declarations
+        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+        plugin_decl = PluginDeclaration(
+            name='plex_client',
+            plugin_type=PluginType.LIBRARY_MANAGER,
+            provides=[
+                'library.scan',
+                'library.cover_art',
+                'track.title',
+                'track.artist',
+                'track.album',
+                'track.duration_ms',
+                'track.track_number',
+                'album.artist',
+            ],
+            consumes=['auth.credentials'],
+            scope=[PluginScope.LIBRARY],
+            version='1.0.0',
+            description='Plex media server library manager',
+            author='SoulSync',
+            instance=self,
+            priority=100,
+        )
+        register_plugin(plugin_decl)
     
     def ensure_connection(self) -> bool:
         """Ensure connection to Plex server with lazy initialization."""

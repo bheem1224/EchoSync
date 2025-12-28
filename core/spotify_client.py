@@ -12,6 +12,7 @@ from utils.logging_config import get_logger
 from config.settings import config_manager
 from .provider_base import ProviderBase
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
+from core.provider_capabilities import get_provider_capabilities
 
 logger = get_logger("spotify_client")
 
@@ -260,8 +261,40 @@ class SpotifyClient(ProviderBase):
             retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
             rate=RateLimitConfig(requests_per_second=5.0)
         )
+
+        # Capability flags
+        self.capabilities = get_provider_capabilities('spotify')
         self._setup_client()
         ProviderRegistry.register(SpotifyClient)
+        
+        # Register as plugin with explicit declarations
+        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+        plugin_decl = PluginDeclaration(
+            name='spotify_client',
+            plugin_type=PluginType.PLAYLIST_SERVICE,
+            provides=[
+                'playlist.read',
+                'search.tracks',
+                'search.artists',
+                'search.albums',
+                'search.playlists',
+                'track.title',
+                'track.artist',
+                'track.album',
+                'track.duration_ms',
+                'track.release_date',
+                'album.artist',
+                'album.type',
+            ],
+            consumes=['auth.credentials'],
+            scope=[PluginScope.SYNC, PluginScope.SEARCH],
+            version='1.0.0',
+            description='Spotify playlist and search provider',
+            author='SoulSync',
+            instance=self,
+            priority=100,
+        )
+        register_plugin(plugin_decl)
     
     def _setup_client(self):
         try:

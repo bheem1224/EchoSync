@@ -12,6 +12,8 @@ from utils.logging_config import get_logger
 from config.settings import config_manager
 from .provider_types import SyncServiceProvider
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
+from core.provider_capabilities import get_provider_capabilities
+from core.provider_capabilities import get_provider_capabilities
 
 logger = get_logger("tidal_client")
 
@@ -64,12 +66,44 @@ class TidalClient(SyncServiceProvider):
             retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
             rate=RateLimitConfig(requests_per_second=2.0)
         )
+
+        # Capability flags
+        self.capabilities = get_provider_capabilities('tidal')
         self.auth_server = None
         self.auth_code = None
         self.code_verifier = None
         self.code_challenge = None
         self._load_config()
         self._load_saved_tokens()
+        
+        # Register as plugin with explicit declarations
+        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+        plugin_decl = PluginDeclaration(
+            name='tidal_client',
+            plugin_type=PluginType.PLAYLIST_SERVICE,
+            provides=[
+                'playlist.read',
+                'search.tracks',
+                'search.artists',
+                'search.albums',
+                'search.playlists',
+                'track.title',
+                'track.artist',
+                'track.album',
+                'track.duration_ms',
+                'track.release_date',
+                'album.artist',
+                'album.type',
+            ],
+            consumes=['auth.oauth'],
+            scope=[PluginScope.SYNC, PluginScope.SEARCH],
+            version='1.0.0',
+            description='TIDAL playlist and search provider',
+            author='SoulSync',
+            instance=self,
+            priority=90,
+        )
+        register_plugin(plugin_decl)
     def _refresh_access_token(self):
         """Refresh the Tidal access token using the refresh token."""
         if not self.refresh_token or not self.client_id:

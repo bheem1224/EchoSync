@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Any
 from utils.logging_config import get_logger
 from config.settings import config_manager
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
+from core.provider_capabilities import get_provider_capabilities
 import time
 
 logger = get_logger("listenbrainz_client")
@@ -23,6 +24,31 @@ class ListenBrainzClient:
         self._http._session.headers.update({
             'User-Agent': 'SoulSync/1.0'
         })
+
+        # Capability flags
+        self.capabilities = get_provider_capabilities('listenbrainz')
+        
+        # Register as plugin with explicit declarations
+        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+        plugin_decl = PluginDeclaration(
+            name='listenbrainz_client',
+            plugin_type=PluginType.PLAYLIST_SERVICE,
+            provides=[
+                'playlist.read',
+                'search.playlists',
+                'track.title',
+                'track.artist',
+                'track.album',
+            ],
+            consumes=[],
+            scope=[PluginScope.SYNC, PluginScope.SEARCH],
+            version='1.0.0',
+            description='ListenBrainz playlist discovery and sync',
+            author='SoulSync',
+            instance=self,
+            priority=70,
+        )
+        register_plugin(plugin_decl)
 
         if self.token:
             # Validate token and get username

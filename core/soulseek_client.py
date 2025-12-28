@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from utils.logging_config import get_logger
 from config.settings import config_manager
+from core.provider_capabilities import get_provider_capabilities
 
 logger = get_logger("soulseek_client")
 
@@ -234,11 +235,34 @@ class SoulseekClient(DownloaderProvider):
         self.base_url: Optional[str] = None
         self.api_key: Optional[str] = None
         self.download_path: Path = Path("./downloads")
+        # Capability flags
+        self.capabilities = get_provider_capabilities('soulseek')
         self.active_searches: Dict[str, bool] = {}
         self.search_timestamps: List[float] = []
         self.max_searches_per_window = 35
         self.rate_limit_window = 220
         self._setup_client()
+        
+        # Register as plugin with explicit declarations
+        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+        plugin_decl = PluginDeclaration(
+            name='soulseek_client',
+            plugin_type=PluginType.DOWNLOAD_CLIENT,
+            provides=[
+                'download.p2p',
+                'search.tracks',
+                'track.title',
+                'track.artist',
+            ],
+            consumes=['auth.credentials'],
+            scope=[PluginScope.DOWNLOAD, PluginScope.SEARCH],
+            version='1.0.0',
+            description='Soulseek P2P search and download client',
+            author='SoulSync',
+            instance=self,
+            priority=80,
+        )
+        register_plugin(plugin_decl)
     
     def _setup_client(self):
         config = config_manager.get_soulseek_config()

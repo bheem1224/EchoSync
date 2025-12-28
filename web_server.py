@@ -31,6 +31,7 @@ from core.matching_engine import MusicMatchingEngine
 from core.database_update_worker import DatabaseUpdateWorker, DatabaseStatsWorker
 from core.web_scan_manager import WebScanManager
 from core.lyrics_client import lyrics_client
+from core.plugin_system import plugin_registry, PluginType, PluginScope
 from database.music_database import get_database
 from sdk.storage_service import get_storage_service
 from services.sync_service import PlaylistSyncService
@@ -47,6 +48,74 @@ app = Flask(
     static_folder=os.path.join(base_dir, 'webui', 'static')
 )
 
+
+# ============================================================================
+# PLUGIN SYSTEM API ENDPOINTS
+# ============================================================================
+
+@app.get('/api/plugins')
+def list_plugins():
+    """List all registered plugins with their declarations."""
+    try:
+        return jsonify({
+            'plugins': plugin_registry.list_all_dict(),
+            'total': len(plugin_registry.list_all())
+        })
+    except Exception as e:
+        logger.error(f"Error listing plugins: {e}")
+        return jsonify({'error': 'Failed to list plugins'}), 500
+
+
+@app.get('/api/plugins/by-type/<plugin_type>')
+def get_plugins_by_type(plugin_type: str):
+    """Get plugins filtered by type (e.g., playlist_service, library_manager)."""
+    try:
+        ptype = PluginType(plugin_type)
+        plugins = plugin_registry.get_plugins_by_type(ptype)
+        return jsonify({
+            'type': plugin_type,
+            'plugins': [p.to_dict() for p in plugins],
+            'total': len(plugins)
+        })
+    except ValueError:
+        return jsonify({'error': f'Unknown plugin type: {plugin_type}'}), 404
+    except Exception as e:
+        logger.error(f"Error filtering plugins by type: {e}")
+        return jsonify({'error': 'Failed to filter plugins'}), 500
+
+
+@app.get('/api/plugins/by-scope/<scope>')
+def get_plugins_by_scope(scope: str):
+    """Get plugins filtered by scope (library, sync, search, download, playback, utility)."""
+    try:
+        pscope = PluginScope(scope)
+        plugins = plugin_registry.get_plugins_by_scope(pscope)
+        return jsonify({
+            'scope': scope,
+            'plugins': [p.to_dict() for p in plugins],
+            'total': len(plugins)
+        })
+    except ValueError:
+        return jsonify({'error': f'Unknown scope: {scope}'}), 404
+    except Exception as e:
+        logger.error(f"Error filtering plugins by scope: {e}")
+        return jsonify({'error': 'Failed to filter plugins'}), 500
+
+
+@app.get('/api/plugins/capability/<capability>')
+def get_capability_providers(capability: str):
+    """Get plugins that provide a specific capability, sorted by priority."""
+    try:
+        providers = plugin_registry.get_providers_for_capability(capability)
+        return jsonify({
+            'capability': capability,
+            'providers': [p.to_dict() for p in providers],
+            'primary': providers[0].to_dict() if providers else None,
+            'total': len(providers)
+        })
+    except Exception as e:
+        logger.error(f"Error getting capability providers: {e}")
+        return jsonify({'error': 'Failed to fetch providers'}), 500
 
 
 # --- Memory Cleanup Manager (Phase 1 Optimization) ---
@@ -1032,248 +1101,7 @@ album_artists = {}  # album_key -> artist_name
 album_editions = {}  # album_key -> "standard" or "deluxe"
 album_name_cache = {}  # album_key -> cached_final_name
 
-def _prepare_stream_task(track_data):
-    """
-    Background streaming task that downloads track to Stream folder and updates global state.
-    Enhanced version with robust error handling matching the GUI StreamingThread.
-    """
-    loop = None
-    queue_start_time = None
-    actively_downloading = False
-    last_progress_sent = 0.0
-    
-    try:
-        print(f"🎵 Starting stream preparation for: {track_data.get('filename')}")
-        
-        # Update state to loading
-        with stream_lock:
-            stream_state.update({
-                "status": "loading",
-                "progress": 0,
-                "track_info": track_data,
-                "file_path": None,
-                "error_message": None
-            })
-        
-        # Get paths
-        download_path = docker_resolve_path(config_manager.get('soulseek.download_path', './downloads'))
-        project_root = os.path.dirname(os.path.abspath(__file__))
-        stream_folder = os.path.join(project_root, 'Stream')
-        
-        # Ensure Stream directory exists
-        os.makedirs(stream_folder, exist_ok=True)
-        
-        # Clear any existing files in Stream folder (only one file at a time)
-        for existing_file in glob.glob(os.path.join(stream_folder, '*')):
-            try:
-                if os.path.isfile(existing_file):
-                    os.remove(existing_file)
-                elif os.path.isdir(existing_file):
-                    shutil.rmtree(existing_file)
-                print(f"🗑️ Cleared old stream file: {existing_file}")
-            except Exception as e:
-                print(f"⚠️ Could not remove existing stream file: {e}")
-        
-        # Start the download using the same mechanism as regular downloads
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            # Use ProviderBase search and get_track for download simulation
-            download_result = None
-            transfers = soulseek_client.search("", limit=1000)
-            for track in transfers:
-                if getattr(track, 'username', None) == track_data.get('username') and getattr(track, 'filename', None) == track_data.get('filename'):
-                    download_result = track
-                    break
-            
-            if not download_result:
-                with stream_lock:
-                    stream_state.update({
-                        "status": "error",
-                        "error_message": "Failed to initiate download - uploader may be offline"
-                    })
-                return
-            
-            print(f"✓ Download initiated for streaming")
-            
-            # Enhanced monitoring with queue timeout detection (matching GUI)
-            max_wait_time = 60  # Increased timeout
-            poll_interval = 1.5  # More frequent polling
-            queue_timeout = 15   # Queue timeout like GUI
-            wait_count = 0
-            
-            while wait_count * poll_interval < max_wait_time:
-                wait_count += 1
-                
-                # Check download progress via slskd API
-                api_progress = None
-                download_state = None
-                download_status = None
-                
-                try:
-                    transfers = soulseek_client.search("", limit=1000)
-                    download_status = None
-                    for track in transfers:
-                        if getattr(track, 'username', None) == track_data.get('username') and getattr(track, 'filename', None) == track_data.get('filename'):
-                            download_status = track
-                            break
-                    
-                    if download_status:
-                        api_progress = download_status.get('percentComplete', 0)
-                        download_state = download_status.get('state', '').lower()
-                        original_state = download_status.get('state', '')
-                        
-                        print(f"API Download - State: {original_state}, Progress: {api_progress:.1f}%")
-                        
-                        # Track queue state timing (matching GUI logic)
-                        is_queued = ('queued' in download_state or 'initializing' in download_state)
-                        is_downloading = ('inprogress' in download_state or 'transferring' in download_state)
-                        is_completed = ('succeeded' in download_state or api_progress >= 100)
-                        
-                        # Handle queue state timing
-                        if is_queued and queue_start_time is None:
-                            queue_start_time = time.time()
-                            print(f"📋 Download entered queue state: {original_state}")
-                            with stream_lock:
-                                stream_state["status"] = "queued"
-                        elif is_downloading and not actively_downloading:
-                            actively_downloading = True
-                            queue_start_time = None  # Reset queue timer
-                            print(f"🚀 Download started actively downloading: {original_state}")
-                            with stream_lock:
-                                stream_state["status"] = "loading"
-                        
-                        # Check for queue timeout (matching GUI)
-                        if is_queued and queue_start_time:
-                            queue_elapsed = time.time() - queue_start_time
-                            if queue_elapsed > queue_timeout:
-                                print(f"⏰ Queue timeout after {queue_elapsed:.1f}s - download stuck in queue")
-                                with stream_lock:
-                                    stream_state.update({
-                                        "status": "error",
-                                        "error_message": "Queue timeout - uploader not responding. Try another source."
-                                    })
-                                return
-                        
-                        # Update progress
-                        with stream_lock:
-                            if api_progress != last_progress_sent:
-                                stream_state["progress"] = api_progress
-                                last_progress_sent = api_progress
-                        
-                        # Check if download is complete
-                        if is_completed:
-                            print(f"✓ Download completed via API status: {original_state}")
-                            
-                            # Give file system time to sync
-                            time.sleep(1)
-                            
-                            found_file = _find_downloaded_file(download_path, track_data)
-                            
-                            # Retry file search a few times (matching GUI logic)
-                            retry_attempts = 5
-                            for attempt in range(retry_attempts):
-                                if found_file:
-                                    break
-                                print(f"File not found yet, attempt {attempt + 1}/{retry_attempts}")
-                                time.sleep(1)
-                                found_file = _find_downloaded_file(download_path, track_data)
-                            
-                            if found_file:
-                                print(f"✓ Found downloaded file: {found_file}")
-                                
-                                # Move file to Stream folder
-                                original_filename = extract_filename(found_file)
-                                stream_path = os.path.join(stream_folder, original_filename)
-                                
-                                try:
-                                    shutil.move(found_file, stream_path)
-                                    print(f"✓ Moved file to stream folder: {stream_path}")
-                                    
-                                    # Clean up empty directories (matching GUI)
-                                    _cleanup_empty_directories(download_path, found_file)
-                                    
-                                    # Update state to ready
-                                    with stream_lock:
-                                        stream_state.update({
-                                            "status": "ready",
-                                            "progress": 100,
-                                            "file_path": stream_path
-                                        })
-                                    
-                                    # Clean up download from slskd API
-                                    try:
-                                        download_id = download_status.get('id', '')
-                                        if download_id and track_data.get('username'):
-                                            # No direct signal_download_completion; just log
-                                            print(f"✓ Marked download {download_id} as completed (no direct API cleanup)")
-                                    except Exception as e:
-                                        print(f"⚠️ Error cleaning up download: {e}")
-                                    
-                                    print(f"✅ Stream file ready for playback: {stream_path}")
-                                    return  # Success!
-                                    
-                                except Exception as e:
-                                    print(f"❌ Error moving file to stream folder: {e}")
-                                    with stream_lock:
-                                        stream_state.update({
-                                            "status": "error",
-                                            "error_message": f"Failed to prepare stream file: {e}"
-                                        })
-                                    return
-                            else:
-                                print("❌ Could not find downloaded file after completion")
-                                with stream_lock:
-                                    stream_state.update({
-                                        "status": "error",
-                                        "error_message": "Download completed but file not found"
-                                    })
-                                return
-                    else:
-                        # No transfer found in API - may still be initializing
-                        print(f"No transfer found in API yet... (elapsed: {wait_count * poll_interval}s)")
-                        
-                except Exception as e:
-                    print(f"⚠️ Error checking download progress: {e}")
-                    # Continue to next iteration if API call fails
-                
-                # Wait before next poll
-                time.sleep(poll_interval)
-            
-            # If we get here, download timed out
-            print(f"❌ Download timed out after {max_wait_time}s")
-            with stream_lock:
-                stream_state.update({
-                    "status": "error", 
-                    "error_message": "Download timed out - try a different source"
-                })
-                
-        except asyncio.CancelledError:
-            print("🛑 Stream task cancelled")
-            with stream_lock:
-                stream_state.update({
-                    "status": "stopped",
-                    "error_message": None
-                })
-        finally:
-            if loop:
-                try:
-                    # Clean up any pending tasks
-                    pending = asyncio.all_tasks(loop)
-                    if pending:
-                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-                    loop.close()
-                except Exception as e:
-                    print(f"⚠️ Error cleaning up streaming event loop: {e}")
-            
-    except Exception as e:
-        print(f"❌ Stream preparation failed: {e}")
-        with stream_lock:
-            stream_state.update({
-                "status": "error",
-                "error_message": f"Streaming error: {str(e)}"
-            })
+
 
 def _find_streaming_download_in_transfers(transfers_data, track_data):
     """Find streaming download in transfer data using same logic as download queue"""
@@ -5909,10 +5737,17 @@ def stream_start():
                 "error_message": None
             })
         
-        # Start new background streaming task
-        stream_background_task = stream_executor.submit(_prepare_stream_task, data)
+        # Legacy streaming task has been removed - streaming functionality needs refactoring
+        with stream_lock:
+            stream_state.update({
+                "status": "error",
+                "progress": 0,
+                "track_info": data,
+                "file_path": None,
+                "error_message": "Legacy streaming removed - feature being refactored"
+            })
         
-        return jsonify({"success": True, "message": "Streaming started"})
+        return jsonify({"success": False, "error": "Streaming feature temporarily disabled during refactor"}), 501
         
     except Exception as e:
         print(f"❌ Error starting stream: {e}")
@@ -10358,339 +10193,11 @@ def stop_database_update():
 # ===============================
 
 # Quality tier mappings
-QUALITY_TIERS = {
-    'lossless': {
-        'extensions': ['.flac', '.ape', '.wav', '.alac', '.dsf', '.dff', '.aiff', '.aif'],
-        'tier': 1
-    },
-    'high_lossy': {
-        'extensions': ['.opus', '.ogg'],
-        'tier': 2
-    },
-    'standard_lossy': {
-        'extensions': ['.m4a', '.aac'],
-        'tier': 3
-    },
-    'low_lossy': {
-        'extensions': ['.mp3', '.wma'],
-        'tier': 4
-    }
-}
 
-def _get_quality_tier_from_extension(file_path):
-    """Determine quality tier from file extension"""
-    if not file_path:
-        return ('unknown', 999)
 
-    ext = os.path.splitext(file_path)[1].lower()
 
-    for tier_name, tier_data in QUALITY_TIERS.items():
-        if ext in tier_data['extensions']:
-            return (tier_name, tier_data['tier'])
 
-    return ('unknown', 999)
 
-def _run_quality_scanner(scope='watchlist'):
-    """Main quality scanner worker function"""
-    from core.wishlist_service import get_wishlist_service
-    from database.music_database import MusicDatabase
-
-    try:
-        with quality_scanner_lock:
-            quality_scanner_state["status"] = "running"
-            quality_scanner_state["phase"] = "Initializing scan..."
-            quality_scanner_state["progress"] = 0
-            quality_scanner_state["processed"] = 0
-            quality_scanner_state["total"] = 0
-            quality_scanner_state["quality_met"] = 0
-            quality_scanner_state["low_quality"] = 0
-            quality_scanner_state["matched"] = 0
-            quality_scanner_state["results"] = []
-            quality_scanner_state["error_message"] = ""
-
-        print(f"🔍 [Quality Scanner] Starting scan with scope: {scope}")
-
-        # Get database instance
-        db = MusicDatabase()
-
-        # Get quality profile to determine preferred quality
-        quality_profile = db.get_quality_profile()
-        preferred_qualities = quality_profile.get('qualities', {})
-
-        # Determine minimum acceptable tier based on enabled qualities
-        min_acceptable_tier = 999
-        for quality_name, quality_config in preferred_qualities.items():
-            if quality_config.get('enabled', False):
-                # Map quality profile names to tier names
-                tier_map = {
-                    'flac': 'lossless',
-                    'mp3_320': 'low_lossy',
-                    'mp3_256': 'low_lossy',
-                    'mp3_192': 'low_lossy'
-                }
-                tier_name = tier_map.get(quality_name)
-                if tier_name:
-                    tier_num = QUALITY_TIERS[tier_name]['tier']
-                    min_acceptable_tier = min(min_acceptable_tier, tier_num)
-
-        print(f"🎵 [Quality Scanner] Minimum acceptable tier: {min_acceptable_tier}")
-
-        # Get tracks to scan based on scope
-        with quality_scanner_lock:
-            quality_scanner_state["phase"] = "Loading tracks from database..."
-
-        if scope == 'watchlist':
-            # Get watchlist artists
-            watchlist_artists = db.get_watchlist_artists()
-            if not watchlist_artists:
-                with quality_scanner_lock:
-                    quality_scanner_state["status"] = "finished"
-                    quality_scanner_state["phase"] = "No watchlist artists found"
-                    quality_scanner_state["error_message"] = "Please add artists to watchlist first"
-                print(f"⚠️ [Quality Scanner] No watchlist artists found")
-                return
-
-            # Get artist names from watchlist
-            artist_names = [artist.artist_name for artist in watchlist_artists]
-            print(f"📋 [Quality Scanner] Scanning {len(artist_names)} watchlist artists")
-
-            # Get all tracks for these artists by name
-            conn = db._get_connection()
-            placeholders = ','.join(['?' for _ in artist_names])
-            tracks_to_scan = conn.execute(
-                f"SELECT t.id, t.title, t.artist_id, t.album_id, t.file_path, t.bitrate, a.name as artist_name, al.title as album_title "
-                f"FROM tracks t "
-                f"JOIN artists a ON t.artist_id = a.id "
-                f"JOIN albums al ON t.album_id = al.id "
-                f"WHERE a.name IN ({placeholders}) AND t.file_path IS NOT NULL",
-                artist_names
-            ).fetchall()
-            conn.close()
-        else:
-            # Scan all library tracks
-            with quality_scanner_lock:
-                quality_scanner_state["phase"] = "Loading all library tracks..."
-
-            conn = db._get_connection()
-            tracks_to_scan = conn.execute(
-                "SELECT t.id, t.title, t.artist_id, t.album_id, t.file_path, t.bitrate, a.name as artist_name, al.title as album_title "
-                "FROM tracks t "
-                "JOIN artists a ON t.artist_id = a.id "
-                "JOIN albums al ON t.album_id = al.id "
-                "WHERE t.file_path IS NOT NULL"
-            ).fetchall()
-            conn.close()
-
-        total_tracks = len(tracks_to_scan)
-        print(f"📊 [Quality Scanner] Found {total_tracks} tracks to scan")
-
-        with quality_scanner_lock:
-            quality_scanner_state["total"] = total_tracks
-            quality_scanner_state["phase"] = f"Scanning {total_tracks} tracks..."
-
-        # Initialize Spotify client for matching
-        spotify_client = SpotifyClient()
-        if not spotify_client.is_authenticated():
-            with quality_scanner_lock:
-                quality_scanner_state["status"] = "error"
-                quality_scanner_state["phase"] = "Spotify not authenticated"
-                quality_scanner_state["error_message"] = "Please authenticate with Spotify first"
-            print(f"❌ [Quality Scanner] Spotify not authenticated")
-            return
-
-        wishlist_service = get_wishlist_service()
-
-        # Scan each track
-        for idx, track_row in enumerate(tracks_to_scan, 1):
-            try:
-                track_id, title, artist_id, album_id, file_path, bitrate, artist_name, album_title = track_row
-
-                # Check quality tier
-                tier_name, tier_num = _get_quality_tier_from_extension(file_path)
-
-                # Update progress
-                with quality_scanner_lock:
-                    quality_scanner_state["processed"] = idx
-                    quality_scanner_state["progress"] = (idx / total_tracks) * 100
-                    quality_scanner_state["phase"] = f"Scanning: {artist_name} - {title}"
-
-                # Check if meets quality standards
-                if tier_num <= min_acceptable_tier:
-                    # Quality met
-                    with quality_scanner_lock:
-                        quality_scanner_state["quality_met"] += 1
-                    continue
-
-                # Low quality track found
-                with quality_scanner_lock:
-                    quality_scanner_state["low_quality"] += 1
-
-                print(f"🔍 [Quality Scanner] Low quality: {artist_name} - {title} ({tier_name}, {file_path})")
-
-                # Attempt to match to Spotify using matching_engine
-                matched = False
-                matched_track_data = None
-
-                try:
-                    # Generate search queries using matching engine
-                    temp_track = type('TempTrack', (), {
-                        'name': title,
-                        'artists': [artist_name],
-                        'album': album_title
-                    })()
-
-                    search_queries = matching_engine.generate_download_queries(temp_track)
-                    print(f"🔍 [Quality Scanner] Generated {len(search_queries)} search queries for {artist_name} - {title}")
-
-                    # Find best match using confidence scoring
-                    best_match = None
-                    best_confidence = 0.0
-                    min_confidence = 0.7  # Match existing standard
-
-                    for query_idx, search_query in enumerate(search_queries):
-                        try:
-                            spotify_matches = spotify_client.search_tracks(search_query, limit=5)
-
-                            if not spotify_matches:
-                                continue
-
-                            # Score each result using matching engine
-                            for spotify_track in spotify_matches:
-                                try:
-                                    # Calculate artist confidence
-                                    artist_confidence = 0.0
-                                    if spotify_track.artists:
-                                        for result_artist in spotify_track.artists:
-                                            artist_sim = matching_engine.similarity_score(
-                                                matching_engine.normalize_string(artist_name),
-                                                matching_engine.normalize_string(result_artist)
-                                            )
-                                            artist_confidence = max(artist_confidence, artist_sim)
-
-                                    # Calculate title confidence
-                                    title_confidence = matching_engine.similarity_score(
-                                        matching_engine.normalize_string(title),
-                                        matching_engine.normalize_string(spotify_track.name)
-                                    )
-
-                                    # Combined confidence (50% artist + 50% title)
-                                    combined_confidence = (artist_confidence * 0.5 + title_confidence * 0.5)
-
-                                    print(f"🔍 [Quality Scanner] Candidate: '{spotify_track.artists[0]}' - '{spotify_track.name}' (confidence: {combined_confidence:.3f})")
-
-                                    # Update best match if this is better
-                                    if combined_confidence > best_confidence and combined_confidence >= min_confidence:
-                                        best_confidence = combined_confidence
-                                        best_match = spotify_track
-                                        print(f"✅ [Quality Scanner] New best match: {spotify_track.artists[0]} - {spotify_track.name} (confidence: {combined_confidence:.3f})")
-
-                                except Exception as e:
-                                    print(f"❌ [Quality Scanner] Error scoring result: {e}")
-                                    continue
-
-                            # If we found a very high confidence match, stop searching
-                            if best_confidence >= 0.9:
-                                print(f"🎯 [Quality Scanner] High confidence match found ({best_confidence:.3f}), stopping search")
-                                break
-
-                        except Exception as e:
-                            print(f"❌ [Quality Scanner] Error searching with query '{search_query}': {e}")
-                            continue
-
-                    # Process best match
-                    if best_match:
-                        matched = True
-                        print(f"✅ [Quality Scanner] Final match: {best_match.artists[0]} - {best_match.name} (confidence: {best_confidence:.3f})")
-
-                        # Build full Spotify track data for wishlist
-                        matched_track_data = {
-                            'id': best_match.id,
-                            'name': best_match.name,
-                            'artists': [{'name': artist} for artist in best_match.artists],
-                            'album': {
-                                'name': best_match.album,
-                                'album_type': 'album'  # Default to 'album' for quality scanner matches
-                            },
-                            'duration_ms': best_match.duration_ms,
-                            'popularity': best_match.popularity,
-                            'preview_url': best_match.preview_url,
-                            'external_urls': best_match.external_urls or {}
-                        }
-
-                        # Add to wishlist
-                        source_context = {
-                            'quality_scanner': True,
-                            'original_file_path': file_path,
-                            'original_format': tier_name,
-                            'original_bitrate': bitrate,
-                            'match_confidence': best_confidence,
-                            'scan_date': datetime.now().isoformat()
-                        }
-
-                        success = wishlist_service.add_spotify_track_to_wishlist(
-                            spotify_track_data=matched_track_data,
-                            failure_reason=f"Low quality - {tier_name.replace('_', ' ').title()} format",
-                            source_type='quality_scanner',
-                            source_context=source_context
-                        )
-
-                        if success:
-                            with quality_scanner_lock:
-                                quality_scanner_state["matched"] += 1
-                            print(f"✅ [Quality Scanner] Matched and added to wishlist: {artist_name} - {title}")
-                        else:
-                            print(f"⚠️ [Quality Scanner] Failed to add to wishlist: {artist_name} - {title}")
-                    else:
-                        print(f"⚠️ [Quality Scanner] No suitable match found (best confidence: {best_confidence:.3f}, required: {min_confidence:.3f})")
-
-                except Exception as matching_error:
-                    print(f"❌ [Quality Scanner] Matching error for {artist_name} - {title}: {matching_error}")
-
-                # Store result
-                result_entry = {
-                    'track_id': track_id,
-                    'title': title,
-                    'artist': artist_name,
-                    'album': album_title,
-                    'file_path': file_path,
-                    'current_format': tier_name,
-                    'bitrate': bitrate,
-                    'matched': matched,
-                    'spotify_id': matched_track_data['id'] if matched_track_data else None
-                }
-
-                with quality_scanner_lock:
-                    quality_scanner_state["results"].append(result_entry)
-
-                if not matched:
-                    print(f"⚠️ [Quality Scanner] No Spotify match found for: {artist_name} - {title}")
-
-            except Exception as track_error:
-                print(f"❌ [Quality Scanner] Error processing track: {track_error}")
-                continue
-
-        # Scan complete
-        with quality_scanner_lock:
-            quality_scanner_state["status"] = "finished"
-            quality_scanner_state["progress"] = 100
-            quality_scanner_state["phase"] = "Scan complete"
-
-        print(f"✅ [Quality Scanner] Scan complete: {quality_scanner_state['processed']} processed, "
-              f"{quality_scanner_state['low_quality']} low quality, {quality_scanner_state['matched']} matched to Spotify")
-
-        # Add activity
-        add_activity_item("🔍", "Quality Scan Complete",
-                         f"{quality_scanner_state['matched']} tracks added to wishlist", "Now")
-
-    except Exception as e:
-        print(f"❌ [Quality Scanner] Critical error: {e}")
-        import traceback
-        traceback.print_exc()
-
-        with quality_scanner_lock:
-            quality_scanner_state["status"] = "error"
-            quality_scanner_state["error_message"] = str(e)
-            quality_scanner_state["phase"] = f"Error: {str(e)}"
 
 
 def _run_duplicate_cleaner():
@@ -10875,54 +10382,6 @@ def _run_duplicate_cleaner():
             duplicate_cleaner_state["status"] = "error"
             duplicate_cleaner_state["error_message"] = str(e)
             duplicate_cleaner_state["phase"] = f"Error: {str(e)}"
-
-@app.route('/api/quality-scanner/start', methods=['POST'])
-def start_quality_scan():
-    """Start the quality scanner"""
-    with quality_scanner_lock:
-        if quality_scanner_state["status"] == "running":
-            return jsonify({"success": False, "error": "A scan is already in progress"}), 409
-
-        data = request.get_json() or {}
-        scope = data.get('scope', 'watchlist')  # 'watchlist' or 'all'
-
-        print(f"🔍 [Quality Scanner API] Starting scan with scope: {scope}")
-
-        # Reset state
-        quality_scanner_state["status"] = "running"
-        quality_scanner_state["phase"] = "Initializing..."
-        quality_scanner_state["progress"] = 0
-        quality_scanner_state["processed"] = 0
-        quality_scanner_state["total"] = 0
-        quality_scanner_state["quality_met"] = 0
-        quality_scanner_state["low_quality"] = 0
-        quality_scanner_state["matched"] = 0
-        quality_scanner_state["results"] = []
-        quality_scanner_state["error_message"] = ""
-
-        # Submit worker
-        quality_scanner_executor.submit(_run_quality_scanner, scope)
-
-        add_activity_item("🔍", "Quality Scan Started", f"Scanning {scope} tracks", "Now")
-
-        return jsonify({"success": True, "message": "Quality scan started"})
-
-@app.route('/api/quality-scanner/status', methods=['GET'])
-def get_quality_scanner_status():
-    """Get current quality scanner status"""
-    with quality_scanner_lock:
-        return jsonify(quality_scanner_state)
-
-@app.route('/api/quality-scanner/stop', methods=['POST'])
-def stop_quality_scan():
-    """Stop the quality scanner (sets a stop flag)"""
-    with quality_scanner_lock:
-        if quality_scanner_state["status"] == "running":
-            quality_scanner_state["status"] = "finished"
-            quality_scanner_state["phase"] = "Scan stopped by user"
-            return jsonify({"success": True, "message": "Stop request sent"})
-        else:
-            return jsonify({"success": False, "error": "No scan is currently running"}), 404
 
 @app.route('/api/duplicate-cleaner/start', methods=['POST'])
 def start_duplicate_cleaner():
@@ -19299,139 +18758,7 @@ def cancel_listenbrainz_sync(playlist_mbid):
 
 
 # OLD ENDPOINT - REMOVE ALL THE CODE BELOW FOR THE OLD IMPLEMENTATION
-def _old_get_listenbrainz_playlist_tracks_DEPRECATED(playlist_mbid):
-    """DEPRECATED - Old implementation that fetches from API"""
-    try:
-        from core.listenbrainz_client import ListenBrainzClient
 
-        client = ListenBrainzClient()
-
-        playlist = client.get_playlist_details(playlist_mbid, fetch_metadata=True)
-
-        if not playlist:
-            return jsonify({
-                "success": False,
-                "error": "Playlist not found or not accessible"
-            }), 404
-
-        # Extract tracks from JSPF format
-        jspf_tracks = playlist.get('track', [])
-
-        # Convert to our standard format - prepare tracks first without cover art
-        tracks = []
-        print(f"🎵 Processing {len(jspf_tracks)} tracks from playlist")
-
-        # First pass: extract all track data without cover art
-        track_data_list = []
-        for idx, track in enumerate(jspf_tracks):
-            # Get recording MBID from identifier
-            recording_mbid = None
-            identifiers = track.get('identifier', [])
-            for identifier in identifiers:
-                if 'musicbrainz.org/recording/' in identifier:
-                    recording_mbid = identifier.split('/')[-1]
-                    break
-
-            # Get extension data (has MusicBrainz metadata)
-            extension = track.get('extension', {})
-            mb_data = extension.get('https://musicbrainz.org/doc/jspf#track', {})
-
-            if idx == 0:
-                print(f"📋 Sample track extension data: {extension}")
-                print(f"📋 Sample mb_data keys: {mb_data.keys() if mb_data else 'None'}")
-
-            # Extract release MBID for cover art
-            release_mbid = None
-            if mb_data:
-                # Check in additional_metadata first
-                additional_metadata = mb_data.get('additional_metadata', {})
-                if 'caa_release_mbid' in additional_metadata:
-                    release_mbid = additional_metadata['caa_release_mbid']
-                # Fallback to top-level release_mbid
-                elif 'release_mbid' in mb_data:
-                    release_mbid = mb_data['release_mbid']
-
-            if idx == 0:
-                print(f"🆔 First track release_mbid: {release_mbid}")
-
-            track_data = {
-                'track_name': track.get('title', 'Unknown Track'),
-                'artist_name': track.get('creator', 'Unknown Artist'),
-                'album_name': track.get('album', 'Unknown Album'),
-                'duration_ms': track.get('duration', 0),
-                'mbid': recording_mbid,
-                'release_mbid': release_mbid,
-                'album_cover_url': None,  # Will be fetched in parallel
-                'additional_metadata': mb_data
-            }
-
-            track_data_list.append(track_data)
-
-        # Second pass: fetch cover art in parallel using threading (much faster)
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        import time
-
-        def fetch_cover_art(track_data):
-            """Fetch cover art for a single track"""
-            release_mbid = track_data.get('release_mbid')
-            if not release_mbid:
-                return None
-
-            try:
-                cover_art_url = f"https://coverartarchive.org/release/{release_mbid}"
-                cover_response = requests.get(cover_art_url, timeout=3)
-
-                if cover_response.status_code == 200:
-                    cover_data = cover_response.json()
-                    images = cover_data.get('images', [])
-
-                    # Get front cover
-                    for img in images:
-                        if img.get('front'):
-                            return img.get('thumbnails', {}).get('small') or img.get('image')
-
-                    # Fallback to first image
-                    if images:
-                        return images[0].get('thumbnails', {}).get('small') or images[0].get('image')
-            except:
-                pass
-
-            return None
-
-        print(f"🎨 Fetching cover art for {len(track_data_list)} tracks in parallel...")
-        start_time = time.time()
-
-        # Fetch up to 10 covers at a time
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_track = {executor.submit(fetch_cover_art, track): idx
-                             for idx, track in enumerate(track_data_list)}
-
-            for future in as_completed(future_to_track):
-                idx = future_to_track[future]
-                try:
-                    cover_url = future.result()
-                    if cover_url:
-                        track_data_list[idx]['album_cover_url'] = cover_url
-                except Exception as e:
-                    pass
-
-        elapsed = time.time() - start_time
-        covers_found = sum(1 for t in track_data_list if t.get('album_cover_url'))
-        print(f"✅ Fetched {covers_found}/{len(track_data_list)} covers in {elapsed:.2f}s")
-
-        tracks = track_data_list
-
-        return jsonify({
-            "success": True,
-            "tracks": tracks,
-            "track_count": len(tracks)
-        })
-
-    except Exception as e:
-        print(f"Error getting ListenBrainz playlist tracks: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/metadata/start', methods=['POST'])
 def start_metadata_update():
@@ -22151,259 +21478,9 @@ def docker_resolve_url(url):
 
 # --- Main Execution ---
 
-def start_oauth_callback_servers():
-    """Start dedicated OAuth callback servers for Spotify and Tidal"""
-    import threading
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    import urllib.parse
-    
-    # Spotify callback server
-    class SpotifyCallbackHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            print(f"🎵 Spotify callback received: {self.path}")
-            parsed_url = urllib.parse.urlparse(self.path)
-            query_params = urllib.parse.parse_qs(parsed_url.query)
-            
-            if 'code' in query_params:
-                auth_code = query_params['code'][0]
-                print(f"🎵 Received Spotify authorization code: {auth_code[:10]}...")
-                
-                # Manually trigger the token exchange using spotipy's auth manager
-                try:
-                    from core.spotify_client import SpotifyClient
-                    from spotipy.oauth2 import SpotifyOAuth
-                    from config.settings import config_manager
-                    
-                    # Get Spotify config
-                    config = config_manager.get_spotify_config()
-                    
-                    # Create auth manager and exchange code for token
-                    auth_manager = SpotifyOAuth(
-                        client_id=config['client_id'],
-                        client_secret=config['client_secret'],
-                        redirect_uri=config.get('redirect_uri', "http://127.0.0.1:8888/callback"),
-                        scope="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email",
-                        cache_path='config/.spotify_cache'
-                    )
-                    
-                    # Extract the authorization code and exchange it for tokens
-                    token_info = auth_manager.get_access_token(auth_code, as_dict=True)
-                    
-                    if token_info:
-                        # Reinitialize the global client with new tokens
-                        global spotify_client
-                        spotify_client = SpotifyClient()
-                        
-                        if spotify_client.is_authenticated():
-                            add_activity_item("✅", "Spotify Auth Complete", "Successfully authenticated with Spotify", "Now")
-                            self.send_response(200)
-                            self.send_header('Content-type', 'text/html')
-                            self.end_headers()
-                            self.wfile.write(b'<h1>Spotify Authentication Successful!</h1><p>You can close this window.</p>')
-                        else:
-                            raise Exception("Token exchange succeeded but authentication validation failed")
-                    else:
-                        raise Exception("Failed to exchange authorization code for access token")
-                except Exception as e:
-                    print(f"🔴 Spotify token processing error: {e}")
-                    add_activity_item("❌", "Spotify Auth Failed", f"Token processing failed: {str(e)}", "Now")
-                    self.send_response(400)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    self.wfile.write(f'<h1>Spotify Authentication Failed</h1><p>{str(e)}</p>'.encode())
-            else:
-                error = query_params.get('error', ['Unknown error'])[0]
-                print(f"🔴 Spotify OAuth error: {error}")
-                print(f"🔴 Full Spotify callback URL: {self.path}")
-                print(f"🔴 All query params: {query_params}")
-                
-                # Only show error toast if it's not just a spurious request
-                if 'error' in query_params:
-                    add_activity_item("❌", "Spotify Auth Failed", f"OAuth error: {error}", "Now")
-                else:
-                    print("🔴 Spurious Spotify callback without code or error - ignoring")
-                
-                self.send_response(400)
-                self.send_header('Content-type', 'text/html')
-                self.end_headers()
-                self.wfile.write(f'<h1>Spotify Authentication Failed</h1><p>{error}</p>'.encode())
-        
-        def log_message(self, format, *args):
-            pass  # Suppress server logs
-    
-    # Start Spotify callback server
-    def run_spotify_server():
-        try:
-            spotify_server = HTTPServer(('0.0.0.0', 8888), SpotifyCallbackHandler)
-            print("🎵 Started Spotify OAuth callback server on port 8888")
-            spotify_server.serve_forever()
-        except Exception as e:
-            print(f"🔴 Failed to start Spotify callback server: {e}")
-    
-    # Tidal callback server
-  
-    class TidalCallbackHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            print("🎶 ═══════════════════════════════════════════════════")
-            print("🎶 TIDAL OAUTH CALLBACK RECEIVED")
-            print("🎶 ═══════════════════════════════════════════════════")
-            
-            parsed_url = urllib.parse.urlparse(self.path)
-            query_params = urllib.parse.parse_qs(parsed_url.query)
-            print(f"🎶 Callback path: {self.path}")
-            
-            # Check for errors first
-            if 'error' in query_params:
-                error = query_params.get('error', ['Unknown error'])[0]
-                error_desc = query_params.get('error_description', ['No description'])[0]
-                print(f"🔴 Tidal OAuth error: {error}")
-                print(f"🔴 Description: {error_desc}")
-                add_activity_item("❌", "Tidal Auth Failed", f"OAuth error: {error}", "Now")
-                self.send_response(400)
-                self.send_header('Content-type', 'text/html; charset=utf-8')
-                self.end_headers()
-                self.wfile.write(f'<h1>❌ Tidal Authentication Failed</h1><p>{error}: {error_desc}</p>'.encode('utf-8'))
-                return
-            
-            # Check for authorization code
-            if 'code' not in query_params:
-                print("🔴 No authorization code in callback")
-                self.send_response(400)
-                self.send_header('Content-type', 'text/html; charset=utf-8')
-                self.end_headers()
-                self.wfile.write('<h1>❌ Authentication Failed</h1><p>No authorization code received</p>'.encode('utf-8'))
-                return
-                
-            auth_code = query_params['code'][0]
-            state = query_params.get('state', [''])[0]
-            print(f"🎶 Received authorization code: {auth_code[:10]}...")
-            print(f"🎶 Received state: {state[:20]}...")
-            
-            try:
-                from core.tidal_client import TidalClient
-                
-                # 1. Decode state to get PKCE session ID
-                if not state:
-                    raise ValueError("Missing state parameter")
-                    
-                try:
-                    # Decode state (add padding if needed)
-                    padded_state = state + '=' * (-len(state) % 4)
-                    payload = json.loads(base64.urlsafe_b64decode(padded_state.encode('utf-8')).decode('utf-8'))
-                    pkce_id = payload.get('pkce_id')
-                    
-                    if not pkce_id:
-                        raise ValueError("State payload missing pkce_id")
-                        
-                    print(f"🔐 Decoded state: pkce_id={pkce_id[:8]}...")
-                    
-                except Exception as e:
-                    print(f"🔴 Failed to decode state: {e}")
-                    raise ValueError(f"Invalid state parameter: {e}")
-                
-                # 2. Retrieve PKCE entry from config.db via StorageService
-                storage = get_storage_service()
-                print(f"🔍 Retrieving PKCE session {pkce_id} from config.db...")
-                pkce_entry = storage.get_pkce_session(pkce_id)
-                
-                if not pkce_entry:
-                    print(f"🔴 No PKCE entry found for id={pkce_id[:8]}...")
-                    raise ValueError("PKCE session not found or expired")
-                
-                print(f"✅ Successfully retrieved PKCE entry from database")
-                print(f"🔍 PKCE entry keys: {list(pkce_entry.keys())}")
-                print(f"🔍 code_verifier type: {type(pkce_entry.get('code_verifier'))}, value: {pkce_entry.get('code_verifier')[:20] if pkce_entry.get('code_verifier') else 'None'}...")
-                
-                # 3. PKCE entry is automatically validated for TTL by get_pkce_session
-                age = int(time.time()) - pkce_entry.get('created_at', 0)
-                print(f"🔐 Retrieved PKCE entry from database (age: {age}s):")
-                print(f"   verifier_len: {len(pkce_entry.get('code_verifier', ''))}")
-                print(f"   challenge_len: {len(pkce_entry.get('code_challenge', ''))}")
-                print(f"   redirect_uri: {pkce_entry.get('redirect_uri')}")
-                print(f"   account_id: {pkce_entry.get('account_id')}")
-                
-                # 4. Create TidalClient for the specific account and restore PKCE values
-                account_id = pkce_entry.get('account_id')
-                print(f"🔍 Creating TidalClient for account_id={account_id}")
-                temp_client = TidalClient(account_id=account_id)
-                
-                print(f"🔍 Setting code_verifier on temp_client...")
-                temp_client.code_verifier = pkce_entry.get('code_verifier')
-                temp_client.code_challenge = pkce_entry.get('code_challenge')
-                temp_client.redirect_uri = pkce_entry.get('redirect_uri')
-                
-                print(f"🔍 After setting, temp_client.code_verifier = {temp_client.code_verifier[:20] if temp_client.code_verifier else 'None'}...")
-                
-                # Verify we have all required values
-                if not temp_client.code_verifier:
-                    raise ValueError("PKCE code_verifier missing from stored entry")
-                if not temp_client.redirect_uri:
-                    raise ValueError("redirect_uri missing from stored entry")
-                if not temp_client.client_id:
-                    raise ValueError("client_id missing from stored entry")
-                
-                print(f"🔐 Restored PKCE to TidalClient:")
-                print(f"   verifier_len: {len(temp_client.code_verifier)}")
-                print(f"   redirect_uri: {temp_client.redirect_uri}")
-                print(f"   client_id: {temp_client.client_id[:8]}...")
-                
-                # 5. Exchange authorization code for tokens
-                print(f"🔄 Starting token exchange...")
-                success = temp_client.fetch_token_from_code(auth_code)
-                
-                if success:
-                    print(f"✅ Token exchange successful!")
-                    
-                    # 6. Reinitialize global tidal client with new tokens
-                    global tidal_client
-                    tidal_client = TidalClient(account_id=account_id)
-                    
-                    # 7. Clean up PKCE entry (one-time use)
-                    storage.delete_pkce_session(pkce_id)
-                    print(f"🧹 Cleaned up PKCE entry {pkce_id[:8]}... from database")
-                    
-                    add_activity_item("✅", "Tidal Auth Complete", f"Account {pkce_entry.get('account_id')} authenticated", "Now")
-                    
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    self.wfile.write('<h1>✅ Tidal Authentication Successful!</h1><p>You can close this window and return to SoulSync.</p>'.encode('utf-8'))
-                else:
-                    print(f"🔴 Token exchange failed")
-                    raise Exception("Token exchange returned False")
-                    
-            except Exception as e:
-                print(f"🔴 Tidal callback error: {e}")
-                import traceback
-                traceback.print_exc()
-                add_activity_item("❌", "Tidal Auth Failed", f"Error: {str(e)}", "Now")
-                self.send_response(400)
-                self.send_header('Content-type', 'text/html')
-                self.end_headers()
-                self.wfile.write(f'<h1>❌ Tidal Authentication Failed</h1><p>{str(e)}</p><p>Please try again.</p>'.encode('utf-8'))
-        
-        def log_message(self, format, *args):
-            pass  # Suppress server logs
-    
-    def run_tidal_server():
-        try:
-            tidal_server = HTTPServer(('0.0.0.0', 8008), TidalCallbackHandler)
-            print("🎶 Started Tidal OAuth callback server on port 8008")
-            print(f"🎶 Tidal server listening on all interfaces, port 8008")
-            tidal_server.serve_forever()
-        except Exception as e:
-            print(f"🔴 Failed to start Tidal callback server: {e}")
-            import traceback
-            print(f"🔴 Full error: {traceback.format_exc()}")
-    
-    # Start both servers in background threads
-    spotify_thread = threading.Thread(target=run_spotify_server, daemon=True)
-    tidal_thread = threading.Thread(target=run_tidal_server, daemon=True)
-    
-    spotify_thread.start()
-    tidal_thread.start()
-    
-    print("✅ OAuth callback servers started")
+
+
+
 
 # ===============================================
 # Artist Detail Spotify Integration Functions
