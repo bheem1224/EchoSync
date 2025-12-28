@@ -2691,6 +2691,23 @@
                                 
                                 <div class="help-text">Number of parallel threads for database updates. Higher values = faster updates but more server load.</div>
                             </div>
+
+                            <!-- Jobs Management -->
+                            <div class="settings-group">
+                                <h3>⏰ Scheduled Jobs</h3>
+                                
+                                <div class="form-group">
+                                    <button class="refresh-button" onclick="refreshJobsList()">🔄 Refresh Jobs</button>
+                                </div>
+
+                                <div id="jobs-list" class="jobs-list">
+                                    <div class="loading-text">Loading jobs...</div>
+                                </div>
+
+                                <div class="help-text">
+                                    Manage automated background tasks. Disable jobs to pause them, enable to resume, or trigger them immediately.
+                                </div>
+                            </div>
                             
                             <!-- Metadata Enhancement Settings -->
                             <div class="settings-group">

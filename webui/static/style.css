@@ -1811,6 +1811,120 @@ body {
     max-width: calc(33.333% - 6px);
 }
 
+/* Jobs List Styling */
+.jobs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 5px;
+}
+
+.job-item {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.job-item.disabled {
+    opacity: 0.5;
+}
+
+.job-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.job-item-name {
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+}
+
+.job-item-status {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+}
+
+.job-status-badge {
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.job-status-badge.enabled {
+    background: rgba(29, 185, 84, 0.2);
+    color: #1db954;
+}
+
+.job-status-badge.disabled {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.job-status-badge.running {
+    background: rgba(66, 165, 245, 0.2);
+    color: #42a5f5;
+}
+
+.job-item-details {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.job-item-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.job-action-btn {
+    padding: 4px 12px;
+    font-size: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.8);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.job-action-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+}
+
+.job-action-btn.primary {
+    background: rgba(29, 185, 84, 0.2);
+    border-color: rgba(29, 185, 84, 0.5);
+    color: #1db954;
+}
+
+.job-action-btn.primary:hover {
+    background: rgba(29, 185, 84, 0.3);
+}
+
+.job-action-btn.danger {
+    background: rgba(239, 83, 80, 0.2);
+    border-color: rgba(239, 83, 80, 0.5);
+    color: #ef5350;
+}
+
+.job-action-btn.danger:hover {
+    background: rgba(239, 83, 80, 0.3);
+}
+
 /* Server Test Section */
 .server-test-section {
     margin-top: 16px;

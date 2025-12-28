@@ -1722,6 +1722,9 @@ async function loadSettingsData() {
         try { await loadSpotifyAccounts(); } catch (e) { console.error('Spotify accounts load failed', e); }
         try { await loadTidalAccounts(); } catch (e) { console.error('Tidal accounts load failed', e); }
 
+        // Load jobs list
+        try { await refreshJobsList(); } catch (e) { console.error('Jobs list load failed', e); }
+
     } catch (error) {
         console.error('Error loading settings:', error);
         showToast('Failed to load settings', 'error');
@@ -1787,6 +1790,155 @@ function toggleServer(serverType) {
     // Load Jellyfin music libraries when switching to Jellyfin
     if (serverType === 'jellyfin') {
         loadJellyfinMusicLibraries();
+    }
+}
+
+// ===============================
+// JOBS MANAGEMENT FUNCTIONS
+// ===============================
+
+async function refreshJobsList() {
+    const jobsList = document.getElementById('jobs-list');
+    if (!jobsList) return;
+
+    try {
+        jobsList.innerHTML = '<div class="loading-text">Loading jobs...</div>';
+        
+        const response = await fetch('/api/jobs');
+        const data = await response.json();
+        
+        if (!data.success || !data.jobs || data.jobs.length === 0) {
+            jobsList.innerHTML = '<div class="loading-text">No jobs registered</div>';
+            return;
+        }
+
+        jobsList.innerHTML = '';
+        
+        data.jobs.forEach(job => {
+            const jobItem = createJobItem(job);
+            jobsList.appendChild(jobItem);
+        });
+    } catch (error) {
+        console.error('Error loading jobs:', error);
+        jobsList.innerHTML = '<div class="loading-text" style="color: #ef5350;">Failed to load jobs</div>';
+    }
+}
+
+function createJobItem(job) {
+    const div = document.createElement('div');
+    div.className = `job-item${job.enabled ? '' : ' disabled'}`;
+    
+    const statusBadge = job.running ? 'running' : (job.enabled ? 'enabled' : 'disabled');
+    const statusText = job.running ? 'Running' : (job.enabled ? 'Enabled' : 'Disabled');
+    
+    // Format next run time
+    let nextRunText = 'N/A';
+    if (job.enabled && job.next_run) {
+        const secondsUntil = Math.max(0, Math.floor(job.next_run - (Date.now() / 1000)));
+        if (secondsUntil < 60) {
+            nextRunText = `${secondsUntil}s`;
+        } else if (secondsUntil < 3600) {
+            nextRunText = `${Math.floor(secondsUntil / 60)}m`;
+        } else if (secondsUntil < 86400) {
+            nextRunText = `${Math.floor(secondsUntil / 3600)}h`;
+        } else {
+            nextRunText = `${Math.floor(secondsUntil / 86400)}d`;
+        }
+    }
+    
+    // Format interval
+    let intervalText = 'One-time';
+    if (job.interval_seconds) {
+        if (job.interval_seconds < 60) {
+            intervalText = `Every ${job.interval_seconds}s`;
+        } else if (job.interval_seconds < 3600) {
+            intervalText = `Every ${Math.floor(job.interval_seconds / 60)}m`;
+        } else if (job.interval_seconds < 86400) {
+            intervalText = `Every ${Math.floor(job.interval_seconds / 3600)}h`;
+        } else {
+            intervalText = `Every ${Math.floor(job.interval_seconds / 86400)}d`;
+        }
+    }
+    
+    div.innerHTML = `
+        <div class="job-item-header">
+            <div class="job-item-name">${job.name}</div>
+            <div class="job-item-status">
+                <span class="job-status-badge ${statusBadge}">${statusText}</span>
+            </div>
+        </div>
+        <div class="job-item-details">
+            <div>Next run: ${nextRunText}</div>
+            <div>Interval: ${intervalText}</div>
+            ${job.last_error ? `<div style="color: #ef5350;">Last error: ${job.last_error}</div>` : ''}
+            ${job.tags && job.tags.length > 0 ? `<div>Tags: ${job.tags.join(', ')}</div>` : ''}
+        </div>
+        <div class="job-item-actions">
+            ${job.enabled ? 
+                `<button class="job-action-btn danger" onclick="disableJob('${job.name}')">Disable</button>` :
+                `<button class="job-action-btn primary" onclick="enableJob('${job.name}')">Enable</button>`
+            }
+            <button class="job-action-btn" onclick="runJobNow('${job.name}')">Run Now</button>
+        </div>
+    `;
+    
+    return div;
+}
+
+async function enableJob(jobName) {
+    try {
+        const response = await fetch(`/api/jobs/${encodeURIComponent(jobName)}/enable`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            showToast(`Job '${jobName}' enabled`, 'success');
+            refreshJobsList();
+        } else {
+            showToast(`Failed to enable job: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error enabling job:', error);
+        showToast('Failed to enable job', 'error');
+    }
+}
+
+async function disableJob(jobName) {
+    try {
+        const response = await fetch(`/api/jobs/${encodeURIComponent(jobName)}/disable`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            showToast(`Job '${jobName}' disabled`, 'success');
+            refreshJobsList();
+        } else {
+            showToast(`Failed to disable job: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error disabling job:', error);
+        showToast('Failed to disable job', 'error');
+    }
+}
+
+async function runJobNow(jobName) {
+    try {
+        const response = await fetch(`/api/jobs/${encodeURIComponent(jobName)}/run`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            showToast(`Job '${jobName}' triggered`, 'success');
+            setTimeout(() => refreshJobsList(), 1000);
+        } else {
+            showToast(`Failed to run job: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error running job:', error);
+        showToast('Failed to run job', 'error');
     }
 }
 

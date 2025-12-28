@@ -1,0 +1,243 @@
+"""
+Canonical data models for SoulSync.
+
+The Track model is the single source of truth used by ALL providers.
+Providers never own data - they only create stubs, enrich fields, or attach references.
+"""
+
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
+from enum import Enum
+import uuid
+from datetime import datetime
+
+
+class DownloadStatus(Enum):
+    """Track download lifecycle states"""
+    MISSING = "missing"           # Not yet downloaded
+    QUEUED = "queued"             # In download queue
+    DOWNLOADING = "downloading"   # Active download
+    COMPLETE = "complete"         # Downloaded but not verified
+    VERIFIED = "verified"         # Downloaded and verified
+    FAILED = "failed"             # Download failed
+
+
+class ProviderType(Enum):
+    """Provider types for track references"""
+    SPOTIFY = "spotify"
+    TIDAL = "tidal"
+    YOUTUBE = "youtube"
+    PLEX = "plex"
+    JELLYFIN = "jellyfin"
+    NAVIDROME = "navidrome"
+    SOULSEEK = "soulseek"
+    MUSICBRAINZ = "musicbrainz"
+    ACOUSTID = "acoustid"
+
+
+@dataclass
+class ProviderRef:
+    """Reference to a track in a specific provider"""
+    provider: ProviderType
+    provider_id: str                    # Provider's native ID
+    provider_url: Optional[str] = None  # Direct URL if available
+    metadata: Dict[str, Any] = field(default_factory=dict)  # Provider-specific extras
+    last_updated: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class Track:
+    """
+    Canonical Track model - single source of truth for all providers.
+    
+    Design principles:
+    - All fields except track_id are optional (progressive enrichment)
+    - Providers attach references via provider_refs
+    - confidence_score tracks data quality (0.0 = stub, 1.0 = fully verified)
+    - No provider owns this data - all work through music_database
+    """
+    
+    # === Core Identity ===
+    track_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    
+    # === Basic Metadata (progressively enriched) ===
+    title: Optional[str] = None
+    artists: List[str] = field(default_factory=list)  # Ordered list
+    album: Optional[str] = None
+    duration_ms: Optional[int] = None
+    
+    # === Global Identifiers (for matching) ===
+    isrc: Optional[str] = None                          # International Standard Recording Code
+    musicbrainz_recording_id: Optional[str] = None      # MusicBrainz recording MBID
+    acoustid: Optional[str] = None                      # AcoustID fingerprint
+    
+    # === Provider References ===
+    provider_refs: Dict[str, ProviderRef] = field(default_factory=dict)  # Key: provider name
+    
+    # === Download Management ===
+    download_status: DownloadStatus = DownloadStatus.MISSING
+    file_path: Optional[str] = None                     # Local file path if downloaded
+    file_format: Optional[str] = None                   # e.g., "flac", "mp3"
+    bitrate: Optional[int] = None                       # Bits per second
+    
+    # === Quality & Confidence ===
+    confidence_score: float = 0.0                       # 0.0 (stub) to 1.0 (verified)
+    
+    # === Extended Metadata (optional enrichment) ===
+    album_artist: Optional[str] = None
+    track_number: Optional[int] = None
+    disc_number: Optional[int] = None
+    release_year: Optional[int] = None
+    genres: List[str] = field(default_factory=list)
+    
+    # === System Fields ===
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+    
+    def add_provider_ref(self, provider: ProviderType, provider_id: str, 
+                        provider_url: Optional[str] = None, 
+                        metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Attach a provider reference to this track"""
+        self.provider_refs[provider.value] = ProviderRef(
+            provider=provider,
+            provider_id=provider_id,
+            provider_url=provider_url,
+            metadata=metadata or {}
+        )
+        self.updated_at = datetime.now()
+    
+    def get_provider_ref(self, provider: ProviderType) -> Optional[ProviderRef]:
+        """Get reference for a specific provider"""
+        return self.provider_refs.get(provider.value)
+    
+    def has_provider_ref(self, provider: ProviderType) -> bool:
+        """Check if track has reference for a provider"""
+        return provider.value in self.provider_refs
+    
+    def enrich(self, **kwargs) -> None:
+        """
+        Progressively enrich track fields.
+        Only updates non-None values, never overwrites existing data.
+        Updates confidence_score based on completeness.
+        """
+        for key, value in kwargs.items():
+            if value is not None and hasattr(self, key):
+                current = getattr(self, key)
+                # Only update if current is None or empty list
+                if current is None or (isinstance(current, list) and len(current) == 0):
+                    setattr(self, key, value)
+        
+        self.updated_at = datetime.now()
+        self._calculate_confidence()
+    
+    def _calculate_confidence(self) -> None:
+        """Calculate confidence score based on field completeness"""
+        score = 0.0
+        total_weight = 0.0
+        
+        # Core fields (higher weight)
+        if self.title:
+            score += 0.25
+        total_weight += 0.25
+        
+        if self.artists:
+            score += 0.20
+        total_weight += 0.20
+        
+        if self.album:
+            score += 0.15
+        total_weight += 0.15
+        
+        if self.duration_ms:
+            score += 0.10
+        total_weight += 0.10
+        
+        # Global identifiers (high value for matching)
+        if self.isrc:
+            score += 0.10
+        total_weight += 0.10
+        
+        if self.musicbrainz_recording_id:
+            score += 0.08
+        total_weight += 0.08
+        
+        # File presence
+        if self.file_path and self.download_status == DownloadStatus.VERIFIED:
+            score += 0.12
+        total_weight += 0.12
+        
+        self.confidence_score = min(score / total_weight if total_weight > 0 else 0.0, 1.0)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for database storage"""
+        return {
+            'track_id': self.track_id,
+            'title': self.title,
+            'artists': self.artists,
+            'album': self.album,
+            'duration_ms': self.duration_ms,
+            'isrc': self.isrc,
+            'musicbrainz_recording_id': self.musicbrainz_recording_id,
+            'acoustid': self.acoustid,
+            'provider_refs': {k: {
+                'provider': v.provider.value,
+                'provider_id': v.provider_id,
+                'provider_url': v.provider_url,
+                'metadata': v.metadata,
+                'last_updated': v.last_updated.isoformat()
+            } for k, v in self.provider_refs.items()},
+            'download_status': self.download_status.value,
+            'file_path': self.file_path,
+            'file_format': self.file_format,
+            'bitrate': self.bitrate,
+            'confidence_score': self.confidence_score,
+            'album_artist': self.album_artist,
+            'track_number': self.track_number,
+            'disc_number': self.disc_number,
+            'release_year': self.release_year,
+            'genres': self.genres,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Track':
+        """Create Track from dictionary (database retrieval)"""
+        # Parse provider_refs
+        provider_refs = {}
+        for key, ref_data in data.get('provider_refs', {}).items():
+            provider_refs[key] = ProviderRef(
+                provider=ProviderType(ref_data['provider']),
+                provider_id=ref_data['provider_id'],
+                provider_url=ref_data.get('provider_url'),
+                metadata=ref_data.get('metadata', {}),
+                last_updated=datetime.fromisoformat(ref_data.get('last_updated', datetime.now().isoformat()))
+            )
+        
+        return cls(
+            track_id=data.get('track_id', str(uuid.uuid4())),
+            title=data.get('title'),
+            artists=data.get('artists', []),
+            album=data.get('album'),
+            duration_ms=data.get('duration_ms'),
+            isrc=data.get('isrc'),
+            musicbrainz_recording_id=data.get('musicbrainz_recording_id'),
+            acoustid=data.get('acoustid'),
+            provider_refs=provider_refs,
+            download_status=DownloadStatus(data.get('download_status', 'missing')),
+            file_path=data.get('file_path'),
+            file_format=data.get('file_format'),
+            bitrate=data.get('bitrate'),
+            confidence_score=data.get('confidence_score', 0.0),
+            album_artist=data.get('album_artist'),
+            track_number=data.get('track_number'),
+            disc_number=data.get('disc_number'),
+            release_year=data.get('release_year'),
+            genres=data.get('genres', []),
+            created_at=datetime.fromisoformat(data.get('created_at', datetime.now().isoformat())),
+            updated_at=datetime.fromisoformat(data.get('updated_at', datetime.now().isoformat()))
+        )
+    
+    def __repr__(self) -> str:
+        artist_str = ", ".join(self.artists) if self.artists else "Unknown"
+        return f"Track('{self.title or 'Unknown'}' by {artist_str}, confidence={self.confidence_score:.2f})"

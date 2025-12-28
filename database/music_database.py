@@ -12,6 +12,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 from pathlib import Path
 from utils.logging_config import get_logger
+from core.models import Track, DownloadStatus
 
 logger = get_logger("music_database")
 
@@ -276,6 +277,9 @@ class MusicDatabase:
 
             # Add album type filter columns to watchlist_artists (migration)
             self._add_watchlist_album_type_filters(cursor)
+
+            # Canonical Track storage (Track-centric)
+            self._add_canonical_tracks_table(cursor)
 
             conn.commit()
             logger.info("Database initialized successfully")
@@ -749,10 +753,91 @@ class MusicDatabase:
             logger.error(f"Error adding album type filter columns to watchlist_artists: {e}")
             # Don't raise - this is a migration, database can still function
 
+    def _add_canonical_tracks_table(self, cursor):
+        """Create Track-centric canonical storage if missing."""
+        try:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS canonical_tracks (
+                    track_id TEXT PRIMARY KEY,
+                    title TEXT,
+                    artists TEXT,                  -- JSON array
+                    album TEXT,
+                    duration_ms INTEGER,
+                    isrc TEXT,
+                    musicbrainz_recording_id TEXT,
+                    acoustid TEXT,
+                    provider_refs TEXT,            -- JSON object
+                    download_status TEXT,
+                    file_path TEXT,
+                    file_format TEXT,
+                    bitrate INTEGER,
+                    confidence_score REAL,
+                    album_artist TEXT,
+                    track_number INTEGER,
+                    disc_number INTEGER,
+                    release_year INTEGER,
+                    genres TEXT,                   -- JSON array
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+                """
+            )
+
+            # Indexes for fast lookup by global identifiers and fuzzy title search
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_canonical_isrc ON canonical_tracks (isrc)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_canonical_mbid ON canonical_tracks (musicbrainz_recording_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_canonical_acoustid ON canonical_tracks (acoustid)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_canonical_title ON canonical_tracks (title)")
+
+            logger.info("Canonical Track storage is ready")
+        except Exception as e:
+            logger.error(f"Error creating canonical_tracks table: {e}")
+            # Don't raise - this is a migration, database can still function
+
     def close(self):
         """Close database connection (no-op since we create connections per operation)"""
         # Each operation creates and closes its own connection, so nothing to do here
         pass
+
+    # ======================================================================
+    # Adapter-friendly wrappers (canonical Track storage)
+    # ======================================================================
+
+    def create_track(self, track: Track) -> str:
+        """Create a new canonical Track record and return its ID."""
+        self.upsert_canonical_track(track)
+        return track.track_id
+
+    def update_track(self, track: Track) -> None:
+        """Update an existing canonical Track record."""
+        self.upsert_canonical_track(track)
+
+    def get_track(self, track_id: str) -> Optional[Track]:
+        """Fetch canonical Track by ID."""
+        return self.get_canonical_track(track_id)
+
+    def find_track_by_provider_ref(self, provider: str, provider_id: str) -> Optional[Track]:
+        """Find canonical Track by provider reference."""
+        return self.find_canonical_by_provider_ref(provider, provider_id)
+
+    def find_track_by_isrc(self, isrc: str) -> Optional[Track]:
+        """Find canonical Track by ISRC."""
+        matches = self.search_canonical_by_ids(isrc=isrc)
+        return matches[0] if matches else None
+
+    def find_track_by_musicbrainz_id(self, mbid: str) -> Optional[Track]:
+        """Find canonical Track by MusicBrainz recording ID."""
+        matches = self.search_canonical_by_ids(musicbrainz_recording_id=mbid)
+        return matches[0] if matches else None
+
+    def fuzzy_match_tracks(self, title: str, artists: List[str], album: Optional[str] = None, threshold: float = 0.0) -> List[Track]:
+        """Fuzzy match canonical tracks by title and optional artist; filter by confidence threshold."""
+        artist_str = artists[0] if artists else None
+        results = self.search_canonical_fuzzy(title=title, artist=artist_str, limit=25)
+        if threshold > 0.0:
+            results = [t for t in results if (t.confidence_score or 0.0) >= threshold]
+        return results
     
     def get_statistics(self) -> Dict[str, int]:
         """Get database statistics for all servers (legacy method)"""
@@ -4257,6 +4342,252 @@ class MusicDatabase:
         except Exception as e:
             logger.error(f"Error deleting OAuth tokens: {e}")
             return False
+
+    # ======================================================================
+    # Canonical Track storage (Track-centric)
+    # ======================================================================
+
+    def _row_to_canonical_track(self, row: sqlite3.Row) -> Track:
+        """Convert canonical_tracks row to Track instance."""
+        try:
+            data = {
+                'track_id': row['track_id'],
+                'title': row['title'],
+                'artists': json.loads(row['artists']) if row['artists'] else [],
+                'album': row['album'],
+                'duration_ms': row['duration_ms'],
+                'isrc': row['isrc'],
+                'musicbrainz_recording_id': row['musicbrainz_recording_id'],
+                'acoustid': row['acoustid'],
+                'provider_refs': json.loads(row['provider_refs']) if row['provider_refs'] else {},
+                'download_status': row['download_status'] or DownloadStatus.MISSING.value,
+                'file_path': row['file_path'],
+                'file_format': row['file_format'],
+                'bitrate': row['bitrate'],
+                'confidence_score': row['confidence_score'] if row['confidence_score'] is not None else 0.0,
+                'album_artist': row['album_artist'],
+                'track_number': row['track_number'],
+                'disc_number': row['disc_number'],
+                'release_year': row['release_year'],
+                'genres': json.loads(row['genres']) if row['genres'] else [],
+                'created_at': row['created_at'] or datetime.now().isoformat(),
+                'updated_at': row['updated_at'] or datetime.now().isoformat(),
+            }
+            return Track.from_dict(data)
+        except Exception as e:
+            logger.error(f"Error converting canonical track row: {e}")
+            raise
+
+    def upsert_canonical_track(self, track: Track) -> Track:
+        """Insert or update a canonical Track record and return the stored Track."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Ensure timestamps are set
+            now_iso = datetime.now().isoformat()
+            track.created_at = track.created_at or datetime.now()
+            track.updated_at = datetime.now()
+
+            payload = track.to_dict()
+
+            artists_json = json.dumps(payload['artists']) if payload.get('artists') is not None else json.dumps([])
+            provider_refs_json = json.dumps(payload['provider_refs']) if payload.get('provider_refs') is not None else json.dumps({})
+            genres_json = json.dumps(payload['genres']) if payload.get('genres') is not None else json.dumps([])
+
+            cursor.execute(
+                """
+                INSERT INTO canonical_tracks (
+                    track_id, title, artists, album, duration_ms, isrc,
+                    musicbrainz_recording_id, acoustid, provider_refs, download_status,
+                    file_path, file_format, bitrate, confidence_score, album_artist,
+                    track_number, disc_number, release_year, genres, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(track_id) DO UPDATE SET
+                    title=excluded.title,
+                    artists=excluded.artists,
+                    album=excluded.album,
+                    duration_ms=excluded.duration_ms,
+                    isrc=excluded.isrc,
+                    musicbrainz_recording_id=excluded.musicbrainz_recording_id,
+                    acoustid=excluded.acoustid,
+                    provider_refs=excluded.provider_refs,
+                    download_status=excluded.download_status,
+                    file_path=excluded.file_path,
+                    file_format=excluded.file_format,
+                    bitrate=excluded.bitrate,
+                    confidence_score=excluded.confidence_score,
+                    album_artist=excluded.album_artist,
+                    track_number=excluded.track_number,
+                    disc_number=excluded.disc_number,
+                    release_year=excluded.release_year,
+                    genres=excluded.genres,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    payload['track_id'],
+                    payload.get('title'),
+                    artists_json,
+                    payload.get('album'),
+                    payload.get('duration_ms'),
+                    payload.get('isrc'),
+                    payload.get('musicbrainz_recording_id'),
+                    payload.get('acoustid'),
+                    provider_refs_json,
+                    payload.get('download_status', DownloadStatus.MISSING.value),
+                    payload.get('file_path'),
+                    payload.get('file_format'),
+                    payload.get('bitrate'),
+                    payload.get('confidence_score', 0.0),
+                    payload.get('album_artist'),
+                    payload.get('track_number'),
+                    payload.get('disc_number'),
+                    payload.get('release_year'),
+                    genres_json,
+                    payload.get('created_at', now_iso),
+                    now_iso,
+                ),
+            )
+
+            conn.commit()
+            conn.close()
+            return track
+        except Exception as e:
+            logger.error(f"Error upserting canonical track {track.track_id}: {e}")
+            raise
+
+    def get_canonical_track(self, track_id: str) -> Optional[Track]:
+        """Fetch a canonical Track by ID."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM canonical_tracks WHERE track_id = ?", (track_id,))
+            row = cursor.fetchone()
+            conn.close()
+            if not row:
+                return None
+            return self._row_to_canonical_track(row)
+        except Exception as e:
+            logger.error(f"Error fetching canonical track {track_id}: {e}")
+            return None
+
+    def delete_canonical_track(self, track_id: str) -> bool:
+        """Delete a canonical Track by ID."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM canonical_tracks WHERE track_id = ?", (track_id,))
+            conn.commit()
+            conn.close()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting canonical track {track_id}: {e}")
+            return False
+
+    def search_canonical_by_ids(
+        self,
+        isrc: Optional[str] = None,
+        musicbrainz_recording_id: Optional[str] = None,
+        acoustid: Optional[str] = None,
+    ) -> List[Track]:
+        """Search canonical tracks by global identifiers (ISRC, MBID, AcoustID)."""
+        clauses = []
+        params: List[Any] = []
+
+        if isrc:
+            clauses.append("isrc = ?")
+            params.append(isrc)
+        if musicbrainz_recording_id:
+            clauses.append("musicbrainz_recording_id = ?")
+            params.append(musicbrainz_recording_id)
+        if acoustid:
+            clauses.append("acoustid = ?")
+            params.append(acoustid)
+
+        if not clauses:
+            return []
+
+        query = "SELECT * FROM canonical_tracks WHERE " + " OR ".join(clauses)
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            rows = cursor.fetchall()
+            conn.close()
+            return [self._row_to_canonical_track(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error searching canonical tracks by IDs: {e}")
+            return []
+
+    def find_canonical_by_provider_ref(self, provider: str, provider_id: str) -> Optional[Track]:
+        """Find a canonical track by provider reference (JSON search)."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            pattern = f'%"provider_id": "{provider_id}"%'
+            provider_pattern = f'%"provider": "{provider}"%'
+            cursor.execute(
+                "SELECT * FROM canonical_tracks WHERE provider_refs LIKE ? AND provider_refs LIKE ? LIMIT 1",
+                (pattern, provider_pattern),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            if not row:
+                return None
+            return self._row_to_canonical_track(row)
+        except Exception as e:
+            logger.error(f"Error finding canonical track by provider ref {provider}:{provider_id}: {e}")
+            return None
+
+    def search_canonical_fuzzy(self, title: str, artist: Optional[str] = None, limit: int = 10) -> List[Track]:
+        """Fuzzy search canonical tracks by title and optional artist substring."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            title_like = f"%{title}%"
+            if artist:
+                artist_like = f"%{artist}%"
+                cursor.execute(
+                    """
+                    SELECT * FROM canonical_tracks
+                    WHERE title LIKE ? AND artists LIKE ?
+                    ORDER BY confidence_score DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (title_like, artist_like, limit),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT * FROM canonical_tracks
+                    WHERE title LIKE ?
+                    ORDER BY confidence_score DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (title_like, limit),
+                )
+            rows = cursor.fetchall()
+            conn.close()
+            return [self._row_to_canonical_track(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error performing fuzzy search on canonical tracks: {e}")
+            return []
+
+    def list_canonical_tracks(self, limit: int = 50, offset: int = 0) -> List[Track]:
+        """List canonical tracks with pagination."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM canonical_tracks ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            return [self._row_to_canonical_track(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error listing canonical tracks: {e}")
+            return []
 
 # Thread-safe singleton pattern for database access
 _database_instances: Dict[int, MusicDatabase] = {}  # Thread ID -> Database instance

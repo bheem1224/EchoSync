@@ -127,6 +127,25 @@ class PlexClient(MediaServerProvider):
 
     def is_configured(self) -> bool:
         return self.server is not None
+    
+    def get_library(self):
+        """Get all Plex library sections."""
+        if not self.ensure_connection():
+            return []
+        try:
+            return self.server.library.sections()
+        except Exception as e:
+            logger.error(f"Error fetching Plex library sections: {e}")
+            return []
+    
+    def get_music_libraries(self):
+        """Get only music library sections."""
+        try:
+            sections = self.get_library()
+            return [s for s in sections if s.type == 'artist']
+        except Exception as e:
+            logger.error(f"Error fetching music libraries: {e}")
+            return []
     def __init__(self):
         self.server: Optional[PlexServer] = None
         self.music_library: Optional[MusicSection] = None
@@ -172,12 +191,18 @@ class PlexClient(MediaServerProvider):
         register_plugin(plugin_decl)
     
     def ensure_connection(self) -> bool:
-        """Ensure connection to Plex server with lazy initialization."""
+        """Ensure connection to Plex server with lazy initialization and reconnection support."""
         import time
 
-        # If already connected, keep it
+        # If already connected, test it
         if self.server is not None:
-            return True
+            try:
+                # Quick connection test
+                self.server.library.sections()
+                return True
+            except Exception:
+                logger.info("Plex connection lost, reconnecting...")
+                self.server = None
 
         # Avoid concurrent connection attempts
         if self._is_connecting:

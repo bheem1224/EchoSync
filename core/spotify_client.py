@@ -268,33 +268,42 @@ class SpotifyClient(ProviderBase):
         ProviderRegistry.register(SpotifyClient)
         
         # Register as plugin with explicit declarations
-        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
-        plugin_decl = PluginDeclaration(
-            name='spotify_client',
-            plugin_type=PluginType.PLAYLIST_SERVICE,
-            provides=[
-                'playlist.read',
-                'search.tracks',
-                'search.artists',
-                'search.albums',
-                'search.playlists',
-                'track.title',
-                'track.artist',
-                'track.album',
-                'track.duration_ms',
-                'track.release_date',
-                'album.artist',
-                'album.type',
-            ],
-            consumes=['auth.credentials'],
-            scope=[PluginScope.SYNC, PluginScope.SEARCH],
-            version='1.0.0',
-            description='Spotify playlist and search provider',
-            author='SoulSync',
-            instance=self,
-            priority=100,
+        from core.plugin_system import (
+            PluginType,
+            PluginScope,
+            PluginDeclaration,
+            register_plugin,
+            get_plugin,
         )
-        register_plugin(plugin_decl)
+
+        # Avoid duplicate registrations when temp clients are created (e.g., tests/health)
+        if not get_plugin('spotify_client'):
+            plugin_decl = PluginDeclaration(
+                name='spotify_client',
+                plugin_type=PluginType.PLAYLIST_SERVICE,
+                provides=[
+                    'playlist.read',
+                    'search.tracks',
+                    'search.artists',
+                    'search.albums',
+                    'search.playlists',
+                    'track.title',
+                    'track.artist',
+                    'track.album',
+                    'track.duration_ms',
+                    'track.release_date',
+                    'album.artist',
+                    'album.type',
+                ],
+                consumes=['auth.credentials'],
+                scope=[PluginScope.SYNC, PluginScope.SEARCH],
+                version='1.0.0',
+                description='Spotify playlist and search provider',
+                author='SoulSync',
+                instance=self,
+                priority=100,
+            )
+            register_plugin(plugin_decl)
     
     def _setup_client(self):
         try:

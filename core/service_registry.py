@@ -25,6 +25,7 @@ class ServiceRegistry:
         return ProviderRegistry.create_instance_by_type(provider_type, *args, **kwargs)
     def __init__(self):
         self._clients = {}
+        self._adapters = {}
 
     def get_provider_client(self, name: str, account_id: Optional[str] = None):
         from core.provider_registry import ProviderRegistry
@@ -45,6 +46,36 @@ class ServiceRegistry:
             except Exception:
                 self._clients[name] = ProviderRegistry.create_instance(name)
         return self._clients[name]
+
+    def get_adapter(self, name: str):
+        """Get or create a ProviderAdapter instance for a provider name."""
+        from core.adapter_registry import AdapterRegistry
+        if name not in self._adapters:
+            # Inject existing provider client if available
+            client = None
+            try:
+                client = self.get_provider_client(name)
+            except Exception:
+                client = None
+            # Create adapter instance with injected client where applicable
+            if name == 'spotify':
+                self._adapters[name] = AdapterRegistry.create_instance(name, spotify_client=client)
+            elif name == 'tidal':
+                self._adapters[name] = AdapterRegistry.create_instance(name, tidal_client=client)
+            elif name == 'plex':
+                self._adapters[name] = AdapterRegistry.create_instance(name, plex_client=client)
+            elif name == 'jellyfin':
+                self._adapters[name] = AdapterRegistry.create_instance(name, jellyfin_client=client)
+            elif name == 'navidrome':
+                self._adapters[name] = AdapterRegistry.create_instance(name, navidrome_client=client)
+            elif name == 'soulseek':
+                self._adapters[name] = AdapterRegistry.create_instance(name, soulseek_client=client)
+            elif name == 'listenbrainz':
+                self._adapters[name] = AdapterRegistry.create_instance(name, listenbrainz_client=client)
+            else:
+                # Default creation without client injection
+                self._adapters[name] = AdapterRegistry.create_instance(name)
+        return self._adapters[name]
 
     def get_plex_client(self):
         return self.get_provider_client('plex')

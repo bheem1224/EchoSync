@@ -33,6 +33,7 @@ from core.web_scan_manager import WebScanManager
 from core.lyrics_client import lyrics_client
 from core.plugin_system import plugin_registry, PluginType, PluginScope
 from database.music_database import get_database
+from core.models import Track, DownloadStatus
 from sdk.storage_service import get_storage_service
 from services.sync_service import PlaylistSyncService
 from datetime import datetime
@@ -116,6 +117,309 @@ def get_capability_providers(capability: str):
     except Exception as e:
         logger.error(f"Error getting capability providers: {e}")
         return jsonify({'error': 'Failed to fetch providers'}), 500
+
+@app.get('/api/plugins/field/<field_name>')
+def get_field_providers(field_name: str):
+    """Get plugins that can populate a Track field, sorted by priority."""
+    try:
+        providers = plugin_registry.get_providers_for_field(field_name)
+        return jsonify({
+            'field': field_name,
+            'providers': [p.to_dict() for p in providers],
+            'primary': providers[0].to_dict() if providers else None,
+            'total': len(providers)
+        })
+    except Exception as e:
+        logger.error(f"Error getting field providers: {e}")
+        return jsonify({'error': 'Failed to fetch providers'}), 500
+
+
+# ============================================================================
+# CANONICAL TRACK API ENDPOINTS
+# ============================================================================
+
+@app.get('/api/tracks')
+def list_canonical_tracks():
+    """List canonical tracks with pagination."""
+    try:
+        limit = int(request.args.get('limit', 50))
+        offset = int(request.args.get('offset', 0))
+        db = get_database()
+        tracks = db.list_canonical_tracks(limit=limit, offset=offset)
+        return jsonify({
+            'items': [t.to_dict() for t in tracks],
+            'limit': limit,
+            'offset': offset,
+            'count': len(tracks)
+        })
+    except Exception as e:
+        logger.error(f"Error listing canonical tracks: {e}")
+        return jsonify({'error': 'Failed to list tracks'}), 500
+
+
+@app.get('/api/tracks/<track_id>')
+def get_canonical_track(track_id: str):
+    """Fetch a canonical track by ID."""
+    try:
+        db = get_database()
+        track = db.get_canonical_track(track_id)
+        if not track:
+            return jsonify({'error': 'Track not found'}), 404
+        return jsonify(track.to_dict())
+    except Exception as e:
+        logger.error(f"Error fetching canonical track {track_id}: {e}")
+        return jsonify({'error': 'Failed to fetch track'}), 500
+
+
+@app.post('/api/tracks')
+def upsert_canonical_track():
+    """Create or update a canonical track from JSON payload."""
+    try:
+        payload = request.get_json(force=True)
+        if not payload:
+            return jsonify({'error': 'Missing JSON payload'}), 400
+        # Build Track and upsert
+        track = Track.from_dict(payload)
+        db = get_database()
+        db.upsert_canonical_track(track)
+        return jsonify(track.to_dict())
+    except Exception as e:
+        logger.error(f"Error upserting canonical track: {e}")
+        return jsonify({'error': 'Failed to upsert track'}), 500
+
+
+@app.delete('/api/tracks/<track_id>')
+def delete_canonical_track(track_id: str):
+    """Delete a canonical track by ID."""
+    try:
+        db = get_database()
+        deleted = db.delete_canonical_track(track_id)
+        if not deleted:
+            return jsonify({'error': 'Track not found'}), 404
+        return jsonify({'deleted': True, 'track_id': track_id})
+    except Exception as e:
+        logger.error(f"Error deleting canonical track {track_id}: {e}")
+        return jsonify({'error': 'Failed to delete track'}), 500
+
+
+@app.get('/api/tracks/search')
+def search_canonical_tracks():
+    """Fuzzy search canonical tracks by title and optional artist substring."""
+    try:
+        title = request.args.get('title')
+        artist = request.args.get('artist')
+        limit = int(request.args.get('limit', 10))
+        if not title:
+            return jsonify({'error': 'Missing title parameter'}), 400
+        db = get_database()
+        tracks = db.search_canonical_fuzzy(title=title, artist=artist, limit=limit)
+        return jsonify({
+            'query': {'title': title, 'artist': artist, 'limit': limit},
+            'items': [t.to_dict() for t in tracks],
+            'count': len(tracks)
+        })
+    except Exception as e:
+        logger.error(f"Error searching canonical tracks: {e}")
+        return jsonify({'error': 'Failed to search tracks'}), 500
+
+
+@app.get('/api/tracks/ids')
+def search_canonical_by_ids():
+    """Search canonical tracks by global identifiers (ISRC, MBID, AcoustID)."""
+    try:
+        isrc = request.args.get('isrc')
+        mbid = request.args.get('mbid')  # alias for musicbrainz_recording_id
+        acoustid = request.args.get('acoustid')
+        db = get_database()
+        tracks = db.search_canonical_by_ids(
+            isrc=isrc,
+            musicbrainz_recording_id=mbid,
+            acoustid=acoustid,
+        )
+        return jsonify({
+            'query': {'isrc': isrc, 'mbid': mbid, 'acoustid': acoustid},
+            'items': [t.to_dict() for t in tracks],
+            'count': len(tracks)
+        })
+    except Exception as e:
+        logger.error(f"Error searching canonical tracks by IDs: {e}")
+        return jsonify({'error': 'Failed to search tracks by IDs'}), 500
+
+
+@app.get('/api/tracks/by-provider')
+def find_canonical_by_provider():
+    """Find canonical track by provider reference."""
+    try:
+        provider = request.args.get('provider')
+        provider_id = request.args.get('provider_id')
+        if not provider or not provider_id:
+            return jsonify({'error': 'Missing provider or provider_id'}), 400
+        db = get_database()
+        track = db.find_canonical_by_provider_ref(provider=provider, provider_id=provider_id)
+        return jsonify(track.to_dict() if track else None), (200 if track else 404)
+    except Exception as e:
+        logger.error(f"Error finding canonical track by provider ref: {e}")
+        return jsonify({'error': 'Failed to search by provider ref'}), 500
+
+
+# ============================================================================
+# ADAPTER INGESTION ENDPOINTS (Spotify & TIDAL)
+# ============================================================================
+
+@app.post('/api/spotify/ingest/playlist/<playlist_id>')
+def api_spotify_ingest_playlist(playlist_id):
+    """Ingest a Spotify playlist into canonical tracks via SpotifyAdapter."""
+    try:
+        adapter = service_registry.get_adapter('spotify')
+        if not adapter:
+            return jsonify({'error': 'spotify_adapter not available'}), 400
+        tracks = adapter.ingest_playlist(playlist_id)
+        return jsonify({'ingested': len(tracks)}), 200
+    except Exception as e:
+        logger.error(f"Error ingesting Spotify playlist {playlist_id}: {e}")
+        return jsonify({'error': 'Failed to ingest playlist'}), 500
+
+@app.post('/api/spotify/ingest/saved')
+def api_spotify_ingest_saved():
+    """Ingest Spotify saved tracks into canonical tracks."""
+    try:
+        limit = request.args.get('limit')
+        limit = int(limit) if limit is not None else None
+        adapter = service_registry.get_adapter('spotify')
+        if not adapter:
+            return jsonify({'error': 'spotify_adapter not available'}), 400
+        tracks = adapter.ingest_saved_tracks(limit=limit)
+        return jsonify({'ingested': len(tracks)}), 200
+    except Exception as e:
+        logger.error(f"Error ingesting Spotify saved tracks: {e}")
+        return jsonify({'error': 'Failed to ingest saved tracks'}), 500
+
+@app.post('/api/tidal/ingest/playlist/<playlist_id>')
+def api_tidal_ingest_playlist(playlist_id):
+    """Ingest a TIDAL playlist into canonical tracks via TidalAdapter."""
+    try:
+        adapter = service_registry.get_adapter('tidal')
+        if not adapter:
+            return jsonify({'error': 'tidal_adapter not available'}), 400
+        tracks = adapter.ingest_playlist(playlist_id)
+        return jsonify({'ingested': len(tracks)}), 200
+    except Exception as e:
+        logger.error(f"Error ingesting TIDAL playlist {playlist_id}: {e}")
+        return jsonify({'error': 'Failed to ingest playlist'}), 500
+
+@app.post('/api/tidal/ingest/favorites')
+def api_tidal_ingest_favorites():
+    """Ingest TIDAL favorite/saved tracks into canonical tracks."""
+    try:
+        limit = request.args.get('limit')
+        limit = int(limit) if limit is not None else None
+        adapter = service_registry.get_adapter('tidal')
+        if not adapter:
+            return jsonify({'error': 'tidal_adapter not available'}), 400
+        tracks = adapter.ingest_favorites(limit=limit)
+        return jsonify({'ingested': len(tracks)}), 200
+    except Exception as e:
+        logger.error(f"Error ingesting TIDAL favorites: {e}")
+        return jsonify({'error': 'Failed to ingest favorites'}), 500
+
+@app.post('/api/plex/ingest/library')
+def api_plex_ingest_library():
+    """Ingest Plex music library into canonical tracks."""
+    try:
+        limit = request.args.get('limit')
+        limit = int(limit) if limit is not None else None
+        adapter = service_registry.get_adapter('plex')
+        if not adapter:
+            return jsonify({'error': 'plex_adapter not available'}), 400
+        
+        # Wrap ingestion in try-catch to prevent server crash
+        try:
+            tracks = adapter.ingest_library(limit=limit)
+            logger.info(f"Successfully ingested {len(tracks)} tracks from Plex library")
+            return jsonify({'ingested': len(tracks)}), 200
+        except Exception as ingest_error:
+            logger.error(f"Plex library ingestion failed: {ingest_error}", exc_info=True)
+            return jsonify({'error': f'Ingestion failed: {str(ingest_error)}'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error ingesting Plex library: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to ingest Plex library'}), 500
+
+@app.post('/api/jellyfin/ingest/library')
+def api_jellyfin_ingest_library():
+    """Ingest Jellyfin music library into canonical tracks."""
+    try:
+        limit = request.args.get('limit')
+        limit = int(limit) if limit is not None else None
+        adapter = service_registry.get_adapter('jellyfin')
+        if not adapter:
+            return jsonify({'error': 'jellyfin_adapter not available'}), 400
+        tracks = adapter.ingest_library(limit=limit)
+        return jsonify({'ingested': len(tracks)}), 200
+    except Exception as e:
+        logger.error(f"Error ingesting Jellyfin library: {e}")
+        return jsonify({'error': 'Failed to ingest Jellyfin library'}), 500
+
+@app.post('/api/navidrome/ingest/library')
+def api_navidrome_ingest_library():
+    """Ingest Navidrome music library into canonical tracks."""
+    try:
+        limit = request.args.get('limit')
+        limit = int(limit) if limit is not None else None
+        adapter = service_registry.get_adapter('navidrome')
+        if not adapter:
+            return jsonify({'error': 'navidrome_adapter not available'}), 400
+        tracks = adapter.ingest_library(limit=limit)
+        return jsonify({'ingested': len(tracks)}), 200
+    except Exception as e:
+        logger.error(f"Error ingesting Navidrome library: {e}")
+        return jsonify({'error': 'Failed to ingest Navidrome library'}), 500
+
+@app.post('/api/listenbrainz/ingest/playlist/<playlist_mbid>')
+def api_listenbrainz_ingest_playlist(playlist_mbid):
+    """Ingest a ListenBrainz playlist by MBID into canonical tracks."""
+    try:
+        adapter = service_registry.get_adapter('listenbrainz')
+        if not adapter:
+            return jsonify({'error': 'listenbrainz_adapter not available'}), 400
+        tracks = adapter.ingest_playlist(playlist_mbid)
+        return jsonify({'ingested': len(tracks)}), 200
+    except Exception as e:
+        logger.error(f"Error ingesting ListenBrainz playlist {playlist_mbid}: {e}")
+        return jsonify({'error': 'Failed to ingest playlist'}), 500
+
+@app.post('/api/soulseek/enqueue/track/<track_id>')
+def api_soulseek_enqueue_track(track_id):
+    """Search Soulseek for the best candidate for a track and enqueue download."""
+    try:
+        adapter = service_registry.get_adapter('soulseek')
+        if not adapter:
+            return jsonify({'error': 'soulseek_adapter not available'}), 400
+        updated = adapter.enqueue_best_for_track(track_id)
+        if not updated:
+            return jsonify({'error': 'No candidate found or enqueue failed'}), 404
+        return jsonify({'track': updated.to_dict()}), 200
+    except Exception as e:
+        logger.error(f"Error enqueuing Soulseek download for track {track_id}: {e}")
+        return jsonify({'error': 'Failed to enqueue download'}), 500
+
+@app.post('/api/soulseek/search-and-enqueue')
+def api_soulseek_search_and_enqueue():
+    """Search Soulseek by query and enqueue the best result as a new canonical track."""
+    try:
+        query = request.args.get('query') or (request.get_json(silent=True) or {}).get('query')
+        if not query:
+            return jsonify({'error': 'Missing query parameter'}), 400
+        adapter = service_registry.get_adapter('soulseek')
+        if not adapter:
+            return jsonify({'error': 'soulseek_adapter not available'}), 400
+        track = adapter.search_and_enqueue(query)
+        if not track:
+            return jsonify({'error': 'No candidate found or enqueue failed'}), 404
+        return jsonify({'track': track.to_dict()}), 200
+    except Exception as e:
+        logger.error(f"Error searching/enqueuing Soulseek download: {e}")
+        return jsonify({'error': 'Failed to search/enqueue'}), 500
 
 
 # --- Memory Cleanup Manager (Phase 1 Optimization) ---
@@ -238,6 +542,151 @@ except Exception as e:
     print(f"🔴 FATAL: Error initializing service clients: {e}")
     spotify_client = plex_client = jellyfin_client = navidrome_client = soulseek_client = tidal_client = matching_engine = sync_service = web_scan_manager = None
 
+# --- Initialize Health Check System ---
+from core.health_check import health_check_registry, HealthCheckResult
+
+def create_plex_health_check():
+    """Health check for Plex connection"""
+    try:
+        if not plex_client:
+            return HealthCheckResult(
+                service_name="plex",
+                status="unhealthy",
+                message="Plex client not initialized"
+            )
+        
+        connected = plex_client.ensure_connection()
+        if connected and plex_client.server:
+            return HealthCheckResult(
+                service_name="plex",
+                status="healthy",
+                message=f"Connected to {plex_client.server.friendlyName}",
+                details={"server_name": plex_client.server.friendlyName}
+            )
+        else:
+            return HealthCheckResult(
+                service_name="plex",
+                status="unhealthy",
+                message="Could not connect to Plex server"
+            )
+    except Exception as e:
+        return HealthCheckResult(
+            service_name="plex",
+            status="unhealthy",
+            message=f"Health check failed: {str(e)}"
+        )
+
+def create_spotify_health_check():
+    """Health check for Spotify connection"""
+    try:
+        if not spotify_client:
+            return HealthCheckResult(
+                service_name="spotify",
+                status="unhealthy",
+                message="Spotify client not initialized"
+            )
+        
+        authenticated = spotify_client.authenticate()
+        if authenticated:
+            return HealthCheckResult(
+                service_name="spotify",
+                status="healthy",
+                message="Spotify authenticated successfully"
+            )
+        else:
+            return HealthCheckResult(
+                service_name="spotify",
+                status="degraded",
+                message="Spotify authentication needed"
+            )
+    except Exception as e:
+        return HealthCheckResult(
+            service_name="spotify",
+            status="unhealthy",
+            message=f"Health check failed: {str(e)}"
+        )
+
+def create_soulseek_health_check():
+    """Health check for Soulseek connection"""
+    try:
+        if not soulseek_client:
+            return HealthCheckResult(
+                service_name="soulseek",
+                status="unhealthy",
+                message="Soulseek client not initialized"
+            )
+        
+        # Check if slskd is reachable
+        connected = asyncio.run(soulseek_client.check_connection())
+        if connected:
+            return HealthCheckResult(
+                service_name="soulseek",
+                status="healthy",
+                message="Soulseek (slskd) connected"
+            )
+        else:
+            return HealthCheckResult(
+                service_name="soulseek",
+                status="unhealthy",
+                message="Could not connect to slskd"
+            )
+    except Exception as e:
+        return HealthCheckResult(
+            service_name="soulseek",
+            status="unhealthy",
+            message=f"Health check failed: {str(e)}"
+        )
+
+def create_database_health_check():
+    """Health check for database connection"""
+    try:
+        db = get_database()
+        # Simple query to verify database is accessible
+        with db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM canonical_tracks")
+            count = cursor.fetchone()[0]
+            return HealthCheckResult(
+                service_name="database",
+                status="healthy",
+                message=f"Database accessible ({count} tracks)",
+                details={"track_count": count}
+            )
+    except Exception as e:
+        return HealthCheckResult(
+            service_name="database",
+            status="unhealthy",
+            message=f"Database check failed: {str(e)}"
+        )
+
+# Register health checks
+health_check_registry.register_check("plex", create_plex_health_check)
+health_check_registry.register_check("spotify", create_spotify_health_check)
+health_check_registry.register_check("soulseek", create_soulseek_health_check)
+health_check_registry.register_check("database", create_database_health_check)
+
+# Start periodic health checks (every 2 minutes) via JobQueue
+try:
+    from core.job_queue import register_job, start_job_queue, job_queue
+    start_job_queue()
+    register_job(
+        name="health_checks",
+        func=lambda: health_check_registry.run_all_checks(),
+        interval_seconds=120,
+        enabled=True,
+        max_retries=1,
+        backoff_base=15.0,
+        backoff_factor=2.0,
+        tags=["health", "system"],
+        plugin="core"
+    )
+    print("✅ Health check system initialized (JobQueue)")
+except Exception as e:
+    print(f"⚠️ Failed to start JobQueue for health checks: {e}")
+    health_check_registry.start_scheduler(interval_seconds=120)
+    print("✅ Health check scheduler started (fallback)")
+
+
 # --- Global Streaming State Management ---
 # Thread-safe state tracking for streaming functionality
 stream_state = {
@@ -345,6 +794,18 @@ wishlist_auto_processing_timestamp = 0  # Timestamp when processing started (for
 wishlist_next_run_time = 0  # Timestamp when next auto-processing is scheduled (for countdown display)
 wishlist_timer_lock = threading.Lock()  # Thread safety for timer operations
 
+# Prefer the JobQueue-based scheduler; fall back to legacy timers if JobQueue registration fails.
+USE_JOB_QUEUE_FOR_WISHLIST = True
+WISHLIST_JOB_NAME = "wishlist_auto_processing"
+wishlist_job_registered = False
+
+# Simple background monitor (search cleanup + transfer polling)
+USE_JOB_QUEUE_FOR_SIMPLE_MONITOR = True
+SIMPLE_MONITOR_JOB_NAME = "simple_background_monitor"
+simple_monitor_job_registered = False
+simple_monitor_last_search_cleanup = 0
+simple_monitor_initial_cleanup_done = False
+
 # --- Automatic Watchlist Scanning Infrastructure ---
 # Server-side timer system for automatic watchlist scanning (mirrors wishlist pattern for consistency)
 watchlist_auto_timer = None  # threading.Timer for scheduling next auto-scanning
@@ -352,6 +813,28 @@ watchlist_auto_scanning = False  # Flag to prevent concurrent auto-scanning
 watchlist_auto_scanning_timestamp = 0  # Timestamp when scanning started (for stuck detection)
 watchlist_next_run_time = 0  # Timestamp when next auto-scanning is scheduled (for countdown display)
 watchlist_timer_lock = threading.Lock()  # Thread safety for timer operations
+
+USE_JOB_QUEUE_FOR_WATCHLIST = True
+WATCHLIST_JOB_NAME = "watchlist_auto_scanning"
+watchlist_job_registered = False
+
+
+def _get_job_next_run_seconds(job_name: str, fallback_next_run_time: float = 0) -> int:
+    """Return seconds until the next scheduled run for a JobQueue job, with legacy fallback."""
+    try:
+        from core.job_queue import list_jobs
+
+        now = time.time()
+        for job in list_jobs():
+            if job.get("name") == job_name and job.get("next_run"):
+                return max(0, int(job["next_run"] - now))
+    except Exception:
+        # Silent fallback to avoid noisy logs if JobQueue is unavailable
+        pass
+
+    if fallback_next_run_time > 0:
+        return max(0, int(fallback_next_run_time - time.time()))
+    return 0
 
 # --- Shared Transfer Data Cache ---
 # Cache transfer data to avoid hammering the Soulseek API with multiple concurrent modals
@@ -377,8 +860,12 @@ def get_cached_transfer_data():
         # Cache expired or empty, fetch new data
         live_transfers_lookup = {}
         try:
-            # Use DownloaderProvider interface: get current downloads via search
-            transfers = soulseek_client.search("", limit=1000)
+            # Fetch current downloads - soulseek search doesn't support limit parameter
+            # This is a workaround; ideally use get_all_downloads() method
+            try:
+                transfers = asyncio.run(soulseek_client.get_all_downloads())
+            except Exception:
+                transfers = []
             for track in transfers:
                 username = getattr(track, 'username', 'Unknown')
                 filename = getattr(track, 'filename', '')
@@ -580,8 +1067,11 @@ class WebUIDownloadMonitor:
             if not self.monitoring:
                 return {}
                 
-            # Use ProviderBase search method for Soulseek
-            transfers = soulseek_client.search("", limit=1000)
+            # Use async get_all_downloads instead of search
+            try:
+                transfers = asyncio.run(soulseek_client.get_all_downloads())
+            except Exception:
+                transfers = []
             live_transfers = {}
             for track in transfers:
                 username = getattr(track, 'username', 'Unknown')
@@ -1556,6 +2046,40 @@ _status_cache_timestamps = {
 }
 STATUS_CACHE_TTL = 120  # Cache for 2 minutes (reduces API calls while staying fresh)
 
+# Optional debug endpoint to verify Spotify auth state via storage
+@app.get('/api/debug/spotify-auth')
+def debug_spotify_auth():
+    try:
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+        storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
+        accounts = storage.list_accounts('spotify') or []
+        details = []
+        for a in accounts:
+            token = None
+            try:
+                token = storage.get_account_token(a.get('id'))
+            except Exception:
+                token = None
+            details.append({
+                'id': a.get('id'),
+                'name': a.get('account_name') or a.get('display_name'),
+                'is_active': a.get('is_active'),
+                'is_authenticated': a.get('is_authenticated'),
+                'has_access_token': bool(token and token.get('access_token')),
+                'has_refresh_token': bool(token and token.get('refresh_token')),
+                'expires_at': (token or {}).get('expires_at'),
+                'scope': (token or {}).get('scope')
+            })
+        # Runtime client check as well
+        runtime_authenticated = bool(spotify_client and hasattr(spotify_client, 'is_authenticated') and spotify_client.is_authenticated())
+        return jsonify({
+            'accounts': details,
+            'runtime_authenticated': runtime_authenticated
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/status')
 def get_status():
     if not all([spotify_client, plex_client, jellyfin_client, soulseek_client, config_manager]):
@@ -1566,12 +2090,40 @@ def get_status():
         current_time = time.time()
         active_server = config_manager.get_active_media_server()
 
-        # Test Spotify - with caching to avoid excessive API calls
+        # Test Spotify - prefer DB token presence over live API to avoid false negatives
         if current_time - _status_cache_timestamps['spotify'] > STATUS_CACHE_TTL:
             spotify_start = time.time()
-            # Use ProviderBase interface
             spotify_status = False
-            spotify_status = spotify_client.authenticate()
+            try:
+                # Check encrypted config.db for Spotify accounts/tokens
+                from sdk.storage_service import get_storage_service
+                storage = get_storage_service()
+                storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
+                accounts = storage.list_accounts('spotify') or []
+                # Prefer active account
+                active = next((a for a in accounts if a.get('is_active')), None)
+                candidate_accounts = []
+                if active:
+                    candidate_accounts.append(active)
+                # Add other accounts as fallback
+                candidate_accounts.extend([a for a in accounts if not active or a.get('id') != active.get('id')])
+
+                for acc in candidate_accounts:
+                    try:
+                        token_info = storage.get_account_token(acc.get('id'))
+                        if token_info and (token_info.get('access_token') or token_info.get('refresh_token')):
+                            spotify_status = True
+                            break
+                    except Exception:
+                        continue
+
+                # Final fallback to runtime client check
+                if not spotify_status:
+                    spotify_status = bool(spotify_client and hasattr(spotify_client, 'is_authenticated') and spotify_client.is_authenticated())
+            except Exception:
+                # Fallback to runtime client check on any storage errors
+                spotify_status = bool(spotify_client and hasattr(spotify_client, 'is_authenticated') and spotify_client.is_authenticated())
+
             spotify_response_time = (time.time() - spotify_start) * 1000
             _status_cache['spotify'] = {
                 'connected': spotify_status,
@@ -1734,7 +2286,7 @@ def get_system_stats():
         # Calculate total download speed from active soulseek transfers
         total_download_speed = 0.0
         try:
-            transfers = soulseek_client.search("", limit=1000)
+            transfers = asyncio.run(soulseek_client.get_all_downloads())
             for track in transfers:
                 state = getattr(track, 'state', '').lower()
                 speed = getattr(track, 'upload_speed', 0)
@@ -2272,6 +2824,32 @@ def spotify_callback():
                 spotify_client._setup_client()
             except Exception as e:
                 logger.error(f"Client reinit failed: {e}")
+        # Invalidate /status cache for Spotify to reflect new account
+        try:
+            import time
+            _status_cache['spotify'] = {'connected': False, 'response_time': 0}
+            _status_cache_timestamps['spotify'] = 0  # force refresh on next /status call
+        except Exception:
+            pass
+        
+        # Invalidate and refresh status cache for Spotify immediately
+        try:
+            import time
+            current_time = time.time()
+            # Best-effort check; don't block callback if it fails
+            is_authed = False
+            try:
+                is_authed = spotify_client.authenticate() if spotify_client else False
+            except Exception:
+                is_authed = False
+            _status_cache['spotify'] = {
+                'connected': bool(is_authed),
+                'response_time': 0
+            }
+            _status_cache_timestamps['spotify'] = current_time
+            logger.info("Updated Spotify status cache post-authentication callback")
+        except Exception as e:
+            logger.debug(f"Could not update Spotify status cache: {e}")
         
         success_html = """
         <html><body style='font-family: Arial, sans-serif;'>
@@ -2957,15 +3535,21 @@ def plex_oauth_callback():
 def get_plex_music_libraries():
     """Get list of all available music libraries from Plex"""
     try:
-        # Use get_library to fetch all tracks (MediaServerProvider)
+        if not plex_client:
+            return jsonify({"success": False, "error": "Plex client not initialized"}), 400
+
+        if not plex_client.ensure_connection():
+            return jsonify({"success": False, "error": "Plex connection failed"}), 503
+
         try:
-            tracks = plex_client.get_library()
+            libraries = plex_client.get_available_music_libraries()
+            # Ensure JSON-serializable payload (title/key only)
             return jsonify({
                 "success": True,
-                "tracks": tracks
+                "libraries": libraries
             })
         except Exception as e:
-            logger.error(f"Error getting Plex library: {e}")
+            logger.error(f"Error getting Plex library: {e}", exc_info=True)
             return jsonify({"success": False, "error": str(e)}), 500
     except Exception as e:
         logger.error(f"Error getting Plex music libraries: {e}")
@@ -4321,6 +4905,229 @@ def clear_finished_downloads():
     except Exception as e:
         print(f"Error clearing finished downloads: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ============================================================================
+# JOB QUEUE API ENDPOINTS
+# ============================================================================
+
+@app.route('/api/jobs', methods=['GET'])
+def list_all_jobs():
+    """List all registered jobs with their status"""
+    try:
+        from core.job_queue import list_jobs
+        jobs = list_jobs()
+        return jsonify({
+            "success": True,
+            "jobs": jobs,
+            "count": len(jobs)
+        })
+    except Exception as e:
+        logger.error(f"Error listing jobs: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/jobs/<job_name>/enable', methods=['POST'])
+def enable_job_endpoint(job_name):
+    """Enable a specific job"""
+    try:
+        from core.job_queue import enable_job
+        enable_job(job_name)
+        return jsonify({
+            "success": True,
+            "message": f"Job '{job_name}' enabled"
+        })
+    except Exception as e:
+        logger.error(f"Error enabling job {job_name}: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/jobs/<job_name>/disable', methods=['POST'])
+def disable_job_endpoint(job_name):
+    """Disable a specific job"""
+    try:
+        from core.job_queue import disable_job
+        disable_job(job_name)
+        return jsonify({
+            "success": True,
+            "message": f"Job '{job_name}' disabled"
+        })
+    except Exception as e:
+        logger.error(f"Error disabling job {job_name}: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/jobs/<job_name>/run', methods=['POST'])
+def run_job_now_endpoint(job_name):
+    """Trigger immediate execution of a job"""
+    try:
+        from core.job_queue import run_job_now
+        run_job_now(job_name)
+        return jsonify({
+            "success": True,
+            "message": f"Job '{job_name}' scheduled for immediate execution"
+        })
+    except Exception as e:
+        logger.error(f"Error running job {job_name}: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/jobs/<job_name>/schedule', methods=['POST'])
+def schedule_job_endpoint(job_name):
+    """Schedule a job to run after a specific delay"""
+    try:
+        from core.job_queue import schedule_job_in
+        data = request.get_json() or {}
+        delay_seconds = data.get('delay_seconds', 60.0)
+        
+        if not isinstance(delay_seconds, (int, float)) or delay_seconds < 0:
+            return jsonify({
+                "success": False,
+                "error": "delay_seconds must be a non-negative number"
+            }), 400
+        
+        schedule_job_in(job_name, delay_seconds)
+        return jsonify({
+            "success": True,
+            "message": f"Job '{job_name}' scheduled to run in {delay_seconds} seconds"
+        })
+    except Exception as e:
+        logger.error(f"Error scheduling job {job_name}: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/jobs/<job_name>', methods=['GET'])
+def get_job_status_endpoint(job_name):
+    """Get detailed status for a specific job"""
+    try:
+        from core.job_queue import list_jobs
+        jobs = list_jobs()
+        job = next((j for j in jobs if j['name'] == job_name), None)
+        
+        if job is None:
+            return jsonify({
+                "success": False,
+                "error": f"Job '{job_name}' not found"
+            }), 404
+        
+        return jsonify({
+            "success": True,
+            "job": job
+        })
+    except Exception as e:
+        logger.error(f"Error getting job status {job_name}: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ============================================================================
+# HEALTH CHECK API ENDPOINTS
+# ============================================================================
+
+@app.route('/api/health', methods=['GET'])
+def get_health_summary():
+    """Get overall health summary of all services"""
+    try:
+        results = health_check_registry.run_all_checks()
+        
+        # Determine overall status
+        statuses = [r.status for r in results.values()]
+        if all(s == "healthy" for s in statuses):
+            overall_status = "healthy"
+        elif any(s == "unhealthy" for s in statuses):
+            overall_status = "unhealthy"
+        else:
+            overall_status = "degraded"
+        
+        return jsonify({
+            "status": overall_status,
+            "timestamp": datetime.now().isoformat(),
+            "services": {
+                name: {
+                    "status": result.status,
+                    "message": result.message
+                }
+                for name, result in results.items()
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error getting health summary: {e}")
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/health/<service>', methods=['GET'])
+def get_service_health(service):
+    """Get health status for a specific service"""
+    try:
+        result = health_check_registry.run_check(service)
+        
+        if result is None:
+            return jsonify({
+                "error": f"Service '{service}' not found"
+            }), 404
+        
+        return jsonify({
+            "service": service,
+            "status": result.status,
+            "message": result.message,
+            "details": result.details,
+            "timestamp": result.timestamp.isoformat(),
+            "response_time_ms": result.response_time_ms
+        })
+    except Exception as e:
+        logger.error(f"Error checking health for {service}: {e}")
+        return jsonify({
+            "service": service,
+            "status": "unhealthy",
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/health/all', methods=['GET'])
+def get_all_health_details():
+    """Get detailed health status for all services"""
+    try:
+        results = health_check_registry.run_all_checks()
+        
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "services": {
+                name: {
+                    "status": result.status,
+                    "message": result.message,
+                    "details": result.details,
+                    "timestamp": result.timestamp.isoformat(),
+                    "response_time_ms": result.response_time_ms
+                }
+                for name, result in results.items()
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error getting all health details: {e}")
+        return jsonify({
+            "error": str(e)
+        }), 500
+
 
 @app.route('/api/scan/request', methods=['POST'])
 def request_media_scan():
@@ -8772,57 +9579,93 @@ def get_version_info():
     return jsonify(version_data)
 
 
+def _simple_monitor_tick():
+    """Single tick of the background monitor: poll downloads and run periodic cleanup."""
+    global simple_monitor_last_search_cleanup, simple_monitor_initial_cleanup_done
+
+    try:
+        with matched_context_lock:
+            pending_count = len(matched_downloads_context)
+
+        if pending_count > 0:
+            # Use app_context to safely call endpoint logic from a background context
+            with app.app_context():
+                get_download_status()
+
+        # Automatic search cleanup every hour (or initial cleanup)
+        search_cleanup_interval = 3600  # 1 hour
+        current_time = time.time()
+        should_cleanup = (
+            (current_time - simple_monitor_last_search_cleanup > search_cleanup_interval)
+            or not simple_monitor_initial_cleanup_done
+        )
+
+        if should_cleanup:
+            try:
+                if not simple_monitor_initial_cleanup_done:
+                    print("🔍 [Auto Cleanup] Performing initial search cleanup in background...")
+                    simple_monitor_initial_cleanup_done = True
+                else:
+                    print("🔍 [Auto Cleanup] Starting scheduled search cleanup...")
+
+                success = asyncio.run(soulseek_client.maintain_search_history_with_buffer(
+                    keep_searches=50, trigger_threshold=200
+                ))
+                if success:
+                    cleanup_type = (
+                        "Initial search history maintenance"
+                        if simple_monitor_last_search_cleanup == 0
+                        else "Automatic search history maintenance completed"
+                    )
+                    add_activity_item("🧹", "Search Cleanup", cleanup_type, "Now")
+                    print("✅ [Auto Cleanup] Search history maintenance completed")
+                else:
+                    print("⚠️ [Auto Cleanup] Search history maintenance returned false")
+                simple_monitor_last_search_cleanup = current_time
+            except Exception as cleanup_error:
+                print(f"❌ [Auto Cleanup] Error in automatic search cleanup: {cleanup_error}")
+                simple_monitor_last_search_cleanup = current_time  # Still update to avoid spam
+                simple_monitor_initial_cleanup_done = True  # Mark as done even on error
+    except Exception as e:
+        print(f"❌ Simple monitor tick error: {e}")
+
+
 def _simple_monitor_task():
-    """The actual monitoring task that runs in the background thread."""
-    print("🔄 Simple background monitor started")
-    last_search_cleanup = 0  # Force initial cleanup on first run
-    search_cleanup_interval = 3600  # 1 hour
-    initial_cleanup_done = False
-    
+    """Legacy background monitor loop used as fallback when JobQueue is unavailable."""
+    print("🔄 Simple background monitor (legacy thread) started")
     while True:
-        try:
-            with matched_context_lock:
-                pending_count = len(matched_downloads_context)
-            
-            if pending_count > 0:
-                # Use app_context to safely call endpoint logic from a thread
-                with app.app_context():
-                    get_download_status()
-            
-            # Automatic search cleanup every hour (or initial cleanup)
-            current_time = time.time()
-            should_cleanup = (current_time - last_search_cleanup > search_cleanup_interval) or not initial_cleanup_done
-            
-            if should_cleanup:
-                try:
-                    if not initial_cleanup_done:
-                        print("🔍 [Auto Cleanup] Performing initial search cleanup in background...")
-                        initial_cleanup_done = True
-                    else:
-                        print("🔍 [Auto Cleanup] Starting scheduled search cleanup...")
-                    
-                    success = asyncio.run(soulseek_client.maintain_search_history_with_buffer(
-                        keep_searches=50, trigger_threshold=200
-                    ))
-                    if success:
-                        cleanup_type = "Initial search history maintenance" if last_search_cleanup == 0 else "Automatic search history maintenance completed"
-                        add_activity_item("🧹", "Search Cleanup", cleanup_type, "Now")
-                        print("✅ [Auto Cleanup] Search history maintenance completed")
-                    else:
-                        print("⚠️ [Auto Cleanup] Search history maintenance returned false")
-                    last_search_cleanup = current_time
-                except Exception as cleanup_error:
-                    print(f"❌ [Auto Cleanup] Error in automatic search cleanup: {cleanup_error}")
-                    last_search_cleanup = current_time  # Still update to avoid spam
-                    initial_cleanup_done = True  # Mark as done even on error to avoid blocking
-            
-            time.sleep(1)
-        except Exception as e:
-            print(f"❌ Simple monitor error: {e}")
-            time.sleep(10)
+        _simple_monitor_tick()
+        time.sleep(1)
+
 
 def start_simple_background_monitor():
-    """Starts the simple background monitor thread."""
+    """Start the background monitor via JobQueue, falling back to thread if needed."""
+    global simple_monitor_job_registered
+
+    if USE_JOB_QUEUE_FOR_SIMPLE_MONITOR:
+        try:
+            from core.job_queue import register_job, start_job_queue
+
+            start_job_queue()
+            if not simple_monitor_job_registered:
+                register_job(
+                    name=SIMPLE_MONITOR_JOB_NAME,
+                    func=_simple_monitor_tick,
+                    interval_seconds=10.0,
+                    start_after=1.0,
+                    enabled=True,
+                    max_retries=1,
+                    backoff_base=5.0,
+                    backoff_factor=2.0,
+                    tags=["monitor", "cleanup"],
+                    plugin="core"
+                )
+                simple_monitor_job_registered = True
+                print("✅ Simple background monitor scheduled via JobQueue (10s interval)")
+            return
+        except Exception as job_error:
+            print(f"⚠️ Failed to schedule simple monitor via JobQueue: {job_error}. Falling back to legacy thread.")
+
     monitor_thread = threading.Thread(target=_simple_monitor_task)
     monitor_thread.daemon = True
     monitor_thread.start()
@@ -8952,10 +9795,38 @@ def is_watchlist_actually_scanning():
     return True
 
 def start_wishlist_auto_processing():
-    """Start automatic wishlist processing with 1-minute initial delay."""
-    global wishlist_auto_timer, wishlist_next_run_time
+    """Start automatic wishlist processing with JobQueue (fallback to timers if needed)."""
+    global wishlist_auto_timer, wishlist_next_run_time, wishlist_job_registered
 
     print("🚀 [Auto-Wishlist] Initializing automatic wishlist processing...")
+
+    if USE_JOB_QUEUE_FOR_WISHLIST:
+        try:
+            from core.job_queue import enable_job, register_job, schedule_job_in, start_job_queue
+
+            start_job_queue()
+            if wishlist_job_registered:
+                enable_job(WISHLIST_JOB_NAME)
+                schedule_job_in(WISHLIST_JOB_NAME, 60.0)
+            else:
+                register_job(
+                    name=WISHLIST_JOB_NAME,
+                    func=_process_wishlist_automatically,
+                    interval_seconds=1800.0,
+                    start_after=60.0,
+                    enabled=True,
+                    max_retries=1,
+                    backoff_base=60.0,
+                    backoff_factor=2.0,
+                    tags=["wishlist", "auto"],
+                    plugin="core"
+                )
+                wishlist_job_registered = True
+            wishlist_next_run_time = time.time() + 60.0
+            print("✅ [Auto-Wishlist] Scheduled via JobQueue (1 minute initial delay, 30 minute interval)")
+            return
+        except Exception as job_error:
+            print(f"⚠️ Failed to start wishlist auto-processing via JobQueue: {job_error}. Falling back to legacy timer.")
 
     with wishlist_timer_lock:
         # Stop any existing timer to prevent duplicates
@@ -8973,6 +9844,13 @@ def stop_wishlist_auto_processing():
     """Stop automatic wishlist processing and cleanup timer."""
     global wishlist_auto_timer, wishlist_auto_processing, wishlist_auto_processing_timestamp, wishlist_next_run_time
 
+    if USE_JOB_QUEUE_FOR_WISHLIST and wishlist_job_registered:
+        try:
+            from core.job_queue import disable_job
+            disable_job(WISHLIST_JOB_NAME)
+        except Exception as job_error:
+            print(f"⚠️ Failed to disable wishlist job in JobQueue: {job_error}")
+
     with wishlist_timer_lock:
         if wishlist_auto_timer is not None:
             wishlist_auto_timer.cancel()
@@ -8983,14 +9861,26 @@ def stop_wishlist_auto_processing():
         wishlist_auto_processing_timestamp = 0
         wishlist_next_run_time = 0  # Clear countdown timer
 
-def schedule_next_wishlist_processing():
-    """Schedule next automatic wishlist processing in 30 minutes."""
+def schedule_next_wishlist_processing(delay_seconds: float = 1800.0):
+    """Schedule the next automatic wishlist processing run."""
     global wishlist_auto_timer, wishlist_next_run_time
 
     with wishlist_timer_lock:
-        print("⏰ Scheduling next automatic wishlist processing in 30 minutes")
-        wishlist_next_run_time = time.time() + 1800.0  # Set timestamp for countdown display
-        wishlist_auto_timer = threading.Timer(1800.0, _process_wishlist_automatically)  # 30 minutes (1800 seconds)
+        wishlist_next_run_time = time.time() + delay_seconds  # Track for countdown display (legacy UI)
+
+    if USE_JOB_QUEUE_FOR_WISHLIST and wishlist_job_registered:
+        try:
+            from core.job_queue import schedule_job_in
+            schedule_job_in(WISHLIST_JOB_NAME, delay_seconds)
+            return
+        except Exception as job_error:
+            print(f"⚠️ Failed to reschedule wishlist job via JobQueue: {job_error}. Falling back to legacy timer.")
+
+    with wishlist_timer_lock:
+        print(f"⏰ Scheduling next automatic wishlist processing in {delay_seconds} seconds")
+        if wishlist_auto_timer is not None:
+            wishlist_auto_timer.cancel()
+        wishlist_auto_timer = threading.Timer(delay_seconds, _process_wishlist_automatically)
         wishlist_auto_timer.daemon = True
         wishlist_auto_timer.start()
 
@@ -9422,10 +10312,7 @@ def get_wishlist_stats():
         total_count = singles_count + albums_count
 
         # Calculate time until next auto-processing
-        next_run_in_seconds = 0
-        with wishlist_timer_lock:
-            if wishlist_next_run_time > 0:
-                next_run_in_seconds = max(0, int(wishlist_next_run_time - time.time()))
+        next_run_in_seconds = _get_job_next_run_seconds(WISHLIST_JOB_NAME, wishlist_next_run_time)
 
         return jsonify({
             "singles": singles_count,
@@ -16250,10 +17137,7 @@ def get_watchlist_count():
         count = database.get_watchlist_count()
 
         # Calculate time until next auto-scanning
-        next_run_in_seconds = 0
-        with watchlist_timer_lock:
-            if watchlist_next_run_time > 0:
-                next_run_in_seconds = max(0, int(watchlist_next_run_time - time.time()))
+        next_run_in_seconds = _get_job_next_run_seconds(WATCHLIST_JOB_NAME, watchlist_next_run_time)
 
         return jsonify({
             "success": True,
@@ -16952,10 +17836,38 @@ watchlist_scan_state = {
 }
 
 def start_watchlist_auto_scanning():
-    """Start automatic watchlist scanning with 5-minute initial delay (Timer-based like wishlist)"""
-    global watchlist_auto_timer, watchlist_next_run_time
+    """Start automatic watchlist scanning via JobQueue (fallback to timers if needed)."""
+    global watchlist_auto_timer, watchlist_next_run_time, watchlist_job_registered
 
     print("🚀 [Auto-Watchlist] Initializing automatic watchlist scanning...")
+
+    if USE_JOB_QUEUE_FOR_WATCHLIST:
+        try:
+            from core.job_queue import enable_job, register_job, schedule_job_in, start_job_queue
+
+            start_job_queue()
+            if watchlist_job_registered:
+                enable_job(WATCHLIST_JOB_NAME)
+                schedule_job_in(WATCHLIST_JOB_NAME, 300.0)
+            else:
+                register_job(
+                    name=WATCHLIST_JOB_NAME,
+                    func=_process_watchlist_scan_automatically,
+                    interval_seconds=86400.0,
+                    start_after=300.0,
+                    enabled=True,
+                    max_retries=1,
+                    backoff_base=900.0,
+                    backoff_factor=2.0,
+                    tags=["watchlist", "auto"],
+                    plugin="core"
+                )
+                watchlist_job_registered = True
+            watchlist_next_run_time = time.time() + 300.0
+            print("✅ [Auto-Watchlist] Scheduled via JobQueue (5 minute initial delay, 24 hour interval)")
+            return
+        except Exception as job_error:
+            print(f"⚠️ Failed to start watchlist auto-scanning via JobQueue: {job_error}. Falling back to legacy timer.")
 
     with watchlist_timer_lock:
         # Stop any existing timer to prevent duplicates
@@ -16973,6 +17885,13 @@ def stop_watchlist_auto_scanning():
     """Stop automatic watchlist scanning and cleanup timer."""
     global watchlist_auto_timer, watchlist_auto_scanning
 
+    if USE_JOB_QUEUE_FOR_WATCHLIST and watchlist_job_registered:
+        try:
+            from core.job_queue import disable_job
+            disable_job(WATCHLIST_JOB_NAME)
+        except Exception as job_error:
+            print(f"⚠️ Failed to disable watchlist job in JobQueue: {job_error}")
+
     with watchlist_timer_lock:
         if watchlist_auto_timer is not None:
             watchlist_auto_timer.cancel()
@@ -16982,14 +17901,26 @@ def stop_watchlist_auto_scanning():
         watchlist_auto_scanning = False
         watchlist_auto_scanning_timestamp = 0
 
-def schedule_next_watchlist_scan():
-    """Schedule next automatic watchlist scan in 24 hours."""
+def schedule_next_watchlist_scan(delay_seconds: float = 86400.0):
+    """Schedule the next automatic watchlist scan."""
     global watchlist_auto_timer, watchlist_next_run_time
 
     with watchlist_timer_lock:
-        print("⏰ Scheduling next automatic watchlist scan in 24 hours")
-        watchlist_next_run_time = time.time() + 86400.0  # Set timestamp for countdown display
-        watchlist_auto_timer = threading.Timer(86400.0, _process_watchlist_scan_automatically)  # 24 hours
+        watchlist_next_run_time = time.time() + delay_seconds
+
+    if USE_JOB_QUEUE_FOR_WATCHLIST and watchlist_job_registered:
+        try:
+            from core.job_queue import schedule_job_in
+            schedule_job_in(WATCHLIST_JOB_NAME, delay_seconds)
+            return
+        except Exception as job_error:
+            print(f"⚠️ Failed to reschedule watchlist job via JobQueue: {job_error}. Falling back to legacy timer.")
+
+    with watchlist_timer_lock:
+        print(f"⏰ Scheduling next automatic watchlist scan in {delay_seconds} seconds")
+        if watchlist_auto_timer is not None:
+            watchlist_auto_timer.cancel()
+        watchlist_auto_timer = threading.Timer(delay_seconds, _process_watchlist_scan_automatically)
         watchlist_auto_timer.daemon = True
         watchlist_auto_timer.start()
 
@@ -17010,11 +17941,7 @@ def _process_watchlist_scan_automatically():
             if is_wishlist_actually_processing():
                 print("🎵 Wishlist processing in progress, rescheduling watchlist scan for 10 minutes from now")
                 # Smart retry: don't wait 24 hours, just wait 10 minutes and try again
-                global watchlist_auto_timer, watchlist_next_run_time
-                watchlist_next_run_time = time.time() + 600.0  # Set timestamp for countdown display
-                watchlist_auto_timer = threading.Timer(600.0, _process_watchlist_scan_automatically)  # 10 minutes
-                watchlist_auto_timer.daemon = True
-                watchlist_auto_timer.start()
+                schedule_next_watchlist_scan(delay_seconds=600.0)
                 return
 
             # Set flag and timestamp
