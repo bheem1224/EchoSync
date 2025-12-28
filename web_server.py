@@ -21,17 +21,17 @@ from utils.path_helpers import extract_filename, docker_resolve_path
 # Global logger for this module
 logger = get_logger("web_server")
 from config.settings import config_manager
-from core.spotify_client import SpotifyClient, Playlist as SpotifyPlaylist, Track as SpotifyTrack
-from core.plex_client import PlexClient
-from core.jellyfin_client import JellyfinClient
-from core.navidrome_client import NavidromeClient
-from core.soulseek_client import SoulseekClient
-from core.tidal_client import TidalClient
+from providers.spotify.client import SpotifyClient, Playlist as SpotifyPlaylist, Track as SpotifyTrack
+from providers.plex.client import PlexClient
+from providers.jellyfin.client import JellyfinClient
+from providers.navidrome.client import NavidromeClient
+from providers.soulseek.client import SoulseekClient
+from providers.tidal.client import TidalClient
 from core.matching_engine import MusicMatchingEngine
 from core.database_update_worker import DatabaseUpdateWorker, DatabaseStatsWorker
 from core.web_scan_manager import WebScanManager
 from core.lyrics_client import lyrics_client
-from core.plugin_system import plugin_registry, PluginType, PluginScope
+from plugins.plugin_system import plugin_registry, PluginType, PluginScope
 from database.music_database import get_database
 from core.models import Track, DownloadStatus
 from sdk.storage_service import get_storage_service
@@ -516,7 +516,7 @@ atexit.register(_cleanup_manager.stop)
 # --- Initialize Core Application Components ---
 print("🚀 Initializing SoulSync services for Web UI...")
 
-from core.service_registry import service_registry
+from plugins.service_registry import service_registry
 
 # --- Initialize Core Application Components ---
 print("🚀 Initializing SoulSync services for Web UI...")
@@ -2757,7 +2757,7 @@ def spotify_callback():
             logger.warning(f"Failed to seed Spotify service config into config.db (callback): {e}")
 
         # Use cache handler to persist tokens into encrypted DB
-        from core.spotify_client import ConfigCacheHandler
+        from providers.spotify.client import ConfigCacheHandler
         auth_manager = SpotifyOAuth(
             client_id=client_id,
             client_secret=client_secret,
@@ -3011,7 +3011,7 @@ def activate_tidal_account(account_id: int):
 
         # Reinitialize Tidal client if needed
         try:
-            from core.tidal_client import TidalClient
+            from providers.tidal.client import TidalClient
             global tidal_client
             tidal_client = TidalClient(account_id=str(account_id))
         except Exception:
@@ -3049,7 +3049,7 @@ def tidal_authorize_url(account_id: int):
             redirect_uri = redirect_uri.replace(':8889', ':8008')
 
         # 4. Create TidalClient for the specific account (loads from DB)
-        from core.tidal_client import TidalClient
+        from providers.tidal.client import TidalClient
         temp_client = TidalClient(account_id=str(account_id))
 
         # 5. Generate PKCE values for this OAuth attempt
@@ -3803,7 +3803,7 @@ def auth_tidal():
     print("🔐🔐🔐 TIDAL AUTH ROUTE CALLED 🔐🔐🔐")
     try:
         # Create a fresh tidal client to get OAuth URL
-        from core.tidal_client import TidalClient
+        from providers.tidal.client import TidalClient
         temp_tidal_client = TidalClient()
         
         if not temp_tidal_client.client_id:
@@ -11336,7 +11336,7 @@ def get_valid_candidates(results, spotify_track, query):
 
     # Filter by user's quality profile before artist verification
     # Use shared soulseek_client method for consistency
-    from core.soulseek_client import SoulseekClient
+    from providers.soulseek.client import SoulseekClient
     temp_client = SoulseekClient()
     quality_filtered_candidates = temp_client.filter_results_by_quality_preference(initial_candidates)
 
@@ -22416,7 +22416,7 @@ def docker_resolve_url(url):
 def get_spotify_artist_discography(artist_name):
     """Get complete artist discography from Spotify using proper matching"""
     try:
-        from core.spotify_client import SpotifyClient
+        from providers.spotify.client import SpotifyClient
         from core.matching_engine import MusicMatchingEngine
 
         print(f"🎵 Searching Spotify for artist: {artist_name}")

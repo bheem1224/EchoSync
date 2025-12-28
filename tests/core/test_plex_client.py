@@ -1,7 +1,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch, call
-from core.plex_client import PlexClient, PlexTrackInfo
+from providers.plex.client import PlexClient, PlexTrackInfo
 from plexapi.exceptions import NotFound
 
 # --- Sample Config and Mock Objects ---

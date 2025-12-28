@@ -9,7 +9,7 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 
 from typing import List, Optional, Dict, Any
 from utils.logging_config import get_logger
-from core.provider_adapter import ProviderAdapter
+from plugins.provider_adapter import ProviderAdapter
 from core.models import ProviderType, Track
 from database.music_database import get_database
 
@@ -106,7 +106,7 @@ class SpotifyAdapter(ProviderAdapter):
 
 # Register adapter in plugin system (declaration only; instance created by services)
 try:
-    from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+    from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
     decl = PluginDeclaration(
         name="spotify_adapter",
         plugin_type=PluginType.PLAYLIST_PROVIDER,

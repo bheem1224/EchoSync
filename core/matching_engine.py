@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from unidecode import unidecode
 from utils.logging_config import get_logger
-from core.spotify_client import Track as SpotifyTrack
-from core.plex_client import PlexTrackInfo
-from core.soulseek_client import TrackResult
+from providers.spotify.client import Track as SpotifyTrack
+from providers.plex.client import PlexTrackInfo
+from providers.soulseek.client import TrackResult
 
 
 logger = get_logger("matching_engine")

@@ -1,7 +1,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch, call
-from core.navidrome_client import NavidromeClient, NavidromeArtist, NavidromeAlbum, NavidromeTrack
+from providers.navidrome.client import NavidromeClient, NavidromeArtist, NavidromeAlbum, NavidromeTrack
 
 # --- Sample Config and API Responses ---
 

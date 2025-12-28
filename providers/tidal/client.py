@@ -10,7 +10,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Optional, Any
 from utils.logging_config import get_logger
 from config.settings import config_manager
-from .provider_types import SyncServiceProvider
+from core.provider_types import SyncServiceProvider
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
 from core.provider_capabilities import get_provider_capabilities
 from core.provider_capabilities import get_provider_capabilities
@@ -77,7 +77,7 @@ class TidalClient(SyncServiceProvider):
         self._load_saved_tokens()
         
         # Register as plugin with explicit declarations
-        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
         plugin_decl = PluginDeclaration(
             name='tidal_client',
             plugin_type=PluginType.PLAYLIST_SERVICE,

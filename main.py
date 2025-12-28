@@ -11,11 +11,11 @@ from PyQt6.QtGui import QFont, QPalette, QColor
 
 from config.settings import config_manager
 from utils.logging_config import setup_logging, get_logger
-from core.spotify_client import SpotifyClient
-from core.plex_client import PlexClient
-from core.jellyfin_client import JellyfinClient
-from core.navidrome_client import NavidromeClient
-from core.soulseek_client import SoulseekClient
+from providers.spotify.client import SpotifyClient
+from providers.plex.client import PlexClient
+from providers.jellyfin.client import JellyfinClient
+from providers.navidrome.client import NavidromeClient
+from providers.soulseek.client import SoulseekClient
 
 from ui.sidebar import ModernSidebar
 from ui.pages.dashboard import DashboardPage

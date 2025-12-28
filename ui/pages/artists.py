@@ -14,9 +14,9 @@ from typing import List, Optional
 from dataclasses import dataclass
 
 # Import core components
-from core.spotify_client import SpotifyClient, Artist, Album
-from core.plex_client import PlexClient
-from core.soulseek_client import SoulseekClient, AlbumResult
+from providers.spotify.client import SpotifyClient, Artist, Album
+from providers.plex.client import PlexClient
+from providers.soulseek.client import SoulseekClient, AlbumResult
 from core.matching_engine import MusicMatchingEngine
 from core.wishlist_service import get_wishlist_service
 from core.plex_scan_manager import PlexScanManager
@@ -507,7 +507,7 @@ class SinglesEPsLibraryWorker(QThread):
         try:
             # For singles, we need to get the track info from Spotify first
             # Since the release object might not have track details
-            from core.spotify_client import SpotifyClient
+            from providers.spotify.client import SpotifyClient
             spotify_client = SpotifyClient()
             
             if not spotify_client.is_authenticated():
@@ -590,7 +590,7 @@ class SinglesEPsLibraryWorker(QThread):
         """Check EP ownership by checking individual tracks"""
         try:
             # Get EP tracks from Spotify
-            from core.spotify_client import SpotifyClient
+            from providers.spotify.client import SpotifyClient
             spotify_client = SpotifyClient()
             
             if not spotify_client.is_authenticated():
@@ -3341,7 +3341,7 @@ class ArtistsPage(QWidget):
             self.plex_client = PlexClient()
             
             # Add Jellyfin client for multi-server support
-            from core.jellyfin_client import JellyfinClient
+            from providers.jellyfin.client import JellyfinClient
             self.jellyfin_client = JellyfinClient()
             
             # Set up unified media client based on active server
@@ -4400,7 +4400,7 @@ class ArtistsPage(QWidget):
                 return
             
             # Import Track class for track creation
-            from core.spotify_client import Track
+            from providers.spotify.client import Track
             
             # Convert track data to Track objects
             tracks = []

@@ -1,10 +1,10 @@
 from typing import Optional
-from core.spotify_client import SpotifyClient
-from core.plex_client import PlexClient
-from core.jellyfin_client import JellyfinClient
-from core.navidrome_client import NavidromeClient
-from core.soulseek_client import SoulseekClient
-from core.tidal_client import TidalClient
+from providers.spotify.client import SpotifyClient
+from providers.plex.client import PlexClient
+from providers.jellyfin.client import JellyfinClient
+from providers.navidrome.client import NavidromeClient
+from providers.soulseek.client import SoulseekClient
+from providers.tidal.client import TidalClient
 from core.matching_engine import MusicMatchingEngine
 from services.sync_service import PlaylistSyncService
 from config.settings import config_manager
@@ -49,7 +49,7 @@ class ServiceRegistry:
 
     def get_adapter(self, name: str):
         """Get or create a ProviderAdapter instance for a provider name."""
-        from core.adapter_registry import AdapterRegistry
+        from plugins.adapter_registry import AdapterRegistry
         if name not in self._adapters:
             # Inject existing provider client if available
             client = None

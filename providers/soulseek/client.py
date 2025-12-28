@@ -199,7 +199,7 @@ class DownloadStatus:
     speed: int
     time_remaining: Optional[int] = None
 
-from .provider_types import DownloaderProvider
+from core.provider_types import DownloaderProvider
 
 class SoulseekClient(DownloaderProvider):
     name = "soulseek"
@@ -244,7 +244,7 @@ class SoulseekClient(DownloaderProvider):
         self._setup_client()
         
         # Register as plugin with explicit declarations
-        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
         plugin_decl = PluginDeclaration(
             name='soulseek_client',
             plugin_type=PluginType.DOWNLOAD_CLIENT,

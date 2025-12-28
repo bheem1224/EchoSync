@@ -134,7 +134,7 @@ class JellyfinTrack:
             return self._client.get_album_by_id(self._album_id)
         return None
 
-from .provider_types import MediaServerProvider
+from core.provider_types import MediaServerProvider
 
 class JellyfinClient(MediaServerProvider):
     name = "jellyfin"
@@ -289,7 +289,7 @@ class JellyfinClient(MediaServerProvider):
         self.capabilities = get_provider_capabilities('jellyfin')
         
         # Register as plugin with explicit declarations
-        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
         plugin_decl = PluginDeclaration(
             name='jellyfin_client',
             plugin_type=PluginType.LIBRARY_MANAGER,

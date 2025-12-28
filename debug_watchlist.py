@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from unittest.mock import MagicMock, patch
 from core.watchlist_scanner import WatchlistScanner
-from core.spotify_client import SpotifyClient
+from providers.spotify.client import SpotifyClient
 
 # Setup mocks
 mock_spotify = MagicMock(spec=SpotifyClient)

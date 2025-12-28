@@ -11,7 +11,7 @@ import re
 import time
 from bs4 import BeautifulSoup
 from database.music_database import get_database, WatchlistArtist
-from core.spotify_client import SpotifyClient
+from providers.spotify.client import SpotifyClient
 from core.wishlist_service import get_wishlist_service
 from core.matching_engine import MusicMatchingEngine
 from utils.logging_config import get_logger

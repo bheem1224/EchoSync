@@ -1,4 +1,4 @@
-from .provider_types import MediaServerProvider
+from core.provider_types import MediaServerProvider
 from plexapi.server import PlexServer
 from plexapi.library import LibrarySection, MusicSection
 from plexapi.audio import Track as PlexTrack, Album as PlexAlbum, Artist as PlexArtist
@@ -166,7 +166,7 @@ class PlexClient(MediaServerProvider):
         self.capabilities = get_provider_capabilities('plex')
         
         # Register as plugin with explicit declarations
-        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
         plugin_decl = PluginDeclaration(
             name='plex_client',
             plugin_type=PluginType.LIBRARY_MANAGER,

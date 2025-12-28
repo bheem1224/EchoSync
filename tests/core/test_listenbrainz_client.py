@@ -1,7 +1,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch, call
-from core.listenbrainz_client import ListenBrainzClient
+from providers.listenbrainz.client import ListenBrainzClient
 
 # --- Sample API Responses ---
 

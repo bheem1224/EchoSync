@@ -36,43 +36,43 @@ class AdapterRegistry:
 
 # Register known adapters
 try:
-    from core.adapters.spotify_adapter import SpotifyAdapter
+    from providers.spotify.adapter import SpotifyAdapter
     AdapterRegistry.register("spotify", SpotifyAdapter)
 except Exception as e:
     logger.debug(f"SpotifyAdapter registration deferred: {e}")
 
 try:
-    from core.adapters.tidal_adapter import TidalAdapter
+    from providers.tidal.adapter import TidalAdapter
     AdapterRegistry.register("tidal", TidalAdapter)
 except Exception as e:
     logger.debug(f"TidalAdapter registration deferred: {e}")
 
 try:
-    from core.adapters.plex_adapter import PlexAdapter
+    from providers.plex.adapter import PlexAdapter
     AdapterRegistry.register("plex", PlexAdapter)
 except Exception as e:
     logger.debug(f"PlexAdapter registration deferred: {e}")
 
 try:
-    from core.adapters.jellyfin_adapter import JellyfinAdapter
+    from providers.jellyfin.adapter import JellyfinAdapter
     AdapterRegistry.register("jellyfin", JellyfinAdapter)
 except Exception as e:
     logger.debug(f"JellyfinAdapter registration deferred: {e}")
 
 try:
-    from core.adapters.navidrome_adapter import NavidromeAdapter
+    from providers.navidrome.adapter import NavidromeAdapter
     AdapterRegistry.register("navidrome", NavidromeAdapter)
 except Exception as e:
     logger.debug(f"NavidromeAdapter registration deferred: {e}")
 
 try:
-    from core.adapters.soulseek_adapter import SoulseekAdapter
+    from providers.soulseek.adapter import SoulseekAdapter
     AdapterRegistry.register("soulseek", SoulseekAdapter)
 except Exception as e:
     logger.debug(f"SoulseekAdapter registration deferred: {e}")
 
 try:
-    from core.adapters.listenbrainz_adapter import ListenBrainzAdapter
+    from providers.listenbrainz.adapter import ListenBrainzAdapter
     AdapterRegistry.register("listenbrainz", ListenBrainzAdapter)
 except Exception as e:
     logger.debug(f"ListenBrainzAdapter registration deferred: {e}")

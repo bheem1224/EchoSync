@@ -3,11 +3,11 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 from utils.logging_config import get_logger
-from core.spotify_client import SpotifyClient, Playlist as SpotifyPlaylist, Track as SpotifyTrack
-from core.plex_client import PlexClient, PlexTrackInfo
-from core.jellyfin_client import JellyfinClient
-from core.navidrome_client import NavidromeClient
-from core.soulseek_client import SoulseekClient
+from providers.spotify.client import SpotifyClient, Playlist as SpotifyPlaylist, Track as SpotifyTrack
+from providers.plex.client import PlexClient, PlexTrackInfo
+from providers.jellyfin.client import JellyfinClient
+from providers.navidrome.client import NavidromeClient
+from providers.soulseek.client import SoulseekClient
 from core.matching_engine import MusicMatchingEngine, MatchResult
 
 logger = get_logger("sync_service")

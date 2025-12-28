@@ -12,8 +12,8 @@ from threading import RLock, Lock
 from queue import Queue, Empty
 from config.settings import config_manager
 # Import the new search result classes
-from core.soulseek_client import TrackResult, AlbumResult
-from core.spotify_client import SpotifyClient, Artist, Album
+from providers.soulseek.client import TrackResult, AlbumResult
+from providers.spotify.client import SpotifyClient, Artist, Album
 from core.matching_engine import MusicMatchingEngine
 from core.lyrics_client import LyricsClient
 import requests

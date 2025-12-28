@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import MagicMock, patch, ANY
 from datetime import datetime, timedelta, timezone
 from core.watchlist_scanner import WatchlistScanner, ScanResult, clean_track_name_for_search
-from core.spotify_client import SpotifyClient
+from providers.spotify.client import SpotifyClient
 from database.music_database import WatchlistArtist
 
 # --- Helper Function Tests ---

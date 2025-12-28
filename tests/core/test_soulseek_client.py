@@ -47,7 +47,7 @@ def mock_config_manager():
 @pytest.fixture
 def soulseek_client(mock_config_manager, mock_aiohttp_session):
     """Provides a SoulseekClient instance with mocked dependencies."""
-    from core.soulseek_client import SoulseekClient
+    from providers.soulseek.client import SoulseekClient
     return SoulseekClient()
 
 # --- Tests ---
@@ -64,7 +64,7 @@ async def test_initialization_no_config():
     """Test that the client is not configured if the URL is missing."""
     with patch('core.soulseek_client.config_manager') as mock_cfg:
         mock_cfg.get_soulseek_config.return_value = {}
-        from core.soulseek_client import SoulseekClient
+        from providers.soulseek.client import SoulseekClient
         client = SoulseekClient()
         assert client.is_configured() is False
 
@@ -152,7 +152,7 @@ async def test_search_flow(soulseek_client, mock_aiohttp_session):
 # Non-async test - exempt from asyncio marker by not using async def
 def test_process_search_responses(soulseek_client):
     """Test the internal logic for processing raw search responses."""
-    from core.soulseek_client import AlbumResult
+    from providers.soulseek.client import AlbumResult
     
     responses_data = [
         # Album 1 from user A

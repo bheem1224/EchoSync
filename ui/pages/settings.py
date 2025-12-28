@@ -470,7 +470,7 @@ class ServiceTestThread(QThread):
     def _test_spotify(self):
         """Test Spotify connection"""
         try:
-            from core.spotify_client import SpotifyClient
+            from providers.spotify.client import SpotifyClient
             
             # Basic validation first
             if not self.test_config.get('client_id') or not self.test_config.get('client_secret'):
@@ -529,7 +529,7 @@ class ServiceTestThread(QThread):
     def _test_tidal(self):
         """Test Tidal connection"""
         try:
-            from core.tidal_client import TidalClient
+            from providers.tidal.client import TidalClient
             
             # Basic validation first
             if not self.test_config.get('client_id') or not self.test_config.get('client_secret'):
@@ -584,7 +584,7 @@ class ServiceTestThread(QThread):
     def _test_plex(self):
         """Test Plex connection"""
         try:
-            from core.plex_client import PlexClient
+            from providers.plex.client import PlexClient
             
             # Save temporarily to test
             original_base_url = config_manager.get('plex.base_url')

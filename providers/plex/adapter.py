@@ -7,7 +7,7 @@ and attaches Plex ProviderRef. Adheres to Track-centric architecture.
 
 from typing import List, Optional, Dict, Any
 from utils.logging_config import get_logger
-from core.provider_adapter import ProviderAdapter
+from plugins.provider_adapter import ProviderAdapter
 from core.models import ProviderType, Track
 from database.music_database import get_database
 
@@ -101,7 +101,7 @@ class PlexAdapter(ProviderAdapter):
 
 # Register adapter in plugin system
 try:
-    from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+    from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
     decl = PluginDeclaration(
         name="plex_adapter",
         plugin_type=PluginType.LIBRARY_PROVIDER,

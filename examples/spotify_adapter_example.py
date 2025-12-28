@@ -8,7 +8,7 @@ AFTER (New): SpotifyAdapter creates stubs through music_database
 """
 
 from typing import List, Dict, Optional, Any
-from core.provider_adapter import ProviderAdapter
+from plugins.provider_adapter import ProviderAdapter
 from core.models import Track, ProviderType
 from database.music_database import MusicDatabase
 
@@ -28,7 +28,7 @@ class SpotifyAdapter(ProviderAdapter):
         super().__init__(db, ProviderType.SPOTIFY)
         
         # Initialize Spotify API client (authentication, etc.)
-        from core.spotify_client import SpotifyClient
+        from providers.spotify.client import SpotifyClient
         self._client = SpotifyClient()  # Existing client for API calls
     
     # ========================================================================

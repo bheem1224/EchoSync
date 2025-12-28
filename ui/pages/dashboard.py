@@ -28,7 +28,7 @@ from core.wishlist_service import get_wishlist_service
 from core.watchlist_scanner import get_watchlist_scanner
 from utils.logging_config import get_logger
 
-from core.soulseek_client import TrackResult
+from providers.soulseek.client import TrackResult
 from database.music_database import get_database
 from core.plex_scan_manager import PlexScanManager
 
@@ -1381,7 +1381,7 @@ class SimpleWishlistDownloadWorker(QRunnable):
             # 3. Return the results for manual download
 
             # For now, let's use a direct approach
-            from core.soulseek_client import SoulseekClient
+            from providers.soulseek.client import SoulseekClient
             if hasattr(self.soulseek_client, 'search_tracks'):
                 results = await self.soulseek_client.search_tracks(query)
 
@@ -2816,7 +2816,7 @@ class DashboardPage(QWidget):
             if active_server == "plex":
                 media_client = self.service_clients.get('plex_client')
             elif active_server == "jellyfin":
-                from core.jellyfin_client import JellyfinClient
+                from providers.jellyfin.client import JellyfinClient
                 media_client = JellyfinClient()
             else:
                 logger.error(f"Unknown active server for auto-update: {active_server}")
@@ -3263,7 +3263,7 @@ class DashboardPage(QWidget):
                 media_client = self.data_provider.service_clients['plex_client']
             elif active_server == "jellyfin":
                 # Import and get Jellyfin client
-                from core.jellyfin_client import JellyfinClient
+                from providers.jellyfin.client import JellyfinClient
                 media_client = JellyfinClient()
             else:
                 logger.error(f"Unknown active server: {active_server}")

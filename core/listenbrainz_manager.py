@@ -9,7 +9,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 from pathlib import Path
 from utils.logging_config import get_logger
-from core.listenbrainz_client import ListenBrainzClient
+from providers.listenbrainz.client import ListenBrainzClient
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = get_logger("listenbrainz_manager")

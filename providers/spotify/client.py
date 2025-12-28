@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from utils.logging_config import get_logger
 from config.settings import config_manager
-from .provider_base import ProviderBase
+from core.provider_base import ProviderBase
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
 from core.provider_capabilities import get_provider_capabilities
 
@@ -268,7 +268,7 @@ class SpotifyClient(ProviderBase):
         ProviderRegistry.register(SpotifyClient)
         
         # Register as plugin with explicit declarations
-        from core.plugin_system import (
+        from plugins.plugin_system import (
             PluginType,
             PluginScope,
             PluginDeclaration,

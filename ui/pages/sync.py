@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Optional
-from core.soulseek_client import TrackResult
+from providers.soulseek.client import TrackResult
 import re
 import asyncio
 import time
@@ -21,8 +21,8 @@ from database.music_database import get_database
 from core.plex_scan_manager import PlexScanManager
 from utils.logging_config import get_logger
 import yt_dlp
-from core.spotify_client import Track, Playlist
-from core.tidal_client import TidalClient
+from providers.spotify.client import Track, Playlist
+from providers.tidal.client import TidalClient
 
 logger = get_logger("sync")
 

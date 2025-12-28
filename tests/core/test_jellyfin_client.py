@@ -1,7 +1,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch, call
-from core.jellyfin_client import JellyfinClient, JellyfinArtist, JellyfinAlbum, JellyfinTrack
+from providers.jellyfin.client import JellyfinClient, JellyfinArtist, JellyfinAlbum, JellyfinTrack
 from sdk.http_client import HttpError
 
 # --- Sample Jellyfin API Responses ---

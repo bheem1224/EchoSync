@@ -29,7 +29,7 @@ class ListenBrainzClient:
         self.capabilities = get_provider_capabilities('listenbrainz')
         
         # Register as plugin with explicit declarations
-        from core.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
         plugin_decl = PluginDeclaration(
             name='listenbrainz_client',
             plugin_type=PluginType.PLAYLIST_SERVICE,

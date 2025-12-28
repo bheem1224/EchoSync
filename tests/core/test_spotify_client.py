@@ -7,7 +7,7 @@ import sys
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from core.spotify_client import SpotifyClient
+from providers.spotify.client import SpotifyClient
 
 class TestSpotifyClientFinal(unittest.TestCase):
     @patch('sdk.storage_service.get_storage_service')

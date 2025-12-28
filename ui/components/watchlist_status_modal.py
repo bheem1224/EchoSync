@@ -11,7 +11,7 @@ from PyQt6.QtGui import QFont
 from datetime import datetime
 from typing import Optional, List
 
-from core.spotify_client import SpotifyClient
+from providers.spotify.client import SpotifyClient
 from core.watchlist_scanner import get_watchlist_scanner, ScanResult
 from database.music_database import get_database, WatchlistArtist
 from utils.logging_config import get_logger

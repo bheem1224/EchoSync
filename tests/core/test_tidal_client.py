@@ -8,7 +8,7 @@ import time
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from core.tidal_client import TidalClient, Playlist, Track
+from providers.tidal.client import TidalClient, Playlist, Track
 
 class TestTidalClient(unittest.TestCase):
     @patch('sdk.storage_service.get_storage_service')
