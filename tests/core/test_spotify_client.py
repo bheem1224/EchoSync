@@ -11,8 +11,8 @@ from providers.spotify.client import SpotifyClient
 
 class TestSpotifyClientFinal(unittest.TestCase):
     @patch('sdk.storage_service.get_storage_service')
-    @patch('core.spotify_client.spotipy')
-    @patch('core.spotify_client.SpotifyOAuth')
+    @patch('providers.spotify.client.spotipy')
+    @patch('providers.spotify.client.SpotifyOAuth')
     def test_initialization_success(self, mock_spotify_oauth, mock_spotipy, mock_storage):
         """Test client initializes correctly."""
         storage = MagicMock()
@@ -28,8 +28,8 @@ class TestSpotifyClientFinal(unittest.TestCase):
         mock_spotipy.Spotify.assert_called_once()
 
     @patch('sdk.storage_service.get_storage_service')
-    @patch('core.spotify_client.spotipy')
-    @patch('core.spotify_client.SpotifyOAuth')
+    @patch('providers.spotify.client.spotipy')
+    @patch('providers.spotify.client.SpotifyOAuth')
     def test_initialization_no_credentials(self, mock_spotify_oauth, mock_spotipy, mock_storage):
         """Test client does not initialize without credentials."""
         storage = MagicMock()
@@ -40,8 +40,8 @@ class TestSpotifyClientFinal(unittest.TestCase):
         mock_spotify_oauth.assert_not_called()
 
     @patch('sdk.storage_service.get_storage_service')
-    @patch('core.spotify_client.spotipy')
-    @patch('core.spotify_client.SpotifyOAuth')
+    @patch('providers.spotify.client.spotipy')
+    @patch('providers.spotify.client.SpotifyOAuth')
     def test_get_user_playlists_metadata_only(self, mock_spotify_oauth, mock_spotipy, mock_storage):
         storage = MagicMock()
         mock_storage.return_value = storage
@@ -68,8 +68,8 @@ class TestSpotifyClientFinal(unittest.TestCase):
         mock_sp_instance.current_user_playlists.assert_called_once()
 
     @patch('sdk.storage_service.get_storage_service')
-    @patch('core.spotify_client.spotipy')
-    @patch('core.spotify_client.SpotifyOAuth')
+    @patch('providers.spotify.client.spotipy')
+    @patch('providers.spotify.client.SpotifyOAuth')
     def test_get_saved_tracks(self, mock_spotify_oauth, mock_spotipy, mock_storage):
         storage = MagicMock()
         mock_storage.return_value = storage
@@ -88,8 +88,8 @@ class TestSpotifyClientFinal(unittest.TestCase):
         mock_sp_instance.current_user_saved_tracks.assert_called_once()
 
     @patch('sdk.storage_service.get_storage_service')
-    @patch('core.spotify_client.spotipy')
-    @patch('core.spotify_client.SpotifyOAuth')
+    @patch('providers.spotify.client.spotipy')
+    @patch('providers.spotify.client.SpotifyOAuth')
     def test_is_authenticated_true(self, mock_spotify_oauth, mock_spotipy, mock_storage):
         storage = MagicMock()
         mock_storage.return_value = storage
@@ -104,8 +104,8 @@ class TestSpotifyClientFinal(unittest.TestCase):
         self.assertTrue(client.is_authenticated())
 
     @patch('sdk.storage_service.get_storage_service')
-    @patch('core.spotify_client.spotipy')
-    @patch('core.spotify_client.SpotifyOAuth')
+    @patch('providers.spotify.client.spotipy')
+    @patch('providers.spotify.client.SpotifyOAuth')
     def test_is_authenticated_false(self, mock_spotify_oauth, mock_spotipy, mock_storage):
         storage = MagicMock()
         mock_storage.return_value = storage

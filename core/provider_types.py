@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from .provider_base import ProviderBase
+from core.provider_base import ProviderBase
 from typing import Any, Dict, List, Optional
 
 class DownloaderProvider(ProviderBase):

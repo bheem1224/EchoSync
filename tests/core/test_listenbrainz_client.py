@@ -16,7 +16,7 @@ PLAYLIST_DETAILS = {'playlist': {'title': 'My Weekly Mix', 'track': [{'title': '
 @pytest.fixture
 def mock_config_manager():
     """Fixture to mock config_manager."""
-    with patch('core.listenbrainz_client.config_manager') as mock_manager:
+    with patch('providers.listenbrainz.client.config_manager') as mock_manager:
         # Default to having a token
         mock_manager.get.return_value = 'test_token'
         yield mock_manager
@@ -25,7 +25,7 @@ def mock_config_manager():
 def mock_http_client(mock_config_manager):
     """Fixture to mock the HttpClient object."""
     # Patch HttpClient constructor at the import location used by the client
-    with patch('core.listenbrainz_client.HttpClient') as mock_http_class:
+    with patch('providers.listenbrainz.client.HttpClient') as mock_http_class:
         # Create the mock HttpClient instance
         mock_http = MagicMock()
         

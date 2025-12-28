@@ -1,6 +1,6 @@
 from typing import Dict, Type, List
-from .provider_base import ProviderBase
-from .provider_types import DownloaderProvider, MediaServerProvider, SyncServiceProvider
+from core.provider_base import ProviderBase
+from core.provider_types import DownloaderProvider, MediaServerProvider, SyncServiceProvider
 
 class ProviderRegistry:
     """
@@ -55,12 +55,12 @@ class ProviderRegistry:
 
 
 # Register all provider clients for plugin discovery
-from .spotify_client import SpotifyClient
-from .tidal_client import TidalClient
-from .soulseek_client import SoulseekClient
-from .plex_client import PlexClient
-from .jellyfin_client import JellyfinClient
-from .navidrome_client import NavidromeClient
+from providers.spotify.client import SpotifyClient
+from providers.tidal.client import TidalClient
+from providers.soulseek.client import SoulseekClient
+from providers.plex.client import PlexClient
+from providers.jellyfin.client import JellyfinClient
+from providers.navidrome.client import NavidromeClient
 ProviderRegistry.register(SpotifyClient)
 ProviderRegistry.register(TidalClient)
 ProviderRegistry.register(SoulseekClient)

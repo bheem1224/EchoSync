@@ -253,7 +253,7 @@ class SpotifyClient(ProviderBase):
     def __init__(self, account_id: Optional[int] = None):
         self.sp: Optional[spotipy.Spotify] = None
         self.user_id: Optional[str] = None
-        from .provider_registry import ProviderRegistry
+        from core.provider_registry import ProviderRegistry
         self.account_id: Optional[int] = account_id
         # Initialize centralized HTTP client for Spotify (5 requests/second rate limit)
         self._http = HttpClient(

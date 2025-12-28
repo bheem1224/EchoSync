@@ -24,7 +24,7 @@ SAMPLE_PLAYLIST_ITEM = {'Id': 'playlist1', 'Name': 'Test Playlist', 'ChildCount'
 @pytest.fixture
 def mock_config_manager():
     """Fixture to mock the config_manager."""
-    with patch('core.jellyfin_client.config_manager') as mock_manager:
+    with patch('providers.jellyfin.client.config_manager') as mock_manager:
         mock_manager.get_jellyfin_config.return_value = SAMPLE_CONFIG
         yield mock_manager
 

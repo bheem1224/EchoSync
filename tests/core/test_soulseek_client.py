@@ -37,7 +37,7 @@ def mock_aiohttp_session():
 @pytest.fixture
 def mock_config_manager():
     """Mocks the config manager to provide a slskd URL."""
-    with patch('core.soulseek_client.config_manager') as mock_manager:
+    with patch('providers.soulseek.client.config_manager') as mock_manager:
         mock_manager.get_soulseek_config.return_value = {
             'slskd_url': 'http://slskd.test',
             'api_key': 'test_key'
@@ -62,7 +62,7 @@ async def test_initialization(soulseek_client):
 @pytest.mark.asyncio
 async def test_initialization_no_config():
     """Test that the client is not configured if the URL is missing."""
-    with patch('core.soulseek_client.config_manager') as mock_cfg:
+    with patch('providers.soulseek.client.config_manager') as mock_cfg:
         mock_cfg.get_soulseek_config.return_value = {}
         from providers.soulseek.client import SoulseekClient
         client = SoulseekClient()

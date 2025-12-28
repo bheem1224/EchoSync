@@ -31,7 +31,7 @@ SAMPLE_CREATE_PLAYLIST = create_success_response('playlist', {'id': 'newpl', 'na
 @pytest.fixture
 def mock_config_manager():
     """Fixture to mock the config_manager."""
-    with patch('core.navidrome_client.config_manager') as mock_manager:
+    with patch('providers.navidrome.client.config_manager') as mock_manager:
         mock_manager.get_navidrome_config.return_value = SAMPLE_CONFIG
         yield mock_manager
 
@@ -39,8 +39,8 @@ def mock_config_manager():
 def navidrome_client(mock_config_manager):
     """Fixture for a NavidromeClient instance with mocked dependencies."""
     # Mock the auth generation to be deterministic
-    with patch('core.navidrome_client.secrets.token_hex', return_value='somesalt'), \
-         patch('core.navidrome_client.hashlib.md5') as mock_md5:
+    with patch('providers.navidrome.client.secrets.token_hex', return_value='somesalt'), \
+         patch('providers.navidrome.client.hashlib.md5') as mock_md5:
         mock_md5.return_value.hexdigest.return_value = 'sometoken'
         
         client = NavidromeClient()
@@ -203,7 +203,7 @@ def test_update_playlist_new(navidrome_client):
     assert 'createPlaylist' in call2.args[0]
     assert call2.kwargs['params']['name'] == 'A New One'
 
-@patch('core.navidrome_client.config_manager')
+@patch('providers.navidrome.client.config_manager')
 def test_update_playlist_existing(mock_cfg, navidrome_client):
     """Test updating an existing playlist."""
     navidrome_client.ensure_connection()
