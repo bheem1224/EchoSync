@@ -163,21 +163,25 @@ class ConfigManager:
         return value
 
     def _decrypt_value(self, value: Any) -> Any:
-        """Decrypts a single value if it's an encrypted string."""
+        """Decrypts a single value if it's an encrypted string.
+        
+        SECURITY: Never logs the decrypted value itself, only success/failure.
+        """
         if isinstance(value, str) and value.startswith("enc:") and self.cipher:
             try:
                 encrypted_val = value[4:]
                 decrypted = self.cipher.decrypt(encrypted_val.encode()).decode()
-                print(f"[DEBUG] Decrypted value: {encrypted_val[:20]}... → {decrypted[:20] if len(decrypted) > 20 else decrypted}")
+                # SECURITY: Only log that decryption succeeded, not the value
+                print(f"[DEBUG] Decrypted secret ({len(decrypted)} chars)")
                 return decrypted
             except Exception as e:
-                print(f"[ERROR] Decryption failed for value '{value[:20]}...': {e}")
+                print(f"[ERROR] Decryption failed: {e}")
                 print(f"[ERROR] This usually means the encryption key has changed.")
                 print(f"[ERROR] Make sure MASTER_KEY environment variable or /config/.encryption_key is consistent.")
                 print(f"[DEBUG] Cipher initialized: {self.cipher is not None}")
                 return ""  # Return empty string on decryption failure
         elif isinstance(value, str) and value.startswith("enc:"):
-            print(f"[WARN] Found encrypted value but cipher is not initialized: {value[:20]}...")
+            print(f"[WARN] Found encrypted value but cipher is not initialized")
             return value
         return value
 

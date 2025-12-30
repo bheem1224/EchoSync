@@ -2,13 +2,68 @@ slskd/slskd.exe
 Storage/sync_status.json
 .spotify_cache
 slskd/config/slskd.example.yml
+Webui-Refactor.txt
+"/webui/Old-UI assets/"
+
+# Python runtime
 __pycache__/
 **/__pycache__/
 *.pyc
 *.pyo
+*.pyd
+.pyre/
+.pytype/
+
+# Virtual environments
 .venv/
-.env
-.encryption_key
-.database/config/.encry
-/config/.encryption_key
+venv/
+ENV/
+env/
+
+# Node.js & Frontend build
+node_modules/
+.svelte-kit/
+/webui/build/
+package-lock.json
+dist/
+build/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.orig
+*.rej
+.DS_Store
+Thumbs.db
+
+# Sensitive configuration & secrets (NEVER COMMIT THESE)
+/config/config.json
 /config/config.db
+/config/.encryption_key
+/config/config.yml
+/config/config.yaml
+/config/*.env
+/config/*.secret
+.env
+/secrets/
+*.key
+*.pem
+*.crt
+
+# Runtime & logs (generated, not source)
+/logs/
+*.log
+*.tmp
+*.bak
+
+# Database files
+/data/music_library.db
+*.db-shm
+*.db-wal
+database/config.db
+
+# Temporary files
+*.tmp
+*.bak

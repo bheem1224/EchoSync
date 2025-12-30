@@ -12,6 +12,127 @@
 			],
 			"problemMatcher": [],
 			"group": "build"
+		},
+		{
+			"label": "Build SoulSync (pre-test)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-m",
+				"compileall",
+				"."
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build SoulSync (pre-test)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-m",
+				"compileall",
+				"."
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build SoulSync (pre-test)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-m",
+				"compileall",
+				"."
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build SoulSync (pre-test)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-m",
+				"compileall",
+				"."
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build SoulSync (pre-test)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-m",
+				"compileall",
+				"."
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build SoulSync (pre-test)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-m",
+				"compileall",
+				"."
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build SoulSync (pre-test)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-m",
+				"compileall",
+				"."
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build SoulSync (pre-test)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-m",
+				"compileall",
+				"."
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run backend without webui",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"main.py"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Run backend without webui",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"main.py"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Run backend without webui",
+			"type": "shell",
+			"command": "c:/Users/bheam/VScode-Projects/SoulSync/.venv/Scripts/python.exe",
+			"args": [
+				"main.py"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
 		}
 	]
 }

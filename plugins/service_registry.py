@@ -5,10 +5,13 @@ from providers.jellyfin.client import JellyfinClient
 from providers.navidrome.client import NavidromeClient
 from providers.soulseek.client import SoulseekClient
 from providers.tidal.client import TidalClient
-from core.matching_engine import MusicMatchingEngine
 from services.sync_service import PlaylistSyncService
 from config.settings import config_manager
 from database.music_database import get_database
+
+def get_music_matching_engine():
+    from core.matching_engine import MusicMatchingEngine
+    return MusicMatchingEngine()
 
 class ServiceRegistry:
     """
@@ -93,7 +96,7 @@ class ServiceRegistry:
 
     def get_matching_engine(self):
         if 'matching_engine' not in self._clients:
-            self._clients['matching_engine'] = MusicMatchingEngine()
+            self._clients['matching_engine'] = get_music_matching_engine()
         return self._clients['matching_engine']
 
     def get_sync_service(self):

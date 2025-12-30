@@ -164,6 +164,28 @@ class JobQueue:
                 })
             return result
 
+    def get_active_jobs(self) -> List[Dict[str, Any]]:
+        """Get list of currently running jobs."""
+        with self._lock:
+            result = []
+            for job in self._jobs.values():
+                if job.running:
+                    result.append({
+                        "name": job.name,
+                        "enabled": job.enabled,
+                        "next_run": job.next_run,
+                        "interval_seconds": job.interval_seconds,
+                        "running": job.running,
+                        "current_retries": job.current_retries,
+                        "last_error": job.last_error,
+                        "last_started": job.last_started,
+                        "last_finished": job.last_finished,
+                        "last_success": job.last_success,
+                        "tags": job.tags,
+                        "plugin": job.plugin,
+                    })
+            return result
+
     # Internal runner
     def _run_loop(self):
         while self._running:
