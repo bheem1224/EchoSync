@@ -75,30 +75,63 @@ class ConfigManager:
             return False
 
     def __init__(self, config_path: str = "config/config.json"):
+        # Config directory preference (in containers we expect /config)
         config_dir_env = os.environ.get('SOULSYNC_CONFIG_DIR')
         if config_dir_env:
-            # Docker-friendly setup: use a dedicated /config directory
             self.config_dir = Path(config_dir_env)
+        elif Path('/config').exists():
+            # Running in container with a mounted /config
+            self.config_dir = Path('/config')
         else:
-            # Default setup: paths relative to the application structure
+            # Default setup: paths relative to the application structure (dev)
             self.config_dir = Path(__file__).parent
+
+        # Data directory preference (container-friendly /data)
+        data_dir_env = os.environ.get('SOULSYNC_DATA_DIR')
+        if data_dir_env:
+            self.data_dir = Path(data_dir_env)
+        elif Path('/data').exists():
+            self.data_dir = Path('/data')
+        else:
+            # Fallback to a data directory next to the project for local dev
+            self.data_dir = Path(__file__).parent.parent / 'data'
 
         # Ensure directory exists
         self.config_dir.mkdir(parents=True, exist_ok=True)
         
         # Paths for key and database
         self.key_path = self.config_dir / ".encryption_key"
-        self.config_path = self.config_dir / 'config.json' # For migration
+        self.config_path = self.config_dir / 'config.json' # For migration and non-secret JSON
         self.database_path = self.config_dir / 'config.db'  # Encrypted config database
+        # Media library DB (user-visible non-secret DB for music library)
+        self.media_db_path = self.config_dir / 'media_library.db'
+
+        # Ensure data dir subpaths
+        self.downloads_path = self.data_dir / 'downloads'
+        self.library_path = self.data_dir / 'library'
+        self.logs_path = self.data_dir / 'logs'
         
         print(f"[INFO] Config directory: {self.config_dir}")
         print(f"[INFO] Key file path: {self.key_path}")
         print(f"[INFO] Database path: {self.database_path}")
+        print(f"[INFO] Media DB path: {self.media_db_path}")
+        print(f"[INFO] Data directory: {self.data_dir}")
+        print(f"[INFO] Downloads path: {self.downloads_path}")
+        print(f"[INFO] Library path: {self.library_path}")
+        print(f"[INFO] Logs path: {self.logs_path}")
         
         self.config_data: Dict[str, Any] = {}
         self.cipher: Optional[Fernet] = None
         self._initialize_encryption()
         self._load_config()
+        # Ensure data directories exist for logs/downloads/library
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            self.downloads_path.mkdir(parents=True, exist_ok=True)
+            self.library_path.mkdir(parents=True, exist_ok=True)
+            self.logs_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"[WARN] Could not create data directories: {e}")
 
     def _initialize_encryption(self):
         """Initialize Fernet cipher from MASTER_KEY or local key file."""
@@ -297,7 +330,8 @@ class ConfigManager:
 
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration"""
-        return {
+        # Use container-friendly defaults when available, fall back to project-relative paths
+        cfg = {
             "active_media_server": "plex",
             "spotify": {"client_id": "", "client_secret": "", "redirect_uri": "http://127.0.0.1:8008/api/spotify/callback"},
             # Multi-account Spotify support
@@ -310,10 +344,10 @@ class ConfigManager:
             "plex": {"base_url": "", "token": "", "auto_detect": True},
             "jellyfin": {"base_url": "", "api_key": "", "auto_detect": True},
             "navidrome": {"base_url": "", "username": "", "password": "", "auto_detect": True},
-            "soulseek": {"slskd_url": "", "api_key": "", "download_path": "./downloads", "transfer_path": "./Transfer"},
+            "soulseek": {"slskd_url": "", "api_key": "", "download_path": str(self.downloads_path), "transfer_path": str(self.library_path)},
             "listenbrainz": {"token": ""},
-            "logging": {"path": "logs/app.log", "level": "INFO"},
-            "database": {"path": "data/music_library.db", "max_workers": 5},
+            "logging": {"path": str(self.logs_path / 'app.log'), "level": "INFO"},
+            "database": {"path": str(self.media_db_path), "max_workers": 2},
             "metadata_enhancement": {"enabled": True, "embed_album_art": True},
             "playlist_sync": {"create_backup": True},
             "file_organization": {
@@ -343,8 +377,16 @@ class ConfigManager:
                 "min_bitrate_kbps": 256,
                 "min_length_seconds": 0
             },
-            "settings": {"audio_quality": "flac"}
+            "settings": {"audio_quality": "flac"},
+            # Storage paths used by UI and runtime
+            "storage": {
+                "download_dir": str(self.downloads_path),
+                "transfer_dir": str(self.library_path),
+                "log_dir": str(self.logs_path),
+                "config_dir": str(self.config_dir)
+            }
         }
+        return cfg
 
     def _has_undecrypted_secrets(self, config_data: Dict[str, Any]) -> bool:
         """Check if config has encrypted values that weren't decrypted (bad cipher)."""
@@ -388,6 +430,39 @@ class ConfigManager:
         # If we have no JSON file yet, save current config to JSON for future edits
         if not json_data:
             self._save_non_secrets_to_json()
+        # Normalize certain config entries (e.g., database workers)
+        self._normalize_database_workers()
+
+    def _normalize_database_workers(self):
+        """Ensure database.max_workers is sensible for the configured DB.
+
+        Behavior:
+         - If DB path looks like SQLite (.db or contains 'sqlite'), clamp to 1..4 and default to 2.
+         - Otherwise clamp to 1..10 and default to 4.
+        """
+        try:
+            db_cfg = self.config_data.get('database') or {}
+            raw = db_cfg.get('max_workers')
+            try:
+                val = int(raw)
+            except Exception:
+                val = None
+
+            db_path = (db_cfg.get('path') or '').lower()
+            is_sqlite = db_path.endswith('.db') or 'sqlite' in db_path
+
+            if is_sqlite:
+                if val is None:
+                    val = 2
+                val = max(1, min(val, 4))
+            else:
+                if val is None:
+                    val = 4
+                val = max(1, min(val, 10))
+
+            self.config_data.setdefault('database', {})['max_workers'] = val
+        except Exception as e:
+            print(f"[WARN] Could not normalize database.max_workers: {e}")
     
     def _deep_merge(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively merge override dict into base dict."""
@@ -628,6 +703,86 @@ class ConfigManager:
 
     def get_settings(self) -> Dict[str, Any]:
         return self.get('settings', {})
+
+    def get_all(self) -> Dict[str, Any]:
+        """Return the full non-secret configuration suitable for the UI.
+
+        This exposes only non-secret values (the same subset saved to config.json).
+        """
+        try:
+            # Return a deep copy of non-secret config to avoid accidental mutation
+            non_secrets = self._extract_non_secrets(self.config_data)
+            return copy.deepcopy(non_secrets)
+        except Exception as e:
+            print(f"[ERROR] get_all failed: {e}")
+            return {}
+
+    def get_quality_profiles(self) -> list:
+        """Return the stored quality profiles list (no defaults merged)."""
+        try:
+            profiles = self.config_data.get('quality_profiles')
+            return profiles if isinstance(profiles, list) else []
+        except Exception as e:
+            print(f"[ERROR] get_quality_profiles failed: {e}")
+            return []
+
+    def set_quality_profiles(self, profiles: list) -> bool:
+        """Validate/normalize and persist quality profiles as top-level key.
+
+        Returns True on success, False otherwise.
+        """
+        try:
+            if not isinstance(profiles, list):
+                raise ValueError('profiles must be a list')
+
+            # Normalize each profile and formats
+            def _norm_profile(p):
+                np = dict(p)
+                np['id'] = str(np.get('id', ''))
+                np['name'] = str(np.get('name', ''))
+                formats = np.get('formats') or np.get('types') or []
+                norm_formats = []
+                for f in formats:
+                    nf = dict(f)
+                    # numeric fields
+                    try:
+                        nf['min_size_mb'] = int(nf.get('min_size_mb') or 0)
+                    except Exception:
+                        nf['min_size_mb'] = 0
+                    try:
+                        nf['max_size_mb'] = int(nf.get('max_size_mb') or 0)
+                    except Exception:
+                        nf['max_size_mb'] = 0
+                    try:
+                        nf['priority'] = int(nf.get('priority') or 0)
+                    except Exception:
+                        nf['priority'] = 0
+
+                    # ensure arrays
+                    for arrk in ('bitrates', 'bit_depths', 'sample_rates'):
+                        val = nf.get(arrk)
+                        if val is None:
+                            nf[arrk] = []
+                        elif isinstance(val, list):
+                            nf[arrk] = [str(x) for x in val]
+                        else:
+                            nf[arrk] = [str(val)]
+
+                    nf['type'] = str(nf.get('type') or nf.get('format') or '')
+                    norm_formats.append(nf)
+                np['formats'] = norm_formats
+                return np
+
+            normalized = [_norm_profile(p) for p in profiles]
+
+            # Set into in-memory config and persist non-secrets JSON
+            self.config_data['quality_profiles'] = normalized
+            self._save_non_secrets_to_json()
+            return True
+        except Exception as e:
+            print(f"[ERROR] set_quality_profiles failed: {e}")
+            import traceback; traceback.print_exc()
+            return False
 
     def get_database_config(self) -> Dict[str, str]:
         return self.get('database', {})

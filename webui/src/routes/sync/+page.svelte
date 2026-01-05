@@ -5,7 +5,7 @@
   import apiClient from '../../api/client';
 
   let sourceProvider = '';
-  let targetProviders = [];
+  let targetProvider = '';
   let playlists = [];
   let selectedPlaylists = [];
   let loadingPlaylists = false;
@@ -18,20 +18,34 @@
   );
 
   $: syncTargets = Object.values($providers.items).filter(p => 
-    p.capabilities?.supports_sync || p.capabilities?.server
+    // Streaming services (Spotify, Tidal) OR Media servers (Plex, Jellyfin, Navidrome)
+    (p.capabilities?.supports_playlists === 'READ_WRITE') || 
+    (p.capabilities?.supports_library_scan ?? false)
   );
 
   async function loadPlaylists() {
-    if (!sourceProvider) return;
-    
+    if (!sourceProvider) {
+      console.log('[Sync] No source provider selected');
+      return;
+    }
+
     loadingPlaylists = true;
     error = '';
     playlists = [];
-    
+
     try {
+      console.log(`[Sync] Loading playlists for provider: ${sourceProvider}`);
       const response = await apiClient.get(`/providers/${sourceProvider}/playlists`);
+      console.log('[Sync] Full response object:', response);
+      console.log('[Sync] Response data:', response.data);
+      console.log('[Sync] Response data type:', typeof response.data);
+      console.log('[Sync] Response data.items:', response.data.items);
+
       playlists = response.data.items || [];
+      console.log('[Sync] Playlists after assignment:', playlists);
+      console.log('[Sync] Number of playlists:', playlists.length);
     } catch (err) {
+      console.error('[Sync] Error loading playlists:', err);
       error = `Failed to load playlists: ${err.response?.data?.error || err.message}`;
     } finally {
       loadingPlaylists = false;
@@ -39,8 +53,8 @@
   }
 
   async function startSync() {
-    if (!sourceProvider || targetProviders.length === 0 || selectedPlaylists.length === 0) {
-      error = 'Please select a source, at least one target, and at least one playlist.';
+    if (!sourceProvider || !targetProvider || selectedPlaylists.length === 0) {
+      error = 'Please select a source, target, and at least one playlist.';
       return;
     }
 
@@ -53,7 +67,7 @@
         mode: 'provider-to-provider',
         sources: [sourceProvider],
         targets: {
-          providers: targetProviders,
+          providers: [targetProvider],
           libraries: []
         },
         playlists: selectedPlaylists
@@ -118,7 +132,10 @@
         </div>
         <div class="form-group">
           <label for="source">Select where to sync from:</label>
-          <select id="source" bind:value={sourceProvider} on:change={loadPlaylists}>
+          <select id="source" bind:value={sourceProvider} on:change={() => {
+              console.log('[Debug] Source provider selected:', sourceProvider);
+              loadPlaylists();
+            }}>
             <option value="">-- Select Source --</option>
             {#each playlistProviders as p}
               <option value={p.id}>{p.name}</option>
@@ -133,20 +150,18 @@
           <span class="step-num">2</span>
           <h2>Target Services</h2>
         </div>
-        <div class="targets-list">
-          {#each syncTargets as p}
-            {#if p.id !== sourceProvider}
-              <label class="target-item">
-                <input type="checkbox" 
-                       checked={targetProviders.includes(p.id)} 
-                       on:change={() => toggleTarget(p.id)} />
-                <span class="target-name">{p.name}</span>
-                <span class="target-type">{p.capabilities?.server ? 'Server' : 'Sync'}</span>
-              </label>
-            {/if}
-          {/each}
+        <div class="form-group">
+          <label for="target">Select sync target:</label>
+          <select id="target" bind:value={targetProvider}>
+            <option value="">-- Select Target --</option>
+            {#each syncTargets as p}
+              {#if p.id !== sourceProvider}
+                <option value={p.id}>{p.name}</option>
+              {/if}
+            {/each}
+          </select>
           {#if syncTargets.length === 0}
-            <p class="muted">No target services available.</p>
+            <p class="muted small">No target services available.</p>
           {/if}
         </div>
       </div>
@@ -208,7 +223,7 @@
         <p class="success-msg">{success}</p>
       {/if}
       <button class="btn btn--primary" 
-              disabled={syncing || !sourceProvider || targetProviders.length === 0 || selectedPlaylists.length === 0}
+              disabled={syncing || !sourceProvider || !targetProvider || selectedPlaylists.length === 0}
               on:click={startSync}>
         {#if syncing}
           Starting Sync...
@@ -293,45 +308,26 @@
     color: #fff;
     font-size: 14px;
     outline: none;
+    cursor: pointer;
+  }
+
+  select option {
+    background: #1e293b;
+    color: #fff;
+    padding: 8px;
+  }
+
+  select:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
   }
 
   select:focus {
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(15, 239, 136, 0.1);
   }
 
-  .targets-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .target-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .target-item:hover {
-    background: rgba(255, 255, 255, 0.06);
-  }
-
-  .target-name {
-    flex: 1;
-    font-size: 14px;
-    font-weight: 500;
-  }
-
-  .target-type {
-    font-size: 10px;
-    text-transform: uppercase;
-    background: rgba(255, 255, 255, 0.1);
-    padding: 2px 6px;
+  .playlists-grid {    padding: 2px 6px;
     border-radius: 4px;
     color: #94a3b8;
   }

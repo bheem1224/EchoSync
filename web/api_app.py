@@ -25,6 +25,14 @@ from web.routes.search import bp as search_bp
 from web.routes.system import bp as system_bp
 from web.routes.sync import bp as sync_bp
 from web.routes.playlists import bp as playlists_bp
+from web.routes.accounts import bp as accounts_bp
+from web.routes.tidal_accounts import bp as tidal_accounts_bp
+from web.routes.plex_settings import bp as plex_settings_bp
+from web.routes.navidrome_settings import bp as navidrome_settings_bp
+from web.routes.jellyfin_settings import bp as jellyfin_settings_bp
+from web.routes.media_server import bp as media_server_bp
+import importlib
+import providers as providers_pkg
 
 
 def create_app() -> Flask:
@@ -42,8 +50,49 @@ def create_app() -> Flask:
     app.register_blueprint(system_bp)
     app.register_blueprint(sync_bp)
     app.register_blueprint(playlists_bp)
+    app.register_blueprint(accounts_bp)
+    app.register_blueprint(tidal_accounts_bp)
+    app.register_blueprint(plex_settings_bp)
+    app.register_blueprint(navidrome_settings_bp)
+    app.register_blueprint(jellyfin_settings_bp)
+    app.register_blueprint(media_server_bp)
+    
+    # Dynamically register provider-specific blueprints (e.g., OAuth endpoints)
+    for prov_name in getattr(providers_pkg, '__all__', []):
+        try:
+            mod = importlib.import_module(f'providers.{prov_name}')
+            # If provider package exposes an oauth_bp or oauth_routes.bp, register it
+            bp = getattr(mod, 'oauth_bp', None)
+            if bp:
+                app.register_blueprint(bp)
+        except Exception:
+            # Ignore providers that don't expose additional routes
+            continue
+    
+    # Instantiate provider clients so they self-register in plugin_registry
+    _init_provider_clients()
 
     return app
+
+
+def _init_provider_clients():
+    """Instantiate provider clients to trigger self-registration in plugin_registry."""
+    from providers.spotify.client import SpotifyClient
+    from providers.plex.client import PlexClient
+    from providers.jellyfin.client import JellyfinClient
+    from providers.navidrome.client import NavidromeClient
+    from providers.soulseek.client import SoulseekClient
+    try:
+        from providers.tidal.client import TidalClient
+        TidalClient()  # Instantiate to trigger self-registration
+    except Exception:
+        pass  # Tidal may not be configured
+    
+    SpotifyClient()
+    PlexClient()
+    JellyfinClient()
+    NavidromeClient()
+    SoulseekClient()
 
 
 def generate_ephemeral_cert():

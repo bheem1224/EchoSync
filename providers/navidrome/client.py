@@ -219,12 +219,13 @@ class NavidromeClient(MediaServerProvider):
         # Register as plugin with explicit declarations
         from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
         plugin_decl = PluginDeclaration(
-            name='navidrome_client',
+            name='navidrome',
             plugin_type=PluginType.LIBRARY_MANAGER,
             provides=[
                 'library.scan',
                 'library.cover_art',
                 'playlist.read',
+                'playlist.write',
                 'search.tracks',
                 'search.artists',
                 'search.albums',

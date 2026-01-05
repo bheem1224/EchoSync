@@ -148,7 +148,11 @@ class MusicDatabase:
         self.database_path = resolved_path
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Initialize database
+        # Ensure writer queue for this DB and initialize database
+        try:
+            ensure_writer(str(self.database_path))
+        except Exception:
+            pass
         self._initialize_database()
     
     def _get_connection(self) -> sqlite3.Connection:
@@ -163,10 +167,9 @@ class MusicDatabase:
     
     def _initialize_database(self):
         """Create database tables if they don't exist"""
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            
+        from . import execute_write
+        
+        def _init(cursor):
             # Artists table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS artists (
@@ -179,7 +182,7 @@ class MusicDatabase:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # Albums table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS albums (
@@ -196,7 +199,7 @@ class MusicDatabase:
                     FOREIGN KEY (artist_id) REFERENCES artists (id) ON DELETE CASCADE
                 )
             """)
-            
+
             # Tracks table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tracks (
@@ -214,7 +217,7 @@ class MusicDatabase:
                     FOREIGN KEY (artist_id) REFERENCES artists (id) ON DELETE CASCADE
                 )
             """)
-            
+
             # Metadata table for storing system information like last refresh dates
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS metadata (
@@ -223,7 +226,7 @@ class MusicDatabase:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # Wishlist table for storing failed download tracks for retry
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS wishlist_tracks (
@@ -238,7 +241,7 @@ class MusicDatabase:
                     source_info TEXT  -- JSON of source context (playlist name, album info, etc.)
                 )
             """)
-            
+
             # Watchlist table for storing artists to monitor for new releases
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS watchlist_artists (
@@ -262,7 +265,7 @@ class MusicDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_artists_name ON artists (name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_albums_title ON albums (title)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks (title)")
-            
+
             # Add server_source columns for multi-server support (migration)
             self._add_server_source_columns(cursor)
 
@@ -281,49 +284,33 @@ class MusicDatabase:
             # Canonical Track storage (Track-centric)
             self._add_canonical_tracks_table(cursor)
 
-            conn.commit()
+        try:
+            # Run DB initialization on writer thread to avoid concurrent writes
+            execute_write(str(self.database_path), _init)
             logger.info("Database initialized successfully")
-            
         except Exception as e:
             logger.error(f"Error initializing database: {e}")
-            raise
-    
-    def _add_server_source_columns(self, cursor):
-        """Add server_source columns to existing tables for multi-server support"""
-        try:
-            # Check if server_source column exists in artists table
-            cursor.execute("PRAGMA table_info(artists)")
-            artists_columns = [column[1] for column in cursor.fetchall()]
-            
-            if 'server_source' not in artists_columns:
-                cursor.execute("ALTER TABLE artists ADD COLUMN server_source TEXT DEFAULT 'plex'")
-                logger.info("Added server_source column to artists table")
-            
-            # Check if server_source column exists in albums table
-            cursor.execute("PRAGMA table_info(albums)")
-            albums_columns = [column[1] for column in cursor.fetchall()]
-            
-            if 'server_source' not in albums_columns:
-                cursor.execute("ALTER TABLE albums ADD COLUMN server_source TEXT DEFAULT 'plex'")
-                logger.info("Added server_source column to albums table")
-            
-            # Check if server_source column exists in tracks table
-            cursor.execute("PRAGMA table_info(tracks)")
-            tracks_columns = [column[1] for column in cursor.fetchall()]
-            
-            if 'server_source' not in tracks_columns:
-                cursor.execute("ALTER TABLE tracks ADD COLUMN server_source TEXT DEFAULT 'plex'")
-                logger.info("Added server_source column to tracks table")
-                
-            # Create indexes for server_source columns for performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_artists_server_source ON artists (server_source)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_albums_server_source ON albums (server_source)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tracks_server_source ON tracks (server_source)")
-            
-        except Exception as e:
-            logger.error(f"Error adding server_source columns: {e}")
             # Don't raise - this is a migration, database can still function without it
     
+    def _add_server_source_columns(self, cursor):
+        """Ensure `server_source` column exists on key tables (idempotent)."""
+        try:
+            try:
+                cursor.execute("ALTER TABLE artists ADD COLUMN server_source TEXT DEFAULT 'local'")
+            except Exception:
+                pass
+            try:
+                cursor.execute("ALTER TABLE albums ADD COLUMN server_source TEXT DEFAULT 'local'")
+            except Exception:
+                pass
+            try:
+                cursor.execute("ALTER TABLE tracks ADD COLUMN server_source TEXT DEFAULT 'local'")
+            except Exception:
+                pass
+        except Exception:
+            # Swallow errors - migration should not block initialization
+            pass
+
     def _migrate_id_columns_to_text(self, cursor):
         """Migrate ID columns from INTEGER to TEXT to support both Plex (int) and Jellyfin (GUID) IDs"""
         try:
@@ -902,21 +889,16 @@ class MusicDatabase:
     def clear_all_data(self):
         """Clear all data from database (for full refresh) - DEPRECATED: Use clear_server_data instead"""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
+            def _task(cursor):
                 cursor.execute("DELETE FROM tracks")
                 cursor.execute("DELETE FROM albums")
                 cursor.execute("DELETE FROM artists")
-                
-                conn.commit()
-                
-                # VACUUM to actually shrink the database file and reclaim disk space
-                logger.info("Vacuuming database to reclaim disk space...")
+                # VACUUM will run on same writer connection
                 cursor.execute("VACUUM")
-                
-                logger.info("All database data cleared and file compacted")
-                
+
+            execute_write(str(self.database_path), _task)
+            logger.info("All database data cleared and file compacted")
+
         except Exception as e:
             logger.error(f"Error clearing database: {e}")
             raise
@@ -924,31 +906,27 @@ class MusicDatabase:
     def clear_server_data(self, server_source: str):
         """Clear data for specific server only (server-aware full refresh)"""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Delete only data from the specified server
-                # Order matters: tracks -> albums -> artists (foreign key constraints)
+            deleted_counts = {'tracks': 0, 'albums': 0, 'artists': 0}
+
+            def _task(cursor):
                 cursor.execute("DELETE FROM tracks WHERE server_source = ?", (server_source,))
-                tracks_deleted = cursor.rowcount
-                
+                deleted_counts['tracks'] = cursor.rowcount
+
                 cursor.execute("DELETE FROM albums WHERE server_source = ?", (server_source,))
-                albums_deleted = cursor.rowcount
-                
+                deleted_counts['albums'] = cursor.rowcount
+
                 cursor.execute("DELETE FROM artists WHERE server_source = ?", (server_source,))
-                artists_deleted = cursor.rowcount
-                
-                conn.commit()
-                
-                # Only VACUUM if we deleted a significant amount of data
-                if tracks_deleted > 1000 or albums_deleted > 100:
+                deleted_counts['artists'] = cursor.rowcount
+
+                # Optionally VACUUM if many rows removed
+                if deleted_counts['tracks'] > 1000 or deleted_counts['albums'] > 100:
                     logger.info("Vacuuming database to reclaim disk space...")
                     cursor.execute("VACUUM")
-                
-                logger.info(f"Cleared {server_source} data: {artists_deleted} artists, {albums_deleted} albums, {tracks_deleted} tracks")
-                
-                # Note: Watchlist and wishlist are preserved as they are server-agnostic
-                
+
+            execute_write(str(self.database_path), _task)
+
+            logger.info(f"Cleared {server_source} data: {deleted_counts['artists']} artists, {deleted_counts['albums']} albums, {deleted_counts['tracks']} tracks")
+
         except Exception as e:
             logger.error(f"Error clearing {server_source} database data: {e}")
             raise
@@ -956,46 +934,40 @@ class MusicDatabase:
     def cleanup_orphaned_records(self) -> Dict[str, int]:
         """Remove artists and albums that have no associated tracks"""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
+            results = {'orphaned_artists_removed': 0, 'orphaned_albums_removed': 0}
+
+            def _task(cursor):
                 # Find orphaned artists (no tracks)
                 cursor.execute("""
                     SELECT COUNT(*) FROM artists 
                     WHERE id NOT IN (SELECT DISTINCT artist_id FROM tracks WHERE artist_id IS NOT NULL)
                 """)
-                orphaned_artists_count = cursor.fetchone()[0]
-                
+                results['orphaned_artists_removed'] = cursor.fetchone()[0]
+
                 # Find orphaned albums (no tracks)
                 cursor.execute("""
                     SELECT COUNT(*) FROM albums 
                     WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)
                 """)
-                orphaned_albums_count = cursor.fetchone()[0]
-                
-                # Delete orphaned artists
-                if orphaned_artists_count > 0:
+                results['orphaned_albums_removed'] = cursor.fetchone()[0]
+
+                if results['orphaned_artists_removed'] > 0:
                     cursor.execute("""
                         DELETE FROM artists 
                         WHERE id NOT IN (SELECT DISTINCT artist_id FROM tracks WHERE artist_id IS NOT NULL)
                     """)
-                    logger.info(f"🧹 Removed {orphaned_artists_count} orphaned artists")
-                
-                # Delete orphaned albums  
-                if orphaned_albums_count > 0:
+                    logger.info(f"🧹 Removed {results['orphaned_artists_removed']} orphaned artists")
+
+                if results['orphaned_albums_removed'] > 0:
                     cursor.execute("""
                         DELETE FROM albums 
                         WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)
                     """)
-                    logger.info(f"🧹 Removed {orphaned_albums_count} orphaned albums")
-                
-                conn.commit()
-                
-                return {
-                    'orphaned_artists_removed': orphaned_artists_count,
-                    'orphaned_albums_removed': orphaned_albums_count
-                }
-                
+                    logger.info(f"🧹 Removed {results['orphaned_albums_removed']} orphaned albums")
+
+            execute_write(str(self.database_path), _task)
+            return results
+
         except Exception as e:
             logger.error(f"Error cleaning up orphaned records: {e}")
             return {'orphaned_artists_removed': 0, 'orphaned_albums_removed': 0}
@@ -2303,13 +2275,10 @@ class MusicDatabase:
     def set_metadata(self, key: str, value: str):
         """Set a metadata value"""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT OR REPLACE INTO metadata (key, value, updated_at) 
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                """, (key, value))
-                conn.commit()
+            execute_write_sql(str(self.database_path), """
+                INSERT OR REPLACE INTO metadata (key, value, updated_at) 
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            """, (key, value))
         except Exception as e:
             logger.error(f"Error setting metadata {key}: {e}")
     
@@ -2587,18 +2556,15 @@ class MusicDatabase:
     def remove_from_wishlist(self, spotify_track_id: str) -> bool:
         """Remove a track from the wishlist (typically after successful download)"""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM wishlist_tracks WHERE spotify_track_id = ?", (spotify_track_id,))
-                conn.commit()
+            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM wishlist_tracks WHERE spotify_track_id = ?", (spotify_track_id,))
+            
+            if rowcount and rowcount > 0:
+                logger.info(f"Removed track from wishlist: {spotify_track_id}")
+                return True
+            else:
+                logger.debug(f"Track not found in wishlist: {spotify_track_id}")
+                return False
                 
-                if cursor.rowcount > 0:
-                    logger.info(f"Removed track from wishlist: {spotify_track_id}")
-                    return True
-                else:
-                    logger.debug(f"Track not found in wishlist: {spotify_track_id}")
-                    return False
-                    
         except Exception as e:
             logger.error(f"Error removing track from wishlist: {e}")
             return False
@@ -2652,14 +2618,10 @@ class MusicDatabase:
     def update_wishlist_retry(self, spotify_track_id: str, success: bool, error_message: str = None) -> bool:
         """Update retry count and status for a wishlist track"""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
+            def _task(cursor):
                 if success:
-                    # Remove from wishlist on success
                     cursor.execute("DELETE FROM wishlist_tracks WHERE spotify_track_id = ?", (spotify_track_id,))
                 else:
-                    # Increment retry count and update failure reason
                     cursor.execute("""
                         UPDATE wishlist_tracks 
                         SET retry_count = retry_count + 1, 
@@ -2667,9 +2629,10 @@ class MusicDatabase:
                             failure_reason = COALESCE(?, failure_reason)
                         WHERE spotify_track_id = ?
                     """, (error_message, spotify_track_id))
-                
-                conn.commit()
-                return cursor.rowcount > 0
+                return cursor.rowcount
+            
+            rowcount = execute_write(str(self.database_path), _task)
+            return rowcount > 0 if rowcount else False
                 
         except Exception as e:
             logger.error(f"Error updating wishlist retry status: {e}")
@@ -2690,12 +2653,9 @@ class MusicDatabase:
     def clear_wishlist(self) -> bool:
         """Clear all tracks from the wishlist"""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM wishlist_tracks")
-                conn.commit()
-                logger.info(f"Cleared {cursor.rowcount} tracks from wishlist")
-                return True
+            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM wishlist_tracks")
+            logger.info(f"Cleared {rowcount or 0} tracks from wishlist")
+            return True
         except Exception as e:
             logger.error(f"Error clearing wishlist: {e}")
             return False

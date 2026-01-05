@@ -11,13 +11,14 @@ from typing import List
 from utils.logging_config import get_logger
 from plugins.provider_adapter import ProviderAdapter
 from core.models import ProviderType, Track
-from database.music_database import get_database
+from sdk.storage_service import get_storage_service
 
 logger = get_logger("listenbrainz_adapter")
 
 class ListenBrainzAdapter(ProviderAdapter):
     def __init__(self, listenbrainz_client=None):
-        db = get_database()
+        storage = get_storage_service()
+        db = storage.get_music_database()
         # Use MUSICBRAINZ provider type for recording references
         super().__init__(db=db, provider_type=ProviderType.MUSICBRAINZ)
         self.lb = listenbrainz_client

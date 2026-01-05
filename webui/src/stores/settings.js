@@ -32,7 +32,8 @@ function createSettingsStore() {
 
   async function save(patch) {
     try {
-      await apiClient.post('/api/settings', patch);
+      // API client baseURL is '/api' so use '/settings' to avoid '/api/api/...'
+      await apiClient.post('/settings', patch);
       update((state) => ({
         ...state,
         data: { ...state.data, ...patch },

@@ -189,6 +189,7 @@ class PluginDeclaration:
     def to_dict(self) -> dict:
         """Serialize declaration to dict (for API responses)."""
         return {
+            'id': self.name,  # Frontend expects 'id' field
             'name': self.name,
             'plugin_type': self.plugin_type.value,
             'provides_fields': self.provides_fields,

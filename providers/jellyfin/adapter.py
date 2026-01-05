@@ -9,13 +9,14 @@ from typing import List, Optional, Dict, Any
 from utils.logging_config import get_logger
 from plugins.provider_adapter import ProviderAdapter
 from core.models import ProviderType, Track
-from database.music_database import get_database
+from sdk.storage_service import get_storage_service
 
 logger = get_logger("jellyfin_adapter")
 
 class JellyfinAdapter(ProviderAdapter):
     def __init__(self, jellyfin_client=None):
-        db = get_database()
+        storage = get_storage_service()
+        db = storage.get_music_database()
         super().__init__(db=db, provider_type=ProviderType.JELLYFIN)
         self.jellyfin = jellyfin_client
 

@@ -12,13 +12,14 @@ from typing import List, Optional
 from utils.logging_config import get_logger
 from plugins.provider_adapter import ProviderAdapter
 from core.models import ProviderType, Track
-from database.music_database import get_database
+from sdk.storage_service import get_storage_service
 
 logger = get_logger("soulseek_adapter")
 
 class SoulseekAdapter(ProviderAdapter):
     def __init__(self, soulseek_client=None):
-        db = get_database()
+        storage = get_storage_service()
+        db = storage.get_music_database()
         super().__init__(db=db, provider_type=ProviderType.SOULSEEK)
         self.soulseek = soulseek_client
 

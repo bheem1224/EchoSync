@@ -1,4 +1,3 @@
-
 import secrets
 import base64
 import time
@@ -73,13 +72,15 @@ class TidalClient(SyncServiceProvider):
         self.auth_code = None
         self.code_verifier = None
         self.code_challenge = None
+        self.country_code = "US"  # Default country code
+        # Load configuration from the database
         self._load_config()
         self._load_saved_tokens()
         
         # Register as plugin with explicit declarations
         from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
         plugin_decl = PluginDeclaration(
-            name='tidal_client',
+            name='tidal',
             plugin_type=PluginType.PLAYLIST_SERVICE,
             provides=[
                 'playlist.read',
@@ -103,7 +104,12 @@ class TidalClient(SyncServiceProvider):
             instance=self,
             priority=90,
         )
-        register_plugin(plugin_decl)
+        # Check if the plugin is already registered
+        from plugins.plugin_system import get_plugin
+        if get_plugin('tidal'):
+            logger.info("Plugin 'tidal' already registered; skipping duplicate")
+        else:
+            register_plugin(plugin_decl)
     def _refresh_access_token(self):
         """Refresh the Tidal access token using the refresh token."""
         if not self.refresh_token or not self.client_id:
@@ -155,9 +161,114 @@ class TidalClient(SyncServiceProvider):
         # Stub implementation
         return []
 
-    def get_user_playlists(self, user_id: Optional[str] = None) -> list:
-        # Stub implementation
-        return []
+    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Fetch user playlists with detailed metadata."""
+        print(f"🔵 [TIDAL] get_user_playlists called! user_id={user_id}, has_token={bool(self.access_token)}")
+        logger.info(f"[TIDAL] get_user_playlists called with user_id={user_id}, access_token={bool(self.access_token)}")
+        
+        if not self.access_token:
+            print("❌ [TIDAL] No access token available!")
+            return []
+            
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Accept": "application/vnd.api+json"
+        }
+
+        # Step 1: Resolve user ID and country code if not provided
+        if not user_id:
+            user_url = f"{self.base_url}/users/me"
+            try:
+                print(f"🔵 [TIDAL] Fetching user info from {user_url}")
+                logger.info(f"[TIDAL] Fetching user info from {user_url}")
+                user_response = self._http.get(user_url, headers=headers)
+                print(f"🔵 [TIDAL] User info response status: {user_response.status_code}")
+                user_response.raise_for_status()
+                user_data = user_response.json().get("data", {})
+                print(f"🔵 [TIDAL] User data: {user_data}")
+                user_id = user_data.get("id")
+                self.country_code = user_data.get("attributes", {}).get("countryCode", "US")
+                print(f"✅ [TIDAL] Resolved user_id={user_id}, country_code={self.country_code}")
+                logger.info(f"[TIDAL] Resolved user_id={user_id}, country_code={self.country_code}")
+            except Exception as e:
+                print(f"❌ [TIDAL] Failed to fetch user info: {e}")
+                logger.error(f"[TIDAL] Failed to fetch user info: {e}", exc_info=True)
+                return []
+
+        # Step 2: Fetch playlists using userCollections endpoint with includes
+        endpoint = f"/userCollections/{user_id}"
+        playlists = []
+        
+        # Build URL with proper query parameters (include must be repeated)
+        country = self.country_code or "US"
+        url = f"{self.base_url}{endpoint}?countryCode={country}&locale=en-US&include=playlists&include=tracks"
+        
+        print(f"🔵 [TIDAL] Fetching playlists from URL: {url}")
+        logger.info(f"[TIDAL] Fetching playlists from URL: {url}")
+
+        try:
+            response = self._http.get(url, headers=headers)
+            print(f"🔵 [TIDAL] Playlists response status: {response.status_code}")
+            response.raise_for_status()
+            data = response.json()
+            
+            # Print the full response for debugging
+            import json
+            print(f"🔵 [TIDAL] FULL API RESPONSE:")
+            print(json.dumps(data, indent=2))
+            
+            # Debug: print structure
+            print(f"🔵 [TIDAL] Response keys: {data.keys()}")
+            print(f"🔵 [TIDAL] data type: {type(data.get('data'))}")
+            print(f"🔵 [TIDAL] data.relationships keys: {data.get('data', {}).get('relationships', {}).keys()}")
+            
+            included = data.get("included", [])
+            print(f"🔵 [TIDAL] Number of included items: {len(included)}")
+            
+            # Get playlists from relationships
+            relationships = data.get("data", {}).get("relationships", {})
+            playlists_rel = relationships.get("playlists", {})
+            rel_playlists = playlists_rel.get("data", [])
+            
+            print(f"🔵 [TIDAL] Number of playlists in relationships.playlists.data: {len(rel_playlists)}")
+            
+            logger.info(f"[TIDAL] API Response status: {response.status_code}")
+
+            # Build lookup for included playlists
+            playlist_map = {
+                item.get("id"): item
+                for item in included
+                if item.get("type") == "playlists"
+            }
+            print(f"🔵 [TIDAL] Built playlist_map with {len(playlist_map)} items")
+
+            # Iterate relationships.playlists.data for stable ordering
+            for rel in rel_playlists:
+                playlist_id = rel.get("id")
+                print(f"🔵 [TIDAL] Processing playlist ID: {playlist_id}")
+                playlist_obj = playlist_map.get(playlist_id, {})
+                print(f"🔵 [TIDAL] Found playlist in map: {bool(playlist_obj)}")
+                attributes = playlist_obj.get("attributes", {})
+                print(f"🔵 [TIDAL] Attributes: {attributes}")
+                playlist_dict = {
+                    "id": playlist_id,
+                    "name": attributes.get("name"),
+                    "description": attributes.get("description"),
+                    "duration": attributes.get("duration"),
+                    "externalLinks": attributes.get("externalLinks", []),
+                    "track_count": attributes.get("numberOfItems"),
+                }
+                playlists.append(playlist_dict)
+                print(f"✅ [TIDAL] Added playlist {playlist_dict['name']} (tracks={playlist_dict['track_count']})")
+                logger.info(f"[TIDAL] Added playlist: {playlist_dict['name']} (id={playlist_id})")
+            print(f"✅ [TIDAL] Total playlists parsed: {len(playlists)}")
+            logger.info(f"[TIDAL] Total playlists parsed: {len(playlists)}")
+        except Exception as e:
+            print(f"❌ [TIDAL] Failed to fetch playlists: {e}")
+            logger.error(f"[TIDAL] Failed to fetch playlists: {e}", exc_info=True)
+
+        print(f"🔵 [TIDAL] Returning {len(playlists)} playlists")
+        return playlists
 
     def get_playlist_tracks(self, playlist_id: str) -> list:
         # Stub implementation
@@ -188,11 +299,14 @@ class TidalClient(SyncServiceProvider):
             from sdk.storage_service import get_storage_service
             storage = get_storage_service()
             storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+            
+            # Ensure client_id and client_secret are retrieved from service_config
             self.client_id = storage.get_service_config('tidal', 'client_id') or None
             self.client_secret = storage.get_service_config('tidal', 'client_secret') or None
-            self.redirect_uri = storage.get_service_config('tidal', 'redirect_uri') or self.redirect_uri
+
+            # Log a warning if they are missing
             if not self.client_id or not self.client_secret:
-                logger.warning("Tidal client ID or secret not configured in database")
+                logger.warning("Tidal client ID or secret not configured in service_config table")
                 return False
             logger.info(f"Loaded Tidal config from config.db with client ID: {self.client_id[:8]}...")
             return True
@@ -481,3 +595,47 @@ class TidalClient(SyncServiceProvider):
                         duration=track_info['attributes'].get('duration')
                     ))
         return Playlist(meta.get('id'), meta.get('attributes', {}).get('name'), track_objs)
+
+    def get_playlist_by_id(self, playlist_id: str) -> dict:
+        """Fetch a specific playlist by ID from Tidal API."""
+        if not self.access_token:
+            logger.error("TidalClient: Missing access token. Cannot fetch playlist.")
+            return {}
+
+        url = f"{self.base_url}/playlists/{playlist_id}"
+        headers = {
+            'Authorization': f'Bearer {self.access_token}'
+        }
+
+        try:
+            response = self._http.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"Failed to fetch Tidal playlist {playlist_id}: {response.status_code} - {response.text}")
+                return {}
+        except Exception as e:
+            logger.error(f"Exception while fetching Tidal playlist {playlist_id}: {e}")
+            return {}
+
+    def get_saved_tracks(self) -> list:
+        """Fetch user's saved tracks from Tidal API."""
+        if not self.access_token:
+            logger.error("TidalClient: Missing access token. Cannot fetch saved tracks.")
+            return []
+
+        url = f"{self.base_url}/users/me/tracks"
+        headers = {
+            'Authorization': f'Bearer {self.access_token}'
+        }
+
+        try:
+            response = self._http.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.json().get('items', [])
+            else:
+                logger.error(f"Failed to fetch Tidal saved tracks: {response.status_code} - {response.text}")
+                return []
+        except Exception as e:
+            logger.error(f"Exception while fetching Tidal saved tracks: {e}")
+            return []

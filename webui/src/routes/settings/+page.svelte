@@ -2,9 +2,42 @@
   import { onMount } from 'svelte';
   import { providers } from '../../stores/providers';
   import { settings } from '../../stores/settings';
-  import ProviderSettings from '../../components/ProviderSettings.svelte';
+  import { settingsPanel } from '../../stores/settingsPanel';
+  import QualityProfiles from '../../components/QualityProfiles.svelte';
+  import StorageSettings from '../../components/StorageSettings.svelte';
+  import { preferences } from '../../stores/preferences';
+  import Sidebar from '../../components/Sidebar.svelte';
 
   let loadError = '';
+  let storageRef;
+
+  import { feedback } from '../../stores/feedback';
+
+  async function saveAll() {
+    try {
+      feedback.setLoading(true);
+      // if storage component exposes save, call it
+      if (storageRef && typeof storageRef.save === 'function') {
+        await storageRef.save();
+      }
+      // persist quality profiles as part of Save All
+      try {
+        await preferences.saveProfiles($preferences?.profiles || []);
+        feedback.addToast('Preferences saved', 'success');
+      } catch (e) {
+        console.error('Failed to save preferences during Save All', e);
+        feedback.addToast('Failed saving preferences', 'error');
+      }
+      // persist full settings state to backend
+      await settings.save($settings?.data || {});
+      feedback.addToast('Settings saved', 'success');
+    } catch (e) {
+      console.error('Failed to save all settings', e);
+      feedback.addToast('Failed to save settings', 'error');
+    } finally {
+      feedback.setLoading(false);
+    }
+  }
 
   onMount(async () => {
     try {
@@ -35,136 +68,59 @@
 <section class="page">
   <header class="page__header">
     <div>
-      <p class="eyebrow">Configuration</p>
-      <h1>Settings</h1>
-      <p class="sub">Dynamic options based on provider capabilities.</p>
+      <h1 class="prefs-title">{({ preferences: 'Preferences' }[$settingsPanel?.active] ?? ($settingsPanel?.active?.replace(/-/g, ' ') || 'Settings'))}</h1>
+    </div>
+    <div class="header-actions">
+      <button class="btn-primary save-all" on:click={saveAll} title="Save All">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+          <polyline points="17 21 17 13 7 13 7 21"></polyline>
+          <polyline points="7 3 7 8 15 8"></polyline>
+        </svg>
+        Save All
+      </button>
     </div>
   </header>
 
   <div class="grid-2">
-    <div class="card section-card" id="preferences">
-      <div class="section-heading">
-        <h2>Preferences</h2>
-        <span class="chip">User defaults</span>
-      </div>
+    <div class="section-card" id="preferences">
       {#if loadError}
         <p class="error">{loadError}</p>
-      {:else if Object.keys(userSettings).length === 0}
-        <p class="muted">No settings available.</p>
       {:else}
         <div class="settings-list">
-          {#each Object.entries(userSettings) as [key, value]}
-            <label>
-              <span>{key}</span>
-              <input
-                class="input"
-                name={key}
-                type="text"
-                value={value}
-                on:change={(e) => updateSetting(key, e.target.value)}
-              />
-            </label>
-          {/each}
+          <QualityProfiles />
+          
+          <section class="appearance card">
+            <div class="section-heading">
+              <h2>Appearance</h2>
+            </div>
+            <div class="appearance-content">
+              <label>
+                <span class="label-text">Theme</span>
+                <select class="theme-select">
+                  <option value="dark" selected>Dark</option>
+                </select>
+              </label>
+            </div>
+          </section>
         </div>
       {/if}
     </div>
 
-    <div class="card section-card" id="music-services">
-      <div class="section-heading">
-        <h2>Music Services</h2>
-        <span class="chip">Streaming providers</span>
-      </div>
-      {#if streamingProviders.length === 0}
-        <p class="muted">No streaming providers available.</p>
+    <div class="section-card" id="storage">
+      {#if loadError}
+        <p class="error">{loadError}</p>
       {:else}
-        <div class="provider-settings-grid">
-          {#each streamingProviders as provider}
-            <ProviderSettings providerId={provider.id} providerName={provider.name} />
-          {/each}
-        </div>
+        <StorageSettings bind:this={storageRef} />
       {/if}
-    </div>
-
-    <div class="card section-card" id="servers">
-      <div class="section-heading">
-        <h2>Servers</h2>
-        <span class="chip">Plex / Jellyfin</span>
-      </div>
-      {#if serverProviders.length === 0}
-        <p class="muted">No servers registered.</p>
-      {:else}
-        <div class="provider-settings-grid">
-          {#each serverProviders as provider}
-            <ProviderSettings providerId={provider.id} providerName={provider.name} />
-          {/each}
-        </div>
-      {/if}
-    </div>
-
-    <div class="card section-card" id="metadata">
-      <div class="section-heading">
-        <h2>Metadata</h2>
-        <span class="chip">Tag sources</span>
-      </div>
-      {#if metadataProviders.length === 0}
-        <p class="muted">No metadata providers registered.</p>
-      {:else}
-        <div class="provider-settings-grid">
-          {#each metadataProviders as provider}
-            <ProviderSettings providerId={provider.id} providerName={provider.name} />
-          {/each}
-        </div>
-      {/if}
-    </div>
-
-    <div class="card section-card" id="search">
-      <div class="section-heading">
-        <h2>Search</h2>
-        <span class="chip">Unified search</span>
-      </div>
-      {#if searchProviders.length === 0}
-        <p class="muted">No search-capable providers.</p>
-      {:else}
-        <div class="provider-settings-grid">
-          {#each searchProviders as provider}
-            <ProviderSettings providerId={provider.id} providerName={provider.name} />
-          {/each}
-        </div>
-      {/if}
-    </div>
-
-    <div class="card section-card" id="misc">
-      <div class="section-heading">
-        <h2>Misc</h2>
-        <span class="chip">Other providers</span>
-      </div>
-      {#if miscProviders.length === 0}
-        <p class="muted">No uncategorized providers.</p>
-      {:else}
-        <div class="provider-settings-grid">
-          {#each miscProviders as provider}
-            <ProviderSettings providerId={provider.id} providerName={provider.name} />
-          {/each}
-        </div>
-      {/if}
-    </div>
-
-    <div class="card section-card" id="jobs">
-      <div class="section-heading">
-        <h2>Jobs</h2>
-        <span class="chip">Scheduling</span>
-      </div>
-      <p class="muted">Registered jobs, next run, previous run, and run-now controls will be listed. (TODO)</p>
-    </div>
-
-    <div class="card section-card" id="system">
-      <div class="section-heading">
-        <h2>System</h2>
-        <span class="chip">Status</span>
-      </div>
-      <p class="muted">CPU, memory, DB size, installed plugins/providers, logs download, recent events. (TODO)</p>
     </div>
   </div>
+
+  <Sidebar>
+    <li>
+      <a href="/settings/download-clients">Download Clients</a>
+    </li>
+  </Sidebar>
 </section>
 
 <style>
@@ -191,6 +147,8 @@
     padding: 16px;
   }
 
+    .header-actions { display:flex; align-items:center }
+
   .settings-list {
     display: flex;
     flex-direction: column;
@@ -216,5 +174,20 @@
     border: 1px solid rgba(248, 113, 113, 0.4);
     padding: 10px 12px;
     border-radius: 8px;
+  }
+
+  .appearance { padding: 12px; margin-top: 12px; }
+  .appearance .section-heading { margin-bottom: 12px; }
+  .appearance .section-heading h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  .appearance-content { display: flex; flex-direction: column; gap: 12px; }
+  .appearance-content label { display: flex; flex-direction: column; gap: 6px; }
+  .appearance-content .label-text { font-size: 14px; color: var(--text); }
+  .appearance-content .theme-select { 
+    padding: 8px 12px; 
+    border-radius: 6px; 
+    background: var(--card-bg); 
+    border: 1px solid var(--border-color, rgba(255,255,255,0.1)); 
+    color: var(--text);
+    font-size: 14px;
   }
 </style>

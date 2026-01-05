@@ -7,6 +7,7 @@ class ProviderBase(ABC):
     All providers must implement these methods for plugin compatibility.
     """
     name: str  # Unique provider name (e.g., 'spotify', 'tidal', 'youtube')
+    supports_downloads: bool = False  # Indicates if the provider supports downloads
 
     @abstractmethod
     def authenticate(self, **kwargs) -> bool:

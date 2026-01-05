@@ -27,13 +27,22 @@ from .music_database import (
     close_database
 )
 
+from .engine import (
+    execute_write,
+    execute_write_sql,
+    ensure_writer
+)
+
 __all__ = [
     'MusicDatabase',
     'DatabaseArtist',
     'DatabaseAlbum',
     'DatabaseTrack', 
     'get_database',
-    'close_database'
+    'close_database',
+    'execute_write',
+    'execute_write_sql',
+    'ensure_writer'
 ]
 
 __version__ = '1.0.0'

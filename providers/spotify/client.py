@@ -277,9 +277,9 @@ class SpotifyClient(ProviderBase):
         )
 
         # Avoid duplicate registrations when temp clients are created (e.g., tests/health)
-        if not get_plugin('spotify_client'):
+        if not get_plugin('spotify'):
             plugin_decl = PluginDeclaration(
-                name='spotify_client',
+                name='spotify',
                 plugin_type=PluginType.PLAYLIST_SERVICE,
                 provides=[
                     'playlist.read',

@@ -28,31 +28,73 @@ def get_provider_playlists(provider_name):
         # Get provider via registry
         from plugins.plugin_system import plugin_registry
         
-        plugin = plugin_registry.get_plugin(provider_name)
-        if not plugin:
+        plugin_decl = plugin_registry.get_plugin(provider_name)
+        if not plugin_decl:
             return jsonify({'error': f'Provider {provider_name} not found or not installed'}), 404
         
-        # Instantiate client if it has a get_user_playlists method
+        # Get the actual client instance from the plugin declaration
+        plugin = plugin_decl.instance if hasattr(plugin_decl, 'instance') else plugin_decl
+        if not plugin:
+            return jsonify({'error': f'Provider {provider_name} instance not found'}), 404
+        
+        # For multi-account providers (Spotify, Tidal), check if any accounts exist
+        multi_account_providers = ['spotify', 'tidal']
+        if provider_name in multi_account_providers:
+            # Check if provider has accounts configured
+            from sdk.storage_service import get_storage_service
+            storage = get_storage_service()
+            
+            accounts = storage.list_accounts(provider_name)
+            if not accounts or len(accounts) == 0:
+                return jsonify({'error': f'No {provider_name.title()} accounts configured. Please add an account in Settings → {provider_name.title()}.'}), 400
+            
+            # Use first account for now (TODO: add account selection UI)
+            account_id = accounts[0]['id']
+            
+            if provider_name == 'spotify':
+                from providers.spotify.client import SpotifyClient
+                plugin = SpotifyClient(account_id=account_id)
+            elif provider_name == 'tidal':
+                from providers.tidal.client import TidalClient
+                plugin = TidalClient(account_id=str(account_id))
+        else:
+            # For single-account providers, check if configured
+            if hasattr(plugin, 'is_configured') and not plugin.is_configured():
+                return jsonify({'error': f'{provider_name} is not configured. Please configure it in Settings first.'}), 400
+        
+        # Check if it has a get_user_playlists method
         if not hasattr(plugin, 'get_user_playlists'):
             return jsonify({'error': f'Provider {provider_name} does not support playlists'}), 400
         
+        logger.info(f"[ROUTE] Calling get_user_playlists on {provider_name} provider")
         playlists = plugin.get_user_playlists()
+        logger.info(f"[ROUTE] get_user_playlists returned {len(playlists) if playlists else 0} playlists")
+        logger.info(f"[ROUTE] Playlists type: {type(playlists)}, content: {playlists}")
         
         # Convert to serializable format if needed
         serialized = []
         for p in playlists:
             if hasattr(p, '__dict__'):
                 serialized.append(p.__dict__)
-            else:
+            elif isinstance(p, dict):
                 serialized.append(p)
-                
-        return jsonify({
+            else:
+                # Try to convert to dict for unknown types
+                try:
+                    serialized.append({'id': getattr(p, 'id', ''), 'name': getattr(p, 'name', str(p))})
+                except:
+                    serialized.append({'name': str(p)})
+        
+        logger.info(f"[ROUTE] Serialized {len(serialized)} playlists for response")
+        response_data = {
             'provider': provider_name,
             'items': serialized,
             'total': len(serialized)
-        }), 200
+        }
+        logger.info(f"[ROUTE] Response: {response_data}")
+        return jsonify(response_data), 200
     except Exception as e:
-        logger.error(f"Error fetching playlists for {provider_name}: {e}")
+        logger.error(f"Error fetching playlists for {provider_name}: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @bp.get("/<provider_name>/settings")
@@ -66,34 +108,18 @@ def get_provider_settings(provider_name):
         from sdk.storage_service import get_storage_service
         storage = get_storage_service()
         
-        # Ensure service exists
+        # Ensure service exists in config.db
         try:
             storage.ensure_service(provider_name)
         except Exception:
             return jsonify({'error': f'Provider {provider_name} not found'}), 404
-        
-        # Get all config keys for this provider
-        # Storage service automatically decrypts sensitive values
-        from database.music_database import get_database
-        db = get_database()
-        
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT id FROM services WHERE name = ?", (provider_name,))
-            row = c.fetchone()
-            if not row:
-                return jsonify({'error': f'Provider {provider_name} not found'}), 404
-            service_id = row[0]
-            
-            # Get config via storage service (handles decryption)
-            c.execute("SELECT config_key FROM service_config WHERE service_id = ?", (service_id,))
-            keys = [row['config_key'] for row in c.fetchall()]
-            
-            # Retrieve each value (storage service decrypts automatically)
-            config = {}
-            for key in keys:
-                value = storage.get_service_config(provider_name, key)
-                config[key] = value  # Already decrypted by storage service
+
+        # Retrieve a known set of provider config keys (client_id, client_secret, redirect_uri)
+        # Storage service returns decrypted values when present in config.db
+        keys_of_interest = ['client_id', 'client_secret', 'redirect_uri']
+        config = {}
+        for key in keys_of_interest:
+            config[key] = storage.get_service_config(provider_name, key)
         
         # Mock schema for dynamic UI generation (should eventually come from provider class)
         schema = _get_mock_schema(provider_name)
@@ -118,21 +144,36 @@ def update_provider_settings(provider_name):
     """
     try:
         payload = request.get_json(silent=True) or {}
-        from config.settings import config_manager
-        
+
         # SECURITY: Log only that we're updating, not the actual credentials
         logger.info(f"Updating settings for provider: {provider_name}")
-        
-        # Use config_manager to set credentials
-        # This handles encryption and database storage automatically
-        success = config_manager.set_service_credentials(provider_name, payload)
-        
-        if success:
-            # SECURITY: Return only success, not echoing back the data
-            logger.info(f"Successfully updated {provider_name} settings")
-            return jsonify({'success': True, 'message': f'{provider_name} credentials saved securely'}), 200
-        else:
-            logger.warning(f"Failed to update settings for {provider_name}")
+
+        # Use the storage service so credentials are saved into the encrypted config.db
+        from sdk.storage_service import get_storage_service
+        storage = get_storage_service()
+
+        try:
+            # Ensure service exists in config.db
+            storage.ensure_service(provider_name)
+
+            # Default sensitive keys
+            sensitive_keys = ['client_secret', 'access_token', 'refresh_token']
+
+            all_ok = True
+            for k, v in payload.items():
+                is_sensitive = k in sensitive_keys
+                ok = storage.set_service_config(provider_name, k, (v or '').strip() if isinstance(v, str) else v, is_sensitive=is_sensitive)
+                if not ok:
+                    all_ok = False
+
+            if all_ok:
+                logger.info(f"Successfully updated {provider_name} settings in config.db")
+                return jsonify({'success': True, 'message': f'{provider_name} credentials saved securely'}), 200
+            else:
+                logger.warning(f"Failed to update one or more settings for {provider_name}")
+                return jsonify({'error': 'Failed to update one or more settings'}), 500
+        except Exception as e:
+            logger.error(f"Error updating settings for {provider_name}: {e}")
             return jsonify({'error': 'Failed to update settings'}), 500
     except Exception as e:
         # SECURITY: Log error but not the payload
@@ -145,7 +186,7 @@ def _get_mock_schema(provider_name):
         'spotify': [
             {'key': 'client_id', 'label': 'Client ID', 'type': 'text', 'sensitive': True},
             {'key': 'client_secret', 'label': 'Client Secret', 'type': 'password', 'sensitive': True},
-            {'key': 'redirect_uri', 'label': 'Redirect URI', 'type': 'text', 'default': 'http://localhost:8888/callback'},
+            {'key': 'redirect_uri', 'label': 'Redirect URI', 'type': 'text', 'default': 'http://127.0.0.1:8008/api/spotify/callback'},
         ],
         'plex': [
             {'key': 'server_url', 'label': 'Server URL', 'type': 'text', 'default': 'http://localhost:32400'},

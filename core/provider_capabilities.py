@@ -65,7 +65,7 @@ CAPABILITY_REGISTRY: Dict[str, ProviderCapabilities] = {
     ),
     'plex': ProviderCapabilities(
         name='plex',
-        supports_playlists=PlaylistSupport.READ,
+        supports_playlists=PlaylistSupport.READ_WRITE,
         search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
         metadata=MetadataRichness.HIGH,
         supports_cover_art=True,
@@ -77,7 +77,7 @@ CAPABILITY_REGISTRY: Dict[str, ProviderCapabilities] = {
     ),
     'jellyfin': ProviderCapabilities(
         name='jellyfin',
-        supports_playlists=PlaylistSupport.READ,
+        supports_playlists=PlaylistSupport.READ_WRITE,
         search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
         metadata=MetadataRichness.MEDIUM,
         supports_cover_art=True,
@@ -89,7 +89,7 @@ CAPABILITY_REGISTRY: Dict[str, ProviderCapabilities] = {
     ),
     'navidrome': ProviderCapabilities(
         name='navidrome',
-        supports_playlists=PlaylistSupport.READ,
+        supports_playlists=PlaylistSupport.READ_WRITE,
         search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
         metadata=MetadataRichness.MEDIUM,
         supports_cover_art=True,

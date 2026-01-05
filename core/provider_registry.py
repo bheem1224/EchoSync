@@ -1,4 +1,4 @@
-from typing import Dict, Type, List
+from typing import Dict, Type, List, Optional
 from core.provider_base import ProviderBase
 from core.provider_types import DownloaderProvider, MediaServerProvider, SyncServiceProvider
 
@@ -39,7 +39,7 @@ class ProviderRegistry:
         cls._providers[name.lower()] = provider_cls
 
     @classmethod
-    def get_provider_class(cls, name: str) -> Type[ProviderBase]:
+    def get_provider_class(cls, name: str) -> Optional[Type[ProviderBase]]:
         return cls._providers.get(name.lower())
 
     @classmethod
@@ -52,6 +52,14 @@ class ProviderRegistry:
         if not provider_cls:
             raise ValueError(f"Provider '{name}' not registered")
         return provider_cls(*args, **kwargs)
+
+    # Added method to filter providers by 'supports_downloads'
+    @classmethod
+    def get_download_clients(cls) -> List[str]:
+        """
+        Return a list of provider names that support downloads.
+        """
+        return [name for name, cls_ in cls._providers.items() if getattr(cls_, 'supports_downloads', False)]
 
 
 # Register all provider clients for plugin discovery

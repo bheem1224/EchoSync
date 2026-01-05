@@ -23,27 +23,31 @@ def list_providers() -> List[Dict]:
         plugin_dict = plugin.to_dict()
         try:
             caps = fetch_capabilities(plugin.name)
-            plugin_dict['metadata_richness'] = caps.metadata.name
-            plugin_dict['supports_streaming'] = caps.supports_streaming
-            plugin_dict['supports_downloads'] = caps.supports_downloads
-            plugin_dict['supports_cover_art'] = caps.supports_cover_art
-            plugin_dict['supports_library_scan'] = caps.supports_library_scan
-            plugin_dict['playlist_support'] = caps.supports_playlists.name if caps.supports_playlists else 'NONE'
-            plugin_dict['search_capabilities'] = {
-                'tracks': caps.search.tracks,
-                'artists': caps.search.artists,
-                'albums': caps.search.albums,
-                'playlists': caps.search.playlists,
+            plugin_dict['capabilities'] = {
+                'metadata_richness': caps.metadata.name,
+                'supports_streaming': caps.supports_streaming,
+                'supports_downloads': caps.supports_downloads,
+                'supports_cover_art': caps.supports_cover_art,
+                'supports_library_scan': caps.supports_library_scan,
+                'supports_playlists': caps.supports_playlists.name if caps.supports_playlists else 'NONE',
+                'search': {
+                    'tracks': caps.search.tracks,
+                    'artists': caps.search.artists,
+                    'albums': caps.search.albums,
+                    'playlists': caps.search.playlists,
+                }
             }
         except KeyError:
             # Provider not in capability registry, use defaults
-            plugin_dict['metadata_richness'] = 'MEDIUM'
-            plugin_dict['supports_streaming'] = False
-            plugin_dict['supports_downloads'] = False
-            plugin_dict['supports_cover_art'] = False
-            plugin_dict['supports_library_scan'] = False
-            plugin_dict['playlist_support'] = 'NONE'
-            plugin_dict['search_capabilities'] = {'tracks': False, 'artists': False, 'albums': False, 'playlists': False}
+            plugin_dict['capabilities'] = {
+                'metadata_richness': 'MEDIUM',
+                'supports_streaming': False,
+                'supports_downloads': False,
+                'supports_cover_art': False,
+                'supports_library_scan': False,
+                'supports_playlists': 'NONE',
+                'search': {'tracks': False, 'artists': False, 'albums': False, 'playlists': False}
+            }
         providers.append(plugin_dict)
     return providers
 

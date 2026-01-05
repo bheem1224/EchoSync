@@ -7,7 +7,7 @@ from providers.soulseek.client import SoulseekClient
 from providers.tidal.client import TidalClient
 from services.sync_service import PlaylistSyncService
 from config.settings import config_manager
-from database.music_database import get_database
+from sdk.storage_service import get_storage_service
 
 def get_music_matching_engine():
     from core.matching_engine import MusicMatchingEngine
@@ -34,7 +34,8 @@ class ServiceRegistry:
         from core.provider_registry import ProviderRegistry
         if name not in self._clients:
             try:
-                db = get_database()
+                storage = get_storage_service()
+                db = storage.get_music_database()
                 with db._get_connection() as conn:
                     c = conn.cursor()
                     c.execute("SELECT id FROM services WHERE name = ?", (name,))

@@ -7,11 +7,12 @@
     logLevel: 'INFO'
   });
 
-  const qualityProfiles = writable([
-    { name: 'Audiophile', formats: ['FLAC', 'MP3 320 kbps', 'MP3 256 kbps', 'MP3 192 kbps'] },
-    { name: 'Balanced', formats: ['FLAC', 'MP3 320 kbps', 'MP3 256 kbps', 'MP3 192 kbps'] },
-    { name: 'Space Saver', formats: ['MP3 320 kbps', 'MP3 256 kbps', 'MP3 192 kbps'] }
-  ]);
+  const appearanceSettings = writable({
+    theme: 'dark'
+  });
+
+  // Start with an empty list so the user config is authoritative
+  const qualityProfiles = writable([]);
 
   function addProfile() {
     qualityProfiles.update((profiles) => {
@@ -55,21 +56,25 @@
   </section>
 
   <section class="card">
+    <h2>Appearance</h2>
+    <label>
+      Theme:
+      <select bind:value={$appearanceSettings.theme}>
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+    </label>
+  </section>
+
+  <section class="card">
     <h2>Quality Profiles</h2>
-    <div class="profiles">
-      {#each $qualityProfiles as profile, index}
-        <div class="profile">
-          <h3>{profile.name}</h3>
-          <button on:click={() => removeProfile(index)}>Delete</button>
-          <ul>
-            {#each profile.formats as format}
-              <li>{format}</li>
-            {/each}
-          </ul>
-        </div>
-      {/each}
-      <button on:click={addProfile}>Add Profile</button>
-    </div>
+    <button on:click={addProfile}>Add</button>
+    {#each $qualityProfiles as profile, index}
+      <div>
+        <input type="text" bind:value={profile.name} />
+        <button on:click={() => removeProfile(index)}>Remove</button>
+      </div>
+    {/each}
   </section>
 </div>
 

@@ -291,11 +291,13 @@ class JellyfinClient(MediaServerProvider):
         # Register as plugin with explicit declarations
         from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
         plugin_decl = PluginDeclaration(
-            name='jellyfin_client',
+            name='jellyfin',
             plugin_type=PluginType.LIBRARY_MANAGER,
             provides=[
                 'library.scan',
                 'library.cover_art',
+                'playlist.read',
+                'playlist.write',
                 'track.title',
                 'track.artist',
                 'track.album',

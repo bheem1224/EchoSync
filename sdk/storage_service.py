@@ -2,6 +2,9 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from config.settings import config_manager
+from utils.logging_config import get_logger
+
+logger = get_logger("storage_service")
 
 # Config DB access (secrets/accounts/tokens/PKCE)
 try:
@@ -54,9 +57,20 @@ class StorageService:
         svc_id = self._cfg.get_or_create_service_id(service_name)
         return self._cfg.ensure_account(service_id=svc_id, account_id=account_id, account_name=account_name, display_name=display_name, user_id=user_id)
 
-    def set_active_account(self, service_name: str, account_id: int) -> bool:
+    def set_active_account(self, service_name: str, account_id: int, exclusive: bool = True) -> bool:
+        """Set an account as active.
+        
+        Args:
+            service_name: Service name
+            account_id: Account ID to activate
+            exclusive: If True, deactivates other accounts. If False, allows multiple active accounts.
+        """
         svc_id = self._cfg.get_or_create_service_id(service_name)
-        return self._cfg.set_active_account(svc_id, account_id)
+        return self._cfg.set_active_account(svc_id, account_id, exclusive=exclusive)
+
+    def toggle_account_active(self, account_id: int, is_active: bool) -> bool:
+        """Toggle an account's active status (for multi-account support)."""
+        return self._cfg.toggle_account_active(account_id, is_active)
 
     def save_account_token(self, account_id: int, access_token: str, refresh_token: Optional[str] = None, token_type: str = 'Bearer', expires_at: Optional[int] = None, scope: Optional[str] = None) -> bool:
         return self._cfg.save_account_token(account_id, access_token, refresh_token, token_type, expires_at, scope)
@@ -76,6 +90,24 @@ class StorageService:
     def update_account_name(self, account_id: int, new_name: str) -> bool:
         return self._cfg.update_account_name(account_id, new_name)
 
+    # Per-account configuration (for providers like Tidal that need per-account credentials)
+    def set_account_config(self, account_id: int, key: str, value: str, is_sensitive: bool = False) -> bool:
+        """Set per-account configuration (e.g., client_id, client_secret for Tidal accounts)."""
+        logger.info(f"StorageService.set_account_config: account_id={account_id}, key={key}, value_length={len(value) if value else 0}, is_sensitive={is_sensitive}")
+        result = self._cfg.set_account_metadata(account_id, key, value, is_sensitive)
+        logger.info(f"StorageService.set_account_config result: {result}")
+        return result
+
+    def get_account_config(self, account_id: int, key: str) -> Optional[str]:
+        """Get per-account configuration."""
+        result = self._cfg.get_account_metadata(account_id, key)
+        logger.info(f"StorageService.get_account_config: account_id={account_id}, key={key}, result_length={len(result) if result else 0}")
+        return result
+
+    def delete_account_config(self, account_id: int, key: str) -> bool:
+        """Delete per-account configuration."""
+        return self._cfg.delete_account_metadata(account_id, key)
+
     # PKCE sessions
     def store_pkce_session(self, pkce_id: str, service: str, account_id: int, code_verifier: str, code_challenge: str, redirect_uri: str, client_id: str, ttl_seconds: int = 600) -> bool:
         return self._cfg.store_pkce_session(pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, ttl_seconds)
@@ -93,6 +125,10 @@ class StorageService:
     @property
     def _lib(self):
         return get_music_database()
+
+    def get_music_database(self):
+        """Get the MusicDatabase instance for providers/plugins that need direct access."""
+        return self._lib
 
     # Expose only read APIs here for plugins; write methods can be added as needed
     def get_library_summary(self) -> Dict[str, int]:

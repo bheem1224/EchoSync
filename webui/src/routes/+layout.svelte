@@ -1,19 +1,33 @@
 <script>
   import { onMount } from 'svelte';
   import Sidebar from '../components/Sidebar.svelte';
+  import BottomNav from '../components/BottomNav.svelte';
+  import Toast from '../components/Toast.svelte';
   import { providers } from '../stores/providers';
   import '../app.css';
+
+  let innerWidth;
 
   onMount(() => {
     providers.load();
   });
 </script>
 
+<svelte:window bind:innerWidth />
+
 <div class="app-shell">
-  <Sidebar />
-  <main class="app-content">
-    <slot />
-  </main>
+  {#if innerWidth >= 768}
+    <Sidebar />
+    <main class="app-content">
+      <slot />
+    </main>
+  {:else}
+    <main class="app-content">
+      <slot />
+    </main>
+    <BottomNav />
+  {/if}
+  <Toast />
 </div>
 
 <style>

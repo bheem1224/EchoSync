@@ -1,6 +1,8 @@
 <script>
   import { page } from '$app/stores';
   import { providers } from '../stores/providers';
+  import { openSettings } from '../stores/settingsPanel';
+  import { goto } from '$app/navigation';
 
   let providerCapabilities = [];
   let settingsOpen = false; // Default to collapsed
@@ -15,13 +17,15 @@
 
   const settingsLinks = [
     { label: 'Preferences', href: '/settings#preferences' },
-    { label: 'Music Services', href: '/settings#music-services' },
-    { label: 'Servers', href: '/settings#servers' },
+    // Use the dedicated route for Music Services
+    { label: 'Music Services', href: '/settings/music-services' },
+    { label: 'Servers', href: '/settings/servers' },
     { label: 'Metadata', href: '/settings#metadata' },
     { label: 'Search', href: '/settings#search' },
     { label: 'Misc', href: '/settings#misc' },
     { label: 'Jobs', href: '/settings#jobs' },
-    { label: 'System', href: '/settings#system' }
+    { label: 'System', href: '/settings#system' },
+    { label: 'Download Clients', href: '/settings/download-clients' } // New entry
   ];
 
   const navLinks = [
@@ -35,9 +39,12 @@
   const isActive = (href) => $page.url.pathname.startsWith(href);
 
   function toggleSettings() {
+    // toggle only the settings panel state and open preferences; rely on native anchor href for navigation
     settingsOpen = !settingsOpen;
     if (settingsOpen) {
-      window.location.href = '/settings#preferences'; // Default to Preferences
+      openSettings('preferences');
+    } else {
+      openSettings();
     }
   }
 </script>
@@ -58,17 +65,38 @@
   </div>
 
   <div class="section">
-    <div class="section-title">Settings</div>
-    <div class="settings-toggle" on:click={toggleSettings}>
-      <span>Configure</span>
+    <a
+      role="button"
+      class="nav-item settings-item"
+      href="/settings#preferences"
+      on:click={toggleSettings}
+      class:active={isActive('/settings') || settingsOpen}
+    >
+      <span class="icon">⚙️</span>
+      <span>Settings</span>
       <span class="chevron">{settingsOpen ? '▾' : '▸'}</span>
-    </div>
+    </a>
+
     {#if settingsOpen}
       <div class="settings-links">
         {#each settingsLinks as link}
-          <a class="nav-sub" href={link.href} class:active={isActive('/settings') && $page.url.hash === link.href.split('#')[1] ? true : false}>
-            {link.label}
-          </a>
+          {#if link.href.includes('#')}
+            <a
+              class="nav-sub"
+              href={link.href}
+              class:active={$page.url.pathname.startsWith('/settings') && $page.url.hash === ('#' + link.href.split('#')[1])}
+            >
+              {link.label}
+            </a>
+          {:else}
+            <a
+              class="nav-sub"
+              href={link.href}
+              class:active={$page.url.pathname === link.href}
+            >
+              {link.label}
+            </a>
+          {/if}
         {/each}
       </div>
     {/if}
@@ -123,6 +151,9 @@
 
   .settings-links {
     margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .nav-item {
@@ -142,8 +173,8 @@
   }
 
   .nav-sub {
-    padding: 6px 12px;
-    border-radius: 6px;
+    padding: 8px 12px;
+    border-radius: 12px;
     text-decoration: none;
     color: var(--muted);
     transition: background 0.2s;

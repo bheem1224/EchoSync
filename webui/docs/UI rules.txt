@@ -1,0 +1,157 @@
+ROLE: Expert Svelte Frontend Developer & UI/UX Designer. PROJECT: SoulSync (Music Sync & Manager). STACK: Svelte (Latest), CSS Variables for Theming.
+CORE DESIGN PHILOSOPHY: Modern, clean, data-dense but breathable. Avoid "noisy" UI. Prioritize visual hierarchy—users should see what they are editing clearly.
+
+1. COLOR PALETTE (DARK MODE DEFAULT) Use CSS variables for all colors to support future theming.
+Primary Accent: Neon Mint (#00E676 or similar based on your screenshot). Used for: Active states, primary buttons, toggles, progress bars.
+Background - App: Deep Void (#0a0a0c - almost black, not gray).
+Background - Surface/Cards: Dark Blue-Grey (#13151a). Used for: Settings panels, sidebars, modal backgrounds.
+Background - Input: Darker Recess (#08080a). Used for: Text fields, dropdowns.
+Text - Primary: White (#ffffff). High contrast for headers/labels.
+Text - Secondary: Muted Grey (#8b9bb4). For descriptions, placeholders, and unselected icons.
+Status - Error: Soft Red (#ff5252).
+Status - Success: Matches Primary Accent.
+2. COMPONENT RULES
+Cards: Use the "Surface" color. rounded-xl (approx 12px-16px). Subtle border: 1px solid rgba(255,255,255,0.05).
+Buttons
+Primary: Solid Neon Mint, Black Text (for contrast). Bold font. Rounded-md.
+Secondary/Ghost: Transparent background, White text, Thin border or hover effect only.
+Inputs: High height (48px) for touch targets. Background "Darker Recess". Border 1px solid #333. Focus state must glow with Primary Accent.
+Typography: Sans-serif (Inter/Roboto).
+Headers: Bold, tight spacing.
+Labels: Uppercase, small, tracking-wide (letter-spacing), muted color.
+
+3. LAYOUT & RESPONSIVENESS
+Mobile-First: All flex/grid layouts must stack vertically on screens < 768px.
+Touch Targets: All clickable elements (buttons, inputs, icons) must be at least 44x44px.
+Spacing: Use generous padding inside cards (p-6) to separate content.
+The Sidebar Problem Your new sidebar looks great on desktop, but it will take up 50% of a phone screen.
+Suggestion: On mobile (< 768px), convert the Sidebar into a Bottom Navigation Bar for high-level items (Dashboard, Sync, Search, Settings).
+
+3. "Secret" Inputs (API Keys)
+Suggestion: For fields like Client Secret or User Token, use an "Eye" toggle to mask the text by default (display ••••••••).
+
+4. Feedback is Key
+Suggestion: When a user hits "Save All" in your new UI, don't just reload. Show a Toast Notification (a small popup at the bottom/top right) that says "Settings Saved Successfully" in your Mint Green color.
+
+5. The "Browse" Buttons In your screenshot, you have "Browse" buttons for directories (/app/downloads).
+Mobile Issue: Browsing a server filesystem on a phone touchscreen is hard if the click targets are small.
+Suggestion: Make the file picker a Modal that covers the screen, with large folders you can tap easily, rather than a tiny dropdown list.
+
+:root {
+    /* The Brand Color */
+    --color-primary: #00fa9a; /* Spring/Mint Green */
+    --color-primary-hover: #00e08a;
+
+    /* Backgrounds */
+    --bg-main: #050508; /* The very dark void background */
+    --bg-sidebar: #0f1216; /* Slightly lighter for nav */
+    --bg-card: #14181f; /* The distinct blue-grey card */
+    --bg-input: #0a0c10; /* Deep recess for typing */
+    /* Text */
+
+    --text-main: #ffffff;
+    --text-muted: #64748b;
+    /* Borders */
+    --border-subtle: rgba(255, 255, 255, 0.08);
+}
+
+Method 1: The "Svelte Logic" Way (Easiest to read)
+Svelte has a special tag called <svelte:window> that lets you track the browser size in real-time. You can use this to literally swap the components based on the pixel width.
+
+The Logic:
+
+If the screen is wider than 768px (standard tablet/desktop cutoff), show <Sidebar />.
+
+Else, show <BottomNav />.
+
+The Code:
+<script>
+  import Sidebar from './Sidebar.svelte';
+  import BottomNav from './BottomNav.svelte';
+
+  // This variable automatically updates whenever the window resizes
+  let innerWidth;
+</script>
+
+<svelte:window bind:innerWidth />
+
+<main class="layout">
+  {#if innerWidth >= 768}
+    <div class="desktop-layout">
+      <Sidebar />
+      <div class="content">
+        <slot /> </div>
+    </div>
+  {:else}
+    <div class="mobile-layout">
+      <div class="content">
+        <slot />
+      </div>
+      <BottomNav />
+    </div>
+  {/if}
+</main>
+
+
+
+https://openapi.tidal.com/v2/users/{userId}/relationships/playlists
+Required Params: countryCode=US (or your user's country code).
+
+
+import requests
+import time
+
+def get_current_user_playlists_v2(access_token):
+    base_url = "https://openapi.tidal.com/v2"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/vnd.api+json",
+        "Content-Type": "application/vnd.api+json"
+    }
+
+    # --- STEP 1: Get User ID ---
+    print("Fetching User ID...")
+    me_resp = requests.get(f"{base_url}/users/me", headers=headers)
+    
+    if me_resp.status_code != 200:
+        raise Exception(f"Failed to fetch user: {me_resp.text}")
+    
+    # Parse JSON:API response for ID
+    me_data = me_resp.json().get('data', {})
+    user_id = me_data.get('id')
+    
+    # Try to grab country code from attributes, default to US if missing
+    attributes = me_data.get('attributes', {})
+    country_code = attributes.get('countryCode', 'US')
+    
+    print(f"Found User ID: {user_id} (Country: {country_code})")
+
+    # --- STEP 2: Get Playlists ---
+    # Note: We use the 'relationships/playlists' endpoint
+    playlists_url = f"{base_url}/users/{user_id}/relationships/playlists"
+    params = {
+        "countryCode": country_code,
+        "page[limit]": 50  # JSON:API pagination limit
+    }
+
+    print(f"Fetching playlists from: {playlists_url}")
+    resp = requests.get(playlists_url, headers=headers, params=params)
+
+    if resp.status_code != 200:
+        raise Exception(f"Failed to fetch playlists: {resp.text}")
+
+    # Parse JSON:API response
+    # The 'data' array contains the playlist objects
+    playlist_data = resp.json().get('data', [])
+    
+    results = []
+    for item in playlist_data:
+        attr = item.get('attributes', {})
+        results.append({
+            "id": item.get('id'),
+            "name": attr.get('title', 'Unknown Playlist'),
+            "description": attr.get('description'),
+            "last_updated": attr.get('lastModifiedAt')
+        })
+        
+    return results

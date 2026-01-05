@@ -10,11 +10,20 @@ from utils.logging_config import get_logger
 
 logger = get_logger("config_database")
 
+# Import write helpers after logger to avoid circular issues
+from . import execute_write, execute_write_sql, ensure_writer
+
 class ConfigDatabase:
     def __init__(self, db_path: Optional[str] = None):
         # Use encrypted config database path from ConfigManager
         self.database_path = Path(db_path) if db_path else Path(config_manager.database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure writer queue is running for this DB
+        try:
+            ensure_writer(str(self.database_path))
+        except Exception:
+            # best-effort; don't fail startup if writer can't be created
+            pass
         self._initialize_schema()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -27,10 +36,9 @@ class ConfigDatabase:
 
     def _initialize_schema(self):
         try:
-            with self._get_connection() as conn:
-                c = conn.cursor()
+            def _schema(cursor):
                 # Services
-                c.execute("""
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS services (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT UNIQUE NOT NULL,
@@ -42,7 +50,7 @@ class ConfigDatabase:
                     )
                 """)
                 # Service config (sensitive values allowed)
-                c.execute("""
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS service_config (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         service_id INTEGER NOT NULL,
@@ -56,7 +64,7 @@ class ConfigDatabase:
                     )
                 """)
                 # Accounts
-                c.execute("""
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS accounts (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         service_id INTEGER NOT NULL,
@@ -73,7 +81,7 @@ class ConfigDatabase:
                     )
                 """)
                 # Account tokens
-                c.execute("""
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS account_tokens (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         account_id INTEGER NOT NULL UNIQUE,
@@ -88,7 +96,7 @@ class ConfigDatabase:
                     )
                 """)
                 # Account metadata (optional)
-                c.execute("""
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS account_metadata (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         account_id INTEGER NOT NULL,
@@ -101,7 +109,7 @@ class ConfigDatabase:
                     )
                 """)
                 # PKCE sessions
-                c.execute("""
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS pkce_sessions (
                         pkce_id TEXT PRIMARY KEY,
                         service TEXT NOT NULL,
@@ -116,12 +124,14 @@ class ConfigDatabase:
                     )
                 """)
                 # Indexes
-                c.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_account ON account_tokens(account_id)")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)")
-                conn.commit()
-                logger.info("Config database schema ensured")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_account ON account_tokens(account_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)")
+
+            # Run schema creation on writer thread to avoid concurrent-writes
+            execute_write(str(self.database_path), _schema)
+            logger.info("Config database schema ensured")
         except Exception as e:
             logger.error(f"Failed to initialize config schema: {e}")
 
@@ -136,27 +146,25 @@ class ConfigDatabase:
             return self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service")
 
     def register_service(self, name: str, display_name: str, service_type: str, description: str) -> int:
-        with self._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("INSERT OR IGNORE INTO services(name, display_name, service_type, description) VALUES(?,?,?,?)", (name, display_name, service_type, description))
-            conn.commit()
-            return self.get_or_create_service_id(name)
+        try:
+            execute_write_sql(str(self.database_path), "INSERT OR IGNORE INTO services(name, display_name, service_type, description) VALUES(?,?,?,?)", (name, display_name, service_type, description))
+        except Exception:
+            pass
+        return self.get_or_create_service_id(name)
 
     def set_service_config(self, service_id: int, key: str, value: Any, is_sensitive: bool = False) -> bool:
         try:
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                c.execute(
-                    """
+            execute_write_sql(
+                str(self.database_path),
+                """
                     INSERT INTO service_config(service_id, config_key, config_value, is_sensitive)
                     VALUES(?,?,?,?)
                     ON CONFLICT(service_id, config_key)
                     DO UPDATE SET config_value=excluded.config_value, is_sensitive=excluded.is_sensitive, updated_at=strftime('%s','now')
-                    """,
-                    (service_id, key, value, 1 if is_sensitive else 0),
-                )
-                conn.commit()
-                return True
+                """,
+                (service_id, key, value, 1 if is_sensitive else 0),
+            )
+            return True
         except Exception as e:
             logger.error(f"Error setting service config: {e}")
             return False
@@ -202,91 +210,108 @@ class ConfigDatabase:
         Returns the account id.
         """
         try:
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                if account_id is not None:
-                    # Check if exists
+            # If explicit account_id is provided, check existence using a reader
+            if account_id is not None:
+                with self._get_connection() as conn:
+                    c = conn.cursor()
                     c.execute("SELECT id FROM accounts WHERE id = ?", (account_id,))
                     row = c.fetchone()
                     if row:
                         return int(row[0])
-                    # Insert with explicit id
-                    c.execute(
+
+                def _insert_with_id(cursor):
+                    cursor.execute(
                         """
                         INSERT INTO accounts(id, service_id, account_name, display_name, user_id, is_active, is_authenticated)
                         VALUES(?,?,?,?,?,0,0)
                         """,
                         (account_id, service_id, account_name, display_name, user_id),
                     )
-                    conn.commit()
-                    return int(account_id)
-                else:
-                    c.execute(
+                    return account_id
+
+                execute_write(str(self.database_path), _insert_with_id)
+                return int(account_id)
+            else:
+                def _insert(cursor):
+                    cursor.execute(
                         """
                         INSERT INTO accounts(service_id, account_name, display_name, user_id, is_active, is_authenticated)
                         VALUES(?,?,?,?,0,0)
                         """,
                         (service_id, account_name, display_name, user_id),
                     )
-                    conn.commit()
-                    last_id = c.lastrowid if c.lastrowid is not None else 0
-                    return int(last_id)
+                    return cursor.lastrowid
+
+                last_id = execute_write(str(self.database_path), _insert)
+                return int(last_id) if last_id is not None else 0
         except Exception as e:
             logger.error(f"Error ensuring account exists: {e}")
             return int(account_id) if account_id is not None else 0
 
-    def set_active_account(self, service_id: int, account_id: int) -> bool:
+    def set_active_account(self, service_id: int, account_id: int, exclusive: bool = True) -> bool:
+        """Set an account as active. 
+        
+        Args:
+            service_id: The service ID
+            account_id: The account ID to activate
+            exclusive: If True, deactivates all other accounts for this service (default).
+                      If False, allows multiple accounts to be active simultaneously.
+        """
         try:
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("UPDATE accounts SET is_active = 0 WHERE service_id = ?", (service_id,))
-                c.execute("UPDATE accounts SET is_active = 1 WHERE id = ? AND service_id = ?", (account_id, service_id))
-                conn.commit()
-                return True
+            def _task(cursor):
+                if exclusive:
+                    # Old behavior: single active account (deactivate all others first)
+                    cursor.execute("UPDATE accounts SET is_active = 0 WHERE service_id = ?", (service_id,))
+                cursor.execute("UPDATE accounts SET is_active = 1 WHERE id = ? AND service_id = ?", (account_id, service_id))
+
+            execute_write(str(self.database_path), _task)
+            return True
         except Exception as e:
             logger.error(f"Error setting active account: {e}")
             return False
 
+    def toggle_account_active(self, account_id: int, is_active: bool) -> bool:
+        """Toggle an account's active status (for multi-account support).
+        
+        Args:
+            account_id: The account ID
+            is_active: True to activate, False to deactivate
+        """
+        try:
+            execute_write_sql(str(self.database_path), "UPDATE accounts SET is_active = ? WHERE id = ?", (1 if is_active else 0, account_id))
+            return True
+        except Exception as e:
+            logger.error(f"Error toggling account active status: {e}")
+            return False
+
     def mark_account_authenticated(self, account_id: int) -> bool:
         try:
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("UPDATE accounts SET is_authenticated = 1, last_authenticated_at = ? WHERE id = ?", (int(time.time()), account_id))
-                conn.commit()
-                return True
+            execute_write_sql(str(self.database_path), "UPDATE accounts SET is_authenticated = 1, last_authenticated_at = ? WHERE id = ?", (int(time.time()), account_id))
+            return True
         except Exception as e:
             logger.error(f"Error marking account authenticated: {e}")
             return False
 
     def set_account_user_id(self, account_id: int, user_id: str) -> bool:
         try:
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("UPDATE accounts SET user_id = ? WHERE id = ?", (user_id, account_id))
-                conn.commit()
-                return c.rowcount > 0
+            rowcount = execute_write_sql(str(self.database_path), "UPDATE accounts SET user_id = ? WHERE id = ?", (user_id, account_id))
+            return (rowcount and rowcount > 0)
         except Exception as e:
             logger.error(f"Error setting account user_id: {e}")
             return False
 
     def delete_account(self, account_id: int) -> bool:
         try:
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
-                conn.commit()
-                return c.rowcount > 0
+            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM accounts WHERE id = ?", (account_id,))
+            return (rowcount and rowcount > 0)
         except Exception as e:
             logger.error(f"Error deleting account: {e}")
             return False
 
     def update_account_name(self, account_id: int, new_name: str) -> bool:
         try:
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("UPDATE accounts SET account_name = ?, display_name = ? WHERE id = ?", (new_name, new_name, account_id))
-                conn.commit()
-                return c.rowcount > 0
+            rowcount = execute_write_sql(str(self.database_path), "UPDATE accounts SET account_name = ?, display_name = ? WHERE id = ?", (new_name, new_name, account_id))
+            return (rowcount and rowcount > 0)
         except Exception as e:
             logger.error(f"Error updating account name: {e}")
             return False
@@ -294,20 +319,18 @@ class ConfigDatabase:
     # Tokens
     def save_account_token(self, account_id: int, access_token: str, refresh_token: Optional[str] = None, token_type: str = 'Bearer', expires_at: Optional[int] = None, scope: Optional[str] = None) -> bool:
         try:
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                c.execute(
-                    """
+            execute_write_sql(
+                str(self.database_path),
+                """
                     INSERT INTO account_tokens(account_id, access_token, refresh_token, token_type, expires_at, scope)
                     VALUES(?,?,?,?,?,?)
                     ON CONFLICT(account_id)
                     DO UPDATE SET access_token=excluded.access_token, refresh_token=excluded.refresh_token, token_type=excluded.token_type, expires_at=excluded.expires_at, scope=excluded.scope, updated_at=strftime('%s','now')
-                    """,
-                    (account_id, access_token, refresh_token, token_type, expires_at, scope),
-                )
-                conn.commit()
-                logger.info(f"Saved tokens for account {account_id} in config.db")
-                return True
+                """,
+                (account_id, access_token, refresh_token, token_type, expires_at, scope),
+            )
+            logger.info(f"Saved tokens for account {account_id} in config.db")
+            return True
         except Exception as e:
             logger.error(f"Error saving account token: {e}")
             return False
@@ -327,21 +350,82 @@ class ConfigDatabase:
             logger.error(f"Error getting account token: {e}")
             return None
 
+    # Account metadata (per-account configuration like client_id, client_secret)
+    def set_account_metadata(self, account_id: int, key: str, value: str, is_sensitive: bool = False) -> bool:
+        """Set per-account metadata (credentials, etc)."""
+        try:
+            logger.info(f"ConfigDB.set_account_metadata: account_id={account_id}, key={key}, value_length={len(value) if value else 0}, is_sensitive={is_sensitive}")
+            logger.info(f"ConfigDB: Database path = {self.database_path}")
+            
+            # Store the value directly (encryption would require config_manager.encrypt_value if needed)
+            # For now, storing as plaintext since config.db itself is encrypted at rest
+            logger.info(f"ConfigDB: Executing SQL INSERT/UPDATE on account_metadata table")
+            rowcount = execute_write_sql(
+                str(self.database_path),
+                """
+                    INSERT INTO account_metadata(account_id, metadata_key, metadata_value, updated_at)
+                    VALUES(?,?,?, strftime('%s','now'))
+                    ON CONFLICT(account_id, metadata_key) DO UPDATE SET
+                        metadata_value = excluded.metadata_value,
+                        updated_at = strftime('%s','now')
+                """,
+                (account_id, key, value),
+            )
+            logger.info(f"ConfigDB: Rows affected = {rowcount}")
+            
+            # Verify it was saved
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT metadata_value FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
+                row = c.fetchone()
+                logger.info(f"ConfigDB: Verification read - row exists: {row is not None}, stored_value_length: {len(row[0]) if row and row[0] else 0}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error setting account metadata: {e}", exc_info=True)
+            return False
+
+    def get_account_metadata(self, account_id: int, key: str) -> Optional[str]:
+        """Get per-account metadata (credentials, etc)."""
+        try:
+            logger.info(f"ConfigDB.get_account_metadata: account_id={account_id}, key={key}")
+            logger.info(f"ConfigDB: Database path = {self.database_path}")
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT metadata_value FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
+                row = c.fetchone()
+                logger.info(f"ConfigDB: Row found: {row is not None}, value_length: {len(row[0]) if row and row[0] else 0}")
+                if not row or row[0] is None:
+                    return None
+                value = row[0]
+                logger.info(f"ConfigDB: Returning value length: {len(value) if value else 0}")
+                return value
+        except Exception as e:
+            logger.error(f"Error getting account metadata: {e}", exc_info=True)
+            return None
+
+    def delete_account_metadata(self, account_id: int, key: str) -> bool:
+        """Delete per-account metadata."""
+        try:
+            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
+            return (rowcount and rowcount > 0)
+        except Exception as e:
+            logger.error(f"Error deleting account metadata: {e}")
+            return False
+
     # PKCE sessions
     def store_pkce_session(self, pkce_id: str, service: str, account_id: int, code_verifier: str, code_challenge: str, redirect_uri: str, client_id: str, ttl_seconds: int = 600) -> bool:
         try:
             now = int(time.time())
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                c.execute(
-                    """
+            execute_write_sql(
+                str(self.database_path),
+                """
                     INSERT OR REPLACE INTO pkce_sessions(pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, created_at, expires_at)
                     VALUES(?,?,?,?,?,?,?,?,?)
-                    """,
-                    (pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, now, now + ttl_seconds),
-                )
-                conn.commit()
-                return True
+                """,
+                (pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, now, now + ttl_seconds),
+            )
+            return True
         except Exception as e:
             logger.error(f"Error storing PKCE session: {e}")
             return False
@@ -363,11 +447,8 @@ class ConfigDatabase:
 
     def delete_pkce_session(self, pkce_id: str) -> bool:
         try:
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("DELETE FROM pkce_sessions WHERE pkce_id = ?", (pkce_id,))
-                conn.commit()
-                return c.rowcount > 0
+            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM pkce_sessions WHERE pkce_id = ?", (pkce_id,))
+            return (rowcount and rowcount > 0)
         except Exception as e:
             logger.error(f"Error deleting PKCE session: {e}")
             return False
@@ -375,10 +456,7 @@ class ConfigDatabase:
     def cleanup_expired_pkce_sessions(self) -> None:
         try:
             now = int(time.time())
-            with self._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("DELETE FROM pkce_sessions WHERE expires_at < ?", (now,))
-                conn.commit()
+            execute_write_sql(str(self.database_path), "DELETE FROM pkce_sessions WHERE expires_at < ?", (now,))
         except Exception as e:
             logger.error(f"Error cleaning PKCE sessions: {e}")
 
