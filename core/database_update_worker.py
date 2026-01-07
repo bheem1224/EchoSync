@@ -39,8 +39,10 @@ import time
 from database import get_database, MusicDatabase
 from utils.logging_config import get_logger
 from config.settings import config_manager
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 logger = get_logger("database_update_worker")
+
 
 class DatabaseUpdateWorker(QThread):
     """Worker thread for updating SoulSync database with media server library data (Plex or Jellyfin)"""
@@ -274,7 +276,7 @@ class DatabaseUpdateWorker(QThread):
             return []
     
     def _get_artists_for_incremental_update(self) -> List:
-        """Get artists that need processing for incremental update using smart early-stopping logic"""
+        """Get artists that need processing for incremental update using provider method"""
         try:
             if not self.media_client.ensure_connection():
                 logger.error(f"Could not connect to {self.server_type} server")
@@ -285,7 +287,7 @@ class DatabaseUpdateWorker(QThread):
                 logger.error("No music library found in Plex")
                 return []
             
-            # Check if database has enough content for incremental updates (server-specific)
+            # Check if database has enough content for incremental updates
             try:
                 # Get stats for the specific server we're updating
                 if hasattr(self.database, 'get_database_info_for_server'):
@@ -308,178 +310,41 @@ class DatabaseUpdateWorker(QThread):
                 self.full_refresh = True
                 return self._get_all_artists()
             
-            # Enhanced Strategy: Get both recently added AND recently updated content
-            # This catches both new content and metadata corrections done on the server
+            # Use provider's get_content_changes_since() method for clean separation
+            logger.info(f"Getting changed content from {self.server_type} provider...")
             
-            logger.info(f"Getting recently added and recently updated content from {self.server_type}...")
+            # Set up progress callback if available
+            if hasattr(self.media_client, 'set_progress_callback'):
+                self.media_client.set_progress_callback(
+                    lambda msg: self._emit_signal('phase_changed', f"Incremental: {msg}")
+                )
             
-            # For Jellyfin, we need to set up progress callback for potential cache population during incremental
-            if self.server_type == "jellyfin":
-                if hasattr(self.media_client, 'set_progress_callback'):
-                    self.media_client.set_progress_callback(lambda msg: self._emit_signal('phase_changed', f"Incremental: {msg}"))
-            elif self.server_type == "navidrome":
-                # Navidrome doesn't need cache preparation for incremental updates
-                logger.info("Navidrome incremental update: no caching needed")
-            
-            # PERFORMANCE BREAKTHROUGH: For Jellyfin, use track-based incremental (much faster)
-            if self.server_type == "jellyfin":
-                return self._get_artists_for_jellyfin_track_incremental_update()
-            elif self.server_type == "navidrome":
-                # Navidrome: simple approach - get all artists and check what's new in database
-                return self._get_artists_for_navidrome_incremental_update()
-
-            # Plex uses album-based approach (established and working)
-            recent_albums = self._get_recent_albums_for_server()
-            if not recent_albums:
-                logger.info("No recently added albums found")
-                return []
-            
-            # Sort albums by added date (newest first) - handle None dates properly
+            # Get last update time (or None for first incremental)
+            last_update = None
             try:
-                def get_sort_date(album):
-                    date_val = getattr(album, 'addedAt', None)
-                    if date_val is None:
-                        return 0  # Fallback for albums with no date
-                    return date_val
-                
-                recent_albums.sort(key=get_sort_date, reverse=True)
-                logger.info("Sorted albums by recently added date (newest first)")
+                if hasattr(self.database, 'get_last_update_time'):
+                    last_update = self.database.get_last_update_time(self.server_type)
+                    if last_update:
+                        logger.info(f"Last update was at {last_update}")
             except Exception as e:
-                logger.warning(f"Could not sort albums by date: {e}")
+                logger.debug(f"Could not get last update time: {e}")
             
-            # Extract artists from recent albums with early stopping logic
-            artists_to_process = []
-            processed_artist_ids = set()
-            stopped_early = False
+            # Call provider's incremental method
+            from core.content_models import ContentChanges
+            content_changes: ContentChanges = self.media_client.get_content_changes_since(last_update)
             
-            logger.info("Checking artists from recent albums (with early stopping)...")
-            
-            # Debug: log the types of objects we're processing
-            object_types = {}
-            for item in recent_albums[:10]:  # Check first 10 items
-                item_type = type(item).__name__
-                object_types[item_type] = object_types.get(item_type, 0) + 1
-            logger.info(f"Recent albums object types (first 10): {object_types}")
-            
-            if not recent_albums:
-                logger.warning("No albums found to process - incremental update cannot proceed")
+            if content_changes.is_empty:
+                logger.info("No new content found - database is up to date")
                 return []
             
-            # Improved approach: Album-level incremental update with smart stopping
-            # Check entire albums at a time and use more robust stopping criteria
-            albums_with_new_content = 0
-            consecutive_complete_albums = 0
-            processed_artist_ids = set()
-            total_tracks_checked = 0
+            logger.info(f"Found changes: {len(content_changes.artists)} artists, "
+                       f"{len(content_changes.albums)} albums, {len(content_changes.tracks)} tracks")
             
-            for i, album in enumerate(recent_albums):
-                if self.should_stop:
-                    break
-                
-                try:
-                    # Defensive check: ensure this is actually an album object
-                    if not hasattr(album, 'tracks') or not hasattr(album, 'artist'):
-                        logger.warning(f"Skipping invalid album object at index {i}: {type(album).__name__}")
-                        continue
-                    
-                    album_title = getattr(album, 'title', f'Album_{i}')
-                    album_has_new_tracks = False
-                    missing_tracks_count = 0
-                    
-                    # Check each individual track in this album
-                    try:
-                        tracks = list(album.tracks())
-                        logger.debug(f"Checking {len(tracks)} tracks in album '{album_title}'")
-                        
-                        for track in tracks:
-                            total_tracks_checked += 1
-                            try:
-                                # Handle both Plex (integer) and Jellyfin (string GUID) IDs
-                                track_id = str(track.ratingKey)
-                                track_title = getattr(track, 'title', 'Unknown Track')
-                                
-                                # Use server-aware track existence check
-                                if hasattr(self.database, 'track_exists_by_server'):
-                                    track_exists = self.database.track_exists_by_server(track_id, self.server_type)
-                                else:
-                                    # Fallback to generic check (works for string IDs)
-                                    track_exists = self.database.track_exists(track_id)
-                                
-                                if not track_exists:
-                                    missing_tracks_count += 1
-                                    album_has_new_tracks = True
-                                    logger.debug(f"📀 Track '{track_title}' is new - album needs processing")
-                                else:
-                                    logger.debug(f"✅ Track '{track_title}' already exists")
-                                    
-                            except Exception as track_error:
-                                logger.debug(f"Error checking individual track: {track_error}")
-                                album_has_new_tracks = True  # Assume needs processing if can't check
-                                missing_tracks_count += 1
-                                continue
-                        
-                        # Evaluate album completion status
-                        if album_has_new_tracks:
-                            albums_with_new_content += 1
-                            consecutive_complete_albums = 0  # Reset counter
-                            logger.info(f"📀 Album '{album_title}' has {missing_tracks_count} new tracks - needs processing")
-                        else:
-                            # Check if existing tracks have metadata changes (catches Plex corrections)
-                            metadata_changed = self._check_for_metadata_changes(tracks)
-                            if metadata_changed:
-                                albums_with_new_content += 1
-                                consecutive_complete_albums = 0  # Reset counter
-                                logger.info(f"🔄 Album '{album_title}' has metadata changes - needs processing")
-                                album_has_new_tracks = True  # Mark for artist processing
-                            else:
-                                consecutive_complete_albums += 1
-                                logger.debug(f"✅ Album '{album_title}' is fully up-to-date (consecutive complete: {consecutive_complete_albums})")
-                                
-                                # Very conservative stopping criteria: 25 consecutive complete albums after metadata fixes
-                                # This ensures we don't miss scattered updated content from manual corrections
-                                if consecutive_complete_albums >= 25:
-                                    logger.info(f"🛑 Found 25 consecutive complete albums - stopping incremental scan after checking {total_tracks_checked} tracks from {i+1} albums")
-                                    stopped_early = True
-                                    break
-                            
-                    except Exception as tracks_error:
-                        logger.warning(f"Error getting tracks for album '{album_title}': {tracks_error}")
-                        # Assume album needs processing if we can't check tracks
-                        album_has_new_tracks = True
-                        consecutive_complete_albums = 0  # Reset the correct variable
-                    
-                    # If album has new tracks, queue its artist for processing
-                    if album_has_new_tracks:
-                        try:
-                            album_artist = album.artist()
-                            if album_artist:
-                                # Handle both Plex (integer) and Jellyfin (string GUID) artist IDs
-                                artist_id = str(album_artist.ratingKey)
-                                
-                                # Skip if we've already queued this artist
-                                if artist_id not in processed_artist_ids:
-                                    processed_artist_ids.add(artist_id)
-                                    artists_to_process.append(album_artist)
-                                    logger.info(f"✅ Added artist '{album_artist.title}' for processing (from album '{album_title}' with new tracks)")
-                        except Exception as artist_error:
-                            logger.warning(f"Error getting artist for album '{album_title}': {artist_error}")
-                
-                except Exception as e:
-                    logger.warning(f"Error processing album at index {i} (type: {type(album).__name__}): {e}")
-                    # Reset consecutive count on error to be safe
-                    consecutive_complete_albums = 0
-                    continue
+            # Store content changes for batch processing
+            self._content_changes = content_changes
             
-            result_msg = f"Smart incremental scan result: {len(artists_to_process)} artists to process from {albums_with_new_content} albums with new content"
-            if stopped_early:
-                result_msg += f" (stopped early after finding 25 consecutive complete albums)"
-            else:
-                result_msg += f" (checked all {total_tracks_checked} tracks from {len(recent_albums)} recent albums)"
-            
-            logger.info(f"📊 Incremental scan stats: {len(recent_albums)} recent albums examined, {albums_with_new_content} needed processing")
-            
-            logger.info(result_msg)
-            return artists_to_process
+            # Return unique artists for processing
+            return content_changes.artists
             
         except Exception as e:
             logger.error(f"Error in smart incremental update: {e}")
@@ -541,7 +406,7 @@ class DatabaseUpdateWorker(QThread):
                         for track in album_tracks:
                             if not self.database.track_exists(track.ratingKey, self.server_type):
                                 album_has_new_tracks = True
-                                consecutive_complete_albums = 0  # Reset counter
+                                consecutive_complete_albums = 0 # Reset counter
                                 break
 
                         # If no new tracks found, increment consecutive complete counter
@@ -577,7 +442,7 @@ class DatabaseUpdateWorker(QThread):
 
                 except Exception as e:
                     logger.warning(f"Error processing album at index {i}: {e}")
-                    consecutive_complete_albums = 0  # Reset on error
+                    consecutive_complete_albums = 0 # Reset on error
                     continue
 
             logger.info(f"🎵 Navidrome incremental complete: {len(artists_to_process)} artists need processing (checked {total_tracks_checked} tracks from {len(recent_albums)} recent albums)")
@@ -767,18 +632,27 @@ class DatabaseUpdateWorker(QThread):
                                     if album_success:
                                         total_processed_albums += 1
                                     
-                                    # Process all tracks in this album
-                                    for track in album_tracks:
+                                    # Get tracks as SoulSyncTrack (provider-agnostic format)
+                                    # This is the clean interface - no raw provider objects
+                                    soul_sync_tracks = self.media_client.get_album_tracks_as_soulsync(album)
+                                    
+                                    # Process all tracks in SoulSyncTrack format
+                                    for soul_track in soul_sync_tracks:
                                         if self.should_stop:
                                             break
-                                            
+
                                         try:
-                                            track_success = self.database.insert_or_update_media_track(track, album_id, artist_id, server_source=self.server_type)
+                                            track_success = self.database.insert_or_update_soul_sync_track(
+                                                soul_track, album_id, artist_id, 
+                                                server_source=self.server_type
+                                            )
                                             if track_success:
                                                 total_processed_tracks += 1
-                                                logger.debug(f"✅ Processed new track: {track.title}")
+                                                logger.info(f"[TRACK SUCCESS] Track '{soul_track.title}' inserted/updated successfully.")
+                                            else:
+                                                logger.warning(f"[TRACK FAILURE] Track '{soul_track.title}' failed to insert/update.")
                                         except Exception as e:
-                                            logger.warning(f"Failed to process track '{getattr(track, 'title', 'Unknown')}': {e}")
+                                            logger.error(f"[TRACK ERROR] Failed to process track '{soul_track.title}': {e}")
                         except Exception as e:
                             logger.warning(f"Failed to process album {album_id}: {e}")
                     
@@ -1124,30 +998,47 @@ class DatabaseUpdateWorker(QThread):
                         if album_success:
                             album_count += 1
                             album_id = str(album.ratingKey)
-                            
-                            # 4. Process tracks in this album (cached from aggressive pre-population)
+
+                            # 4. Get tracks as SoulSyncTrack (provider-agnostic format)
                             try:
-                                tracks = list(album.tracks())
+                                all_tracks = list(album.tracks())
+                                album_title = getattr(album, 'title', 'Unknown')
+                                logger.info(f"Processing album '{album_title}': {len(all_tracks)} total tracks from server")
                                 
-                                # Batch insert tracks for better database performance
-                                track_batch = []
-                                for track in tracks:
-                                    if self.should_stop:
-                                        break
-                                    track_batch.append((track, album_id, artist_id))
+                                soul_sync_tracks = self.media_client.get_album_tracks_as_soulsync(album)
+                                logger.info(f"Album '{album_title}': Converted {len(soul_sync_tracks)} of {len(all_tracks)} tracks")
                                 
-                                # Process track batch
-                                for track, alb_id, art_id in track_batch:
-                                    try:
-                                        track_success = self.database.insert_or_update_media_track(track, alb_id, art_id, server_source=self.server_type)
-                                        if track_success:
-                                            track_count += 1
-                                    except Exception as e:
-                                        logger.warning(f"Failed to process track '{getattr(track, 'title', 'Unknown')}': {e}")
-                                        
+                                if len(soul_sync_tracks) < len(all_tracks):
+                                    diff = len(all_tracks) - len(soul_sync_tracks)
+                                    logger.warning(f"TRACK LOSS - Album '{album_title}': {len(all_tracks)} total, {len(soul_sync_tracks)} converted, {diff} MISSING")
                             except Exception as e:
-                                logger.warning(f"Could not get tracks for album '{getattr(album, 'title', 'Unknown')}': {e}")
-                        
+                                logger.error(f"CRITICAL ERROR getting tracks for album: {e}", exc_info=True)
+                                soul_sync_tracks = []
+
+                            # Process all tracks in SoulSyncTrack format
+                            for soul_track in soul_sync_tracks:
+                                if self.should_stop:
+                                    break
+
+                                try:
+                                    # Ensure database object is initialized
+                                    if not self.database:
+                                        logger.error("Database object is not initialized. Cannot proceed with track insertion.")
+                                        return False, "Database not initialized", 0, 0
+
+                                    # Ensure artist and album IDs are strings
+                                    artist_id = str(artist_id)
+                                    album_id = str(album_id)
+
+                                    track_success = self.database.insert_or_update_soul_sync_track(
+                                        soul_track, album_id, artist_id,
+                                        server_source=self.server_type
+                                    )
+                                    if track_success:
+                                        track_count += 1
+                                except Exception as e:
+                                    logger.warning(f"Failed to process track '{getattr(soul_track, 'title', 'Unknown')}': {e}")
+
                     except Exception as e:
                         logger.warning(f"Failed to process album '{getattr(album, 'title', 'Unknown')}': {e}")
             

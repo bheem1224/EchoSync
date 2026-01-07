@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 import time
-from core.web_scan_manager import WebScanManager
+from legacy.web_scan_manager import WebScanManager
 
 # --- Mock Clients ---
 

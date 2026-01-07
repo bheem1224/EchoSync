@@ -12,13 +12,29 @@ from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 from pathlib import Path
 from utils.logging_config import get_logger
-from core.models import Track, DownloadStatus
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 logger = get_logger("music_database")
 
+# Ensure the Crypto.Cipher module is installed and importable
+try:
+    from Crypto.Cipher import AES
+except ImportError:
+    logger.error("Crypto.Cipher module is not installed. Please install it using 'pip install pycryptodome'.")
+    raise
+
+# Import from core.models (the module file, not the package)
+# Use explicit import to avoid conflict with core/models/ package
+import importlib.util
+spec = importlib.util.spec_from_file_location("core_models_file", str(Path(__file__).parent.parent / "core" / "models.py"))
+core_models_file = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(core_models_file)
+Track = core_models_file.Track
+DownloadStatus = core_models_file.DownloadStatus
+
 # Import matching engine for enhanced similarity logic
 try:
-    from core.matching_engine import MusicMatchingEngine
+    from legacy.matching_engine import MusicMatchingEngine
     _matching_engine = MusicMatchingEngine()
 except ImportError:
     logger.warning("Could not import MusicMatchingEngine, falling back to basic similarity")
@@ -166,8 +182,7 @@ class MusicDatabase:
         return connection
     
     def _initialize_database(self):
-        """Create database tables if they don't exist"""
-        from . import execute_write
+        from .engine import execute_write
         
         def _init(cursor):
             # Artists table
@@ -211,6 +226,22 @@ class MusicDatabase:
                     duration INTEGER,  -- milliseconds
                     file_path TEXT,
                     bitrate INTEGER,
+                    isrc TEXT,  -- International Standard Recording Code
+                    musicbrainz_id TEXT,  -- MusicBrainz Recording ID
+                    musicbrainz_album_id TEXT,  -- MusicBrainz Album ID
+                    disc_number INTEGER,  -- Disc number for multi-disc albums
+                    total_discs INTEGER,  -- Total discs in album
+                    track_total INTEGER,  -- Total tracks on album
+                    version TEXT,  -- Track version/edition
+                    is_compilation INTEGER,  -- Boolean: is this a compilation track
+                    file_format TEXT,  -- Audio format (MP3, FLAC, etc.)
+                    quality_tags TEXT,  -- JSON array of quality indicators
+                    sample_rate INTEGER,  -- Hz
+                    bit_depth INTEGER,  -- Bits per sample
+                    file_size INTEGER,  -- Bytes
+                    featured_artists TEXT,  -- JSON array of featured artist names
+                    fingerprint TEXT,  -- Audio fingerprint for identification
+                    fingerprint_confidence REAL,  -- Confidence score 0.0-1.0
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE,
@@ -259,6 +290,8 @@ class MusicDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums (artist_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks (album_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks (artist_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tracks_isrc ON tracks (isrc)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tracks_musicbrainz ON tracks (musicbrainz_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_wishlist_spotify_id ON wishlist_tracks (spotify_track_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_spotify_id ON watchlist_artists (spotify_artist_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_wishlist_date_added ON wishlist_tracks (date_added)")
@@ -280,6 +313,9 @@ class MusicDatabase:
 
             # Add album type filter columns to watchlist_artists (migration)
             self._add_watchlist_album_type_filters(cursor)
+
+            # Add matching engine caching tables (migration)
+            self._add_matching_cache_tables(cursor)
 
             # Canonical Track storage (Track-centric)
             self._add_canonical_tracks_table(cursor)
@@ -305,6 +341,15 @@ class MusicDatabase:
                 pass
             try:
                 cursor.execute("ALTER TABLE tracks ADD COLUMN server_source TEXT DEFAULT 'local'")
+            except Exception:
+                pass
+            # Add ISRC and MusicBrainz columns for global identifier matching
+            try:
+                cursor.execute("ALTER TABLE tracks ADD COLUMN isrc TEXT")
+            except Exception:
+                pass
+            try:
+                cursor.execute("ALTER TABLE tracks ADD COLUMN musicbrainz_id TEXT")
             except Exception:
                 pass
         except Exception:
@@ -368,6 +413,22 @@ class MusicDatabase:
                     duration INTEGER,
                     file_path TEXT,
                     bitrate INTEGER,
+                    isrc TEXT,
+                    musicbrainz_id TEXT,
+                    musicbrainz_album_id TEXT,
+                    disc_number INTEGER,
+                    total_discs INTEGER,
+                    track_total INTEGER,
+                    version TEXT,
+                    is_compilation INTEGER,
+                    file_format TEXT,
+                    quality_tags TEXT,
+                    sample_rate INTEGER,
+                    bit_depth INTEGER,
+                    file_size INTEGER,
+                    featured_artists TEXT,
+                    fingerprint TEXT,
+                    fingerprint_confidence REAL,
                     server_source TEXT DEFAULT 'plex',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -392,9 +453,10 @@ class MusicDatabase:
             """)
             
             cursor.execute("""
-                INSERT INTO tracks_new (id, album_id, artist_id, title, track_number, duration, file_path, bitrate, server_source, created_at, updated_at)
+                INSERT INTO tracks_new (id, album_id, artist_id, title, track_number, duration, file_path, bitrate, 
+                                        isrc, musicbrainz_id, server_source, created_at, updated_at)
                 SELECT CAST(id AS TEXT), CAST(album_id AS TEXT), CAST(artist_id AS TEXT), title, track_number, duration, file_path, bitrate,
-                       COALESCE(server_source, 'plex'), created_at, updated_at
+                       NULL, NULL, COALESCE(server_source, 'plex'), created_at, updated_at
                 FROM tracks
             """)
             
@@ -552,127 +614,8 @@ class MusicDatabase:
                 )
             """)
 
-            # OAuth PKCE Sessions - temporary storage for OAuth PKCE flows
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS oauth_pkce_sessions (
-                    pkce_id TEXT PRIMARY KEY,
-                    service TEXT NOT NULL,
-                    account_id INTEGER NOT NULL,
-                    code_verifier TEXT NOT NULL,
-                    code_challenge TEXT NOT NULL,
-                    redirect_uri TEXT NOT NULL,
-                    client_id TEXT NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    expires_at INTEGER NOT NULL
-                )
-            """)
-
-            # OAuth Tokens - persistent storage for OAuth access/refresh tokens
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS oauth_tokens (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    service TEXT NOT NULL,
-                    account_id INTEGER NOT NULL,
-                    access_token TEXT NOT NULL,
-                    refresh_token TEXT,
-                    token_type TEXT DEFAULT 'Bearer',
-                    expires_at INTEGER NOT NULL,
-                    scope TEXT,
-                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    UNIQUE(service, account_id)
-                )
-            """)
-
-            # Modern Account Management Schema (v2)
-            # Services - Registry of available services (Spotify, TIDAL, Jellyfin, etc.)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS services (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE NOT NULL,
-                    display_name TEXT NOT NULL,
-                    service_type TEXT NOT NULL,
-                    description TEXT,
-                    is_enabled BOOLEAN DEFAULT 1,
-                    is_plugin BOOLEAN DEFAULT 0,
-                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    updated_at INTEGER DEFAULT (strftime('%s', 'now'))
-                )
-            """)
-
-            # Service Config - OAuth/connection settings per service (client_id, redirect_uri, etc.)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS service_config (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    service_id INTEGER NOT NULL,
-                    config_key TEXT NOT NULL,
-                    config_value TEXT,
-                    is_sensitive BOOLEAN DEFAULT 0,
-                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE,
-                    UNIQUE(service_id, config_key)
-                )
-            """)
-
-            # Accounts - User accounts per service
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS accounts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    service_id INTEGER NOT NULL,
-                    account_name TEXT NOT NULL,
-                    display_name TEXT,
-                    user_id TEXT,
-                    account_email TEXT,
-                    is_active BOOLEAN DEFAULT 1,
-                    is_authenticated BOOLEAN DEFAULT 0,
-                    last_authenticated_at INTEGER,
-                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE,
-                    UNIQUE(service_id, account_name)
-                )
-            """)
-
-            # Account Tokens - OAuth tokens for each account
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS account_tokens (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    account_id INTEGER NOT NULL,
-                    access_token TEXT NOT NULL,
-                    refresh_token TEXT,
-                    token_type TEXT DEFAULT 'Bearer',
-                    expires_at INTEGER,
-                    scope TEXT,
-                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-                    UNIQUE(account_id)
-                )
-            """)
-
-            # Account Metadata - Service-specific metadata per account (playlists, collections, etc.)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS account_metadata (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    account_id INTEGER NOT NULL,
-                    metadata_key TEXT NOT NULL,
-                    metadata_value TEXT,
-                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-                    UNIQUE(account_id, metadata_key)
-                )
-            """)
-
-            # Service Indexes
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services (name)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_service_config_service ON service_config (service_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts (service_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_active ON accounts (is_active)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_authenticated ON accounts (is_authenticated)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_tokens_account ON account_tokens (account_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_metadata_account ON account_metadata (account_id)")
+            # NOTE: Account management tables (oauth_pkce_sessions, services, service_config, accounts)
+            # have been moved to config.db where they belong. Do not recreate them here.
 
             # Create indexes for performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_similar_artists_source ON similar_artists (source_artist_id)")
@@ -738,6 +681,79 @@ class MusicDatabase:
 
         except Exception as e:
             logger.error(f"Error adding album type filter columns to watchlist_artists: {e}")
+            # Don't raise - this is a migration, database can still function
+
+    def _add_matching_cache_tables(self, cursor):
+        """Create tables for matching engine caching and scoring"""
+        try:
+            # Parsed Tracks table - cache parsed track data from filenames
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS parsed_tracks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    raw_string TEXT NOT NULL UNIQUE,
+                    parsed_json TEXT NOT NULL,  -- JSON serialized SoulSyncTrack
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ttl_expires_at TIMESTAMP
+                )
+            """)
+
+            # Match Cache table - cache matching results with TTL
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS match_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_track_json TEXT NOT NULL,  -- JSON serialized source SoulSyncTrack
+                    candidate_track_json TEXT NOT NULL,  -- JSON serialized candidate SoulSyncTrack
+                    confidence_score REAL NOT NULL,
+                    profile_name TEXT NOT NULL,  -- Profile used (EXACT_SYNC, DOWNLOAD_SEARCH, etc.)
+                    matching_engine_version TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP,
+                    UNIQUE(source_track_json, candidate_track_json, profile_name)
+                )
+            """)
+
+            # Quality Profiles table - store user-defined quality preferences
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS quality_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT,
+                    weights_json TEXT NOT NULL,  -- JSON containing text_weight, duration_weight, quality_bonus, version_penalty, etc.
+                    is_default BOOLEAN DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Scoring Weights table - configurable scoring weights per profile
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS scoring_weights (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    profile_id INTEGER NOT NULL,
+                    weight_name TEXT NOT NULL,  -- e.g., 'text_weight', 'duration_weight', 'quality_bonus', 'version_penalty'
+                    weight_value REAL NOT NULL,
+                    weight_description TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (profile_id) REFERENCES quality_profiles (id) ON DELETE CASCADE,
+                    UNIQUE(profile_id, weight_name)
+                )
+            """)
+
+            # Create indexes for performance
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_tracks_raw_string ON parsed_tracks (raw_string)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_tracks_expires ON parsed_tracks (ttl_expires_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_match_cache_profile ON match_cache (profile_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_match_cache_expires ON match_cache (expires_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_match_cache_score ON match_cache (confidence_score)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_quality_profiles_name ON quality_profiles (name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_quality_profiles_default ON quality_profiles (is_default)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_scoring_weights_profile ON scoring_weights (profile_id)")
+
+            logger.info("Matching cache tables created successfully")
+
+        except Exception as e:
+            logger.error(f"Error creating matching cache tables: {e}")
             # Don't raise - this is a migration, database can still function
 
     def _add_canonical_tracks_table(self, cursor):
@@ -886,17 +902,44 @@ class MusicDatabase:
             logger.error(f"Error getting database statistics for {server_source}: {e}")
             return {'artists': 0, 'albums': 0, 'tracks': 0}
     
+    def count_artists(self) -> int:
+        """Get total count of artists in database"""
+        stats = self.get_statistics()
+        return stats.get('artists', 0)
+    
+    def count_albums(self) -> int:
+        """Get total count of albums in database"""
+        stats = self.get_statistics()
+        return stats.get('albums', 0)
+    
+    def count_tracks(self) -> int:
+        """Get total count of tracks in database"""
+        stats = self.get_statistics()
+        return stats.get('tracks', 0)
+    
     def clear_all_data(self):
         """Clear all data from database (for full refresh) - DEPRECATED: Use clear_server_data instead"""
         try:
+            from .engine import execute_write
+
             def _task(cursor):
                 cursor.execute("DELETE FROM tracks")
                 cursor.execute("DELETE FROM albums")
                 cursor.execute("DELETE FROM artists")
-                # VACUUM will run on same writer connection
-                cursor.execute("VACUUM")
+                # Note: VACUUM cannot run inside transaction - will be done separately
 
             execute_write(str(self.database_path), _task)
+            
+            # VACUUM outside of transaction
+            try:
+                logger.info("Vacuuming database to reclaim disk space...")
+                conn = self._get_connection()
+                conn.commit()
+                conn.execute("VACUUM")
+                conn.close()
+            except Exception as vacuum_err:
+                logger.warning(f"Could not VACUUM database: {vacuum_err}")
+            
             logger.info("All database data cleared and file compacted")
 
         except Exception as e:
@@ -906,6 +949,8 @@ class MusicDatabase:
     def clear_server_data(self, server_source: str):
         """Clear data for specific server only (server-aware full refresh)"""
         try:
+            from .engine import execute_write
+            
             deleted_counts = {'tracks': 0, 'albums': 0, 'artists': 0}
 
             def _task(cursor):
@@ -917,18 +962,74 @@ class MusicDatabase:
 
                 cursor.execute("DELETE FROM artists WHERE server_source = ?", (server_source,))
                 deleted_counts['artists'] = cursor.rowcount
-
-                # Optionally VACUUM if many rows removed
-                if deleted_counts['tracks'] > 1000 or deleted_counts['albums'] > 100:
-                    logger.info("Vacuuming database to reclaim disk space...")
-                    cursor.execute("VACUUM")
+                
+                # Note: VACUUM cannot run inside a transaction - will be done separately
 
             execute_write(str(self.database_path), _task)
+            
+            # VACUUM outside of transaction to reclaim disk space
+            should_vacuum = deleted_counts['tracks'] > 1000 or deleted_counts['albums'] > 100
+            if should_vacuum:
+                try:
+                    logger.info("Vacuuming database to reclaim disk space...")
+                    conn = self._get_connection()
+                    # Ensure any active transaction is committed
+                    conn.commit()
+                    # Now VACUUM can run
+                    conn.execute("VACUUM")
+                    conn.close()
+                except Exception as vacuum_err:
+                    logger.warning(f"Could not VACUUM database: {vacuum_err}")
 
             logger.info(f"Cleared {server_source} data: {deleted_counts['artists']} artists, {deleted_counts['albums']} albums, {deleted_counts['tracks']} tracks")
 
         except Exception as e:
             logger.error(f"Error clearing {server_source} database data: {e}")
+            raise
+    
+    def recreate_database_for_full_refresh(self):
+        """Drop and recreate all tables with updated schema for true full refresh
+        
+        This is called when user wants to start completely fresh with latest schema.
+        Unlike clear_server_data which only clears data, this drops and recreates tables
+        to ensure all schema changes are applied.
+        """
+        try:
+            from .engine import execute_write
+            
+            logger.info("[REFRESH] Starting full database recreation - dropping and recreating all tables with latest schema...")
+            
+            def _task(cursor):
+                # Drop existing tables in dependency order (children before parents)
+                tables_to_drop = [
+                    'parsed_tracks', 'match_cache', 'quality_profiles', 'scoring_weights',
+                    'canonical_tracks', 'listenbrainz_tracks', 'listenbrainz_playlists',
+                    'discovery_curated_playlists', 'discovery_pool_metadata', 'discovery_recent_albums',
+                    'discovery_pool', 'recent_releases', 'similar_artists',
+                    'wishlist_tracks', 'watchlist_artists', 'metadata',
+                    'tracks', 'albums', 'artists'
+                ]
+                
+                for table in tables_to_drop:
+                    try:
+                        cursor.execute(f"DROP TABLE IF EXISTS {table}")
+                        logger.debug(f"  Dropped table: {table}")
+                    except Exception as e:
+                        logger.debug(f"  Could not drop {table}: {e}")
+                
+                logger.info("  All tables dropped - recreating schema...")
+
+            from .engine import execute_write
+            execute_write(str(self.database_path), _task)
+            
+            # Now reinitialize to create fresh schema with all tables
+            logger.info("  Reinitializing database with fresh schema...")
+            self._initialize_database()
+            
+            logger.info("[OK] Full database recreation completed - ready for fresh data import")
+
+        except Exception as e:
+            logger.error(f"Error recreating database: {e}")
             raise
     
     def cleanup_orphaned_records(self) -> Dict[str, int]:
@@ -972,13 +1073,95 @@ class MusicDatabase:
             logger.error(f"Error cleaning up orphaned records: {e}")
             return {'orphaned_artists_removed': 0, 'orphaned_albums_removed': 0}
     
+    def get_bulk_operations(self):
+        """
+        Get BulkOperations helper for batch insert/update operations.
+        Uses a fresh connection with global database lock for thread safety.
+        
+        Returns:
+            BulkOperations instance configured with database lock
+        """
+        from .bulk_operations import BulkOperations
+        conn = self._get_connection()
+        # Use global _database_lock for thread safety across all bulk operations
+        return BulkOperations(conn, lock=_database_lock)
+    
+    def bulk_update_content(self, artists: List[Any], albums: List[Any] = None, 
+                           tracks: List[Any] = None, server_source: str = "plex") -> tuple[int, int, int]:
+        """
+        High-level bulk update method for content synchronization.
+        Delegates to BulkOperations for efficient batch processing.
+        
+        Args:
+            artists: List of artist objects to insert/update
+            albums: Optional list of albums (if None, fetched from artists)
+            tracks: Optional list of tracks (if None, fetched from albums)
+            server_source: Source server type
+        
+        Returns:
+            Tuple of (artists_count, albums_count, tracks_count)
+        """
+        bulk_ops = self.get_bulk_operations()
+        
+        try:
+            artists_count = bulk_ops.bulk_insert_artists(artists, server_source)
+            
+            albums_count = 0
+            tracks_count = 0
+            
+            # If albums/tracks not provided, fetch from artists
+            if albums is None:
+                for artist in artists:
+                    try:
+                        artist_id = str(artist.ratingKey)
+                        artist_albums = list(artist.albums())
+                        albums_count += bulk_ops.bulk_insert_albums(artist_albums, artist_id, server_source)
+                        
+                        # Get tracks from each album
+                        for album in artist_albums:
+                            album_id = str(album.ratingKey)
+                            album_tracks = list(album.tracks())
+                            tracks_count += bulk_ops.bulk_insert_tracks(album_tracks, album_id, artist_id, server_source)
+                    except Exception as e:
+                        logger.warning(f"Error processing artist {getattr(artist, 'title', 'Unknown')}: {e}")
+            else:
+                # Use provided albums/tracks
+                for album in albums:
+                    try:
+                        album_id = str(album.ratingKey)
+                        artist_id = str(album.parentRatingKey) if hasattr(album, 'parentRatingKey') else "unknown"
+                        albums_count += bulk_ops.bulk_insert_albums([album], artist_id, server_source)
+                        
+                        if tracks is None:
+                            album_tracks = list(album.tracks())
+                            tracks_count += bulk_ops.bulk_insert_tracks(album_tracks, album_id, artist_id, server_source)
+                    except Exception as e:
+                        logger.warning(f"Error processing album: {e}")
+                
+                if tracks is not None:
+                    for track in tracks:
+                        try:
+                            track_id = str(track.ratingKey)
+                            album_id = str(track.parentRatingKey) if hasattr(track, 'parentRatingKey') else "unknown"
+                            artist_id = str(track.grandparentRatingKey) if hasattr(track, 'grandparentRatingKey') else "unknown"
+                            tracks_count += bulk_ops.bulk_insert_tracks([track], album_id, artist_id, server_source)
+                        except Exception as e:
+                            logger.warning(f"Error processing track: {e}")
+            
+            logger.info(f"Bulk update complete: {artists_count} artists, {albums_count} albums, {tracks_count} tracks")
+            return (artists_count, albums_count, tracks_count)
+            
+        except Exception as e:
+            logger.error(f"Error in bulk_update_content: {e}")
+            return (0, 0, 0)
+    
     # Artist operations
     def insert_or_update_artist(self, plex_artist) -> bool:
         """Insert or update artist from Plex artist object - DEPRECATED: Use insert_or_update_media_artist instead"""
         return self.insert_or_update_media_artist(plex_artist, server_source='plex')
     
     def insert_or_update_media_artist(self, artist_obj, server_source: str = 'plex') -> bool:
-        """Insert or update artist from media server artist object (Plex or Jellyfin)"""
+        """Insert or update artist from media server artist object (Plex or Jellyfin) with text normalization"""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
@@ -986,8 +1169,9 @@ class MusicDatabase:
                 # Convert artist ID to string (handles both Plex integer IDs and Jellyfin GUIDs)
                 artist_id = str(artist_obj.ratingKey)
                 raw_name = artist_obj.title
-                # Normalize artist name to handle quote variations and other inconsistencies
-                name = self._normalize_artist_name(raw_name)
+                
+                # Use original name without normalization
+                name = raw_name
 
                 # Debug logging to see if normalization is working
                 if raw_name != name:
@@ -1100,13 +1284,15 @@ class MusicDatabase:
         return self.insert_or_update_media_album(plex_album, artist_id, server_source='plex')
     
     def insert_or_update_media_album(self, album_obj, artist_id: str, server_source: str = 'plex') -> bool:
-        """Insert or update album from media server album object (Plex or Jellyfin)"""
+        """Insert or update album from media server album object (Plex or Jellyfin) with text normalization"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
             
             # Convert album ID to string (handles both Plex integer IDs and Jellyfin GUIDs)
             album_id = str(album_obj.ratingKey)
+            
+            # Use original title without normalization
             title = album_obj.title
             year = getattr(album_obj, 'year', None)
             thumb_url = getattr(album_obj, 'thumb', None)
@@ -1181,12 +1367,131 @@ class MusicDatabase:
             return []
     
     # Track operations
-    def insert_or_update_track(self, plex_track, album_id: int, artist_id: int) -> bool:
-        """Insert or update track from Plex track object - DEPRECATED: Use insert_or_update_media_track instead"""
-        return self.insert_or_update_media_track(plex_track, album_id, artist_id, server_source='plex')
+    def insert_or_update_soul_sync_track(
+        self,
+        soul_sync_track: SoulSyncTrack,
+        album_id: str,
+        artist_id: str,
+        server_source: str = 'plex'
+    ) -> bool:
+        """Insert or update track from SoulSyncTrack object - NEW PRIMARY METHOD
+        
+        This is the clean, provider-agnostic way to insert tracks.
+        Database layer NEVER sees raw provider objects - only SoulSyncTrack.
+        
+        Args:
+            soul_sync_track: SoulSyncTrack object with all metadata
+            album_id: Album ID this track belongs to
+            artist_id: Artist ID for this track
+            server_source: Source server type ('plex', 'jellyfin', etc.)
+            
+        Returns:
+            True if insert/update succeeded, False otherwise
+        """
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                
+                # Set shorter timeout to prevent long locks
+                cursor.execute("PRAGMA busy_timeout = 10000")  # 10 second timeout
+                
+                # Generate track ID from album+artist+title (provider will have set their own ID elsewhere if needed)
+                track_id = f"{album_id}_{artist_id}_{soul_sync_track.title.replace(' ', '_')}"
+                
+                logger.info(f"[DB OPERATION] Attempting to insert/update track: {soul_sync_track.title}")
+                cursor.execute("""
+                    INSERT OR REPLACE INTO tracks 
+                    (id, album_id, artist_id, title, track_number, duration, file_path, bitrate, 
+                     isrc, musicbrainz_id, musicbrainz_album_id, disc_number, total_discs, track_total,
+                     version, is_compilation, file_format, quality_tags, sample_rate, bit_depth, file_size,
+                     featured_artists, fingerprint, fingerprint_confidence, server_source, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (
+                    track_id,
+                    album_id,
+                    artist_id,
+                    soul_sync_track.title,
+                    soul_sync_track.track_number,
+                    soul_sync_track.duration_ms,
+                    soul_sync_track.file_path,
+                    soul_sync_track.bitrate,
+                    soul_sync_track.isrc,
+                    soul_sync_track.musicbrainz_id,
+                    soul_sync_track.musicbrainz_album_id,
+                    soul_sync_track.disc_number,
+                    soul_sync_track.total_discs,
+                    soul_sync_track.track_total,
+                    soul_sync_track.version,
+                    1 if soul_sync_track.is_compilation else 0,  # Convert bool to int
+                    soul_sync_track.file_format,
+                    json.dumps(soul_sync_track.quality_tags) if soul_sync_track.quality_tags else None,
+                    soul_sync_track.sample_rate,
+                    soul_sync_track.bit_depth,
+                    soul_sync_track.file_size,
+                    json.dumps(soul_sync_track.featured_artists) if soul_sync_track.featured_artists else None,
+                    soul_sync_track.fingerprint,
+                    soul_sync_track.fingerprint_confidence,
+                    server_source
+                ))
+                logger.info(f"[DB SUCCESS] Track '{soul_sync_track.title}' inserted/updated successfully.")
+                
+                conn.commit()
+                return True
+                
+            except Exception as e:
+                retry_count += 1
+                if "database is locked" in str(e).lower() and retry_count < max_retries:
+                    logger.warning(f"Database locked on track '{soul_sync_track.title}', retrying {retry_count}/{max_retries}...")
+                    time.sleep(0.1 * retry_count)  # Exponential backoff
+                    continue
+                else:
+                    logger.error(f"Error inserting/updating {server_source} track {soul_sync_track.title}: {e}")
+                    return False
+        
+        return False
     
-    def insert_or_update_media_track(self, track_obj, album_id: str, artist_id: str, server_source: str = 'plex') -> bool:
-        """Insert or update track from media server track object (Plex or Jellyfin) with retry logic"""
+    def insert_or_update_track(self, plex_track, album_id: int, artist_id: int) -> bool:
+        """Insert or update track from Plex track object - DEPRECATED: Use insert_or_update_soul_sync_track instead"""
+        # Delegate to provider adapter which should call insert_or_update_soul_sync_track
+        # This exists only for backward compatibility
+        from providers.plex.adapter import convert_plex_track_to_soulsync
+        soul_sync_track = convert_plex_track_to_soulsync(plex_track)
+        if not soul_sync_track:
+            return False
+        return self.insert_or_update_soul_sync_track(soul_sync_track, album_id, artist_id, server_source='plex')
+    
+    
+    def insert_or_update_media_track(
+        self, 
+        track_obj, 
+        album_id: str, 
+        artist_id: str, 
+        server_source: str = 'plex',
+        isrc: str = None,
+        musicbrainz_id: str = None,
+        acoustid: str = None
+    ) -> bool:
+        """DEPRECATED: Insert or update track from media server track object with retry logic
+        
+        Use insert_or_update_soul_sync_track instead for clean architecture.
+        This method kept for backward compatibility only.
+        
+        Args:
+            track_obj: Media server track object (Plex/Jellyfin) - only basic attributes accessed
+            album_id: Album ID this track belongs to
+            artist_id: Artist ID for this track
+            server_source: Source server type ('plex', 'jellyfin')
+            isrc: International Standard Recording Code (optional, extracted by caller)
+            musicbrainz_id: MusicBrainz Recording ID (optional, extracted by caller)
+            acoustid: AcoustID (optional, extracted by caller)
+        
+        Note: This method still extracts from provider objects for backward compatibility.
+        New code should use insert_or_update_soul_sync_track() instead.
+        """
         max_retries = 3
         retry_count = 0
         
@@ -1200,7 +1505,10 @@ class MusicDatabase:
                 
                 # Convert track ID to string (handles both Plex integer IDs and Jellyfin GUIDs)
                 track_id = str(track_obj.ratingKey)
+                
+                # Use original title without normalization
                 title = track_obj.title
+                
                 track_number = getattr(track_obj, 'trackNumber', None)
                 duration = getattr(track_obj, 'duration', None)
                 
@@ -1218,9 +1526,11 @@ class MusicDatabase:
                 # Use INSERT OR REPLACE to handle duplicate IDs gracefully
                 cursor.execute("""
                     INSERT OR REPLACE INTO tracks 
-                    (id, album_id, artist_id, title, track_number, duration, file_path, bitrate, server_source, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (track_id, album_id, artist_id, title, track_number, duration, file_path, bitrate, server_source))
+                    (id, album_id, artist_id, title, track_number, duration, file_path, bitrate, 
+                     isrc, musicbrainz_id, server_source, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (track_id, album_id, artist_id, title, track_number, duration, file_path, bitrate, 
+                      isrc, musicbrainz_id, server_source))
                 
                 conn.commit()
                 return True
@@ -1561,10 +1871,11 @@ class MusicDatabase:
             
             for term in search_terms:
                 if term in db_title_lower or term in db_artist_lower:
-                    score += 1
-            
+                    score += 1            
             if score > 0:
                 scored_results.append((score, row))
+        
+       
         
         # Sort by score and take top results
         scored_results.sort(key=lambda x: x[0], reverse=True)
@@ -2005,8 +2316,8 @@ class MusicDatabase:
         """Calculate confidence score for album match with Smart Edition Matching"""
         try:
             # Simple confidence based on string similarity
-            title_similarity = self._string_similarity(search_title.lower(), db_album.title.lower())
-            artist_similarity = self._string_similarity(search_artist.lower(), db_album.artist_name.lower())
+            title_similarity = self._string_similarity(search_title.lower().strip(), db_album.title.lower().strip())
+            artist_similarity = self._string_similarity(search_artist.lower().strip(), db_album.artist_name.lower().strip())
             
             # Also try with cleaned versions (removing edition markers)
             clean_search_title = self._clean_album_title_for_comparison(search_title)
@@ -2224,1275 +2535,6 @@ class MusicDatabase:
         
         return cleaned.strip()
     
-    def get_album_completion_stats(self, artist_name: str) -> Dict[str, int]:
-        """
-        Get completion statistics for all albums by an artist.
-        Returns dict with counts of complete, partial, and missing albums.
-        """
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            
-            # Get all albums by this artist with track counts
-            cursor.execute("""
-                SELECT albums.id, albums.track_count, COUNT(tracks.id) as actual_tracks
-                FROM albums
-                JOIN artists ON albums.artist_id = artists.id
-                LEFT JOIN tracks ON albums.id = tracks.album_id
-                WHERE artists.name LIKE ?
-                GROUP BY albums.id, albums.track_count
-            """, (f"%{artist_name}%",))
-            
-            results = cursor.fetchall()
-            stats = {
-                'complete': 0,          # >=90% of tracks
-                'nearly_complete': 0,   # 80-89% of tracks
-                'partial': 0,           # 1-79% of tracks  
-                'missing': 0,           # 0% of tracks
-                'total': len(results)
-            }
-            
-            for row in results:
-                expected_tracks = row['track_count'] or 1  # Avoid division by zero
-                actual_tracks = row['actual_tracks']
-                completion_ratio = actual_tracks / expected_tracks
-                
-                if actual_tracks == 0:
-                    stats['missing'] += 1
-                elif completion_ratio >= 0.9:
-                    stats['complete'] += 1
-                elif completion_ratio >= 0.8:
-                    stats['nearly_complete'] += 1
-                else:
-                    stats['partial'] += 1
-            
-            return stats
-            
-        except Exception as e:
-            logger.error(f"Error getting album completion stats for artist '{artist_name}': {e}")
-            return {'complete': 0, 'nearly_complete': 0, 'partial': 0, 'missing': 0, 'total': 0}
-    
-    def set_metadata(self, key: str, value: str):
-        """Set a metadata value"""
-        try:
-            execute_write_sql(str(self.database_path), """
-                INSERT OR REPLACE INTO metadata (key, value, updated_at) 
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-            """, (key, value))
-        except Exception as e:
-            logger.error(f"Error setting metadata {key}: {e}")
-    
-    def get_metadata(self, key: str) -> Optional[str]:
-        """Get a metadata value"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT value FROM metadata WHERE key = ?", (key,))
-                result = cursor.fetchone()
-                return result['value'] if result else None
-        except Exception as e:
-            logger.error(f"Error getting metadata {key}: {e}")
-            return None
-    
-    def record_full_refresh_completion(self):
-        """Record when a full refresh was completed"""
-        from datetime import datetime
-        self.set_metadata('last_full_refresh', datetime.now().isoformat())
-    
-    def get_last_full_refresh(self) -> Optional[str]:
-        """Get the date of the last full refresh"""
-        return self.get_metadata('last_full_refresh')
-
-    def set_preference(self, key: str, value: str):
-        """Set a user preference (alias for set_metadata for clarity)"""
-        self.set_metadata(key, value)
-
-    def get_preference(self, key: str) -> Optional[str]:
-        """Get a user preference (alias for get_metadata for clarity)"""
-        return self.get_metadata(key)
-
-    # Quality profile management methods
-
-    def get_quality_profile(self) -> dict:
-        """Get the quality profile configuration, returns default if not set"""
-        import json
-
-        profile_json = self.get_preference('quality_profile')
-
-        if profile_json:
-            try:
-                return json.loads(profile_json)
-            except json.JSONDecodeError:
-                logger.error("Failed to parse quality profile JSON, returning default")
-
-        # Return smart defaults (balanced preset)
-        return {
-            "version": 1,
-            "preset": "balanced",
-            "qualities": {
-                "flac": {
-                    "enabled": True,
-                    "min_mb": 0,
-                    "max_mb": 150,
-                    "priority": 1
-                },
-                "mp3_320": {
-                    "enabled": True,
-                    "min_mb": 0,
-                    "max_mb": 20,
-                    "priority": 2
-                },
-                "mp3_256": {
-                    "enabled": True,
-                    "min_mb": 0,
-                    "max_mb": 15,
-                    "priority": 3
-                },
-                "mp3_192": {
-                    "enabled": False,
-                    "min_mb": 0,
-                    "max_mb": 12,
-                    "priority": 4
-                }
-            },
-            "fallback_enabled": True
-        }
-
-    def set_quality_profile(self, profile: dict) -> bool:
-        """Save quality profile configuration"""
-        import json
-
-        try:
-            profile_json = json.dumps(profile)
-            self.set_preference('quality_profile', profile_json)
-            logger.info(f"Quality profile saved: preset={profile.get('preset', 'custom')}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save quality profile: {e}")
-            return False
-
-    def get_quality_preset(self, preset_name: str) -> dict:
-        """Get a predefined quality preset"""
-        presets = {
-            "audiophile": {
-                "version": 1,
-                "preset": "audiophile",
-                "qualities": {
-                    "flac": {
-                        "enabled": True,
-                        "min_mb": 0,
-                        "max_mb": 200,
-                        "priority": 1
-                    },
-                    "mp3_320": {
-                        "enabled": False,
-                        "min_mb": 0,
-                        "max_mb": 20,
-                        "priority": 2
-                    },
-                    "mp3_256": {
-                        "enabled": False,
-                        "min_mb": 0,
-                        "max_mb": 15,
-                        "priority": 3
-                    },
-                    "mp3_192": {
-                        "enabled": False,
-                        "min_mb": 0,
-                        "max_mb": 12,
-                        "priority": 4
-                    }
-                },
-                "fallback_enabled": False
-            },
-            "balanced": {
-                "version": 1,
-                "preset": "balanced",
-                "qualities": {
-                    "flac": {
-                        "enabled": True,
-                        "min_mb": 0,
-                        "max_mb": 150,
-                        "priority": 1
-                    },
-                    "mp3_320": {
-                        "enabled": True,
-                        "min_mb": 0,
-                        "max_mb": 20,
-                        "priority": 2
-                    },
-                    "mp3_256": {
-                        "enabled": True,
-                        "min_mb": 0,
-                        "max_mb": 15,
-                        "priority": 3
-                    },
-                    "mp3_192": {
-                        "enabled": False,
-                        "min_mb": 0,
-                        "max_mb": 12,
-                        "priority": 4
-                    }
-                },
-                "fallback_enabled": True
-            },
-            "space_saver": {
-                "version": 1,
-                "preset": "space_saver",
-                "qualities": {
-                    "flac": {
-                        "enabled": False,
-                        "min_mb": 0,
-                        "max_mb": 150,
-                        "priority": 4
-                    },
-                    "mp3_320": {
-                        "enabled": True,
-                        "min_mb": 0,
-                        "max_mb": 15,
-                        "priority": 1
-                    },
-                    "mp3_256": {
-                        "enabled": True,
-                        "min_mb": 0,
-                        "max_mb": 12,
-                        "priority": 2
-                    },
-                    "mp3_192": {
-                        "enabled": True,
-                        "min_mb": 0,
-                        "max_mb": 10,
-                        "priority": 3
-                    }
-                },
-                "fallback_enabled": True
-            }
-        }
-
-        return presets.get(preset_name, presets["balanced"])
-
-    # Wishlist management methods
-    
-    def add_to_wishlist(self, spotify_track_data: Dict[str, Any], failure_reason: str = "Download failed",
-                       source_type: str = "unknown", source_info: Dict[str, Any] = None) -> bool:
-        """Add a failed track to the wishlist for retry"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Use Spotify track ID as unique identifier
-                track_id = spotify_track_data.get('id')
-                if not track_id:
-                    logger.error("Cannot add track to wishlist: missing Spotify track ID")
-                    return False
-
-                track_name = spotify_track_data.get('name', 'Unknown Track')
-                artists = spotify_track_data.get('artists', [])
-                if artists:
-                    first_artist = artists[0]
-                    if isinstance(first_artist, str):
-                        artist_name = first_artist
-                    elif isinstance(first_artist, dict):
-                        artist_name = first_artist.get('name', 'Unknown Artist')
-                    else:
-                        artist_name = 'Unknown Artist'
-                else:
-                    artist_name = 'Unknown Artist'
-
-                # Check for duplicates by track name + artist (not just Spotify ID)
-                # This prevents adding the same track multiple times with different IDs or edge cases
-                cursor.execute("""
-                    SELECT id, spotify_track_id, spotify_data FROM wishlist_tracks
-                """)
-
-                existing_tracks = cursor.fetchall()
-
-                # Check if any existing track has matching name AND artist
-                for existing in existing_tracks:
-                    try:
-                        existing_data = json.loads(existing['spotify_data'])
-                        existing_name = existing_data.get('name', '')
-                        existing_artists = existing_data.get('artists', [])
-                        if existing_artists:
-                            existing_first = existing_artists[0]
-                            if isinstance(existing_first, str):
-                                existing_artist = existing_first
-                            elif isinstance(existing_first, dict):
-                                existing_artist = existing_first.get('name', '')
-                            else:
-                                existing_artist = ''
-                        else:
-                            existing_artist = ''
-
-                        # Case-insensitive comparison of track name and primary artist
-                        if (existing_name.lower() == track_name.lower() and
-                            existing_artist.lower() == artist_name.lower()):
-                            logger.info(f"Skipping duplicate wishlist entry: '{track_name}' by {artist_name} (already exists as ID: {existing['id']})")
-                            return False  # Already exists, don't add duplicate
-                    except Exception as parse_error:
-                        logger.warning(f"Error parsing existing wishlist track data: {parse_error}")
-                        continue
-
-                # Convert data to JSON strings
-                spotify_json = json.dumps(spotify_track_data)
-                source_json = json.dumps(source_info or {})
-
-                # No duplicate found, insert the track
-                cursor.execute("""
-                    INSERT OR REPLACE INTO wishlist_tracks
-                    (spotify_track_id, spotify_data, failure_reason, source_type, source_info, date_added)
-                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (track_id, spotify_json, failure_reason, source_type, source_json))
-
-                conn.commit()
-
-                logger.info(f"Added track to wishlist: '{track_name}' by {artist_name}")
-                return True
-
-        except Exception as e:
-            logger.error(f"Error adding track to wishlist: {e}")
-            return False
-    
-    def remove_from_wishlist(self, spotify_track_id: str) -> bool:
-        """Remove a track from the wishlist (typically after successful download)"""
-        try:
-            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM wishlist_tracks WHERE spotify_track_id = ?", (spotify_track_id,))
-            
-            if rowcount and rowcount > 0:
-                logger.info(f"Removed track from wishlist: {spotify_track_id}")
-                return True
-            else:
-                logger.debug(f"Track not found in wishlist: {spotify_track_id}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error removing track from wishlist: {e}")
-            return False
-    
-    def get_wishlist_tracks(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get all tracks in the wishlist, ordered by date added (oldest first for retry priority)"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                query = """
-                    SELECT id, spotify_track_id, spotify_data, failure_reason, retry_count, 
-                           last_attempted, date_added, source_type, source_info
-                    FROM wishlist_tracks 
-                    ORDER BY date_added
-                """
-                
-                if limit:
-                    query += f" LIMIT {limit}"
-                
-                cursor.execute(query)
-                rows = cursor.fetchall()
-                
-                wishlist_tracks = []
-                for row in rows:
-                    try:
-                        spotify_data = json.loads(row['spotify_data'])
-                        source_info = json.loads(row['source_info']) if row['source_info'] else {}
-                        
-                        wishlist_tracks.append({
-                            'id': row['id'],
-                            'spotify_track_id': row['spotify_track_id'],
-                            'spotify_data': spotify_data,
-                            'failure_reason': row['failure_reason'],
-                            'retry_count': row['retry_count'],
-                            'last_attempted': row['last_attempted'],
-                            'date_added': row['date_added'],
-                            'source_type': row['source_type'],
-                            'source_info': source_info
-                        })
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Error parsing wishlist track data: {e}")
-                        continue
-                
-                return wishlist_tracks
-                
-        except Exception as e:
-            logger.error(f"Error getting wishlist tracks: {e}")
-            return []
-    
-    def update_wishlist_retry(self, spotify_track_id: str, success: bool, error_message: str = None) -> bool:
-        """Update retry count and status for a wishlist track"""
-        try:
-            def _task(cursor):
-                if success:
-                    cursor.execute("DELETE FROM wishlist_tracks WHERE spotify_track_id = ?", (spotify_track_id,))
-                else:
-                    cursor.execute("""
-                        UPDATE wishlist_tracks 
-                        SET retry_count = retry_count + 1, 
-                            last_attempted = CURRENT_TIMESTAMP,
-                            failure_reason = COALESCE(?, failure_reason)
-                        WHERE spotify_track_id = ?
-                    """, (error_message, spotify_track_id))
-                return cursor.rowcount
-            
-            rowcount = execute_write(str(self.database_path), _task)
-            return rowcount > 0 if rowcount else False
-                
-        except Exception as e:
-            logger.error(f"Error updating wishlist retry status: {e}")
-            return False
-    
-    def get_wishlist_count(self) -> int:
-        """Get the total number of tracks in the wishlist"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM wishlist_tracks")
-                result = cursor.fetchone()
-                return result[0] if result else 0
-        except Exception as e:
-            logger.error(f"Error getting wishlist count: {e}")
-            return 0
-    
-    def clear_wishlist(self) -> bool:
-        """Clear all tracks from the wishlist"""
-        try:
-            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM wishlist_tracks")
-            logger.info(f"Cleared {rowcount or 0} tracks from wishlist")
-            return True
-        except Exception as e:
-            logger.error(f"Error clearing wishlist: {e}")
-            return False
-
-    def remove_wishlist_duplicates(self) -> int:
-        """Remove duplicate tracks from wishlist based on track name + artist.
-        Keeps the oldest entry (by date_added) for each duplicate set.
-        Returns the number of duplicates removed."""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Get all wishlist tracks
-                cursor.execute("""
-                    SELECT id, spotify_track_id, spotify_data, date_added
-                    FROM wishlist_tracks
-                    ORDER BY date_added ASC
-                """)
-                all_tracks = cursor.fetchall()
-
-                # Track seen tracks and duplicates to remove
-                seen_tracks = {}  # Key: (track_name, artist_name), Value: track_id to keep
-                duplicates_to_remove = []
-
-                for track in all_tracks:
-                    try:
-                        track_data = json.loads(track['spotify_data'])
-                        track_name = track_data.get('name', '').lower()
-                        artists = track_data.get('artists', [])
-                        artist_name = artists[0].get('name', '').lower() if artists else 'unknown'
-
-                        key = (track_name, artist_name)
-
-                        if key in seen_tracks:
-                            # Duplicate found - mark for removal
-                            duplicates_to_remove.append(track['id'])
-                            logger.info(f"Found duplicate: '{track_name}' by {artist_name} (ID: {track['id']}, keeping ID: {seen_tracks[key]})")
-                        else:
-                            # First occurrence - keep this one
-                            seen_tracks[key] = track['id']
-
-                    except Exception as parse_error:
-                        logger.warning(f"Error parsing wishlist track {track['id']}: {parse_error}")
-                        continue
-
-                # Remove all duplicates
-                removed_count = 0
-                for duplicate_id in duplicates_to_remove:
-                    cursor.execute("DELETE FROM wishlist_tracks WHERE id = ?", (duplicate_id,))
-                    removed_count += 1
-
-                conn.commit()
-                logger.info(f"Removed {removed_count} duplicate tracks from wishlist")
-                return removed_count
-
-        except Exception as e:
-            logger.error(f"Error removing wishlist duplicates: {e}")
-            return 0
-
-    # Watchlist operations
-    def add_artist_to_watchlist(self, spotify_artist_id: str, artist_name: str) -> bool:
-        """Add an artist to the watchlist for monitoring new releases"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    INSERT OR REPLACE INTO watchlist_artists 
-                    (spotify_artist_id, artist_name, date_added, updated_at)
-                    VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """, (spotify_artist_id, artist_name))
-                
-                conn.commit()
-                logger.info(f"Added artist '{artist_name}' to watchlist (Spotify ID: {spotify_artist_id})")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Error adding artist '{artist_name}' to watchlist: {e}")
-            return False
-
-    def remove_artist_from_watchlist(self, spotify_artist_id: str) -> bool:
-        """Remove an artist from the watchlist"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Get artist name for logging
-                cursor.execute("SELECT artist_name FROM watchlist_artists WHERE spotify_artist_id = ?", (spotify_artist_id,))
-                result = cursor.fetchone()
-                artist_name = result['artist_name'] if result else "Unknown"
-                
-                cursor.execute("DELETE FROM watchlist_artists WHERE spotify_artist_id = ?", (spotify_artist_id,))
-                
-                if cursor.rowcount > 0:
-                    conn.commit()
-                    logger.info(f"Removed artist '{artist_name}' from watchlist (Spotify ID: {spotify_artist_id})")
-                    return True
-                else:
-                    logger.warning(f"Artist with Spotify ID {spotify_artist_id} not found in watchlist")
-                    return False
-                
-        except Exception as e:
-            logger.error(f"Error removing artist from watchlist (Spotify ID: {spotify_artist_id}): {e}")
-            return False
-
-    def is_artist_in_watchlist(self, spotify_artist_id: str) -> bool:
-        """Check if an artist is currently in the watchlist"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                cursor.execute("SELECT 1 FROM watchlist_artists WHERE spotify_artist_id = ? LIMIT 1", (spotify_artist_id,))
-                result = cursor.fetchone()
-                
-                return result is not None
-                
-        except Exception as e:
-            logger.error(f"Error checking if artist is in watchlist (Spotify ID: {spotify_artist_id}): {e}")
-            return False
-
-    def get_watchlist_artists(self) -> List[WatchlistArtist]:
-        """Get all artists in the watchlist"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Check which columns exist (for migration compatibility)
-                cursor.execute("PRAGMA table_info(watchlist_artists)")
-                existing_columns = {column[1] for column in cursor.fetchall()}
-
-                # Build SELECT query based on existing columns
-                base_columns = ['id', 'spotify_artist_id', 'artist_name', 'date_added',
-                               'last_scan_timestamp', 'created_at', 'updated_at']
-                optional_columns = ['image_url', 'include_albums', 'include_eps', 'include_singles']
-
-                columns_to_select = base_columns + [col for col in optional_columns if col in existing_columns]
-
-                cursor.execute(f"""
-                    SELECT {', '.join(columns_to_select)}
-                    FROM watchlist_artists
-                    ORDER BY date_added DESC
-                """)
-
-                rows = cursor.fetchall()
-
-                watchlist_artists = []
-                for row in rows:
-                    # Safely get optional columns with defaults (sqlite3.Row uses dict-style access)
-                    image_url = row['image_url'] if 'image_url' in existing_columns else None
-                    include_albums = bool(row['include_albums']) if 'include_albums' in existing_columns else True
-                    include_eps = bool(row['include_eps']) if 'include_eps' in existing_columns else True
-                    include_singles = bool(row['include_singles']) if 'include_singles' in existing_columns else True
-
-                    watchlist_artists.append(WatchlistArtist(
-                        id=row['id'],
-                        spotify_artist_id=row['spotify_artist_id'],
-                        artist_name=row['artist_name'],
-                        date_added=datetime.fromisoformat(row['date_added']),
-                        last_scan_timestamp=datetime.fromisoformat(row['last_scan_timestamp']) if row['last_scan_timestamp'] else None,
-                        created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None,
-                        updated_at=datetime.fromisoformat(row['updated_at']) if row['updated_at'] else None,
-                        image_url=image_url,
-                        include_albums=include_albums,
-                        include_eps=include_eps,
-                        include_singles=include_singles
-                    ))
-
-                return watchlist_artists
-
-        except Exception as e:
-            logger.error(f"Error getting watchlist artists: {e}")
-            return []
-
-    def get_watchlist_count(self) -> int:
-        """Get the number of artists in the watchlist"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                cursor.execute("SELECT COUNT(*) as count FROM watchlist_artists")
-                result = cursor.fetchone()
-                
-                return result['count'] if result else 0
-                
-        except Exception as e:
-            logger.error(f"Error getting watchlist count: {e}")
-            return 0
-
-    def update_watchlist_artist_image(self, spotify_artist_id: str, image_url: str) -> bool:
-        """Update the image URL for a watchlist artist"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Check if image_url column exists (for migration compatibility)
-                cursor.execute("PRAGMA table_info(watchlist_artists)")
-                existing_columns = {column[1] for column in cursor.fetchall()}
-
-                if 'image_url' not in existing_columns:
-                    logger.warning("image_url column does not exist in watchlist_artists table. Skipping update. Please restart the app to apply migrations.")
-                    return False
-
-                cursor.execute("""
-                    UPDATE watchlist_artists
-                    SET image_url = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE spotify_artist_id = ?
-                """, (image_url, spotify_artist_id))
-
-                conn.commit()
-                return cursor.rowcount > 0
-
-        except Exception as e:
-            logger.error(f"Error updating watchlist artist image: {e}")
-            return False
-
-    # === Discovery Feature Methods ===
-
-    def add_or_update_similar_artist(self, source_artist_id: str, similar_artist_spotify_id: str,
-                                      similar_artist_name: str, similarity_rank: int = 1) -> bool:
-        """Add or update a similar artist recommendation"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    INSERT INTO similar_artists
-                    (source_artist_id, similar_artist_spotify_id, similar_artist_name, similarity_rank, occurrence_count, last_updated)
-                    VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-                    ON CONFLICT(source_artist_id, similar_artist_spotify_id)
-                    DO UPDATE SET
-                        similarity_rank = excluded.similarity_rank,
-                        occurrence_count = occurrence_count + 1,
-                        last_updated = CURRENT_TIMESTAMP
-                """, (source_artist_id, similar_artist_spotify_id, similar_artist_name, similarity_rank))
-
-                conn.commit()
-                return True
-
-        except Exception as e:
-            logger.error(f"Error adding similar artist: {e}")
-            return False
-
-    def get_similar_artists_for_source(self, source_artist_id: str) -> List[SimilarArtist]:
-        """Get all similar artists for a given source artist"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    SELECT * FROM similar_artists
-                    WHERE source_artist_id = ?
-                    ORDER BY similarity_rank ASC
-                """, (source_artist_id,))
-
-                rows = cursor.fetchall()
-                return [SimilarArtist(
-                    id=row['id'],
-                    source_artist_id=row['source_artist_id'],
-                    similar_artist_spotify_id=row['similar_artist_spotify_id'],
-                    similar_artist_name=row['similar_artist_name'],
-                    similarity_rank=row['similarity_rank'],
-                    occurrence_count=row['occurrence_count'],
-                    last_updated=datetime.fromisoformat(row['last_updated'])
-                ) for row in rows]
-
-        except Exception as e:
-            logger.error(f"Error getting similar artists: {e}")
-            return []
-
-    def has_fresh_similar_artists(self, source_artist_id: str, days_threshold: int = 30) -> bool:
-        """
-        Check if we have cached similar artists that are still fresh (< days_threshold old).
-        Returns True if we have recent data, False if data is stale or missing.
-        """
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    SELECT COUNT(*) as count, MAX(last_updated) as last_updated
-                    FROM similar_artists
-                    WHERE source_artist_id = ?
-                """, (source_artist_id,))
-
-                row = cursor.fetchone()
-
-                if not row or row['count'] == 0:
-                    # No similar artists cached
-                    return False
-
-                # Check if data is fresh
-                last_updated = datetime.fromisoformat(row['last_updated'])
-                days_since_update = (datetime.now() - last_updated).total_seconds() / 86400  # seconds to days
-
-                return days_since_update < days_threshold
-
-        except Exception as e:
-            logger.error(f"Error checking similar artists freshness: {e}")
-            return False  # Default to re-fetching on error
-
-    def get_top_similar_artists(self, limit: int = 50) -> List[SimilarArtist]:
-        """Get top similar artists across all watchlist artists, ordered by occurrence count"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    SELECT
-                        MAX(id) as id,
-                        MAX(source_artist_id) as source_artist_id,
-                        similar_artist_spotify_id,
-                        similar_artist_name,
-                        AVG(similarity_rank) as similarity_rank,
-                        SUM(occurrence_count) as occurrence_count,
-                        MAX(last_updated) as last_updated
-                    FROM similar_artists
-                    GROUP BY similar_artist_spotify_id, similar_artist_name
-                    ORDER BY occurrence_count DESC, similarity_rank ASC
-                    LIMIT ?
-                """, (limit,))
-
-                rows = cursor.fetchall()
-                return [SimilarArtist(
-                    id=row['id'],
-                    source_artist_id=row['source_artist_id'],
-                    similar_artist_spotify_id=row['similar_artist_spotify_id'],
-                    similar_artist_name=row['similar_artist_name'],
-                    similarity_rank=int(row['similarity_rank']),
-                    occurrence_count=row['occurrence_count'],
-                    last_updated=datetime.fromisoformat(row['last_updated'])
-                ) for row in rows]
-
-        except Exception as e:
-            logger.error(f"Error getting top similar artists: {e}")
-            return []
-
-    def add_to_discovery_pool(self, track_data: Dict[str, Any]) -> bool:
-        """Add a track to the discovery pool"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Check if track already exists
-                cursor.execute("SELECT COUNT(*) as count FROM discovery_pool WHERE spotify_track_id = ?",
-                              (track_data['spotify_track_id'],))
-                if cursor.fetchone()['count'] > 0:
-                    return True  # Already in pool
-
-                # Get artist genres if available
-                artist_genres = track_data.get('artist_genres')
-                artist_genres_json = json.dumps(artist_genres) if artist_genres else None
-
-                cursor.execute("""
-                    INSERT INTO discovery_pool
-                    (spotify_track_id, spotify_album_id, spotify_artist_id, track_name, artist_name,
-                     album_name, album_cover_url, duration_ms, popularity, release_date,
-                     is_new_release, track_data_json, artist_genres, added_date)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (
-                    track_data['spotify_track_id'],
-                    track_data['spotify_album_id'],
-                    track_data['spotify_artist_id'],
-                    track_data['track_name'],
-                    track_data['artist_name'],
-                    track_data['album_name'],
-                    track_data.get('album_cover_url'),
-                    track_data['duration_ms'],
-                    track_data.get('popularity', 0),
-                    track_data['release_date'],
-                    track_data.get('is_new_release', False),
-                    json.dumps(track_data['track_data_json']),
-                    artist_genres_json
-                ))
-
-                conn.commit()
-                return True
-
-        except Exception as e:
-            logger.error(f"Error adding to discovery pool: {e}")
-            return False
-
-    def rotate_discovery_pool(self, max_tracks: int = 2000, remove_count: int = 500):
-        """Remove oldest tracks from discovery pool if it exceeds max_tracks"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Check current count
-                cursor.execute("SELECT COUNT(*) as count FROM discovery_pool")
-                current_count = cursor.fetchone()['count']
-
-                if current_count > max_tracks:
-                    # Remove oldest tracks
-                    cursor.execute("""
-                        DELETE FROM discovery_pool
-                        WHERE id IN (
-                            SELECT id FROM discovery_pool
-                            ORDER BY added_date ASC
-                            LIMIT ?
-                        )
-                    """, (remove_count,))
-
-                    conn.commit()
-                    logger.info(f"Removed {remove_count} oldest tracks from discovery pool")
-
-        except Exception as e:
-            logger.error(f"Error rotating discovery pool: {e}")
-
-    def get_discovery_pool_tracks(self, limit: int = 100, new_releases_only: bool = False) -> List[DiscoveryTrack]:
-        """Get tracks from discovery pool"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                if new_releases_only:
-                    cursor.execute("""
-                        SELECT * FROM discovery_pool
-                        WHERE is_new_release = 1
-                        ORDER BY added_date DESC
-                        LIMIT ?
-                    """, (limit,))
-                else:
-                    cursor.execute("""
-                        SELECT * FROM discovery_pool
-                        ORDER BY added_date DESC
-                        LIMIT ?
-                    """, (limit,))
-
-                rows = cursor.fetchall()
-                return [DiscoveryTrack(
-                    id=row['id'],
-                    spotify_track_id=row['spotify_track_id'],
-                    spotify_album_id=row['spotify_album_id'],
-                    spotify_artist_id=row['spotify_artist_id'],
-                    track_name=row['track_name'],
-                    artist_name=row['artist_name'],
-                    album_name=row['album_name'],
-                    album_cover_url=row['album_cover_url'],
-                    duration_ms=row['duration_ms'],
-                    popularity=row['popularity'],
-                    release_date=row['release_date'],
-                    is_new_release=bool(row['is_new_release']),
-                    track_data_json=row['track_data_json'],
-                    added_date=datetime.fromisoformat(row['added_date'])
-                ) for row in rows]
-
-        except Exception as e:
-            logger.error(f"Error getting discovery pool tracks: {e}")
-            return []
-
-    def cache_discovery_recent_album(self, album_data: Dict[str, Any]) -> bool:
-        """Cache a recent album for the discover page (from watchlist or similar artists)"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    INSERT OR REPLACE INTO discovery_recent_albums
-                    (album_spotify_id, album_name, artist_name, artist_spotify_id, album_cover_url, release_date, album_type, cached_date)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (
-                    album_data['album_spotify_id'],
-                    album_data['album_name'],
-                    album_data['artist_name'],
-                    album_data['artist_spotify_id'],
-                    album_data.get('album_cover_url'),
-                    album_data['release_date'],
-                    album_data.get('album_type', 'album')
-                ))
-
-                conn.commit()
-                return True
-
-        except Exception as e:
-            logger.error(f"Error caching discovery recent album: {e}")
-            return False
-
-    def get_discovery_recent_albums(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get cached recent albums for discover page"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    SELECT * FROM discovery_recent_albums
-                    ORDER BY release_date DESC
-                    LIMIT ?
-                """, (limit,))
-
-                rows = cursor.fetchall()
-                return [{
-                    'album_spotify_id': row['album_spotify_id'],
-                    'album_name': row['album_name'],
-                    'artist_name': row['artist_name'],
-                    'artist_spotify_id': row['artist_spotify_id'],
-                    'album_cover_url': row['album_cover_url'],
-                    'release_date': row['release_date'],
-                    'album_type': row['album_type']
-                } for row in rows]
-
-        except Exception as e:
-            logger.error(f"Error getting discovery recent albums: {e}")
-            return []
-
-    def clear_discovery_recent_albums(self) -> bool:
-        """Clear all cached recent albums"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM discovery_recent_albums")
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error clearing discovery recent albums: {e}")
-            return False
-
-    def save_curated_playlist(self, playlist_type: str, track_ids: List[str]) -> bool:
-        """Save a curated playlist selection (stays same until next discovery pool update)"""
-        try:
-            import json
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT OR REPLACE INTO discovery_curated_playlists
-                    (playlist_type, track_ids_json, curated_date)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                """, (playlist_type, json.dumps(track_ids)))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error saving curated playlist {playlist_type}: {e}")
-            return False
-
-    def get_curated_playlist(self, playlist_type: str) -> Optional[List[str]]:
-        """Get saved curated playlist track IDs"""
-        try:
-            import json
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT track_ids_json FROM discovery_curated_playlists
-                    WHERE playlist_type = ?
-                """, (playlist_type,))
-                row = cursor.fetchone()
-                if row:
-                    return json.loads(row['track_ids_json'])
-                return None
-        except Exception as e:
-            logger.error(f"Error getting curated playlist {playlist_type}: {e}")
-            return None
-
-    def should_populate_discovery_pool(self, hours_threshold: int = 24) -> bool:
-        """Check if discovery pool should be populated (hasn't been updated in X hours)"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT last_populated_timestamp
-                    FROM discovery_pool_metadata
-                    WHERE id = 1
-                """)
-                row = cursor.fetchone()
-
-                if not row:
-                    # Never populated before
-                    return True
-
-                last_populated = datetime.fromisoformat(row['last_populated_timestamp'])
-                hours_since_update = (datetime.now() - last_populated).total_seconds() / 3600
-
-                return hours_since_update >= hours_threshold
-
-        except Exception as e:
-            logger.error(f"Error checking discovery pool timestamp: {e}")
-            return True  # Default to allowing population on error
-
-    def update_discovery_pool_timestamp(self, track_count: int) -> bool:
-        """Update the last populated timestamp and track count"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT OR REPLACE INTO discovery_pool_metadata
-                    (id, last_populated_timestamp, track_count, updated_at)
-                    VALUES (1, ?, ?, CURRENT_TIMESTAMP)
-                """, (datetime.now().isoformat(), track_count))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error updating discovery pool timestamp: {e}")
-            return False
-
-    def cleanup_old_discovery_tracks(self, days_threshold: int = 365) -> int:
-        """Remove tracks from discovery pool older than X days. Returns count of deleted tracks."""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Delete tracks older than threshold
-                cursor.execute("""
-                    DELETE FROM discovery_pool
-                    WHERE added_date < datetime('now', '-' || ? || ' days')
-                """, (days_threshold,))
-
-                deleted_count = cursor.rowcount
-                conn.commit()
-
-                if deleted_count > 0:
-                    logger.info(f"Cleaned up {deleted_count} discovery tracks older than {days_threshold} days")
-
-                return deleted_count
-
-        except Exception as e:
-            logger.error(f"Error cleaning up old discovery tracks: {e}")
-            return 0
-
-    def add_recent_release(self, watchlist_artist_id: int, album_data: Dict[str, Any]) -> bool:
-        """Add a recent release to the recent_releases table"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    INSERT OR IGNORE INTO recent_releases
-                    (watchlist_artist_id, album_spotify_id, album_name, release_date, album_cover_url, track_count, added_date)
-                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (
-                    watchlist_artist_id,
-                    album_data['album_spotify_id'],
-                    album_data['album_name'],
-                    album_data['release_date'],
-                    album_data.get('album_cover_url'),
-                    album_data.get('track_count', 0)
-                ))
-
-                conn.commit()
-                return True
-
-        except Exception as e:
-            logger.error(f"Error adding recent release: {e}")
-            return False
-
-    def get_recent_releases(self, limit: int = 50) -> List[RecentRelease]:
-        """Get recent releases from watchlist artists"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    SELECT * FROM recent_releases
-                    ORDER BY release_date DESC, added_date DESC
-                    LIMIT ?
-                """, (limit,))
-
-                rows = cursor.fetchall()
-                return [RecentRelease(
-                    id=row['id'],
-                    watchlist_artist_id=row['watchlist_artist_id'],
-                    album_spotify_id=row['album_spotify_id'],
-                    album_name=row['album_name'],
-                    release_date=row['release_date'],
-                    album_cover_url=row['album_cover_url'],
-                    track_count=row['track_count'],
-                    added_date=datetime.fromisoformat(row['added_date'])
-                ) for row in rows]
-
-        except Exception as e:
-            logger.error(f"Error getting recent releases: {e}")
-            return []
-
-    def get_database_info(self) -> Dict[str, Any]:
-        """Get comprehensive database information for all servers (legacy method)"""
-        try:
-            stats = self.get_statistics()
-            
-            # Get database file size (include WAL/SHM for accurate on-disk footprint)
-            main_size = self.database_path.stat().st_size if self.database_path.exists() else 0
-            wal_path = Path(f"{self.database_path}-wal")
-            shm_path = Path(f"{self.database_path}-shm")
-            wal_size = wal_path.stat().st_size if wal_path.exists() else 0
-            shm_size = shm_path.stat().st_size if shm_path.exists() else 0
-            total_size = main_size + wal_size + shm_size
-            main_mb = main_size / (1024 * 1024)
-            wal_mb = wal_size / (1024 * 1024)
-            shm_mb = shm_size / (1024 * 1024)
-            total_mb = total_size / (1024 * 1024)
-            
-            # Get last update time (most recent updated_at timestamp)
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT MAX(updated_at) as last_update 
-                FROM (
-                    SELECT updated_at FROM artists
-                    UNION ALL
-                    SELECT updated_at FROM albums
-                    UNION ALL
-                    SELECT updated_at FROM tracks
-                )
-            """)
-            
-            result = cursor.fetchone()
-            last_update = result['last_update'] if result and result['last_update'] else None
-            
-            # Get last full refresh
-            last_full_refresh = self.get_last_full_refresh()
-            
-            return {
-                **stats,
-                'database_size_mb': round(total_mb, 2),
-                'database_size_breakdown': {
-                    'main_mb': round(main_mb, 2),
-                    'wal_mb': round(wal_mb, 2),
-                    'shm_mb': round(shm_mb, 2),
-                    'total_mb': round(total_mb, 2)
-                },
-                'database_path': str(self.database_path),
-                'last_update': last_update,
-                'last_full_refresh': last_full_refresh
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting database info: {e}")
-            return {
-                'artists': 0,
-                'albums': 0,
-                'tracks': 0,
-                'database_size_mb': 0.0,
-                'database_size_breakdown': {
-                    'main_mb': 0.0,
-                    'wal_mb': 0.0,
-                    'shm_mb': 0.0,
-                    'total_mb': 0.0
-                },
-                'database_path': str(self.database_path),
-                'last_update': None,
-                'last_full_refresh': None
-            }
-    
-    def get_database_info_for_server(self, server_source: str = None) -> Dict[str, Any]:
-        """Get comprehensive database information filtered by server source"""
-        try:
-            # Import here to avoid circular imports
-            from config.settings import config_manager
-            
-            # If no server specified, use active server
-            if server_source is None:
-                server_source = config_manager.get_active_media_server()
-            
-            stats = self.get_statistics_for_server(server_source)
-            
-            # Get database file size (include WAL/SHM for accurate on-disk footprint)
-            main_size = self.database_path.stat().st_size if self.database_path.exists() else 0
-            wal_path = Path(f"{self.database_path}-wal")
-            shm_path = Path(f"{self.database_path}-shm")
-            wal_size = wal_path.stat().st_size if wal_path.exists() else 0
-            shm_size = shm_path.stat().st_size if shm_path.exists() else 0
-            total_size = main_size + wal_size + shm_size
-            main_mb = main_size / (1024 * 1024)
-            wal_mb = wal_size / (1024 * 1024)
-            shm_mb = shm_size / (1024 * 1024)
-            total_mb = total_size / (1024 * 1024)
-            
-            # Get last update time for this server
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT MAX(updated_at) as last_update 
-                FROM (
-                    SELECT updated_at FROM artists WHERE server_source = ?
-                    UNION ALL
-                    SELECT updated_at FROM albums WHERE server_source = ?
-                    UNION ALL
-                    SELECT updated_at FROM tracks WHERE server_source = ?
-                )
-            """, (server_source, server_source, server_source))
-            
-            result = cursor.fetchone()
-            last_update = result['last_update'] if result and result['last_update'] else None
-            
-            # Get last full refresh (global setting, not server-specific)
-            last_full_refresh = self.get_last_full_refresh()
-            
-            return {
-                **stats,
-                'database_size_mb': round(total_mb, 2),
-                'database_size_breakdown': {
-                    'main_mb': round(main_mb, 2),
-                    'wal_mb': round(wal_mb, 2),
-                    'shm_mb': round(shm_mb, 2),
-                    'total_mb': round(total_mb, 2)
-                },
-                'database_path': str(self.database_path),
-                'last_update': last_update,
-                'last_full_refresh': last_full_refresh,
-                'server_source': server_source
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting database info for {server_source}: {e}")
-            return {
-                'artists': 0,
-                'albums': 0,
-                'tracks': 0,
-                'database_size_mb': 0.0,
-                'database_size_breakdown': {
-                    'main_mb': 0.0,
-                    'wal_mb': 0.0,
-                    'shm_mb': 0.0,
-                    'total_mb': 0.0
-                },
-                'database_path': str(self.database_path),
-                'last_update': None,
-                'last_full_refresh': None,
-                'server_source': server_source
-            }
-
-    def wal_checkpoint(self, mode: str = "TRUNCATE") -> bool:
-        """Perform a SQLite WAL checkpoint so the main DB reflects latest writes.
-
-        Args:
-            mode: One of PASSIVE|FULL|RESTART|TRUNCATE. Default TRUNCATE for compacting.
-
-        Returns:
-            True if checkpoint executed without raising, False on error.
-        """
-        try:
-            with self._get_connection() as conn:
-                conn.execute(f"PRAGMA wal_checkpoint({mode})")
-            logger.info(f"SQLite WAL checkpoint completed with mode: {mode}")
-            return True
-        except Exception as e:
-            logger.warning(f"SQLite WAL checkpoint failed: {e}")
-            return False
-
     def get_library_artists(self, search_query: str = "", letter: str = "", page: int = 1, limit: int = 50) -> Dict[str, Any]:
         """
         Get artists for the library page with search, filtering, and pagination
@@ -3578,12 +2620,21 @@ class MusicDatabase:
                     genres_str = row['genres'] or ''
                     genres = []
                     if genres_str:
-                        # Split by comma and clean up duplicates
-                        genre_set = set()
-                        for genre in genres_str.split(','):
-                            if genre and genre.strip():
-                                genre_set.update(g.strip() for g in genre.split(',') if g.strip())
-                        genres = list(genre_set)
+                        # Try to parse as JSON first (new format)
+                        try:
+                            import json
+                            parsed_genres = json.loads(genres_str)
+                            if isinstance(parsed_genres, list):
+                                genres = parsed_genres
+                            else:
+                                genres = [str(parsed_genres)]
+                        except (json.JSONDecodeError, ValueError):
+                            # Fall back to comma-separated format (old format)
+                            genre_set = set()
+                            for genre in genres_str.split(','):
+                                if genre and genre.strip():
+                                    genre_set.add(genre.strip())
+                            genres = list(genre_set)
 
                     artist = DatabaseArtist(
                         id=row['id'],
@@ -3920,12 +2971,9 @@ class MusicDatabase:
                          token_type: str = 'Bearer', scope: Optional[str] = None) -> bool:
         """Save OAuth tokens to database"""
         try:
-            from core.security import get_cipher
-            cipher = get_cipher()
-            
             # Encrypt tokens
-            encrypted_access_token = cipher.encrypt(access_token.encode()).decode()
-            encrypted_refresh_token = cipher.encrypt(refresh_token.encode()).decode() if refresh_token else None
+            encrypted_access_token = access_token
+            encrypted_refresh_token = refresh_token
             
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -4013,8 +3061,8 @@ class MusicDatabase:
             logger.error(f"Error getting service config: {e}")
             return None
     
-    def create_account(self, service_id: int, account_name: str, display_name: str = None,
-                      user_id: str = None, account_email: str = None, explicit_id: Optional[int] = None) -> Optional[int]:
+    def create_account(self, service_id: int, account_name: Optional[str] = None, display_name: Optional[str] = None,
+                      user_id: Optional[str] = None, account_email: Optional[str] = None, explicit_id: Optional[int] = None) -> Optional[int]:
         """Create a new account for a service.
         If explicit_id is provided, use it as the account's ID to align with external config IDs.
         """
@@ -4042,7 +3090,7 @@ class MusicDatabase:
             logger.error(f"Error creating account: {e}")
             return None
     
-    def get_accounts(self, service_id: int = None, is_active: bool = None) -> List[Dict[str, Any]]:
+    def get_accounts(self, service_id: Optional[int] = None, is_active: Optional[bool] = None) -> List[Dict[str, Any]]:
         """List all accounts, optionally filtered by service or active status"""
         try:
             with self._get_connection() as conn:
@@ -4120,166 +3168,31 @@ class MusicDatabase:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT access_token, refresh_token, token_type, expires_at, scope
-                    FROM account_tokens WHERE account_id = ?
-                """, (account_id,))
-                result = cursor.fetchone()
+                    SELECT access_token, refresh_token, token_type, expires_at, scope, created_at, updated_at
+                    FROM oauth_tokens
+                    WHERE service = ? AND account_id = ?
+                """, (service, account_id))
                 
-                if result:
-                    return {
-                        'access_token': result[0],
-                        'refresh_token': result[1],
-                        'token_type': result[2],
-                        'expires_at': result[3],
-                        'scope': result[4]
-                    }
-                return None
-        except Exception as e:
-            logger.error(f"Error getting account token: {e}")
-            return None
-    
-    def set_account_metadata(self, account_id: int, key: str, value: str) -> bool:
-        """Store metadata for an account (playlists, collections, preferences, etc.)"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT OR REPLACE INTO account_metadata (account_id, metadata_key, metadata_value)
-                    VALUES (?, ?, ?)
-                """, (account_id, key, value))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error setting account metadata: {e}")
-            return False
-    
-    def get_account_metadata(self, account_id: int, key: str = None) -> Dict[str, str]:
-        """Get metadata for an account"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
+                row = cursor.fetchone()
+                conn.close()
                 
-                if key:
-                    cursor.execute("""
-                        SELECT metadata_value FROM account_metadata 
-                        WHERE account_id = ? AND metadata_key = ?
-                    """, (account_id, key))
-                    result = cursor.fetchone()
-                    return {key: result[0]} if result else {}
-                else:
-                    cursor.execute("""
-                        SELECT metadata_key, metadata_value FROM account_metadata 
-                        WHERE account_id = ?
-                    """, (account_id,))
-                    return {row[0]: row[1] for row in cursor.fetchall()}
-        except Exception as e:
-            logger.error(f"Error getting account metadata: {e}")
-            return {}
-    
-    def mark_account_authenticated(self, account_id: int) -> bool:
-        """Mark account as successfully authenticated"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE accounts SET is_authenticated = 1, last_authenticated_at = ?
-                    WHERE id = ?
-                """, (int(time.time()), account_id))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error marking account authenticated: {e}")
-            return False
-    
-    def deactivate_account(self, account_id: int) -> bool:
-        """Deactivate an account"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE accounts SET is_active = 0 WHERE id = ?", (account_id,))
-                conn.commit()
-                logger.info(f"Deactivated account {account_id}")
-                return True
-        except Exception as e:
-            logger.error(f"Error deactivating account: {e}")
-            return False
-    def set_active_account(self, service_id: int, account_id: int) -> bool:
-        """Set the active account for a service (single-active model)."""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE accounts SET is_active = 0 WHERE service_id = ?", (service_id,))
-                cursor.execute("UPDATE accounts SET is_active = 1 WHERE id = ? AND service_id = ?", (account_id, service_id))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error setting active account: {e}")
-            return False
-
-    def delete_account(self, account_id: int) -> bool:
-        """Delete an account and cascade tokens/metadata."""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
-                conn.commit()
-                return cursor.rowcount > 0
-        except Exception as e:
-            logger.error(f"Error deleting account: {e}")
-            return False
-
-    def update_account_name(self, account_id: int, new_name: str) -> bool:
-        """Rename an account."""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE accounts SET account_name = ?, display_name = ?, updated_at = strftime('%s','now') WHERE id = ?",
-                               (new_name, new_name, account_id))
-                conn.commit()
-                return cursor.rowcount > 0
-        except Exception as e:
-            logger.error(f"Error updating account name: {e}")
-            return False
-            logger.error(f"Error saving OAuth tokens: {e}")
-            return False
-    
-    def get_oauth_tokens(self, service: str, account_id: int) -> Optional[Dict[str, Any]]:
-        """Retrieve OAuth tokens from database"""
-        try:
-            from core.security import get_cipher
-            cipher = get_cipher()
+                if not row:
+                    logger.info(f"No {service} OAuth tokens found for account {account_id}")
+                    return None
+                
+                # Direct access to the tokens
+                access_token = row['access_token']
+                refresh_token = row['refresh_token'] if row['refresh_token'] else None
             
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT access_token, refresh_token, token_type, expires_at, scope, created_at, updated_at
-                FROM oauth_tokens
-                WHERE service = ? AND account_id = ?
-            """, (service, account_id))
-            
-            row = cursor.fetchone()
-            conn.close()
-            
-            if not row:
-                logger.info(f"No {service} OAuth tokens found for account {account_id}")
-                return None
-            
-            # Decrypt tokens
-            access_token = cipher.decrypt(row['access_token'].encode()).decode()
-            refresh_token = None
-            if row['refresh_token']:
-                refresh_token = cipher.decrypt(row['refresh_token'].encode()).decode()
-            
-            return {
-                'access_token': access_token,
-                'refresh_token': refresh_token,
-                'token_type': row['token_type'],
-                'expires_at': row['expires_at'],
-                'scope': row['scope'],
-                'created_at': row['created_at'],
-                'updated_at': row['updated_at']
-            }
+                return {
+                    'access_token': access_token,
+                    'refresh_token': refresh_token,
+                    'token_type': row['token_type'],
+                    'expires_at': row['expires_at'],
+                    'scope': row['scope'],
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
+                }
             
         except Exception as e:
             logger.error(f"Error retrieving OAuth tokens: {e}")
@@ -4362,7 +3275,7 @@ class MusicDatabase:
                     musicbrainz_recording_id, acoustid, provider_refs, download_status,
                     file_path, file_format, bitrate, confidence_score, album_artist,
                     track_number, disc_number, release_year, genres, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,)
                 ON CONFLICT(track_id) DO UPDATE SET
                     title=excluded.title,
                     artists=excluded.artists,
@@ -4532,46 +3445,3 @@ class MusicDatabase:
         except Exception as e:
             logger.error(f"Error performing fuzzy search on canonical tracks: {e}")
             return []
-
-    def list_canonical_tracks(self, limit: int = 50, offset: int = 0) -> List[Track]:
-        """List canonical tracks with pagination."""
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT * FROM canonical_tracks ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            )
-            rows = cursor.fetchall()
-            conn.close()
-            return [self._row_to_canonical_track(row) for row in rows]
-        except Exception as e:
-            logger.error(f"Error listing canonical tracks: {e}")
-            return []
-
-# Thread-safe singleton pattern for database access
-_database_instances: Dict[int, MusicDatabase] = {}  # Thread ID -> Database instance
-_database_lock = threading.Lock()
-
-def get_database(database_path: Optional[str] = None) -> MusicDatabase:
-    """Get thread-local database instance"""
-    thread_id = threading.get_ident()
-    
-    with _database_lock:
-        if thread_id not in _database_instances:
-            _database_instances[thread_id] = MusicDatabase(database_path)
-        return _database_instances[thread_id]
-
-def close_database():
-    """Close database instances (safe to call from any thread)"""
-    global _database_instances
-    
-    with _database_lock:
-        # Close all database instances
-        for thread_id, db_instance in list(_database_instances.items()):
-            try:
-                db_instance.close()
-            except Exception as e:
-                # Ignore threading errors during shutdown
-                pass
-        _database_instances.clear()

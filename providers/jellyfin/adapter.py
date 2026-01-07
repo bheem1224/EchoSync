@@ -7,13 +7,143 @@ and attaches Jellyfin ProviderRef. Adheres to Track-centric architecture.
 
 from typing import List, Optional, Dict, Any
 from utils.logging_config import get_logger
-from plugins.provider_adapter import ProviderAdapter
 from core.models import ProviderType, Track
 from sdk.storage_service import get_storage_service
+from core.provider_base import ProviderBase
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 logger = get_logger("jellyfin_adapter")
 
-class JellyfinAdapter(ProviderAdapter):
+
+def convert_jellyfin_track_to_soulsync(jellyfin_track) -> Optional[SoulSyncTrack]:
+    """
+    Convert Jellyfin track object to SoulSyncTrack.
+    
+    Extracts Jellyfin metadata including audio quality info, ISRC, and MusicBrainz IDs.
+    
+    Args:
+        jellyfin_track: Jellyfin track object or wrapper (JellyfinTrack)
+        
+    Returns:
+        SoulSyncTrack with all available metadata, or None if conversion fails
+    """
+    try:
+        # Get raw data dict if this is a wrapper object
+        raw_data = jellyfin_track._data if hasattr(jellyfin_track, '_data') else jellyfin_track
+        
+        # Extract basic metadata from raw data
+        title = raw_data.get('Name') if isinstance(raw_data, dict) else getattr(jellyfin_track, 'title', None)
+        
+        # Handle artist - Jellyfin provides ArtistItems list
+        artist = None
+        if isinstance(raw_data, dict):
+            artist_items = raw_data.get('ArtistItems', [])
+            if artist_items and isinstance(artist_items, list):
+                artist = artist_items[0].get('Name') if isinstance(artist_items[0], dict) else str(artist_items[0])
+        if not artist:
+            artist = getattr(jellyfin_track, 'artist', None)
+        
+        album = raw_data.get('Album') if isinstance(raw_data, dict) else getattr(jellyfin_track, 'album', None)
+        
+        if not title or not artist:
+            logger.warning(f"Jellyfin track missing title or artist: {title} / {artist}")
+            return None
+        
+        # Duration - already converted in wrapper, or convert from ticks
+        duration_ms = None
+        if isinstance(raw_data, dict):
+            duration_raw = raw_data.get('RunTimeTicks')
+            if duration_raw:
+                try:
+                    duration_ms = int(duration_raw) // 10000  # Convert ticks to ms
+                except (ValueError, TypeError):
+                    pass
+        else:
+            duration_ms = getattr(jellyfin_track, 'duration', None)
+        
+        track_number = raw_data.get('IndexNumber') if isinstance(raw_data, dict) else getattr(jellyfin_track, 'trackNumber', None)
+        disc_number = raw_data.get('ParentIndexNumber') if isinstance(raw_data, dict) else None
+        
+        # Extract file metadata
+        file_path = raw_data.get('Path') if isinstance(raw_data, dict) else None
+        file_format = raw_data.get('Container') if isinstance(raw_data, dict) else None
+        if file_format:
+            file_format = file_format.lower()
+        
+        # Audio quality metadata
+        bitrate = raw_data.get('Bitrate') if isinstance(raw_data, dict) else None
+        sample_rate = None
+        bit_depth = None
+        
+        # Jellyfin stores MediaSources with detailed audio info
+        if isinstance(raw_data, dict):
+            media_sources = raw_data.get('MediaSources', [])
+            if media_sources and isinstance(media_sources, list):
+                source = media_sources[0]
+                if isinstance(source, dict):
+                    bitrate = source.get('Bitrate') or bitrate
+                    
+                    # Audio streams contain sample rate and bit depth
+                    media_streams = source.get('MediaStreams', [])
+                    for stream in media_streams:
+                        if isinstance(stream, dict):
+                            stream_type = stream.get('Type', '')
+                            if 'Audio' in stream_type:
+                                sample_rate = stream.get('SampleRate') or sample_rate
+                                bit_depth = stream.get('BitDepth') or bit_depth
+                                break
+        
+        # Extract ISRC and MusicBrainz IDs from ProviderIds
+        isrc = None
+        musicbrainz_id = None
+        musicbrainz_album_id = None
+        
+        if isinstance(raw_data, dict):
+            provider_ids = raw_data.get('ProviderIds', {})
+            if isinstance(provider_ids, dict):
+                isrc = provider_ids.get('Isrc')
+                # MusicBrainz recording
+                musicbrainz_id = provider_ids.get('MusicBrainzRecording') or provider_ids.get('MusicBrainz')
+                # MusicBrainz album
+                musicbrainz_album_id = provider_ids.get('MusicBrainzAlbum')
+        
+        year = None
+        if isinstance(raw_data, dict):
+            year_val = raw_data.get('ProductionYear')
+            if year_val:
+                try:
+                    year = int(year_val)
+                except (ValueError, TypeError):
+                    pass
+        else:
+            year = getattr(jellyfin_track, 'year', None)
+        
+        # Use ProviderBase factory method for normalization
+        return ProviderBase.create_soul_sync_track(
+            title=title,
+            artist=artist,
+            album=album,
+            duration_ms=duration_ms,
+            year=year,
+            track_number=track_number,
+            disc_number=disc_number,
+            isrc=isrc,
+            musicbrainz_id=musicbrainz_id,
+            musicbrainz_album_id=musicbrainz_album_id,
+            bitrate=bitrate,
+            file_format=file_format,
+            sample_rate=sample_rate,
+            bit_depth=bit_depth,
+            file_path=file_path,
+            source='jellyfin'
+        )
+    
+    except Exception as e:
+        logger.error(f"Error converting Jellyfin track to SoulSyncTrack: {e}", exc_info=True)
+        return None
+
+
+class JellyfinAdapter:
     def __init__(self, jellyfin_client=None):
         storage = get_storage_service()
         db = storage.get_music_database()

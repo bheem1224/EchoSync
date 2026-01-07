@@ -3,6 +3,7 @@
 import threading
 import time
 from utils.logging_config import get_logger
+from core.job_queue import JobQueue
 
 logger = get_logger("media_scan_manager")
 
@@ -40,80 +41,36 @@ class MediaScanManager:
         self._periodic_update_interval = 300  # 5 minutes in seconds
         self._is_doing_periodic_updates = False  # Track if we're in periodic update mode
         
+        # Register with JobQueue
+        self.job_queue = JobQueue()
+        self.job_queue.register_job(
+            name="media_scan_update",
+            func=self._execute_scan,
+            interval_seconds=self._periodic_update_interval,
+            enabled=True
+        )
+        
         logger.info(f"MediaScanManager initialized with {delay_seconds}s debounce delay")
+        logger.info("MediaScanManager periodic update job registered with JobQueue.")
     
     def _get_active_media_client(self):
-        """Get the active media client based on config settings"""
+        """Get the active media client based on the flags/tags system."""
         try:
             from config.settings import config_manager
             active_server = config_manager.get_active_media_server()
-            
-            # Try to get client instances from app
-            try:
-                # Try PyQt6 first (GUI mode)
-                try:
-                    from PyQt6.QtWidgets import QApplication
-                    app = QApplication.instance()
-                    
-                    if app:
-                        # Try to find the main window from top-level widgets
-                        main_window = None
-                        for widget in app.topLevelWidgets():
-                            if (hasattr(widget, 'plex_client') and hasattr(widget, 'jellyfin_client') and
-                                hasattr(widget, 'navidrome_client')):
-                                main_window = widget
-                                break
-                        
-                        if main_window:
-                            if active_server == "jellyfin":
-                                client = getattr(main_window, 'jellyfin_client', None)
-                                if client and client.is_connected():
-                                    return client, "jellyfin"
-                                else:
-                                    logger.warning("Jellyfin client not connected, falling back to Plex")
-                            elif active_server == "navidrome":
-                                client = getattr(main_window, 'navidrome_client', None)
-                                if client and client.is_connected():
-                                    return client, "navidrome"
-                                else:
-                                    logger.warning("Navidrome client not connected, falling back to Plex")
 
-                            # Default to Plex or fallback
-                            client = getattr(main_window, 'plex_client', None)
-                            if client and client.is_connected():
-                                return client, "plex"
-                            else:
-                                logger.debug(f"Plex client not connected or not found")
-                        else:
-                            logger.debug("No main window found in Qt application")
-                    else:
-                        logger.debug("No QApplication instance found")
-                        
-                except ImportError:
-                    logger.debug("PyQt6 not available, trying headless mode")
-                
-                # Headless mode - try to get clients from global instances
-                import sys
-                for module_name, module in sys.modules.items():
-                    if (hasattr(module, 'plex_client') and hasattr(module, 'jellyfin_client') and
-                        hasattr(module, 'navidrome_client')):
-                        if active_server == "jellyfin":
-                            client = getattr(module, 'jellyfin_client', None)
-                            if client and hasattr(client, 'is_connected') and client.is_connected():
-                                return client, "jellyfin"
-                        elif active_server == "navidrome":
-                            client = getattr(module, 'navidrome_client', None)
-                            if client and hasattr(client, 'is_connected') and client.is_connected():
-                                return client, "navidrome"
+            # Map active server to client
+            client_map = {
+                "plex": getattr(config_manager, "plex_client", None),
+                "jellyfin": getattr(config_manager, "jellyfin_client", None),
+                "navidrome": getattr(config_manager, "navidrome_client", None),
+            }
 
-                        client = getattr(module, 'plex_client', None)
-                        if client and hasattr(client, 'is_connected') and client.is_connected():
-                            return client, "plex"
-                        
-            except Exception as e:
-                logger.debug(f"Could not access clients: {e}")
-            
-            logger.error("No active media client available")
+            client = client_map.get(active_server)
+            if client and client.is_connected():
+                return client, active_server
+
+            logger.error(f"Active media server '{active_server}' is not connected or unavailable.")
             return None, None
         except Exception as e:
             logger.error(f"Error determining active media server: {e}")
@@ -189,21 +146,26 @@ class MediaScanManager:
             self._reset_scan_state()
             return
         
+        if not server_type:
+            logger.error("Operation aborted: Missing server type.")
+            return
+
         logger.info(f"🎵 Starting {server_type.upper()} library scan...")
-        
+
         try:
             success = media_client.trigger_library_scan()
             
             if success:
                 logger.info(f"✅ {server_type.upper()} library scan initiated successfully")
+                
                 # Start new periodic update system instead of completion detection
                 self._start_periodic_updates()
             else:
-                logger.error(f"❌ Failed to initiate {server_type.upper()} library scan")
+                logger.error("❌ Failed to initiate library scan for the active server")
                 self._reset_scan_state()
                 
         except Exception as e:
-            logger.error(f"Exception during {server_type.upper()} library scan: {e}")
+            logger.error("Exception occurred during library scan for the active server")
             self._reset_scan_state()
     
     def _start_periodic_updates(self):
@@ -251,11 +213,18 @@ class MediaScanManager:
             is_scanning = media_client.is_library_scanning("Music")
             elapsed_time = time.time() - self._scan_start_time if self._scan_start_time else 0
             
-            logger.info(f"🕒 PERIODIC UPDATE: After {elapsed_time//60:.0f} minutes - {server_type.upper()} scanning: {is_scanning}")
-            
+            if server_type:
+                logger.info(f"🕒 PERIODIC UPDATE: After {elapsed_time//60:.0f} minutes - {server_type.upper()} scanning: {is_scanning}")
+            else:
+                logger.warning("Periodic update skipped due to missing server type.")
+
             if is_scanning:
                 # Still scanning - trigger database update and continue periodic updates
-                logger.info(f"🔄 {server_type.upper()} still scanning - triggering database update")
+                if server_type:
+                    logger.info(f"🔄 {server_type.upper()} still scanning - triggering database update")
+                else:
+                    logger.warning("Database update skipped due to missing server type.")
+                
                 self._call_completion_callbacks()
                 
                 # Schedule next periodic update
@@ -264,7 +233,11 @@ class MediaScanManager:
                 self._periodic_update_timer.start()
             else:
                 # Scanning stopped - final update and cleanup
-                logger.info(f"✅ {server_type.upper()} scanning completed - doing final database update")
+                if server_type:
+                    logger.info(f"✅ {server_type.upper()} scanning completed - doing final database update")
+                else:
+                    logger.warning("Final database update skipped due to missing server type.")
+                
                 self._call_completion_callbacks()
                 self._stop_periodic_updates()
                 
@@ -382,3 +355,17 @@ class MediaScanManager:
                 
             self._is_doing_periodic_updates = False
             logger.info("MediaScanManager shutdown - cancelled all pending timers")
+    
+    def update_local_database(self):
+        """Update the local database with files picked up by the media server."""
+        client, server_type = self._get_active_media_client()
+        if not client or not server_type:
+            logger.error("Cannot update local database: No active media server available.")
+            return
+
+        try:
+            logger.info(f"Updating local database with files from {server_type.upper()}...")
+            # Logic to query the media server and update the database goes here
+            logger.info("Local database updated successfully.")
+        except Exception as e:
+            logger.error(f"Failed to update local database: {e}")

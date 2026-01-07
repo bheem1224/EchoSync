@@ -1,7 +1,7 @@
 
 import pytest
 from dataclasses import dataclass
-from core.matching_engine import MusicMatchingEngine
+from core import MatchService, MatchContext, SoulSyncTrack
 
 # --- Mock Data Structures ---
 # Replicating the necessary parts of the real data classes for testing

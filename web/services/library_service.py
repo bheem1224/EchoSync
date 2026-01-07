@@ -1,9 +1,15 @@
 """Library adapter for summarizing library servers and canonical tracks."""
 
 from typing import Dict, List
-
-from plugins.plugin_system import plugin_registry, PluginScope
+import os
+from pathlib import Path
+from config.settings import config_manager
+from core.provider_registry import ProviderRegistry
 from core.provider_capabilities import get_provider_capabilities, MetadataRichness
+from database.music_database import get_database
+from utils.logging_config import get_logger
+
+logger = get_logger("library_service")
 
 
 def _metadata_completeness(richness: str) -> str:
@@ -15,50 +21,112 @@ def _metadata_completeness(richness: str) -> str:
     return mapping.get(richness, 'unknown')
 
 
+def _get_database_size_mb() -> float:
+    """Get the size of the SoulSync music database in MB."""
+    try:
+        db_path = config_manager.get('media_database_path') or Path(__file__).parent.parent.parent / 'config' / 'media_library.db'
+        if isinstance(db_path, str):
+            db_path = Path(db_path)
+        if db_path.exists():
+            size_bytes = db_path.stat().st_size
+            return round(size_bytes / (1024 * 1024), 2)
+    except Exception as e:
+        logger.warning(f"Could not get database size: {e}")
+    return 0.0
+
+
 class LibraryAdapter:
     def overview(self) -> Dict:
         """Summarize available library servers and canonical tracks.
 
         Returns:
-            dict: servers, stats, tracks, artists
+            dict: servers, stats, tracks, artists, albums
         """
         servers: List[Dict] = []
-        tracks: List[Dict] = []
-
-        library_plugins = plugin_registry.get_plugins_by_scope(PluginScope.LIBRARY)
-        for plugin in library_plugins:
-            if not getattr(plugin, "enabled", True):
-                continue
+        provider_artists = 0
+        provider_albums = 0
+        provider_tracks = 0
+        
+        # Get the active media server
+        active_server = config_manager.get('active_media_server', 'plex')
+        
+        # Get all media server providers
+        provider_names = ProviderRegistry.list_providers()
+        
+        for provider_name in provider_names:
             try:
-                caps = get_provider_capabilities(plugin.name)
+                caps = get_provider_capabilities(provider_name)
+                
+                # Skip if not a library/media server provider
+                if not caps.supports_library_scan:
+                    continue
+                
                 richness = caps.metadata.name
-            except KeyError:
-                richness = MetadataRichness.MEDIUM.name
+                is_active = (provider_name == active_server)
+                
+                # Try to get library stats from the provider if it's active
+                track_count = 0
+                artist_count = 0
+                album_count = 0
+                
+                if is_active:
+                    try:
+                        provider = ProviderRegistry.create_instance(provider_name)
+                        if hasattr(provider, 'ensure_connection') and hasattr(provider, 'get_library_stats'):
+                            if provider.ensure_connection():
+                                stats = provider.get_library_stats()
+                                track_count = stats.get('tracks', 0)
+                                artist_count = stats.get('artists', 0)
+                                album_count = stats.get('albums', 0)
+                                
+                                # Store provider stats separately
+                                provider_tracks = track_count
+                                provider_artists = artist_count
+                                provider_albums = album_count
+                    except Exception as e:
+                        logger.error(f"Error getting stats from {provider_name}: {e}")
+                
+                servers.append({
+                    "name": provider_name,
+                    "type": "media_server",
+                    "metadata_richness": richness,
+                    "track_count": track_count,
+                    "artist_count": artist_count,
+                    "album_count": album_count,
+                    "is_active": is_active,
+                })
+                
+            except Exception as e:
+                logger.error(f"Error processing provider {provider_name}: {e}")
+                continue
 
-            servers.append({
-                "name": plugin.name,
-                "type": plugin.plugin_type.value,
-                "metadata_richness": richness,
-                "track_count": 0,
-            })
+        # Get actual database stats (what's been synced to SoulSync database)
+        db_tracks = 0
+        db_artists = 0
+        db_albums = 0
+        db_size_mb = _get_database_size_mb()
+        
+        try:
+            db = get_database()
+            db_artists = db.count_artists()
+            db_albums = db.count_albums()
+            db_tracks = db.count_tracks()
+        except Exception as e:
+            logger.error(f"Error getting database stats: {e}")
 
-            tracks.append({
-                "id": f"track-{plugin.name}-1",
-                "title": f"Sample from {plugin.name}",
-                "artists": ["Sample Artist"],
-                "album": "Sample Album",
-                "duration_ms": 180000,
-                "isrc": None,
-                "provider_refs": {plugin.name: "sample-id"},
-                "source_provider": plugin.name,
-                "metadata_richness": richness,
-                "metadata_completeness": _metadata_completeness(richness),
-            })
-
-        artists = self._aggregate_artists(tracks)
+        tracks = []
+        artists = []
+        albums = []
+        
+        # Stats should reflect what's actually in the SoulSync database
         stats = {
-            "total_tracks": len(tracks),
-            "total_artists": len(artists),
+            "synced_tracks": db_tracks,
+            "synced_artists": db_artists,
+            "synced_albums": db_albums,
+            "total_tracks": provider_tracks,  # Available in source provider
+            "total_artists": provider_artists,
+            "total_albums": provider_albums,
+            "database_size_mb": db_size_mb,
         }
 
         return {
@@ -66,15 +134,6 @@ class LibraryAdapter:
             "stats": stats,
             "tracks": tracks,
             "artists": artists,
+            "albums": albums,
         }
 
-    @staticmethod
-    def _aggregate_artists(tracks: List[Dict]) -> List[Dict]:
-        counts: Dict[str, int] = {}
-        for t in tracks:
-            for artist in t.get("artists", []) or ["Unknown"]:
-                counts[artist] = counts.get(artist, 0) + 1
-        return [
-            {"name": name, "track_count": count}
-            for name, count in sorted(counts.items(), key=lambda kv: kv[0])
-        ]

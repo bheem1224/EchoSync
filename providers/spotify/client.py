@@ -11,10 +11,58 @@ from dataclasses import dataclass
 from utils.logging_config import get_logger
 from config.settings import config_manager
 from core.provider_base import ProviderBase
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
 from core.provider_capabilities import get_provider_capabilities
 
 logger = get_logger("spotify_client")
+
+
+def convert_spotify_track_to_soulsync(spotify_track_data: Dict[str, Any]) -> Optional[SoulSyncTrack]:
+    """
+    Convert Spotify track data to SoulSyncTrack.
+    
+    Extracts ISRC from external_ids and uses shared normalization utilities.
+    This is the ONLY place that knows about Spotify-specific data structures.
+    
+    Args:
+        spotify_track_data: Raw track data from Spotify API
+        
+    Returns:
+        SoulSyncTrack with Spotify metadata, or None if conversion fails
+    """
+    try:
+        title = spotify_track_data.get('name')
+        album = spotify_track_data.get('album', {}).get('name')
+        duration_ms = spotify_track_data.get('duration_ms')
+        
+        # Extract artist (join multiple artists with comma)
+        artists = spotify_track_data.get('artists', [])
+        artist = ', '.join([a.get('name', '') for a in artists]) if artists else None
+        
+        if not title or not artist:
+            logger.warning(f"Spotify track missing title or artist")
+            return None
+        
+        # Extract ISRC from external_ids (Spotify-specific)
+        isrc = None
+        if 'external_ids' in spotify_track_data:
+            isrc = spotify_track_data['external_ids'].get('isrc')
+        
+        # Use ProviderBase factory for normalization
+        return ProviderBase.create_soul_sync_track(
+            title=title,
+            artist=artist,
+            album=album,
+            duration_ms=duration_ms,
+            isrc=isrc,
+            source='spotify'
+        )
+    
+    except Exception as e:
+        logger.error(f"Error converting Spotify track to SoulSyncTrack: {e}", exc_info=True)
+        return None
+
 
 @dataclass
 class Track:
@@ -24,11 +72,17 @@ class Track:
     album: str
     duration_ms: int
     popularity: int
+    isrc: Optional[str] = None  # International Standard Recording Code
     preview_url: Optional[str] = None
     external_urls: Optional[Dict[str, str]] = None
     
     @classmethod
     def from_spotify_track(cls, track_data: Dict[str, Any]) -> 'Track':
+        # Extract ISRC from external_ids if available
+        isrc = None
+        if 'external_ids' in track_data and 'isrc' in track_data['external_ids']:
+            isrc = track_data['external_ids']['isrc']
+        
         return cls(
             id=track_data['id'],
             name=track_data['name'],
@@ -36,6 +90,7 @@ class Track:
             album=track_data['album']['name'],
             duration_ms=track_data['duration_ms'],
             popularity=track_data['popularity'],
+            isrc=isrc,
             preview_url=track_data.get('preview_url'),
             external_urls=track_data.get('external_urls')
         )
@@ -224,9 +279,32 @@ class SpotifyClient(ProviderBase):
         # Stub implementation
         return []
 
-    def get_playlist_tracks(self, playlist_id: str) -> list:
-        # Stub implementation
-        return []
+    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
+        """Get tracks from a Spotify playlist and return as SoulSyncTrack objects"""
+        if not self.is_authenticated():
+            return []
+        
+        try:
+            # Get raw Spotify track data from API
+            results = self.sp.playlist_tracks(playlist_id, limit=100)
+            
+            soul_sync_tracks = []
+            
+            while results:
+                for item in results['items']:
+                    if item['track'] and item['track']['id']:
+                        # Convert Spotify track to SoulSyncTrack
+                        soul_track = convert_spotify_track_to_soulsync(item['track'])
+                        if soul_track:
+                            soul_sync_tracks.append(soul_track)
+                
+                results = self.sp.next(results) if results['next'] else None
+            
+            return soul_sync_tracks
+            
+        except Exception as e:
+            logger.error(f"Error getting playlist tracks: {e}", exc_info=True)
+            return []
 
     def sync_playlist(self, playlist_id: str, target_provider: str) -> bool:
         # Stub implementation
@@ -266,44 +344,6 @@ class SpotifyClient(ProviderBase):
         self.capabilities = get_provider_capabilities('spotify')
         self._setup_client()
         ProviderRegistry.register(SpotifyClient)
-        
-        # Register as plugin with explicit declarations
-        from plugins.plugin_system import (
-            PluginType,
-            PluginScope,
-            PluginDeclaration,
-            register_plugin,
-            get_plugin,
-        )
-
-        # Avoid duplicate registrations when temp clients are created (e.g., tests/health)
-        if not get_plugin('spotify'):
-            plugin_decl = PluginDeclaration(
-                name='spotify',
-                plugin_type=PluginType.PLAYLIST_SERVICE,
-                provides=[
-                    'playlist.read',
-                    'search.tracks',
-                    'search.artists',
-                    'search.albums',
-                    'search.playlists',
-                    'track.title',
-                    'track.artist',
-                    'track.album',
-                    'track.duration_ms',
-                    'track.release_date',
-                    'album.artist',
-                    'album.type',
-                ],
-                consumes=['auth.credentials'],
-                scope=[PluginScope.SYNC, PluginScope.SEARCH],
-                version='1.0.0',
-                description='Spotify playlist and search provider',
-                author='SoulSync',
-                instance=self,
-                priority=100,
-            )
-            register_plugin(plugin_decl)
     
     def _setup_client(self):
         try:

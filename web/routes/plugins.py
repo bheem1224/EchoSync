@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify
-from plugins.plugin_system import plugin_registry, PluginType, PluginScope
+from core.provider_registry import ProviderRegistry
 from utils.logging_config import get_logger
 
 logger = get_logger("plugins_route")
@@ -7,76 +7,88 @@ bp = Blueprint("plugins", __name__, url_prefix="/api/plugins")
 
 @bp.get("/")
 def list_plugins():
-    """List all registered plugins with their declarations."""
+    """List all registered providers/plugins."""
     try:
+        providers = ProviderRegistry.list_providers()
+        provider_info = []
+        for name in providers:
+            cls = ProviderRegistry.get_provider_class(name)
+            if cls:
+                provider_info.append({
+                    'name': name,
+                    'category': getattr(cls, 'category', 'provider'),
+                    'disabled': ProviderRegistry.is_provider_disabled(name)
+                })
         return jsonify({
-            'plugins': plugin_registry.list_all_dict(),
-            'total': len(plugin_registry.list_all())
+            'providers': provider_info,
+            'total': len(provider_info)
         })
     except Exception as e:
-        logger.error(f"Error listing plugins: {e}")
-        return jsonify({'error': 'Failed to list plugins'}), 500
+        logger.error(f"Error listing providers: {e}")
+        return jsonify({'error': 'Failed to list providers'}), 500
 
-@bp.get("/by-type/<plugin_type>")
-def get_plugins_by_type(plugin_type: str):
-    """Get plugins filtered by type (e.g., playlist_service, library_manager)."""
+@bp.get("/by-type/<provider_type>")
+def get_plugins_by_type(provider_type: str):
+    """Get providers filtered by type (e.g., downloader, mediaserver, syncservice)."""
     try:
-        ptype = PluginType(plugin_type)
-        plugins = plugin_registry.get_plugins_by_type(ptype)
+        providers = ProviderRegistry.get_providers_by_type(provider_type)
+        provider_info = []
+        for name in providers:
+            cls = ProviderRegistry.get_provider_class(name)
+            if cls:
+                provider_info.append({
+                    'name': name,
+                    'category': getattr(cls, 'category', 'provider'),
+                    'disabled': ProviderRegistry.is_provider_disabled(name)
+                })
         return jsonify({
-            'type': plugin_type,
-            'plugins': [p.to_dict() for p in plugins],
-            'total': len(plugins)
+            'type': provider_type,
+            'providers': provider_info,
+            'total': len(provider_info)
         })
-    except ValueError:
-        return jsonify({'error': f'Unknown plugin type: {plugin_type}'}), 404
+    except ValueError as e:
+        logger.error(f"Invalid provider type: {e}")
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
-        logger.error(f"Error filtering plugins by type: {e}")
-        return jsonify({'error': 'Failed to filter plugins'}), 500
+        logger.error(f"Error getting providers by type: {e}")
+        return jsonify({'error': 'Failed to get providers'}), 500
 
-@bp.get("/by-scope/<scope>")
-def get_plugins_by_scope(scope: str):
-    """Get plugins filtered by scope (library, sync, search, download, playback, utility)."""
+@bp.post("/disable/<provider_name>")
+def disable_provider(provider_name: str):
+    """Disable a provider/plugin."""
     try:
-        pscope = PluginScope(scope)
-        plugins = plugin_registry.get_plugins_by_scope(pscope)
-        return jsonify({
-            'scope': scope,
-            'plugins': [p.to_dict() for p in plugins],
-            'total': len(plugins)
-        })
-    except ValueError:
-        return jsonify({'error': f'Unknown scope: {scope}'}), 404
+        if ProviderRegistry.disable_provider(provider_name):
+            # Also persist to config
+            from config.settings import config_manager
+            config_manager.disable_provider(provider_name)
+            return jsonify({'status': 'success', 'message': f'Provider {provider_name} disabled. Restart required.'}), 200
+        else:
+            return jsonify({'error': f'Provider {provider_name} not found'}), 404
     except Exception as e:
-        logger.error(f"Error filtering plugins by scope: {e}")
-        return jsonify({'error': 'Failed to filter plugins'}), 500
+        logger.error(f"Error disabling provider: {e}")
+        return jsonify({'error': 'Failed to disable provider'}), 500
 
-@bp.get("/capability/<capability>")
-def get_capability_providers(capability: str):
-    """Get plugins that provide a specific capability, sorted by priority."""
+@bp.post("/enable/<provider_name>")
+def enable_provider(provider_name: str):
+    """Enable a previously disabled provider/plugin."""
     try:
-        providers = plugin_registry.get_providers_for_capability(capability)
-        return jsonify({
-            'capability': capability,
-            'providers': [p.to_dict() for p in providers],
-            'primary': providers[0].to_dict() if providers else None,
-            'total': len(providers)
-        })
+        if ProviderRegistry.enable_provider(provider_name):
+            # Also persist to config
+            from config.settings import config_manager
+            config_manager.enable_provider(provider_name)
+            return jsonify({'status': 'success', 'message': f'Provider {provider_name} enabled. Restart required.'}), 200
+        else:
+            return jsonify({'error': f'Provider {provider_name} not found'}), 404
     except Exception as e:
-        logger.error(f"Error getting capability providers: {e}")
-        return jsonify({'error': 'Failed to fetch providers'}), 500
+        logger.error(f"Error enabling provider: {e}")
+        return jsonify({'error': 'Failed to enable provider'}), 500
 
-@bp.get("/field/<field_name>")
-def get_field_providers(field_name: str):
-    """Get plugins that can populate a Track field, sorted by priority."""
+@bp.get("/disabled")
+def get_disabled_providers():
+    """Get list of disabled providers."""
     try:
-        providers = plugin_registry.get_providers_for_field(field_name)
-        return jsonify({
-            'field': field_name,
-            'providers': [p.to_dict() for p in providers],
-            'primary': providers[0].to_dict() if providers else None,
-            'total': len(providers)
-        })
+        disabled = ProviderRegistry.get_disabled_providers()
+        return jsonify({'disabled_providers': disabled, 'total': len(disabled)}), 200
     except Exception as e:
-        logger.error(f"Error getting field providers: {e}")
-        return jsonify({'error': 'Failed to fetch providers'}), 500
+        logger.error(f"Error getting disabled providers: {e}")
+        return jsonify({'error': 'Failed to fetch disabled providers'}), 500

@@ -8,12 +8,12 @@ AFTER (New): SpotifyAdapter creates stubs through music_database
 """
 
 from typing import List, Dict, Optional, Any
-from plugins.provider_adapter import ProviderAdapter
 from core.models import Track, ProviderType
 from database.music_database import MusicDatabase
 
 
-class SpotifyAdapter(ProviderAdapter):
+# SpotifyAdapter class example (ProviderAdapter base class removed)
+class SpotifyAdapter:
     """
     Spotify adapter using canonical Track model.
     
@@ -128,25 +128,33 @@ class SpotifyAdapter(ProviderAdapter):
         if not results:
             return track  # No match found
         
-        # Find best match (using existing matching engine)
-        from core.matching_engine import MusicMatchingEngine
-        matcher = MusicMatchingEngine()
+        # Find best match (using new MatchService)
+        from core import MatchService, MatchContext, SoulSyncTrack
+        service = MatchService()
         
-        best_match = None
-        best_score = 0.0
+        source = SoulSyncTrack(
+            title=track.title,
+            artist=track.artists[0] if track.artists else "",
+            album=track.album or "",
+            duration_ms=int((track.duration or 0) * 1000),
+        )
         
-        for spotify_track in results:
-            score = matcher.calculate_match_confidence(
-                track.title, ' '.join(track.artists), track.album or "",
-                spotify_track['name'], 
-                ' '.join([a['name'] for a in spotify_track['artists']]),
-                spotify_track['album']['name']
+        candidates = [
+            SoulSyncTrack(
+                title=result['name'],
+                artist=result['artists'][0]['name'] if result['artists'] else "",
+                album=result['album']['name'] if result.get('album') else "",
+                duration_ms=result.get('duration_ms', 0),
             )
-            if score > best_score:
-                best_score = score
-                best_match = spotify_track
+            for result in results
+        ]
         
-        if best_match and best_score >= 0.8:
+        best_match_obj = service.find_best_match(source, candidates, context=MatchContext.DOWNLOAD_SEARCH)
+        
+        if best_match_obj and best_match_obj.confidence_score >= 70:
+            # Get the original result for Spotify data
+            best_match = next((r for r in results if r['name'] == best_match_obj.candidate_track.title), results[0])
+            
             # Enrich with Spotify data
             enriched = self.enrich_track(
                 track_id=track_id,

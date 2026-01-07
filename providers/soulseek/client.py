@@ -201,29 +201,10 @@ class DownloadStatus:
 
 from core.provider_types import DownloaderProvider
 
-# Fixed method signature mismatches, type errors, and duplicate methods in SoulseekClient
 class SoulseekClient(DownloaderProvider):
+    """Soulseek/slskd client for P2P music search and download"""
     name = "soulseek"
-
-    def search(self, query: str, limit: int = 10) -> List[Any]:
-        # Synchronous implementation to match base class
-        return []
-
-    def download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
-        # Synchronous implementation to match base class
-        return None
-
-    def get_download_status(self, download_id: str) -> Optional[Dict[str, Any]]:
-        # Synchronous implementation to match base class
-        return None
-
-    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Any]:
-        # Corrected parameter type
-        return [{"id": "1", "name": "Sample Playlist"}]
-
-    def filter_results_by_quality_preference(self, results: List[TrackResult]) -> List[TrackResult]:
-        # Fixed type mismatch in parameter
-        return results
+    supports_downloads = True
 
     def __init__(self):
         self.base_url: Optional[str] = None
@@ -237,27 +218,6 @@ class SoulseekClient(DownloaderProvider):
         self.max_searches_per_window = 35
         self.rate_limit_window = 220
         self._setup_client()
-        
-        # Register as plugin with explicit declarations
-        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
-        plugin_decl = PluginDeclaration(
-            name='soulseek_client',
-            plugin_type=PluginType.DOWNLOAD_CLIENT,
-            provides=[
-                'download.p2p',
-                'search.tracks',
-                'track.title',
-                'track.artist',
-            ],
-            consumes=['auth.credentials'],
-            scope=[PluginScope.DOWNLOAD, PluginScope.SEARCH],
-            version='1.0.0',
-            description='Soulseek P2P search and download client',
-            author='SoulSync',
-            instance=self,
-            priority=80,
-        )
-        register_plugin(plugin_decl)
     
     def _setup_client(self):
         config = config_manager.get_soulseek_config()
@@ -660,7 +620,7 @@ class SoulseekClient(DownloaderProvider):
         
         return None
     
-    async def search(self, query: str, timeout: int = 60, progress_callback=None) -> tuple[List[TrackResult], List[AlbumResult]]:
+    async def _async_search(self, query: str, timeout: int = 60, progress_callback=None) -> tuple[List[TrackResult], List[AlbumResult]]:
         if not self.base_url:
             logger.error("Soulseek client not configured")
             return [], []
@@ -775,7 +735,7 @@ class SoulseekClient(DownloaderProvider):
             if 'search_id' in locals() and search_id in self.active_searches:
                 del self.active_searches[search_id]
     
-    async def download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
+    async def _async_download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
         if not self.base_url:
             logger.error("Soulseek client not configured")
             return None
@@ -1305,7 +1265,7 @@ class SoulseekClient(DownloaderProvider):
             return False
     
     async def search_and_download_best(self, query: str) -> Optional[str]:
-        results = await self.search(query)
+        results = await self._async_search(query)
 
         if not results:
             logger.warning(f"No results found for: {query}")
@@ -1338,20 +1298,24 @@ class SoulseekClient(DownloaderProvider):
             logger.debug(f"Connection check failed: {e}")
             return False
     
-    def filter_results_by_quality_preference(self, results: List[TrackResult]) -> List[TrackResult]:
+    def filter_results_by_quality_preference(self, results: List[TrackResult], quality_profile: Optional[Dict[str, Any]] = None) -> List[TrackResult]:
         """
         Filter candidates based on user's quality profile with file size constraints.
         Uses priority waterfall logic: tries highest priority quality first, falls back to lower priorities.
         Returns candidates matching quality profile constraints, sorted by confidence and size.
+        
+        Args:
+            results: List of TrackResult objects to filter
+            quality_profile: Optional quality profile dict. If not provided, uses default profile.
         """
-        from database.music_database import MusicDatabase
-
         if not results:
             return []
 
-        # Get quality profile from database
-        db = MusicDatabase()
-        profile = db.get_quality_profile()
+        # Use provided profile or get default from config
+        if quality_profile is None:
+            quality_profile = self._get_default_quality_profile()
+        
+        profile = quality_profile
 
         logger.debug(f"Quality Filter: Using profile preset '{profile.get('preset', 'custom')}', filtering {len(results)} candidates")
 
@@ -1594,3 +1558,134 @@ class SoulseekClient(DownloaderProvider):
     def __del__(self):
         # No persistent session to clean up
         pass
+    
+    def _get_default_quality_profile(self) -> Dict[str, Any]:
+        """Get default quality profile from config"""
+        try:
+            # Try to get from config manager
+            profile = config_manager.get('quality_profile', None)
+            if profile:
+                return profile
+        except Exception as e:
+            logger.debug(f"Could not get quality profile from config: {e}")
+        
+        # Return sensible defaults
+        return {
+            'preset': 'balanced',
+            'qualities': {
+                'flac': {'enabled': True, 'priority': 1, 'min_mb': 20, 'max_mb': 150},
+                'mp3_320': {'enabled': True, 'priority': 2, 'min_mb': 5, 'max_mb': 20},
+                'mp3_256': {'enabled': True, 'priority': 3, 'min_mb': 4, 'max_mb': 15},
+                'mp3_192': {'enabled': False, 'priority': 4, 'min_mb': 3, 'max_mb': 12}
+            },
+            'fallback_enabled': True
+        }
+    
+    # Synchronous wrapper methods for base class compatibility
+    def search(self, query: str, type: str = "track", limit: int = 10) -> List[Dict[str, Any]]:
+        """Synchronous search wrapper - runs async search in new event loop"""
+        try:
+            # Create new event loop for synchronous call
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                # Call the async search method
+                tracks, albums = loop.run_until_complete(self._async_search(query, timeout=30))
+                
+                # Convert to dict format expected by base class
+                results = []
+                for track in tracks:
+                    results.append({
+                        'type': 'track',
+                        'username': track.username,
+                        'filename': track.filename,
+                        'size': track.size,
+                        'bitrate': track.bitrate,
+                        'quality': track.quality,
+                        'artist': track.artist,
+                        'title': track.title,
+                        'album': track.album
+                    })
+                
+                for album in albums:
+                    results.append({
+                        'type': 'album',
+                        'username': album.username,
+                        'album_path': album.album_path,
+                        'album_title': album.album_title,
+                        'artist': album.artist,
+                        'track_count': album.track_count,
+                        'total_size': album.total_size,
+                        'dominant_quality': album.dominant_quality
+                    })
+                
+                return results[:limit]
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"Error in synchronous search: {e}")
+            return []
+    
+    def download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
+        """Synchronous download wrapper - runs async download in new event loop"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(self._async_download(username, filename, file_size))
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"Error in synchronous download: {e}")
+            return None
+    
+    def get_download_status(self, download_id: str) -> Optional[Dict[str, Any]]:
+        """Get download status synchronously"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                # For now, return basic status info - would need full implementation
+                return {'id': download_id, 'status': 'unknown'}
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"Error getting download status: {e}")
+            return None
+    
+    def get_track(self, track_id: str) -> Optional[Dict[str, Any]]:
+        """Not supported for Soulseek"""
+        return None
+    
+    def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
+        """Not supported for Soulseek"""
+        return None
+    
+    def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
+        """Not supported for Soulseek"""
+        return None
+    
+    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Not supported for Soulseek"""
+        return []
+    
+    def get_playlist_tracks(self, playlist_id: str) -> List[Dict[str, Any]]:
+        """Not supported for Soulseek"""
+        return []
+    
+    def authenticate(self, **kwargs) -> bool:
+        """Check if slskd is configured and accessible"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(self.check_connection())
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"Authentication check failed: {e}")
+            return False
+    
+    def get_logo_url(self) -> str:
+        """Return a URL or path to the Soulseek logo/icon"""
+        return "/assets/soulseek-logo.png"

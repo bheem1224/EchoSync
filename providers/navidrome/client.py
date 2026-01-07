@@ -192,6 +192,7 @@ class NavidromeClient(MediaServerProvider):
     def is_configured(self) -> bool:
         return self.base_url is not None
     def __init__(self):
+        super().__init__()
         self.base_url: Optional[str] = None
         self.username: Optional[str] = None
         self.password: Optional[str] = None
@@ -216,36 +217,7 @@ class NavidromeClient(MediaServerProvider):
         # Capability flags
         self.capabilities = get_provider_capabilities('navidrome')
         
-        # Register as plugin with explicit declarations
-        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
-        plugin_decl = PluginDeclaration(
-            name='navidrome',
-            plugin_type=PluginType.LIBRARY_MANAGER,
-            provides=[
-                'library.scan',
-                'library.cover_art',
-                'playlist.read',
-                'playlist.write',
-                'search.tracks',
-                'search.artists',
-                'search.albums',
-                'search.playlists',
-                'track.title',
-                'track.artist',
-                'track.album',
-                'track.duration_ms',
-                'track.track_number',
-                'album.artist',
-            ],
-            consumes=['auth.credentials'],
-            scope=[PluginScope.LIBRARY, PluginScope.SEARCH],
-            version='1.0.0',
-            description='Navidrome music server library manager and search',
-            author='SoulSync',
-            instance=self,
-            priority=85,
-        )
-        register_plugin(plugin_decl)
+        # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration
 
     def set_progress_callback(self, callback):
         """Set callback function for progress updates"""
@@ -745,14 +717,121 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error updating Navidrome playlist '{playlist_name}': {e}")
             return False
 
-    def trigger_library_scan(self, library_name: str = "Music") -> bool:
-        """Trigger Navidrome library scan - Navidrome doesn't have scanning, always returns True"""
-        logger.info(f"🎵 Navidrome doesn't require library scans - library is always current")
+    def _trigger_scan_api(self, path: Optional[str] = None) -> bool:
+        """
+        Navidrome-specific: Trigger library scan.
+        Navidrome doesn't require explicit scans - library is always current.
+        """
+        logger.info(f"Navidrome doesn't require library scans - library is always current")
         return True
 
-    def is_library_scanning(self, library_name: str = "Music") -> bool:
-        """Check if Navidrome library is currently scanning - always returns False"""
-        return False
+    def _get_scan_status_api(self) -> Dict[str, Any]:
+        """
+        Navidrome-specific: Get library scan status.
+        Navidrome doesn't have scanning - always idle.
+        """
+        return {
+            'scanning': False,
+            'progress': 100,
+            'eta_seconds': None,
+            'error': None
+        }
+
+    def get_content_changes_since(self, last_update: Optional[datetime] = None):
+        """
+        Get content changes since last update using Navidrome-specific incremental detection.
+        Uses date-sorted album approach since Navidrome doesn't have direct recent content APIs.
+        """
+        from core.content_models import ContentChanges
+        
+        if not self.ensure_connection():
+            logger.error("Not connected to Navidrome server")
+            return ContentChanges()
+        
+        # If no last_update provided, return all content (full refresh)
+        if last_update is None:
+            logger.info("No last_update provided - performing full content retrieval")
+            artists = self.get_all_artists()
+            return ContentChanges(
+                artists=artists,
+                albums=[],  # Will be fetched per-artist during processing
+                tracks=[],  # Will be fetched per-album during processing
+                full_refresh=True,
+                last_checked=datetime.now()
+            )
+        
+        try:
+            logger.info(f"Getting Navidrome content changes since {last_update}")
+            
+            # Navidrome doesn't have direct "recent albums" API
+            # Get albums from sample of artists and sort by date
+            all_artists = self.get_all_artists()
+            if not all_artists:
+                logger.info("No artists found")
+                return ContentChanges(last_checked=datetime.now())
+            
+            # Sample first 200 artists to get recent albums
+            sample_artists = all_artists[:200]
+            all_albums = []
+            
+            for artist in sample_artists:
+                try:
+                    artist_albums = self.get_albums_for_artist(artist.ratingKey)
+                    all_albums.extend(artist_albums)
+                except Exception as e:
+                    logger.warning(f"Error getting albums for artist: {e}")
+                    continue
+            
+            if not all_albums:
+                logger.info("No albums found")
+                return ContentChanges(last_checked=datetime.now())
+            
+            # Sort by addedAt date (newest first) and take recent ones
+            try:
+                def get_sort_date(album):
+                    date_val = getattr(album, 'addedAt', None)
+                    if date_val is None:
+                        return 0
+                    return date_val
+                
+                all_albums.sort(key=get_sort_date, reverse=True)
+                recent_albums = all_albums[:400]  # Take most recent 400
+                
+                logger.info(f"Found {len(recent_albums)} recent albums from Navidrome")
+            except Exception as e:
+                logger.warning(f"Error sorting albums: {e}")
+                recent_albums = all_albums[:400]
+            
+            # Extract unique artists from recent albums
+            processed_artist_ids = set()
+            artists_to_return = []
+            
+            for album in recent_albums:
+                try:
+                    album_artist = album.artist()
+                    if album_artist:
+                        artist_id = str(album_artist.ratingKey)
+                        if artist_id not in processed_artist_ids:
+                            processed_artist_ids.add(artist_id)
+                            artists_to_return.append(album_artist)
+                except Exception as e:
+                    logger.debug(f"Error getting artist for album: {e}")
+                    continue
+            
+            logger.info(f"Navidrome incremental: Found {len(artists_to_return)} artists with recent albums")
+            
+            return ContentChanges(
+                artists=artists_to_return,
+                albums=recent_albums,
+                tracks=[],  # Will be fetched per-album during processing
+                full_refresh=False,
+                last_checked=datetime.now(),
+                metadata={'recent_albums_checked': len(recent_albums), 'sample_artists': len(sample_artists)}
+            )
+            
+        except Exception as e:
+            logger.error(f"Error getting Navidrome content changes: {e}")
+            return ContentChanges()
 
     # Metadata update methods for compatibility with metadata updater
     def update_artist_genres(self, artist, genres: List[str]):
@@ -878,3 +957,50 @@ class NavidromeClient(MediaServerProvider):
         except Exception as e:
             logger.error(f"Error searching for tracks: {e}")
             return []
+    
+    def get_album_tracks_as_soulsync(self, album) -> List:
+        """
+        Get all tracks from a Navidrome album converted to SoulSyncTrack objects.
+        
+        Args:
+            album: Navidrome album object (NavidromeAlbum wrapper)
+            
+        Returns:
+            List of SoulSyncTrack objects with ISRC/MBID extracted
+        """
+        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        from providers.navidrome.adapter import convert_navidrome_track_to_soulsync
+        
+        soul_sync_tracks = []
+        
+        try:
+            # Get album ID from the album object
+            album_id = getattr(album, 'id', getattr(album, 'ratingKey', None))
+            if not album_id:
+                logger.warning("Could not get album ID for Navidrome album")
+                return soul_sync_tracks
+            
+            # Get tracks for this album
+            tracks = self.get_tracks_for_album(album_id)
+            logger.debug(f"Getting {len(tracks)} tracks from Navidrome album '{getattr(album, 'title', 'Unknown')}'")
+            
+            failed_count = 0
+            for track in tracks:
+                try:
+                    soul_track = convert_navidrome_track_to_soulsync(track)
+                    if soul_track:
+                        soul_sync_tracks.append(soul_track)
+                    else:
+                        failed_count += 1
+                        logger.warning(f"Converter returned None for Navidrome track at album {album_id}")
+                except Exception as track_err:
+                    failed_count += 1
+                    logger.error(f"Error converting Navidrome track: {track_err}")
+            
+            if failed_count > 0:
+                logger.warning(f"⚠️ Navidrome album '{getattr(album, 'title', 'Unknown')}': {len(tracks)} tracks, {len(soul_sync_tracks)} converted, {failed_count} failed")
+                
+        except Exception as e:
+            logger.error(f"Error getting Navidrome album tracks as SoulSyncTrack: {e}")
+        
+        return soul_sync_tracks

@@ -9,13 +9,13 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 
 from typing import List, Optional, Dict, Any
 from utils.logging_config import get_logger
-from plugins.provider_adapter import ProviderAdapter
 from core.models import ProviderType, Track
 from sdk.storage_service import get_storage_service
 
 logger = get_logger("spotify_adapter")
 
-class SpotifyAdapter(ProviderAdapter):
+# SpotifyAdapter class deprecated - use convert_spotify_track_to_soulsync instead
+class SpotifyAdapter:
     def __init__(self, spotify_client=None):
         storage = get_storage_service()
         db = storage.get_music_database()

@@ -67,11 +67,11 @@ from providers.soulseek.client import TrackResult
 import re
 import asyncio
 import time
-from core.matching_engine import MusicMatchingEngine
+from legacy.matching_engine import MusicMatchingEngine
 from core.wishlist_service import get_wishlist_service
 from ui.components.toast_manager import ToastType
 from database.music_database import get_database
-from core.plex_scan_manager import PlexScanManager
+from legacy.plex_scan_manager import PlexScanManager
 from utils.logging_config import get_logger
 import yt_dlp
 from providers.spotify.client import Track, Playlist
@@ -9385,7 +9385,7 @@ class YouTubeDownloadMissingTracksModal(QDialog):
         
         # Create and start a single optimized Spotify discovery worker
         # Import matching engine for validation
-        from core.matching_engine import MusicMatchingEngine
+        from legacy.matching_engine import MusicMatchingEngine
         matching_engine = MusicMatchingEngine()
         
         # Use TidalSpotifyDiscoveryWorker if this is a Tidal playlist

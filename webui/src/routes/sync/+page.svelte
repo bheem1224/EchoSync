@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { providers } from '../../stores/providers';
   import { jobs } from '../../stores/jobs';
+  import { preferences } from '../../stores/preferences';
   import apiClient from '../../api/client';
 
   let sourceProvider = '';
@@ -12,6 +13,20 @@
   let syncing = false;
   let error = '';
   let success = '';
+
+  // Analysis modal state
+  let analysisModalOpen = false;
+  let analysisLoading = false;
+  let analysisError = '';
+  let analysisResult = null;
+  let analysisStarted = false;
+  let downloadingMissing = false;
+  let selectedQuality = '';
+
+  $: qualityProfiles = $preferences.profiles || [];
+  $: if (qualityProfiles.length > 0 && !selectedQuality) {
+    selectedQuality = qualityProfiles[0]?.name || '';
+  }
 
   $: playlistProviders = Object.values($providers.items).filter(p => 
     (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE'
@@ -52,40 +67,84 @@
     }
   }
 
-  async function startSync() {
+  async function runAnalysis() {
     if (!sourceProvider || !targetProvider || selectedPlaylists.length === 0) {
-      error = 'Please select a source, target, and at least one playlist.';
+      analysisError = 'Select a source, target, and at least one playlist to analyze.';
       return;
     }
+    analysisLoading = true;
+    analysisError = '';
+    analysisResult = null;
+    analysisStarted = true;
 
-    syncing = true;
+    try {
+      const selectedDetails = playlists
+        .filter(p => selectedPlaylists.includes(p.id))
+        .map(p => ({ id: p.id, name: p.name, track_count: p.track_count }));
+
+      const response = await apiClient.post('/playlists/analyze', {
+        source: sourceProvider,
+        target: targetProvider,
+        quality_profile: selectedQuality,
+        playlists: selectedDetails
+      });
+      analysisResult = response.data;
+    } catch (err) {
+      console.error('[Sync] Analysis error:', err);
+      analysisError = err.response?.data?.error || err.message || 'Analysis failed';
+    } finally {
+      analysisLoading = false;
+    }
+  }
+
+  async function downloadMissingTracks() {
+    if (!analysisResult || downloadingMissing) return;
+    downloadingMissing = true;
     error = '';
     success = '';
 
     try {
-      const response = await apiClient.post('/api/playlists/sync', {
+      const response = await apiClient.post('/playlists/sync', {
         mode: 'provider-to-provider',
         sources: [sourceProvider],
-        targets: {
-          providers: [targetProvider],
-          libraries: []
-        },
-        playlists: selectedPlaylists
+        targets: { providers: [targetProvider], libraries: [] },
+        playlists: selectedPlaylists,
+        download_missing: true,
+        quality_profile: selectedQuality
       });
 
       if (response.data.accepted) {
-        success = 'Sync job created successfully!';
-        selectedPlaylists = [];
-        // Refresh jobs store to show the new job
+        success = 'Download job created. Check Jobs for progress.';
         jobs.load();
       } else {
-        error = response.data.error || 'Failed to start sync.';
+        error = response.data.error || 'Failed to start download job.';
       }
     } catch (err) {
-      error = `Error starting sync: ${err.response?.data?.error || err.message}`;
+      error = err.response?.data?.error || err.message || 'Download failed';
     } finally {
-      syncing = false;
+      downloadingMissing = false;
     }
+  }
+
+  function openAnalysisModal() {
+    if (!sourceProvider || !targetProvider || selectedPlaylists.length === 0) {
+      error = 'Please select a source, target, and at least one playlist.';
+      return;
+    }
+    analysisModalOpen = true;
+    runAnalysis();
+  }
+
+  function closeAnalysisModal() {
+    analysisModalOpen = false;
+    analysisResult = null;
+    analysisError = '';
+    analysisStarted = false;
+  }
+
+  async function startSync() {
+    // retain existing direct sync as a fallback (not used by UI now)
+    return openAnalysisModal();
   }
 
   function togglePlaylist(id) {
@@ -106,6 +165,7 @@
 
   onMount(() => {
     providers.load();
+    preferences.load();
   });
 </script>
 
@@ -224,16 +284,108 @@
       {/if}
       <button class="btn btn--primary" 
               disabled={syncing || !sourceProvider || !targetProvider || selectedPlaylists.length === 0}
-              on:click={startSync}>
+              on:click={openAnalysisModal}>
         {#if syncing}
-          Starting Sync...
+          Preparing...
         {:else}
-          Start Synchronization
+          Sync Playlist
         {/if}
       </button>
     </div>
   </div>
 </section>
+
+{#if analysisModalOpen}
+  <div class="modal-backdrop" on:click={closeAnalysisModal}></div>
+  <div class="modal">
+    <header class="modal__header">
+      <div>
+        <p class="eyebrow">Playlist Sync</p>
+        <h2>Analysis</h2>
+        <p class="sub">Source: {sourceProvider} → Target: {targetProvider}</p>
+      </div>
+      <button class="close-btn" on:click={closeAnalysisModal}>×</button>
+    </header>
+
+    <div class="modal__body">
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="label">Total Tracks</div>
+          <div class="value">{analysisResult?.summary?.total_tracks ?? '–'}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Found in Library</div>
+          <div class="value">{analysisResult?.summary?.found_in_library ?? '–'}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Missing</div>
+          <div class="value highlight">{analysisResult?.summary?.missing_tracks ?? '–'}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Downloaded</div>
+          <div class="value">{analysisResult?.summary?.downloaded ?? 0}</div>
+        </div>
+      </div>
+
+      <div class="controls-row">
+        <div class="control">
+          <label>Quality Profile</label>
+          <select bind:value={selectedQuality}>
+            {#if qualityProfiles.length === 0}
+              <option value="">No profiles configured</option>
+            {:else}
+              {#each qualityProfiles as profile}
+                <option value={profile.name}>{profile.name}</option>
+              {/each}
+            {/if}
+          </select>
+        </div>
+        <div class="control buttons">
+          <button class="btn" on:click={runAnalysis} disabled={analysisLoading}>
+            {analysisLoading ? 'Analyzing…' : (analysisStarted ? 'Re-run Analysis' : 'Begin Analysis')}
+          </button>
+          <button class="btn btn--primary" on:click={downloadMissingTracks}
+            disabled={!analysisResult || downloadingMissing || (analysisResult?.summary?.missing_tracks ?? 0) === 0}>
+            {downloadingMissing ? 'Starting…' : 'Download Missing Tracks'}
+          </button>
+        </div>
+      </div>
+
+      {#if analysisError}
+        <p class="error-msg">{analysisError}</p>
+      {/if}
+
+      <div class="tracks-table-wrapper">
+        <div class="tracks-table">
+          <div class="table-header">
+            <span>#</span>
+            <span>Track</span>
+            <span>Artist</span>
+            <span>Duration</span>
+            <span>Match Quality</span>
+            <span>Download Status</span>
+          </div>
+          {#if analysisLoading}
+            <div class="table-row muted">Analyzing tracks…</div>
+          {:else if analysisResult?.tracks?.length}
+            {#each analysisResult.tracks as track, idx}
+              <div class="table-row">
+                <span>{idx + 1}</span>
+                <span title={track.title}>{track.title}</span>
+                <span title={track.artist}>{track.artist}</span>
+                <span>{track.duration || '–'}</span>
+                <span class="match-badge {track.library_match?.includes('score') ? 'partial' : track.library_match === 'Found' ? 'found' : track.library_match?.includes('fuzzy') ? 'fuzzy' : 'missing'}">{track.library_match ?? 'Checking…'}</span>
+                <span>{track.download_status ?? '-'}</span>
+              </div>
+            {/each}
+          {:else}
+            <div class="table-row muted">No track details available yet.</div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .page {
@@ -292,6 +444,7 @@
     margin: 0;
     font-size: 18px;
     font-weight: 600;
+    color: var(--text);
   }
 
   .form-group {
@@ -300,20 +453,33 @@
     gap: 8px;
   }
 
+  .form-group label {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+  }
+
   select {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
-    padding: 10px;
-    color: #fff;
+    padding: 12px 16px;
+    color: var(--text);
     font-size: 14px;
     outline: none;
     cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
   }
 
   select option {
-    background: #1e293b;
-    color: #fff;
+    background: #1a1a1a;
+    color: var(--text);
     padding: 8px;
   }
 
@@ -353,7 +519,7 @@
     text-align: left;
     cursor: pointer;
     transition: all 0.2s;
-    color: inherit;
+    color: var(--text);
     font-family: inherit;
   }
 
@@ -400,16 +566,26 @@
     border-radius: 14px;
   }
 
-  .btn--primary {
+  .btn, .btn--primary {
     background: var(--accent);
     color: #000;
-    padding: 12px 32px;
+    padding: 12px 24px;
     border-radius: 10px;
-    font-weight: 700;
-    font-size: 16px;
+    font-weight: 600;
+    font-size: 14px;
     border: none;
     cursor: pointer;
-    transition: transform 0.2s, opacity 0.2s;
+    transition: all 0.2s;
+  }
+
+  .btn {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
+  }
+
+  .btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    transform: translateY(-1px);
   }
 
   .btn--primary:hover:not(:disabled) {
@@ -459,4 +635,171 @@
 
   .muted { color: #94a3b8; }
   .small { font-size: 12px; }
+
+  /* Analysis modal */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(4px);
+    z-index: 20;
+  }
+  .modal {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(1100px, 96vw);
+    max-height: 90vh;
+    background: rgba(10, 10, 10, 0.98);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px;
+    padding: 24px;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+  .modal__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding-bottom: 16px;
+  }
+
+  .modal__header h2 {
+    color: var(--text);
+    margin: 0;
+  }
+
+  .modal__header .eyebrow {
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 0 0 4px 0;
+  }
+
+  .modal__header .sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 4px 0 0 0;
+  }
+  .modal__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow: auto;
+  }
+  .close-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: none;
+    color: var(--muted);
+    font-size: 24px;
+    cursor: pointer;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .close-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text);
+  }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .summary-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .summary-card .label { color: var(--muted); font-size: 12px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  .summary-card .value { font-size: 24px; font-weight: 700; color: var(--text); }
+  .summary-card .highlight { color: #fbbf24; }
+
+  .controls-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+  }
+  .control { display: flex; flex-direction: column; gap: 6px; }
+  .control label { color: var(--text); font-size: 13px; font-weight: 500; }
+  .control.buttons { flex-direction: row; align-items: center; gap: 10px; }
+  .controls-row select {
+    min-width: 180px;
+  }
+  .tracks-table-wrapper {
+    max-height: 450px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    margin-top: 1.5rem;
+  }
+
+  .tracks-table {
+    width: 100%;
+  }
+
+  .table-header {
+    position: sticky;
+    top: 0;
+    background: rgba(15, 23, 42, 0.95);
+    z-index: 10;
+  }
+
+  .table-row {
+    display: grid;
+    grid-template-columns: 40px 1.5fr 1.2fr 90px 140px 160px;
+    gap: 8px;
+    padding: 10px 12px;
+    align-items: center;
+  }
+
+  .table-row span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .match-badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .match-badge.found {
+    background: rgba(74, 222, 128, 0.1);
+    color: #4ade80;
+  }
+
+  .match-badge.fuzzy {
+    background: rgba(250, 204, 21, 0.1);
+    color: #facc15;
+  }
+
+  .match-badge.partial {
+    background: rgba(96, 165, 250, 0.1);
+    color: #60a5fa;
+  }
+
+  .match-badge.missing {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+  }
 </style>

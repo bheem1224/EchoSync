@@ -31,6 +31,8 @@ from web.routes.plex_settings import bp as plex_settings_bp
 from web.routes.navidrome_settings import bp as navidrome_settings_bp
 from web.routes.jellyfin_settings import bp as jellyfin_settings_bp
 from web.routes.media_server import bp as media_server_bp
+from web.routes.library import bp as library_bp
+from web.routes.slskd_settings import bp as slskd_settings_bp
 import importlib
 import providers as providers_pkg
 
@@ -56,6 +58,8 @@ def create_app() -> Flask:
     app.register_blueprint(navidrome_settings_bp)
     app.register_blueprint(jellyfin_settings_bp)
     app.register_blueprint(media_server_bp)
+    app.register_blueprint(library_bp)
+    app.register_blueprint(slskd_settings_bp)
     
     # Dynamically register provider-specific blueprints (e.g., OAuth endpoints)
     for prov_name in getattr(providers_pkg, '__all__', []):
@@ -76,7 +80,18 @@ def create_app() -> Flask:
 
 
 def _init_provider_clients():
-    """Instantiate provider clients to trigger self-registration in plugin_registry."""
+    """Initialize both bundled providers and community plugins."""
+    from core.provider_registry import ProviderRegistry
+    from config.settings import config_manager
+    import importlib.util
+    import os
+    from pathlib import Path
+    
+    # Load disabled providers from config
+    disabled_providers = config_manager.get_disabled_providers()
+    ProviderRegistry.set_disabled_providers(disabled_providers)
+    
+    # Load bundled providers
     from providers.spotify.client import SpotifyClient
     from providers.plex.client import PlexClient
     from providers.jellyfin.client import JellyfinClient
@@ -93,6 +108,99 @@ def _init_provider_clients():
     JellyfinClient()
     NavidromeClient()
     SoulseekClient()
+    
+    # Dynamically load plugins from plugins/ folder
+    _load_plugins_from_directory()
+
+
+def _load_plugins_from_directory():
+    """Dynamically scan and load plugins from the plugins/ folder.
+    
+    Plugins are discovered by looking for subdirectories with a client.py file,
+    similar to the providers/ folder structure.
+    
+    Example structure:
+        plugins/
+            my_plugin/
+                __init__.py
+                client.py  (must export a class inheriting from ProviderBase)
+    """
+    from core.provider_registry import ProviderRegistry
+    from utils.logging_config import get_logger
+    import importlib.util
+    import os
+    from pathlib import Path
+    
+    logger = get_logger("plugin_loader")
+    plugins_dir = Path(__file__).parent.parent / "plugins"
+    
+    if not plugins_dir.exists():
+        logger.debug("plugins/ directory not found, skipping plugin discovery")
+        return
+    
+    logger.info(f"Scanning {plugins_dir} for plugins...")
+    
+    try:
+        for item in plugins_dir.iterdir():
+            if not item.is_dir() or item.name.startswith('_'):
+                continue
+            
+            # Look for client.py in the plugin directory
+            client_file = item / "client.py"
+            if not client_file.exists():
+                logger.debug(f"Skipping {item.name}: no client.py found")
+                continue
+            
+            plugin_name = item.name
+            logger.info(f"Loading plugin: {plugin_name}")
+            
+            try:
+                # Dynamically import the plugin's client module
+                spec = importlib.util.spec_from_file_location(
+                    f"plugins.{plugin_name}.client",
+                    client_file
+                )
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    
+                    # Find and instantiate the provider class
+                    # Convention: look for a class named with plugin_name in CamelCase + "Client"
+                    # or just find the first ProviderBase subclass
+                    from core.provider_base import ProviderBase
+                    
+                    found_client = False
+                    for attr_name in dir(module):
+                        attr = getattr(module, attr_name)
+                        if (isinstance(attr, type) and 
+                            issubclass(attr, ProviderBase) and 
+                            attr is not ProviderBase):
+                            
+                            # Mark as plugin (community-made) vs provider (bundled)
+                            attr.category = 'plugin'
+                            
+                            # Instantiate and register
+                            try:
+                                instance = attr()
+                                logger.info(f"✓ Plugin '{plugin_name}' loaded successfully")
+                                found_client = True
+                                break
+                            except Exception as e:
+                                logger.warning(f"Failed to instantiate {attr_name} from {plugin_name}: {e}")
+                    
+                    if not found_client:
+                        logger.warning(f"No ProviderBase subclass found in {plugin_name}/client.py")
+                else:
+                    logger.error(f"Failed to load module spec for {plugin_name}")
+                    
+            except Exception as e:
+                logger.error(f"Error loading plugin '{plugin_name}': {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
+    except Exception as e:
+        logger.error(f"Error scanning plugins directory: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
 
 
 def generate_ephemeral_cert():

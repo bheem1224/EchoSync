@@ -1,5 +1,6 @@
 <script>
   import { writable } from 'svelte/store';
+  import { getConfig, setConfig } from '../../stores/config';
 
   const downloadSettings = writable({
     slskdDir: '/app/downloads',
@@ -14,6 +15,9 @@
   // Start with an empty list so the user config is authoritative
   const qualityProfiles = writable([]);
 
+  const playlistAlgorithm = writable('DefaultPlaylistAlgorithm');
+  const availableAlgorithms = writable([]);
+
   function addProfile() {
     qualityProfiles.update((profiles) => {
       profiles.push({ name: 'New Profile', formats: [] });
@@ -27,6 +31,19 @@
       return profiles;
     });
   }
+
+  // Fetch available algorithms from the backend
+  async function fetchAlgorithms() {
+    const config = await getConfig();
+    availableAlgorithms.set(config.available_algorithms || []);
+    playlistAlgorithm.set(config.playlist_algorithm || 'DefaultPlaylistAlgorithm');
+  }
+
+  async function saveAlgorithm() {
+    await setConfig({ playlist_algorithm: $playlistAlgorithm });
+  }
+
+  fetchAlgorithms();
 </script>
 
 <div class="preferences">
@@ -75,6 +92,19 @@
         <button on:click={() => removeProfile(index)}>Remove</button>
       </div>
     {/each}
+  </section>
+
+  <section class="card">
+    <h2>Playlist Algorithm</h2>
+    <label>
+      Select Algorithm:
+      <select bind:value={$playlistAlgorithm}>
+        {#each $availableAlgorithms as algorithm}
+          <option value={algorithm}>{algorithm}</option>
+        {/each}
+      </select>
+    </label>
+    <button on:click={saveAlgorithm}>Save</button>
   </section>
 </div>
 

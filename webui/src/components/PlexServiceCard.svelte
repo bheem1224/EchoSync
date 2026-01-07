@@ -19,25 +19,15 @@
 
   onMount(async () => {
     await loadSettings();
-    await checkActiveServer();
     loading = false;
   });
-
-  async function checkActiveServer() {
-    try {
-      const response = await apiClient.get('/media-server/active');
-      isActive = response.data?.active_server === 'plex';
-    } catch (error) {
-      console.error('Failed to check active server:', error);
-    }
-  }
 
   async function activateServer() {
     try {
       activating = true;
-      await apiClient.post('/media-server/activate', { server: 'plex' });
+      await apiClient.post('/plex/activate');
       feedback.addToast('Plex activated as media server', 'success');
-      await checkActiveServer();
+      await loadSettings(); // Reload to get updated is_active
     } catch (error) {
       console.error('Failed to activate server:', error);
       feedback.addToast('Failed to activate server', 'error');
@@ -54,6 +44,7 @@
         serverName = response.data.settings.server_name || '';
         hasToken = response.data.settings.has_token || false;
         connected = response.data.settings.connected || false;
+        isActive = response.data.settings.is_active || false;
       }
     } catch (error) {
       console.error('Failed to load Plex settings:', error);

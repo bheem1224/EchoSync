@@ -101,11 +101,38 @@ class MusicDatabaseWrapper:
         return self._db.get_album_completion_stats(artist_name)
 
     # === Track Operations ===
+    # === Track Operations ===
+    def insert_or_update_soul_sync_track(
+        self,
+        soul_sync_track,
+        album_id: str,
+        artist_id: str,
+        server_source: str = 'plex'
+    ) -> bool:
+        """New primary method - pass through to underlying database"""
+        return self._db.insert_or_update_soul_sync_track(
+            soul_sync_track, album_id, artist_id, server_source
+        )
+    
     def insert_or_update_track(self, plex_track, album_id: int, artist_id: int) -> bool:
+        """DEPRECATED: use insert_or_update_soul_sync_track instead"""
         return self._db.insert_or_update_track(plex_track, album_id, artist_id)
 
-    def insert_or_update_media_track(self, track_obj, album_id: str, artist_id: str, server_source: str = 'plex') -> bool:
-        return self._db.insert_or_update_media_track(track_obj, album_id, artist_id, server_source)
+    def insert_or_update_media_track(
+        self, 
+        track_obj, 
+        album_id: str, 
+        artist_id: str, 
+        server_source: str = 'plex',
+        isrc: str = None,
+        musicbrainz_id: str = None,
+        acoustid: str = None
+    ) -> bool:
+        """DEPRECATED: use insert_or_update_soul_sync_track instead"""
+        return self._db.insert_or_update_media_track(
+            track_obj, album_id, artist_id, server_source,
+            isrc=isrc, musicbrainz_id=musicbrainz_id, acoustid=acoustid
+        )
 
     def track_exists(self, track_id) -> bool:
         return self._db.track_exists(track_id)

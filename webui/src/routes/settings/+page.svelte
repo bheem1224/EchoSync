@@ -6,7 +6,6 @@
   import QualityProfiles from '../../components/QualityProfiles.svelte';
   import StorageSettings from '../../components/StorageSettings.svelte';
   import { preferences } from '../../stores/preferences';
-  import Sidebar from '../../components/Sidebar.svelte';
 
   let loadError = '';
   let storageRef;
@@ -115,12 +114,6 @@
       {/if}
     </div>
   </div>
-
-  <Sidebar>
-    <li>
-      <a href="/settings/download-clients">Download Clients</a>
-    </li>
-  </Sidebar>
 </section>
 
 <style>

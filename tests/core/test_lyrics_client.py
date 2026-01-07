@@ -1,14 +1,14 @@
 
 import pytest
 from unittest.mock import MagicMock, patch, mock_open
-from core.lyrics_client import LyricsClient
+from providers.lrclib.client import LRCLibClient as LyricsClient
 
 # --- Fixtures ---
 
 @pytest.fixture
 def mock_lrclib_api():
     """Fixture to mock the LrcLibAPI class."""
-    with patch('core.lyrics_client.LrcLibAPI') as mock_api_class:
+    with patch('providers.lrclib.client.LrcLibAPI') as mock_api_class:
         mock_api_instance = MagicMock()
         mock_api_class.return_value = mock_api_instance
         # Yield the mocked class so tests can assert it was instantiated
@@ -40,7 +40,7 @@ def test_initialization_success(mock_lrclib_api):
     assert client.api is not None
     mock_lrclib_api.assert_called_once()
 
-@patch('core.lyrics_client.LrcLibAPI', None)
+@patch('providers.lrclib.client.LrcLibAPI', None)
 def test_initialization_no_lrclib():
     """Test graceful failure when lrclib is not installed."""
     # This simulates 'from lrclib import LrcLibAPI' failing

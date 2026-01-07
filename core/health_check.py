@@ -1,11 +1,10 @@
 """
 Health Check System for SoulSync
 
-Allows services to register health checks that can be executed periodically.
-Temporary implementation until job queue/task scheduler is added.
+Allows services to register health checks that are scheduled via job_queue.
+Each health check is registered as a job with a configurable interval.
 """
 
-import threading
 import time
 from typing import Dict, Callable, Optional, Any
 from dataclasses import dataclass, field
@@ -31,14 +30,12 @@ class HealthCheckRegistry:
     Registry for service health checks.
     Services register their health check functions and the registry
     can execute them on demand or periodically.
+    Scheduling is delegated to job_queue for centralized job management.
     """
     
     def __init__(self):
         self._checks: Dict[str, Callable[[], HealthCheckResult]] = {}
         self._last_results: Dict[str, HealthCheckResult] = {}
-        self._scheduler_thread: Optional[threading.Thread] = None
-        self._scheduler_running = False
-        self._check_interval = 60  # Default: check every 60 seconds
     
     def register_check(self, service_name: str, check_func: Callable[[], HealthCheckResult]):
         """
@@ -117,47 +114,42 @@ class HealthCheckRegistry:
         """Get all cached health check results"""
         return self._last_results.copy()
     
-    def start_scheduler(self, interval_seconds: int = 60):
+    def register_check_with_job(
+        self, 
+        service_name: str, 
+        check_func: Callable[[], HealthCheckResult],
+        interval_seconds: float = 60.0,
+        max_retries: int = 3
+    ):
         """
-        Start periodic health check execution.
+        Register a health check and schedule it as a periodic job in job_queue.
         
         Args:
-            interval_seconds: How often to run health checks
+            service_name: Unique identifier for the service
+            check_func: Function that returns a HealthCheckResult
+            interval_seconds: How often to run the check (default: 60 seconds)
+            max_retries: Number of retries on failure (default: 3)
         """
-        if self._scheduler_running:
-            logger.warning("Health check scheduler already running")
-            return
+        # Register the check function
+        self.register_check(service_name, check_func)
         
-        self._check_interval = interval_seconds
-        self._scheduler_running = True
-        self._scheduler_thread = threading.Thread(target=self._scheduler_loop, daemon=True)
-        self._scheduler_thread.start()
-        logger.info(f"Started health check scheduler (interval: {interval_seconds}s)")
-    
-    def stop_scheduler(self):
-        """Stop the periodic health check scheduler"""
-        if not self._scheduler_running:
-            return
+        # Import here to avoid circular imports
+        from core.job_queue import job_queue
         
-        self._scheduler_running = False
-        if self._scheduler_thread:
-            self._scheduler_thread.join(timeout=5)
-        logger.info("Stopped health check scheduler")
-    
-    def _scheduler_loop(self):
-        """Internal scheduler loop that runs health checks periodically"""
-        while self._scheduler_running:
-            try:
-                logger.debug("Running scheduled health checks...")
-                self.run_all_checks()
-            except Exception as e:
-                logger.error(f"Error in health check scheduler: {e}", exc_info=True)
-            
-            # Sleep in small increments to allow for quick shutdown
-            for _ in range(self._check_interval):
-                if not self._scheduler_running:
-                    break
-                time.sleep(1)
+        # Create a wrapper that calls the check and handles results
+        def health_check_job():
+            self.run_check(service_name)
+        
+        # Register as a periodic job in job_queue
+        job_queue.register_job(
+            name=f"health_check_{service_name}",
+            func=health_check_job,
+            interval_seconds=interval_seconds,
+            max_retries=max_retries,
+            tags=["health_check"]
+        )
+        
+        logger.info(f"Registered health check job for {service_name} (interval: {interval_seconds}s)")
 
 
 # Global health check registry instance
@@ -166,8 +158,31 @@ health_check_registry = HealthCheckRegistry()
 
 # Convenience functions
 def register_health_check(service_name: str, check_func: Callable[[], HealthCheckResult]):
-    """Register a health check function"""
+    """Register a health check function (one-time, manual execution only)"""
     health_check_registry.register_check(service_name, check_func)
+
+
+def register_health_check_job(
+    service_name: str, 
+    check_func: Callable[[], HealthCheckResult],
+    interval_seconds: float = 60.0,
+    max_retries: int = 3
+):
+    """
+    Register a health check and schedule it as a periodic job.
+    
+    Args:
+        service_name: Unique identifier for the service
+        check_func: Function that returns a HealthCheckResult
+        interval_seconds: How often to run the check (default: 60 seconds). Override for debug mode or custom schedules.
+        max_retries: Number of retries on failure (default: 3)
+    """
+    health_check_registry.register_check_with_job(
+        service_name, 
+        check_func, 
+        interval_seconds=interval_seconds,
+        max_retries=max_retries
+    )
 
 
 def run_health_check(service_name: str) -> Optional[HealthCheckResult]:

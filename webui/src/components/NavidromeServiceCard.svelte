@@ -18,25 +18,15 @@
 
   onMount(async () => {
     await loadSettings();
-    await checkActiveServer();
     loading = false;
   });
-
-  async function checkActiveServer() {
-    try {
-      const response = await apiClient.get('/media-server/active');
-      isActive = response.data?.active_server === 'navidrome';
-    } catch (error) {
-      console.error('Failed to check active server:', error);
-    }
-  }
 
   async function activateServer() {
     try {
       activating = true;
-      await apiClient.post('/media-server/activate', { server: 'navidrome' });
+      await apiClient.post('/navidrome/activate');
       feedback.addToast('Navidrome activated as media server', 'success');
-      await checkActiveServer();
+      await loadSettings(); // Reload to get updated is_active
     } catch (error) {
       console.error('Failed to activate server:', error);
       feedback.addToast('Failed to activate server', 'error');
@@ -53,6 +43,7 @@
         username = response.data.settings.username || '';
         hasPassword = response.data.settings.has_password || false;
         connected = response.data.settings.connected || false;
+        isActive = response.data.settings.is_active || false;
         password = ''; // Don't load actual password for security
       }
     } catch (error) {

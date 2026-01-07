@@ -2,17 +2,260 @@
 
 """
 Personalized Playlists Service - Creates Spotify-quality personalized playlists
-from user's library and discovery pool
+from user's library and discovery pool with pluggable algorithms
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Protocol
 from datetime import datetime, timedelta
 from collections import Counter
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import random
 import json
 from utils.logging_config import get_logger
 
 logger = get_logger("personalized_playlists")
+
+
+# ========================================
+# ALGORITHM PLUGIN SYSTEM
+# ========================================
+
+class PlaylistAlgorithm(ABC):
+    """
+    Base class for playlist generation algorithms.
+    
+    Algorithms can be provided by:
+    - Core system (built-in)
+    - Providers (via provider flags/tags)
+    - External plugins
+    """
+    
+    @abstractmethod
+    def generate(
+        self, 
+        library_tracks: List[Dict[str, Any]], 
+        discovery_pool: List[Dict[str, Any]],
+        limit: int = 50,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate a playlist from available tracks.
+        
+        Args:
+            library_tracks: User's library tracks
+            discovery_pool: Tracks from discovery pool
+            limit: Maximum number of tracks to return
+            **kwargs: Algorithm-specific parameters
+            
+        Returns:
+            List of track dictionaries in standard format
+        """
+        pass
+    
+    @property
+    @abstractmethod
+    def algorithm_id(self) -> str:
+        """Unique identifier for this algorithm"""
+        pass
+    
+    @property
+    @abstractmethod
+    def display_name(self) -> str:
+        """Human-readable name for UI"""
+        pass
+    
+    @property
+    def description(self) -> str:
+        """Description of what this algorithm does"""
+        return ""
+    
+    @property
+    def requires_spotify(self) -> bool:
+        """Whether this algorithm requires Spotify client"""
+        return False
+    
+    @property
+    def config_schema(self) -> Dict[str, Any]:
+        """JSON schema for algorithm-specific configuration"""
+        return {}
+
+
+class DefaultPlaylistAlgorithm(PlaylistAlgorithm):
+    """Default algorithm - returns discovery pool as-is with optional shuffling"""
+    
+    @property
+    def algorithm_id(self) -> str:
+        return "default"
+    
+    @property
+    def display_name(self) -> str:
+        return "Default"
+    
+    @property
+    def description(self) -> str:
+        return "Returns tracks from discovery pool with optional shuffling"
+    
+    def generate(
+        self, 
+        library_tracks: List[Dict[str, Any]], 
+        discovery_pool: List[Dict[str, Any]],
+        limit: int = 50,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """Return discovery pool tracks, optionally shuffled"""
+        tracks = discovery_pool.copy()
+        
+        if kwargs.get('shuffle', True):
+            random.shuffle(tracks)
+        
+        return tracks[:limit]
+
+
+# Seasonal configuration with keywords and active periods
+SEASONAL_CONFIG = {
+    "halloween": {
+        "name": "Halloween Hits",
+        "description": "Spooky albums and tracks for Halloween",
+        "keywords": ["halloween", "spooky", "horror", "monster", "witch", "zombie", "ghost", "haunted", "scary"],
+        "active_months": [10],  # October
+        "playlist_size": 50,
+        "icon": "🎃"
+    },
+    "christmas": {
+        "name": "Christmas Classics",
+        "description": "Holiday music and Christmas favorites",
+        "keywords": ["christmas", "xmas", "holiday", "santa", "jingle", "winter wonderland", "sleigh", "noel", "carol"],
+        "active_months": [11, 12],  # November-December
+        "playlist_size": 50,
+        "icon": "🎄"
+    },
+    "valentines": {
+        "name": "Love Songs",
+        "description": "Romantic tracks for Valentine's Day",
+        "keywords": ["love", "valentine", "romance", "heart", "romantic", "darling"],
+        "active_months": [2],  # February
+        "playlist_size": 50,
+        "icon": "❤️"
+    },
+    "summer": {
+        "name": "Summer Vibes",
+        "description": "Hot tracks for summer days",
+        "keywords": ["summer", "beach", "sun", "vacation", "tropical", "poolside", "sunshine"],
+        "active_months": [6, 7, 8],  # June-August
+        "playlist_size": 50,
+        "icon": "☀️"
+    },
+    "spring": {
+        "name": "Spring Awakening",
+        "description": "Fresh sounds for spring",
+        "keywords": ["spring", "bloom", "fresh", "renewal", "garden", "flower"],
+        "active_months": [3, 4, 5],  # March-May
+        "playlist_size": 50,
+        "icon": "🌸"
+    },
+    "autumn": {
+        "name": "Autumn Sounds",
+        "description": "Cozy tracks for fall",
+        "keywords": ["fall", "autumn", "harvest", "leaves", "cozy", "pumpkin"],
+        "active_months": [9, 10, 11],  # September-November (overlaps with Halloween)
+        "playlist_size": 50,
+        "icon": "🍂"
+    }
+}
+
+
+class SeasonalPlaylistAlgorithm(PlaylistAlgorithm):
+    """Algorithm that generates seasonal/holiday-themed playlists"""
+    
+    def __init__(self, database, spotify_client=None):
+        self.database = database
+        self.spotify_client = spotify_client
+    
+    @property
+    def algorithm_id(self) -> str:
+        return "seasonal"
+    
+    @property
+    def display_name(self) -> str:
+        return "Seasonal"
+    
+    @property
+    def description(self) -> str:
+        return "Generates playlists based on current season or holiday"
+    
+    @property
+    def requires_spotify(self) -> bool:
+        return True
+    
+    @property
+    def config_schema(self) -> Dict[str, Any]:
+        return {
+            "season_key": {
+                "type": "string",
+                "enum": list(SEASONAL_CONFIG.keys()),
+                "description": "Specific season to generate (auto-detects if not specified)"
+            }
+        }
+    
+    def get_current_season(self) -> Optional[str]:
+        """Detect current season based on current month"""
+        current_month = datetime.now().month
+        
+        # Check each season to find active ones
+        active_seasons = []
+        for season_key, config in SEASONAL_CONFIG.items():
+            if current_month in config['active_months']:
+                active_seasons.append(season_key)
+        
+        if not active_seasons:
+            return None
+        
+        # Prioritize specific holidays over general seasons
+        priority_order = ['halloween', 'christmas', 'valentines', 'summer', 'spring', 'autumn']
+        for priority_season in priority_order:
+            if priority_season in active_seasons:
+                return priority_season
+        
+        return active_seasons[0] if active_seasons else None
+    
+    def generate(
+        self, 
+        library_tracks: List[Dict[str, Any]], 
+        discovery_pool: List[Dict[str, Any]],
+        limit: int = 50,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """Generate seasonal playlist"""
+        season_key = kwargs.get('season_key') or self.get_current_season()
+        
+        if not season_key:
+            logger.warning("No active season detected")
+            return []
+        
+        config = SEASONAL_CONFIG.get(season_key)
+        if not config:
+            logger.error(f"Invalid season key: {season_key}")
+            return []
+        
+        keywords = config['keywords']
+        
+        # Search discovery pool for seasonal tracks
+        matching_tracks = []
+        for track in discovery_pool:
+            track_text = f"{track.get('track_name', '')} {track.get('album_name', '')}".lower()
+            if any(keyword in track_text for keyword in keywords):
+                matching_tracks.append(track)
+        
+        # Search library tracks too
+        for track in library_tracks:
+            track_text = f"{track.get('track_name', '')} {track.get('album_name', '')}".lower()
+            if any(keyword in track_text for keyword in keywords):
+                matching_tracks.append(track)
+        
+        # Shuffle and limit
+        random.shuffle(matching_tracks)
+        return matching_tracks[:limit]
 
 class PersonalizedPlaylistsService:
     """Service for generating personalized playlists from library and discovery pool"""
@@ -99,6 +342,220 @@ class PersonalizedPlaylistsService:
     def __init__(self, database, spotify_client=None):
         self.database = database
         self.spotify_client = spotify_client
+        
+        # Algorithm registry
+        self._algorithms: Dict[str, PlaylistAlgorithm] = {}
+        self._register_builtin_algorithms()
+        self._register_provider_algorithms()
+        
+        # Load selected algorithm from config
+        self._current_algorithm_id = self._load_selected_algorithm()
+    
+    def _register_builtin_algorithms(self):
+        """Register built-in algorithms"""
+        # Register default algorithm
+        self.register_algorithm(DefaultPlaylistAlgorithm())
+        
+        # Register seasonal algorithm if Spotify client available
+        if self.spotify_client:
+            self.register_algorithm(
+                SeasonalPlaylistAlgorithm(self.database, self.spotify_client)
+            )
+    
+    def _register_provider_algorithms(self):
+        """
+        Auto-discover and register algorithms from providers.
+        
+        Scans provider capability registry for providers that declare
+        playlist_algorithms support and loads them dynamically.
+        """
+        try:
+            from core.provider_capabilities import CAPABILITY_REGISTRY
+            import inspect
+            
+            for provider_name, capabilities in CAPABILITY_REGISTRY.items():
+                if capabilities.playlist_algorithms:
+                    # Provider declares algorithm support
+                    logger.info(f"Provider '{provider_name}' supports algorithms: {capabilities.playlist_algorithms}")
+                    
+                    # Try to load provider-specific algorithm module
+                    try:
+                        module_name = f"providers.{provider_name}.algorithms"
+                        provider_module = __import__(module_name, fromlist=[''])
+                        
+                        # Look for algorithm classes in provider module
+                        for attr_name in dir(provider_module):
+                            attr = getattr(provider_module, attr_name)
+                            # Check if it's a PlaylistAlgorithm subclass (not the base class)
+                            if (isinstance(attr, type) and 
+                                issubclass(attr, PlaylistAlgorithm) and 
+                                attr is not PlaylistAlgorithm):
+                                
+                                # Instantiate with flexible argument handling
+                                try:
+                                    # Get the signature of __init__
+                                    sig = inspect.signature(attr.__init__)
+                                    params = list(sig.parameters.keys())
+                                    
+                                    # Remove 'self'
+                                    if 'self' in params:
+                                        params.remove('self')
+                                    
+                                    # Build kwargs based on available parameters
+                                    kwargs = {}
+                                    if 'database' in params:
+                                        kwargs['database'] = self.database
+                                    if 'spotify_client' in params:
+                                        kwargs['spotify_client'] = self.spotify_client
+                                    
+                                    algo_instance = attr(**kwargs) if kwargs else attr()
+                                    self.register_algorithm(algo_instance)
+                                
+                                except Exception as e:
+                                    logger.warning(f"Error instantiating algorithm from {provider_name}: {e}")
+                    
+                    except ImportError:
+                        logger.debug(f"No algorithms module found for provider: {provider_name}")
+                    except Exception as e:
+                        logger.warning(f"Error loading algorithms from provider {provider_name}: {e}")
+        
+        except Exception as e:
+            logger.error(f"Error scanning provider capabilities for algorithms: {e}")
+    
+    def register_algorithm(self, algorithm: PlaylistAlgorithm):
+        """
+        Register a playlist algorithm.
+        
+        Can be called by:
+        - Core system (built-in algorithms)
+        - Providers (via provider initialization)
+        - Plugins (via plugin system)
+        """
+        self._algorithms[algorithm.algorithm_id] = algorithm
+        logger.info(f"Registered playlist algorithm: {algorithm.display_name} ({algorithm.algorithm_id})")
+    
+    def get_available_algorithms(self) -> List[Dict[str, Any]]:
+        """Get list of available algorithms for UI"""
+        return [
+            {
+                'id': algo.algorithm_id,
+                'name': algo.display_name,
+                'description': algo.description,
+                'requires_spotify': algo.requires_spotify,
+                'config_schema': algo.config_schema
+            }
+            for algo in self._algorithms.values()
+        ]
+    
+    def set_algorithm(self, algorithm_id: str):
+        """Set the active algorithm and save to config"""
+        if algorithm_id not in self._algorithms:
+            raise ValueError(f"Unknown algorithm: {algorithm_id}")
+        
+        self._current_algorithm_id = algorithm_id
+        self._save_selected_algorithm(algorithm_id)
+        logger.info(f"Set active playlist algorithm to: {algorithm_id}")
+    
+    def _load_selected_algorithm(self) -> str:
+        """Load selected algorithm from config.json"""
+        try:
+            from config.settings import config_manager
+            return config_manager.get('playlist_algorithm', 'default')
+        except Exception as e:
+            logger.warning(f"Could not load playlist algorithm from config: {e}")
+            return 'default'
+    
+    def _save_selected_algorithm(self, algorithm_id: str):
+        """Save selected algorithm to config.json"""
+        try:
+            from config.settings import config_manager
+            config_manager.set('playlist_algorithm', algorithm_id)
+        except Exception as e:
+            logger.error(f"Could not save playlist algorithm to config: {e}")
+    
+    def generate_playlist(
+        self, 
+        playlist_type: str = 'discovery',
+        limit: int = 50,
+        algorithm_id: Optional[str] = None,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate a playlist using the selected or specified algorithm.
+        
+        Args:
+            playlist_type: Type of playlist source ('discovery', 'library', etc.)
+            limit: Maximum tracks to return
+            algorithm_id: Override default algorithm
+            **kwargs: Algorithm-specific parameters
+        """
+        # Use specified algorithm or fall back to current
+        algo_id = algorithm_id or self._current_algorithm_id
+        
+        if algo_id not in self._algorithms:
+            logger.error(f"Algorithm not found: {algo_id}, falling back to default")
+            algo_id = 'default'
+        
+        algorithm = self._algorithms[algo_id]
+        
+        # Check if algorithm requires Spotify
+        if algorithm.requires_spotify and not self.spotify_client:
+            logger.error(f"Algorithm {algo_id} requires Spotify client but none available")
+            return []
+        
+        # Get source tracks
+        library_tracks = []  # TODO: Implement library track fetching
+        discovery_pool = self._get_discovery_pool_tracks(limit * 10)  # Get more for filtering
+        
+        # Generate playlist
+        try:
+            tracks = algorithm.generate(
+                library_tracks=library_tracks,
+                discovery_pool=discovery_pool,
+                limit=limit,
+                **kwargs
+            )
+            logger.info(f"Generated {len(tracks)} tracks using {algo_id} algorithm")
+            return tracks
+        except Exception as e:
+            logger.error(f"Error generating playlist with {algo_id}: {e}")
+            return []
+    
+    def _get_discovery_pool_tracks(self, limit: int = 500) -> List[Dict[str, Any]]:
+        """Get tracks from discovery pool"""
+        try:
+            with self.database._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT
+                        spotify_track_id,
+                        track_name,
+                        artist_name,
+                        album_name,
+                        album_cover_url,
+                        duration_ms,
+                        popularity,
+                        release_date,
+                        track_data_json
+                    FROM discovery_pool
+                    ORDER BY RANDOM()
+                    LIMIT ?
+                """, (limit,))
+                
+                rows = cursor.fetchall()
+                tracks = []
+                for row in rows:
+                    track_dict = dict(row)
+                    if track_dict.get('track_data_json'):
+                        try:
+                            track_dict['track_data_json'] = json.loads(track_dict['track_data_json'])
+                        except:
+                            pass
+                    tracks.append(track_dict)
+                return tracks
+        except Exception as e:
+            logger.error(f"Error fetching discovery pool tracks: {e}")
+            return []
 
     @staticmethod
     def get_parent_genre(spotify_genre: str) -> str:

@@ -67,3 +67,5 @@ database/config.db
 # Temporary files
 *.tmp
 *.bak
+database/music_library.db
+data/music_library.db

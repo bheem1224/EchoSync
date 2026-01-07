@@ -22,7 +22,7 @@ def test_imports():
         ("Jobs route", lambda: __import__('web.routes.jobs', fromlist=['bp'])),
         ("Config manager", lambda: __import__('config.settings', fromlist=['config_manager'])),
         ("Job queue", lambda: __import__('core.job_queue', fromlist=['job_queue'])),
-        ("Plugin system", lambda: __import__('plugins.plugin_system', fromlist=['plugin_registry'])),
+        ("Provider registry", lambda: __import__('core.provider_registry', fromlist=['ProviderRegistry'])),
     ]
     
     passed = 0
@@ -122,24 +122,23 @@ def test_provider_registry():
         return False
 
 def test_plugin_registry():
-    """Test plugin system."""
-    print("\n=== Testing plugin_registry ===")
+    """Test provider registry system."""
+    print("\n=== Testing Provider Registry ===")
     try:
-        from plugins.plugin_system import plugin_registry
+        from core.provider_registry import ProviderRegistry
         
         # Test list all
-        plugins = plugin_registry.list_all()
-        print(f"  ✓ plugin_registry.list_all() returned {len(plugins)} plugins")
+        providers = ProviderRegistry.list_providers()
+        print(f"  ✓ ProviderRegistry.list_providers() returned {len(providers)} providers")
         
-        # Test get plugin (for each available)
-        if plugins:
-            for plugin in plugins[:2]:  # Test first 2
-                plugin_id = plugin.get('id') if isinstance(plugin, dict) else getattr(plugin, 'id', 'unknown')
-                fetched = plugin_registry.get_plugin(plugin_id)
+        # Test get provider (for each available)
+        if providers:
+            for provider_name in providers[:2]:  # Test first 2
+                fetched = ProviderRegistry.get_provider_class(provider_name)
                 if fetched:
-                    print(f"  ✓ plugin_registry.get_plugin('{plugin_id}') found")
+                    print(f"  ✓ ProviderRegistry.get_provider_class('{provider_name}') found")
                 else:
-                    print(f"  ⚠ plugin_registry.get_plugin('{plugin_id}') returned None")
+                    print(f"  ⚠ ProviderRegistry.get_provider_class('{provider_name}') returned None")
         
         return True
         

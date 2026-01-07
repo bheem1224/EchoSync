@@ -20,12 +20,12 @@
     // Use the dedicated route for Music Services
     { label: 'Music Services', href: '/settings/music-services' },
     { label: 'Servers', href: '/settings/servers' },
+    { label: 'Download Clients', href: '/settings/download-clients' },
     { label: 'Metadata', href: '/settings#metadata' },
     { label: 'Search', href: '/settings#search' },
     { label: 'Misc', href: '/settings#misc' },
     { label: 'Jobs', href: '/settings#jobs' },
-    { label: 'System', href: '/settings#system' },
-    { label: 'Download Clients', href: '/settings/download-clients' } // New entry
+    { label: 'System', href: '/settings#system' }
   ];
 
   const navLinks = [

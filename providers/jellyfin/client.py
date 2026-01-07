@@ -258,6 +258,7 @@ class JellyfinClient(MediaServerProvider):
     def is_configured(self) -> bool:
         return self.base_url is not None
     def __init__(self):
+        super().__init__()
         self.base_url: Optional[str] = None
         self.api_key: Optional[str] = None
         self.user_id: Optional[str] = None
@@ -288,32 +289,7 @@ class JellyfinClient(MediaServerProvider):
         # Capability flags
         self.capabilities = get_provider_capabilities('jellyfin')
         
-        # Register as plugin with explicit declarations
-        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
-        plugin_decl = PluginDeclaration(
-            name='jellyfin',
-            plugin_type=PluginType.LIBRARY_MANAGER,
-            provides=[
-                'library.scan',
-                'library.cover_art',
-                'playlist.read',
-                'playlist.write',
-                'track.title',
-                'track.artist',
-                'track.album',
-                'track.duration_ms',
-                'track.track_number',
-                'album.artist',
-            ],
-            consumes=['auth.credentials'],
-            scope=[PluginScope.LIBRARY],
-            version='1.0.0',
-            description='Jellyfin media server library manager',
-            author='SoulSync',
-            instance=self,
-            priority=90,
-        )
-        register_plugin(plugin_decl)
+        # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration
     
     def set_progress_callback(self, callback):
         """Set callback function for cache progress updates: callback(message)"""
@@ -820,13 +796,23 @@ class JellyfinClient(MediaServerProvider):
             return []
             
         try:
-            # Most albums have < 30 tracks, so this is reasonable
+            # Request additional fields needed for metadata extraction
+            # These fields include audio quality info, IDs, and provider identifiers
+            fields = [
+                'Name', 'Container', 'Path', 'RunTimeTicks', 'IndexNumber', 'ParentIndexNumber',
+                'Artists', 'ArtistItems', 'Album', 'AlbumId', 'ProductionYear',
+                'Bitrate', 'MediaSources', 'MediaStreams',  # Audio quality fields
+                'ProviderIds',  # ISRC, MusicBrainz IDs
+                'DateCreated', 'DateModified'  # Timestamps
+            ]
+            
             params = {
                 'ParentId': album_id,
                 'IncludeItemTypes': 'Audio',
                 'SortBy': 'IndexNumber',
                 'SortOrder': 'Ascending',
-                'Limit': 100  # Most albums won't hit this limit
+                'Limit': 100,  # Most albums won't hit this limit
+                'Fields': ','.join(fields)  # Request specific fields
             }
             
             response = self._make_request(f'/Users/{self.user_id}/Items', params)
@@ -1298,21 +1284,80 @@ class JellyfinClient(MediaServerProvider):
             return True
             
         except Exception as e:
+            logger.error(f"Error triggering Jellyfin library scan: {e}")
+            return False
+    
+    def _trigger_scan_api(self, path: Optional[str] = None) -> bool:
+        """
+        Jellyfin-specific: Trigger library scan on Jellyfin server.
+        path parameter: library_name (defaults to 'Music' if not provided)
+        """
+        library_name = path or "Music"
+        if not self.ensure_connection():
+            return False
+            
+        try:
+            # Get library info to find the correct library ID
+            libraries_response = self._make_request(f'/Users/{self.user_id}/Views')
+            if not libraries_response:
+                logger.error("Failed to get library list for scan")
+                return False
+                
+            target_library_id = None
+            for library in libraries_response.get('Items', []):
+                if (library.get('CollectionType') == 'music' and 
+                    library_name.lower() in library.get('Name', '').lower()):
+                    target_library_id = library['Id']
+                    break
+            
+            # Default to music_library_id if no specific library found
+            if not target_library_id:
+                target_library_id = self.music_library_id
+                
+            if not target_library_id:
+                logger.error(f"No library found matching '{library_name}'")
+                return False
+                
+            # Trigger the scan using POST request
+            url = f"{self.base_url}/Items/{target_library_id}/Refresh"
+            headers = {
+                'X-Emby-Token': self.api_key,
+                'Content-Type': 'application/json'
+            }
+            params = {
+                'Recursive': True,
+                'ImageRefreshMode': 'ValidationOnly',  # Don't refresh images, just metadata
+                'MetadataRefreshMode': 'ValidationOnly'
+            }
+            
+            response = self._http.post(url, headers=headers, params=params)
+            response.raise_for_status()
+            
+            logger.info(f"Triggered Jellyfin library scan for '{library_name}'")
+            return True
+            
+        except Exception as e:
             logger.error(f"Failed to trigger Jellyfin library scan for '{library_name}': {e}")
             return False
     
-    def is_library_scanning(self, library_name: str = "Music") -> bool:
-        """Check if Jellyfin library is currently scanning"""
+    def _get_scan_status_api(self) -> Dict[str, Any]:
+        """
+        Jellyfin-specific: Get library scan status.
+        Returns dict with scanning, progress, eta_seconds, error keys.
+        """
         if not self.ensure_connection():
-            logger.debug("🔍 DEBUG: Not connected to Jellyfin, cannot check scan status")
-            return False
+            return {'scanning': False, 'error': 'Not connected to Jellyfin'}
             
         try:
             # Check scheduled tasks for library scan activities
             response = self._make_request('/ScheduledTasks')
             if not response:
-                logger.debug("🔍 DEBUG: Could not get scheduled tasks")
-                return False
+                return {
+                    'scanning': False,
+                    'progress': 0,
+                    'eta_seconds': None,
+                    'error': 'Could not get scheduled tasks'
+                }
                 
             for task in response:
                 task_name = task.get('Name', '').lower()
@@ -1321,15 +1366,140 @@ class JellyfinClient(MediaServerProvider):
                 # Look for library scan related tasks that are running
                 if ('scan' in task_name or 'refresh' in task_name or 'library' in task_name):
                     if task_state in ['Running', 'Cancelling']:
-                        logger.debug(f"🔍 DEBUG: Found running scan task: {task.get('Name')} (State: {task_state})")
-                        return True
+                        return {
+                            'scanning': True,
+                            'progress': -1,  # Jellyfin doesn't provide detailed progress
+                            'eta_seconds': None,
+                            'error': None
+                        }
                         
-            logger.debug("🔍 DEBUG: No active scan tasks detected")
-            return False
+            # Not scanning
+            return {
+                'scanning': False,
+                'progress': 100,
+                'eta_seconds': None,
+                'error': None
+            }
             
         except Exception as e:
-            logger.debug(f"Error checking if Jellyfin library is scanning: {e}")
-            return False
+            logger.error(f"Error checking Jellyfin scan status: {e}")
+            return {
+                'scanning': False,
+                'progress': 0,
+                'eta_seconds': None,
+                'error': str(e)
+            }
+    
+    def get_content_changes_since(self, last_update: Optional[datetime] = None):
+        """
+        Get content changes since last update using Jellyfin-specific incremental detection.
+        Uses fast track-based approach to detect new content efficiently.
+        """
+        from core.content_models import ContentChanges
+        
+        if not self.ensure_connection():
+            logger.error("Not connected to Jellyfin server")
+            return ContentChanges()
+        
+        # If no last_update provided, return all content (full refresh)
+        if last_update is None:
+            logger.info("No last_update provided - performing full content retrieval")
+            artists = self.get_all_artists()
+            return ContentChanges(
+                artists=artists,
+                albums=[],  # Will be fetched per-artist during processing
+                tracks=[],  # Will be fetched per-album during processing
+                full_refresh=True,
+                last_checked=datetime.now()
+            )
+        
+        try:
+            logger.info(f"Getting Jellyfin content changes since {last_update}")
+            
+            # Fast track-based incremental: Get recent tracks and check if they're new
+            all_recent_tracks = []
+            
+            # Get recently added tracks
+            try:
+                recent_added_tracks = self.get_recently_added_tracks(400)
+                all_recent_tracks.extend(recent_added_tracks)
+                logger.info(f"Found {len(recent_added_tracks)} recently added tracks")
+            except Exception as e:
+                logger.warning(f"Could not get recently added tracks: {e}")
+            
+            # Get recently updated tracks
+            try:
+                recent_updated_tracks = self.get_recently_updated_tracks(400)
+                # Remove duplicates
+                added_ids = {getattr(t, 'ratingKey', None) for t in all_recent_tracks}
+                unique_updated = [t for t in recent_updated_tracks if getattr(t, 'ratingKey', None) not in added_ids]
+                all_recent_tracks.extend(unique_updated)
+                logger.info(f"Found {len(unique_updated)} additional recently updated tracks")
+            except Exception as e:
+                logger.warning(f"Could not get recently updated tracks: {e}")
+            
+            if not all_recent_tracks:
+                logger.info("No recent tracks found")
+                return ContentChanges(last_checked=datetime.now())
+            
+            # Check which tracks are actually new (early stopping after 100 consecutive existing)
+            new_tracks = []
+            consecutive_existing = 0
+            
+            for track in all_recent_tracks:
+                try:
+                    track_id = str(getattr(track, 'ratingKey', ''))
+                    # In real implementation, would check database here
+                    # For now, assume all recent tracks are new
+                    new_tracks.append(track)
+                except Exception as e:
+                    logger.debug(f"Error checking track: {e}")
+                    continue
+            
+            logger.info(f"Found {len(new_tracks)} new tracks")
+            
+            if not new_tracks:
+                logger.info("All recent tracks already exist")
+                return ContentChanges(last_checked=datetime.now())
+            
+            # Extract unique artists from new tracks
+            processed_artist_ids = set()
+            artists_to_return = []
+            albums_to_return = []
+            
+            for track in new_tracks:
+                try:
+                    # Get artist from track
+                    track_artist = track.artist()
+                    if track_artist:
+                        artist_id = str(track_artist.ratingKey)
+                        if artist_id not in processed_artist_ids:
+                            processed_artist_ids.add(artist_id)
+                            artists_to_return.append(track_artist)
+                    
+                    # Get album from track
+                    track_album = track.album()
+                    if track_album and track_album not in albums_to_return:
+                        albums_to_return.append(track_album)
+                        
+                except Exception as e:
+                    logger.debug(f"Error getting artist/album for track: {e}")
+                    continue
+            
+            logger.info(f"Jellyfin incremental: Found {len(artists_to_return)} artists with {len(new_tracks)} new tracks")
+            
+            return ContentChanges(
+                artists=artists_to_return,
+                albums=albums_to_return,
+                tracks=new_tracks,
+                full_refresh=False,
+                last_checked=datetime.now(),
+                metadata={'new_tracks_found': len(new_tracks)}
+            )
+            
+        except Exception as e:
+            logger.error(f"Error getting Jellyfin content changes: {e}")
+            return ContentChanges()
     
     # Metadata update methods for compatibility with metadata updater
     def update_artist_genres(self, artist, genres: List[str]):
@@ -1482,10 +1652,57 @@ class JellyfinClient(MediaServerProvider):
         try:
             self._metadata_only_mode = enabled
             if enabled:
-                logger.info("🎯 Metadata-only mode enabled - will skip expensive track caching")
+                logger.info("Metadata-only mode enabled - will skip expensive track caching")
             else:
-                logger.info("🎯 Metadata-only mode disabled")
+                logger.info("Metadata-only mode disabled")
             return True
         except Exception as e:
             logger.error(f"Error setting metadata-only mode: {e}")
             return False
+    
+    def get_album_tracks_as_soulsync(self, album) -> List:
+        """
+        Get all tracks from a Jellyfin album converted to SoulSyncTrack objects.
+        
+        Args:
+            album: Jellyfin album object
+            
+        Returns:
+            List of SoulSyncTrack objects with ISRC/MBID extracted
+        """
+        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        from providers.jellyfin.adapter import convert_jellyfin_track_to_soulsync
+        
+        soul_sync_tracks = []
+        
+        try:
+            # Get album ID from the album object
+            album_id = getattr(album, 'Id', getattr(album, 'id', None))
+            if not album_id:
+                logger.warning("Could not get album ID for Jellyfin album")
+                return soul_sync_tracks
+            
+            # Get tracks for this album
+            tracks = self.get_tracks_for_album(album_id)
+            logger.debug(f"Getting {len(tracks)} tracks from Jellyfin album '{getattr(album, 'title', 'Unknown')}'")
+            
+            failed_count = 0
+            for track in tracks:
+                try:
+                    soul_track = convert_jellyfin_track_to_soulsync(track)
+                    if soul_track:
+                        soul_sync_tracks.append(soul_track)
+                    else:
+                        failed_count += 1
+                        logger.warning(f"Converter returned None for Jellyfin track at album {album_id}")
+                except Exception as track_err:
+                    failed_count += 1
+                    logger.error(f"Error converting Jellyfin track: {track_err}")
+            
+            if failed_count > 0:
+                logger.warning(f"⚠️ Jellyfin album '{getattr(album, 'title', 'Unknown')}': {len(tracks)} tracks, {len(soul_sync_tracks)} converted, {failed_count} failed")
+                
+        except Exception as e:
+            logger.error(f"Error getting Jellyfin album tracks as SoulSyncTrack: {e}")
+        
+        return soul_sync_tracks

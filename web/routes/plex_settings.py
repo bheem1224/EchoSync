@@ -17,6 +17,10 @@ def get_settings():
         token = config_manager.get('plex.token', '')
         server_name = config_manager.get('plex.server_name', '')
         
+        # Check if this is the active media server
+        active_media_server = config_manager.get('active_media_server', 'plex')
+        is_active = (active_media_server == 'plex')
+        
         # Check connection status
         connected = False
         if base_url and token:
@@ -34,7 +38,8 @@ def get_settings():
                 'base_url': base_url,
                 'server_name': server_name,
                 'has_token': bool(token),
-                'connected': connected
+                'connected': connected,
+                'is_active': is_active
             }
         })
     except Exception as e:
@@ -66,6 +71,21 @@ def save_settings():
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error saving Plex settings: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.post('/activate')
+def activate_server():
+    """Set Plex as the active media server."""
+    try:
+        config_manager.set('active_media_server', 'plex')
+        logger.info("Plex set as active media server")
+        return jsonify({
+            'success': True,
+            'message': 'Plex is now the active media server'
+        })
+    except Exception as e:
+        logger.error(f"Error activating Plex: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 

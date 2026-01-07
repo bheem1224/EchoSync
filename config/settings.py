@@ -5,6 +5,10 @@ from typing import Dict, Any, Optional, Callable
 from cryptography.fernet import Fernet
 from pathlib import Path
 import copy
+from database import get_database
+from utils.logging_config import get_logger
+
+logger = get_logger("config_manager")
 
 # Defines which keys in the config dict should be encrypted.
 SECRETS = [
@@ -384,7 +388,9 @@ class ConfigManager:
                 "transfer_dir": str(self.library_path),
                 "log_dir": str(self.logs_path),
                 "config_dir": str(self.config_dir)
-            }
+            },
+            # Provider/Plugin management
+            "disabled_providers": []  # List of provider/plugin names to disable (e.g., ["spotify", "tidal"])
         }
         return cfg
 
@@ -816,6 +822,33 @@ class ConfigManager:
         spotify_creds = self.get_spotify_active_credentials()
         spotify_configured = bool(spotify_creds.get('client_id')) and bool(spotify_creds.get('client_secret')) and bool(spotify_creds.get('redirect_uri'))
         
+    def get_disabled_providers(self) -> list:
+        """Get list of disabled providers/plugins from config"""
+        return self.get('disabled_providers', [])
+
+    def set_disabled_providers(self, disabled_list: list) -> None:
+        """Set list of disabled providers/plugins"""
+        self.set('disabled_providers', disabled_list)
+
+    def disable_provider(self, name: str) -> None:
+        """Disable a provider/plugin by adding it to the disabled list"""
+        disabled = self.get_disabled_providers()
+        if name not in disabled:
+            disabled.append(name)
+            self.set_disabled_providers(disabled)
+
+    def enable_provider(self, name: str) -> None:
+        """Enable a provider/plugin by removing it from the disabled list"""
+        disabled = self.get_disabled_providers()
+        if name in disabled:
+            disabled.remove(name)
+            self.set_disabled_providers(disabled)
+        
+    def is_configured(self) -> bool:
+        # Check Spotify credentials (global or active account overrides)
+        spotify_creds = self.get_spotify_active_credentials()
+        spotify_configured = bool(spotify_creds.get('client_id')) and bool(spotify_creds.get('client_secret')) and bool(spotify_creds.get('redirect_uri'))
+        
         active_server = self.get_active_media_server()
         soulseek = self.get_soulseek_config()
 
@@ -856,5 +889,22 @@ class ConfigManager:
         validation['active_media_server'] = bool(active_server)
 
         return validation
+
+    def get_service_credentials(self, service_name: str) -> Dict[str, Any]:
+        """
+        Retrieve credentials for a specific service from the database.
+        - service_name: Name of the service (e.g., 'plex', 'spotify').
+        Returns a dictionary of credentials or an empty dictionary if not found.
+        """
+        db = get_database()
+        try:
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT key, value FROM service_configs WHERE service_id = (SELECT id FROM services WHERE name = ?)", (service_name,))
+                rows = c.fetchall()
+                return {row[0]: row[1] for row in rows} if rows else {}
+        except Exception as e:
+            logger.error(f"Error retrieving credentials for {service_name}: {e}")
+            return {}
 
 config_manager = ConfigManager()

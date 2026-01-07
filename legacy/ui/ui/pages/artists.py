@@ -17,9 +17,9 @@ from dataclasses import dataclass
 from providers.spotify.client import SpotifyClient, Artist, Album
 from providers.plex.client import PlexClient
 from providers.soulseek.client import SoulseekClient, AlbumResult
-from core.matching_engine import MusicMatchingEngine
+from legacy.matching_engine import MusicMatchingEngine
 from core.wishlist_service import get_wishlist_service
-from core.plex_scan_manager import PlexScanManager
+from legacy.plex_scan_manager import PlexScanManager
 from database.music_database import get_database
 from utils.logging_config import get_logger
 import asyncio

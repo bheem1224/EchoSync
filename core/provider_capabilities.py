@@ -35,6 +35,7 @@ class ProviderCapabilities:
     supports_library_scan: bool = False
     supports_streaming: bool = False
     supports_downloads: bool = False
+    playlist_algorithms: list = None  # List of algorithm IDs this provider supplies (e.g., ['spotify_mood', 'spotify_energy'])
 
 
 # Central registry of known provider capabilities
@@ -50,6 +51,7 @@ CAPABILITY_REGISTRY: Dict[str, ProviderCapabilities] = {
         supports_library_scan=False,
         supports_streaming=True,
         supports_downloads=False,
+        playlist_algorithms=['spotify_mood', 'spotify_energy', 'spotify_newness'],
     ),
     'tidal': ProviderCapabilities(
         name='tidal',

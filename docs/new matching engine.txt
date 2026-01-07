@@ -1,0 +1,171 @@
+TASK: Create a robust TrackParser service for SoulSync.
+GOAL: Convert raw strings (filenames, torrent titles) into structured SoulSyncTrack objects to enable accurate comparison.
+REQUIREMENTS:
+Regex Extraction Strategy:
+Create a library of regex patterns to extract:
+Quality: 320kbps, FLAC, 24bit, 44.1kHz.
+Version: Remix, Radio Edit, Live, Acoustic, Cover.
+Junk: [Official Video], (Lyrics), www.website.com.
+ID Codes: WEB, CBR, V0.
+The parse_filename(raw_string) method:
+Input: "The_Weeknd_-_Blinding_Lights_(Chromatics_Remix)_[FLAC_24bit].mkv"
+Output: A TrackCandidate object containing:
+artist: "The Weeknd"
+title: "Blinding Lights"
+version: "Chromatics Remix" (CRITICAL: Must separate this from title)
+quality_tags: ['FLAC', '24bit']
+container: mkv
+Normalization:
+Implement normalize_string() to handle case sensitivity, special characters (fancy quotes), and spacing issues.
+EDGE CASES:
+Handle "Artist - Title" vs "Title - Artist" ambiguity.
+Handle "feat." artists (move them from Title to Artist field or a features list).
+Copilot Prompt:
+TASK: Implement the core WeightedMatchingEngine for SoulSync.
+ARCHITECTURE: Use the Strategy Pattern to allow different "Scoring Profiles" based on the use case.
+COMPONENTS:
+1. The ScoringProfile Class: A configuration object defining weights and penalties.
+text_weight (float): Weight for Fuzzy Text matching.
+duration_weight (float): Weight for duration matching.
+fingerprint_weight (float): Weight for audio fingerprinting.
+version_penalty (int): Score deduction if "Remix" status doesn't match (e.g., -50 points).
+quality_bonus (bool): Whether to boost score for higher bitrate (for Slskd).
+2. The calculate_match(source, candidate, profile) method:
+Inputs:
+source: The SoulSyncTrack we want.
+candidate: The TrackCandidate we found (from Slskd or Tidal).
+profile: The specific ScoringProfile to use.
+Logic:
+Step A (The Gatekeeper): If candidate.version != source.version (e.g., source is "Original", candidate is "Remix"), apply the massive version_penalty. This is priority #1.
+Step B (Fuzzy Text): Use token_set_ratio for Artist/Title. Weighted by profile.text_weight.
+Step C (Duration): If available in both, compare. Weighted by profile.duration_weight.
+Step D (Quality Tie-Breaker): If scores are identical, prefer the candidate with better quality_tags (e.g., FLAC > MP3) ONLY if profile.quality_bonus is True.
+Output: A float (0-100) representing confidence.
+PRE-DEFINED PROFILES:
+PROFILE_EXACT_SYNC: Strict text matching, high penalties. (For Spotify -> Tidal).
+PROFILE_DOWNLOAD_SEARCH: Tolerant text matching, high quality bonus. (For Slskd).
+PROFILE_LIBRARY_IMPORT: Maximum weight on Fingerprint/Duration. (For Local Files).
+
+Copilot Prompt:
+TASK: Create the MatchService interface that unifies the Parser and Scorer.
+GOAL: Provide a simple API that other modules (Slskd Plugin, Playlist Sync, Library Scanner) can use without knowing the internal math.
+API METHODS:
+find_best_match(target_track, list_of_candidates, context="download")
+Logic:
+Selects the correct ScoringProfile based on context.
+Parses list_of_candidates using TrackParser (if they are strings).
+Runs calculate_match on every candidate.
+Returns the single best candidate above a minimum threshold.
+compare_tracks(track_a, track_b, context="sync")
+Logic: Returns a simple Boolean (True/False) or a generic MatchResult object explaining why they matched (or failed).
+CONTEXT: This service must be stateless and fast, as it may process thousands of items during a bulk playlist sync.
+
+TASK: Create a PostProcessor service for SoulSync.
+GOAL: Apply metadata to files and organize them into folders based on user patterns (like MusicBrainz Picard).
+INPUT:
+file_path: Path to the local file.
+track_data: A populated SoulSyncTrack object (with Artist, Title, Album, Year, Genres, Cover Art URL).
+pattern: A user string (e.g., "{Artist}/{Year} - {Album}/{Title}").
+REQUIREMENTS:
+Tagging:
+Use mutagen or music-tag library to write ID3/FLAC/Vorbis tags.
+Must Write: Title, Artist, Album, Year, Genre, Disc Number, Track Number
+Smart Art: If track_data.cover_art_url is present, download it to memory and embed it into the file.
+Renaming & Moving:
+Sanitize the pattern (remove illegal characters like /, :, ? from the tags before creating folders).
+Handle duplicates (if song.mp3 exists, rename to song (1).mp3).
+Move the file to the new destination.
+EDGE CASES:
+Ensure the function works across partitions (use shutil.move, not os.rename).
+Clean up empty directories after moving the file out.
+
+regex for Normalization
+# Regex to find "Junk" in filenames
+JUNK_PATTERNS = [
+    r"\(?official\s+(video|audio|lyric|music\s+video)\)?", # (Official Video)
+    r"\(?\d{3,4}[p|k]\)?",                                 # (1080p), 4k
+    r"\(?(HD|HQ|CDQ|M4A|FLAC)\)?",                         # (HQ)
+    r"\[.*?\]",                                            # Remove anything in square brackets usually
+    r"\.(mp3|flac|wav|m4a|ogg)$"                           # Extension
+]
+
+# Regex to find "Version" info (Keep this!)
+VERSION_PATTERNS = [
+    r"\b(remix|mix|edit|club|extended|radio|instrumental|acoustic|live|cover)\b"
+]
+
+TASK: Generate the final SoulSync Core Matching Engine in Python.
+CONTEXT: This is the central brain of the application. It handles File Importing, Slskd Searching, and Playlist Syncing. It must be modular (Strategy Pattern) and robust.
+CORE COMPONENTS:
+Data Structure (SoulSyncTrack)
+Standard fields: title, artist, album, year, duration_ms.
+New Critical Fields:
+is_compilation (bool)
+disc_number (int) & total_discs (int)
+track_total (int) - Critical for album matching.
+extra_metadata (Dict) - For plugin data (BPM, Mood, Lyrics).
+external_ids (Dict) - { 'mbid': '...', 'spotify': '...' }
+The MatchService Class (The Brain):
+Method: match_track(source, candidates, profile)
+Logic:
+Step 1 (Sanity Check): If source.is_compilation is True, disable "Album Artist" penalties.
+Step 2 (The Edition Check): Compare source.track_total vs candidate.track_total. If they differ significantly, apply a WRONG_RELEASE_PENALTY.
+Step 3 (Fuzzy Text): Standard thefuzz matching on Title/Artist.
+Step 4 (Format/Quality): If profile.prefer_lossless is True, give +10 points to FLAC candidates.
+The Caching Decorator:
+Create a @provider_cache(ttl_seconds=3600) decorator.
+Apply this to the MetadataProvider.search() method to prevent API rate limits
+OUTPUT: Generate the Python code for the SoulSyncTrack class and the MatchService class with these specific logic gates implemented.
+
+
+. The "Various Artists" Logic (The Compilation Trap)
+Simple matching engines fail when they see a folder called Ministry of Sound - Annual 2024. They look for an artist named "Ministry of Sound" and fail.
+The Fix: You need a specific flag in your TrackCandidate called is_compilation.
+The Logic: If is_compilation is True, the Matching Engine should ignore the Album Artist for scoring purposes and match purely on Track Title + Track Artist.
+Why add it now? If you don't, your engine will try to "fix" compilations by renaming them to the individual track artists, scattering a single album across 20 different folders.
+2. "Release Group" vs. "Release" (The Edition Problem)
+MusicBrainz distinguishes between the concept of an album (Release Group) and the specific CD (Release).
+The Problem: Your user wants "Dark Side of the Moon."
+Result A: 1973 Original Vinyl (9 tracks).
+Result B: 2011 Remaster (9 tracks + 2 bonus live tracks).
+The Fix: Your engine needs a Preferred Release Type weight.
+Implementation:
+If the user wants a "perfect FLAC match," the engine must penalize Result A if the file is from Result B (track counts won't match).
+Add total_tracks and disc_count to your SoulSyncTrack schema. If the local folder has 12 files but the Metadata Candidate has 9, that’s a -50% score penalty.
+3. Rate-Limit Caching (The Performance Saver)
+You mentioned slskd downloading and Syncing. Both involve high-volume queries. Services like MusicBrainz allow 1 request per second. If you scan a 10,000-song library, it will take 3 hours.
+The Fix: A Short-Term Cache Layer inside the Core.
+Implementation: Before asking the Provider "Who is The Weeknd?", check a local Redis/SQLite cache.
+Why add it now? If you try to bolt this on later, you will have to rewrite every find_match function. Build it into the MatchService wrapper from Day 1.
+
+1. Profile: DOWNLOAD_SEARCH (Slskd)
+Context: Matching a clean Metadata request against messy filenames from P2P networks.
+
+Goal: Find the right song, even if the filename is ugly (e.g., The_Weeknd_-_Blinding_Lights_(Official_Audio)_320kbps.mp3).
+Metric,Weight,Reasoning
+Title Match,40%,"The filename usually contains the title, but often with junk."
+Artist Match,30%,"Critical, but filenames sometimes move ""Feat. X"" to the end."
+Duration,20%,"The BS Detector. If the duration is off by >5s, it's likely a fake or a wrong mix."
+Album Match,10%,Low weight. Filenames often omit the album entirely.
+Quality Bonus,+5 to +10,"If searching for FLAC and file is FLAC, give a bonus."
+Version Penalty,-50,"If you want ""Original"" and find ""Remix"", kill the score."
+
+2. Profile: EXACT_SYNC (Spotify $\rightarrow$ Tidal/Local)
+Context: Matching two structured API responses. Data is clean but might differ slightly (e.g., "Remaster 2011" vs "Remaster").
+Goal: High precision. Avoid false positives.
+Metric,Weight,Reasoning
+Title Match,35%,Must be very close.
+Artist Match,35%,Must be exact.
+Duration,20%,"Streaming services use different masters, so allow ~3s variance."
+Album Match,10%,"Low because ""Greatest Hits"" compilations often contain the same track ID."
+ISRC Match,Instant 100,"If ISRCs match, skip all other checks. It is the same song."
+
+3. Profile: LIBRARY_IMPORT (Picard Style)
+Context: Scanning a local file that might have no tags but has audio data.
+
+Goal: Identification via Fingerprinting.
+Metric,Weight,Reasoning
+Fingerprint,60%,"If chromaprint matches, we are mostly done."
+Duration,30%,Confirms the fingerprint isn't a false positive.
+Meta Tags,10%,Existing tags are trusted least (user might have bad tags).
+Total Tracks,-20 (Penalty),"If album has 12 tracks but metadata says 10, penalize (Wrong Release)."

@@ -17,6 +17,10 @@ def get_settings():
         username = config_manager.get('navidrome.username', '')
         password = config_manager.get('navidrome.password', '')
         
+        # Check if this is the active media server
+        active_media_server = config_manager.get('active_media_server', 'plex')
+        is_active = (active_media_server == 'navidrome')
+        
         # Check connection status
         connected = False
         if base_url and username and password:
@@ -44,7 +48,8 @@ def get_settings():
                 'base_url': base_url,
                 'username': username,
                 'has_password': bool(password),
-                'connected': connected
+                'connected': connected,
+                'is_active': is_active
             }
         })
     except Exception as e:
@@ -76,6 +81,21 @@ def save_settings():
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error saving Navidrome settings: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.post('/activate')
+def activate_server():
+    """Set Navidrome as the active media server."""
+    try:
+        config_manager.set('active_media_server', 'navidrome')
+        logger.info("Navidrome set as active media server")
+        return jsonify({
+            'success': True,
+            'message': 'Navidrome is now the active media server'
+        })
+    except Exception as e:
+        logger.error(f"Error activating Navidrome: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 

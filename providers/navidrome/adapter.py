@@ -1,22 +1,149 @@
 """
 Navidrome ProviderAdapter implementation.
 
-Creates Track stubs from Navidrome library traversal (artists→albums→tracks),
-attaches ProviderRef, and enriches basic metadata. Navidrome does not provide
-local file paths, so download status remains unchanged.
+Creates SoulSyncTrack from Navidrome library with extracted metadata including
+ISRC, MusicBrainz IDs, and audio quality information.
 
-Adapters NEVER own data; all operations go through MusicDatabase.
+Adheres to Track-centric architecture.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from utils.logging_config import get_logger
-from plugins.provider_adapter import ProviderAdapter
 from core.models import ProviderType, Track
 from sdk.storage_service import get_storage_service
+from core.provider_base import ProviderBase
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 logger = get_logger("navidrome_adapter")
 
-class NavidromeAdapter(ProviderAdapter):
+
+def convert_navidrome_track_to_soulsync(navidrome_track) -> Optional[SoulSyncTrack]:
+    """
+    Convert Navidrome track object to SoulSyncTrack.
+    
+    Extracts Navidrome metadata including ISRC, MusicBrainz IDs, and audio quality.
+    
+    Args:
+        navidrome_track: Navidrome track object or wrapper (NavidromeTrack)
+        
+    Returns:
+        SoulSyncTrack with all available metadata, or None if conversion fails
+    """
+    try:
+        # Get raw data dict if this is a wrapper object
+        raw_data = navidrome_track._data if hasattr(navidrome_track, '_data') else navidrome_track
+        
+        # Extract basic metadata from raw data dict
+        title = raw_data.get('title') if isinstance(raw_data, dict) else getattr(navidrome_track, 'title', None)
+        artist = raw_data.get('artist') if isinstance(raw_data, dict) else getattr(navidrome_track, 'artist', None)
+        album = raw_data.get('album') if isinstance(raw_data, dict) else getattr(navidrome_track, 'album', None)
+        
+        if not title or not artist:
+            logger.warning(f"Navidrome track missing title or artist: {title} / {artist}")
+            return None
+        
+        # Duration - Navidrome uses seconds, we need milliseconds
+        duration_ms = None
+        if isinstance(raw_data, dict):
+            duration_raw = raw_data.get('duration')
+            if duration_raw:
+                try:
+                    duration_ms = int(duration_raw) * 1000  # Convert seconds to ms
+                except (ValueError, TypeError):
+                    pass
+        else:
+            duration_ms = getattr(navidrome_track, 'duration', None)
+        
+        track_number = raw_data.get('track') if isinstance(raw_data, dict) else getattr(navidrome_track, 'trackNumber', None)
+        if track_number:
+            try:
+                track_number = int(track_number)
+            except (ValueError, TypeError):
+                pass
+        
+        disc_number = raw_data.get('discNumber') if isinstance(raw_data, dict) else None
+        if disc_number:
+            try:
+                disc_number = int(disc_number)
+            except (ValueError, TypeError):
+                pass
+        
+        # Audio quality metadata
+        bitrate = raw_data.get('bitRate') if isinstance(raw_data, dict) else None
+        if bitrate:
+            try:
+                bitrate = int(bitrate)
+            except (ValueError, TypeError):
+                pass
+        
+        sample_rate = raw_data.get('sampleRate') if isinstance(raw_data, dict) else None
+        if sample_rate:
+            try:
+                sample_rate = int(sample_rate)
+            except (ValueError, TypeError):
+                pass
+        
+        bit_depth = raw_data.get('bitsPerSample') if isinstance(raw_data, dict) else None
+        if bit_depth:
+            try:
+                bit_depth = int(bit_depth)
+            except (ValueError, TypeError):
+                pass
+        
+        # File format and path
+        file_format = raw_data.get('suffix') if isinstance(raw_data, dict) else None
+        if file_format:
+            file_format = file_format.lower()
+        
+        file_path = raw_data.get('path') if isinstance(raw_data, dict) else None
+        
+        # Extract ISRC and MusicBrainz IDs
+        isrc = raw_data.get('isrc') if isinstance(raw_data, dict) else None
+        musicbrainz_id = raw_data.get('mbRecordingID') if isinstance(raw_data, dict) else None
+        musicbrainz_album_id = raw_data.get('mbAlbumID') if isinstance(raw_data, dict) else None
+        
+        year = None
+        if isinstance(raw_data, dict):
+            year_val = raw_data.get('year')
+            if year_val:
+                try:
+                    # If it's a date string, extract just the year
+                    year_str = str(year_val)
+                    if len(year_str) >= 4:
+                        year = int(year_str[:4])
+                    else:
+                        year = int(year_val)
+                except (ValueError, TypeError):
+                    year = None
+        else:
+            year = getattr(navidrome_track, 'year', None)
+        
+        # Use ProviderBase factory method for normalization
+        return ProviderBase.create_soul_sync_track(
+            title=title,
+            artist=artist,
+            album=album,
+            duration_ms=duration_ms,
+            year=year,
+            track_number=track_number,
+            disc_number=disc_number,
+            isrc=isrc,
+            musicbrainz_id=musicbrainz_id,
+            musicbrainz_album_id=musicbrainz_album_id,
+            bitrate=bitrate,
+            file_format=file_format,
+            sample_rate=sample_rate,
+            bit_depth=bit_depth,
+            file_path=file_path,
+            source='navidrome'
+        )
+    
+    except Exception as e:
+        logger.error(f"Error converting Navidrome track to SoulSyncTrack: {e}", exc_info=True)
+        return None
+
+
+class NavidromeAdapter:
     def __init__(self, navidrome_client=None):
         storage = get_storage_service()
         db = storage.get_music_database()

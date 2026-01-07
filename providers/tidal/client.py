@@ -77,39 +77,6 @@ class TidalClient(SyncServiceProvider):
         self._load_config()
         self._load_saved_tokens()
         
-        # Register as plugin with explicit declarations
-        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
-        plugin_decl = PluginDeclaration(
-            name='tidal',
-            plugin_type=PluginType.PLAYLIST_SERVICE,
-            provides=[
-                'playlist.read',
-                'search.tracks',
-                'search.artists',
-                'search.albums',
-                'search.playlists',
-                'track.title',
-                'track.artist',
-                'track.album',
-                'track.duration_ms',
-                'track.release_date',
-                'album.artist',
-                'album.type',
-            ],
-            consumes=['auth.oauth'],
-            scope=[PluginScope.SYNC, PluginScope.SEARCH],
-            version='1.0.0',
-            description='TIDAL playlist and search provider',
-            author='SoulSync',
-            instance=self,
-            priority=90,
-        )
-        # Check if the plugin is already registered
-        from plugins.plugin_system import get_plugin
-        if get_plugin('tidal'):
-            logger.info("Plugin 'tidal' already registered; skipping duplicate")
-        else:
-            register_plugin(plugin_decl)
     def _refresh_access_token(self):
         """Refresh the Tidal access token using the refresh token."""
         if not self.refresh_token or not self.client_id:

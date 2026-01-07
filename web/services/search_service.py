@@ -2,7 +2,7 @@
 
 from typing import List, Dict, Optional
 
-from plugins.plugin_system import plugin_registry, PluginScope
+from core.provider_registry import ProviderRegistry
 from core.provider_capabilities import get_provider_capabilities
 
 

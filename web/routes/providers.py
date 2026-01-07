@@ -1,6 +1,5 @@
 from flask import Blueprint, jsonify, request
 from web.services.provider_registry import list_providers, get_providers_for_capability, get_provider
-from plugins.adapter_registry import AdapterRegistry
 from utils.logging_config import get_logger
 
 logger = get_logger("providers_route")
@@ -21,19 +20,59 @@ def list_all_providers():
         logger.error(f"Error listing providers: {e}")
         return jsonify({'error': str(e)}), 500
 
+@bp.get("/download-clients")
+def list_download_clients():
+    """List all providers flagged as download clients.
+    
+    Returns providers with supports_downloads=True capability.
+    """
+    try:
+        from core.provider_registry import ProviderRegistry
+        from core.provider_capabilities import CAPABILITY_REGISTRY
+        
+        download_clients = []
+        
+        # Get all registered providers
+        all_providers = ProviderRegistry.list_providers()
+        
+        for provider_name in all_providers:
+            # Check if provider supports downloads
+            if provider_name in CAPABILITY_REGISTRY:
+                capabilities = CAPABILITY_REGISTRY[provider_name]
+                if capabilities.supports_downloads:
+                    # Get provider instance
+                    provider_class = ProviderRegistry.get_provider_class(provider_name)
+                    if provider_class:
+                        download_clients.append({
+                            'name': provider_name,
+                            'display_name': provider_name.title(),
+                            'supports_downloads': True,
+                            'description': f'Download music via {provider_name.title()}'
+                        })
+        
+        return jsonify(download_clients), 200
+        
+    except Exception as e:
+        logger.error(f"Error listing download clients: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @bp.get("/<provider_name>/playlists")
 def get_provider_playlists(provider_name):
     """Fetch playlists from a specific provider."""
     try:
         # Get provider via registry
-        from plugins.plugin_system import plugin_registry
+        from core.provider_registry import ProviderRegistry
         
-        plugin_decl = plugin_registry.get_plugin(provider_name)
-        if not plugin_decl:
+        provider_cls = ProviderRegistry.get_provider_class(provider_name)
+        if not provider_cls:
             return jsonify({'error': f'Provider {provider_name} not found or not installed'}), 404
         
-        # Get the actual client instance from the plugin declaration
-        plugin = plugin_decl.instance if hasattr(plugin_decl, 'instance') else plugin_decl
+        # Instantiate provider
+        try:
+            plugin = ProviderRegistry.create_instance(provider_name)
+        except ValueError as e:
+            return jsonify({'error': f'Provider {provider_name} is disabled'}), 403
+        
         if not plugin:
             return jsonify({'error': f'Provider {provider_name} instance not found'}), 404
         

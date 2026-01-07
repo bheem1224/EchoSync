@@ -12,6 +12,10 @@ from utils.logging_config import get_logger
 from config.settings import config_manager
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
 import threading
+from core.job_queue import JobQueue
+from core.health_check import register_health_check_job, HealthCheckResult
+from web.db.music_database import MusicDatabase
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 logger = get_logger("plex_client")
 
@@ -77,14 +81,79 @@ class PlexPlaylistInfo:
 
 class PlexClient(MediaServerProvider):
     name = "plex"
+    def __init__(self):
+        super().__init__()
+        self.server: Optional[PlexServer] = None
+        self.music_library: Optional[MusicSection] = None
+        self._connection_attempted = False
+        self._is_connecting = False
+        self._last_connection_check = 0  # Cache connection checks
+        self._connection_check_interval = 30  # Check every 30 seconds max
+        self._last_connection_attempt = 0
+        # Initialize centralized HTTP client for Plex (10 requests/second)
+        self._http = HttpClient(
+            provider='plex',
+            retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
+            rate=RateLimitConfig(requests_per_second=10.0)
+        )
+        from core.provider_capabilities import get_provider_capabilities
+
+        # Capability flags
+        self.capabilities = get_provider_capabilities('plex')
+        self.job_queue = JobQueue()
+        self.job_queue.start()
+        self._register_health_check()
+        self.db = MusicDatabase()
+        self.credentials = config_manager.get_credentials("plex")
+
+    def _register_health_check(self):
+        def plex_health_check() -> HealthCheckResult:
+            try:
+                connected = self.ensure_connection()
+                if connected:
+                    return HealthCheckResult(
+                        service_name="plex",
+                        status="healthy",
+                        message="Plex server is reachable",
+                    )
+                else:
+                    return HealthCheckResult(
+                        service_name="plex",
+                        status="unhealthy",
+                        message="Plex server connection failed",
+                    )
+            except Exception as e:
+                return HealthCheckResult(
+                    service_name="plex",
+                    status="unhealthy",
+                    message=f"Plex connection error: {str(e)}",
+                )
+
+        register_health_check_job("plex_health_check", plex_health_check, interval_seconds=60)
+
     def authenticate(self, **kwargs) -> bool:
         return self.ensure_connection()
 
-    def search(self, query: str, limit: int = 10) -> list:
-        if not self.ensure_connection():
+    def search(self, query: str, limit: int = 10, type: str = "track") -> list:
+        # Ensure method signature matches base class
+        try:
+            if not self.ensure_connection():
+                return []
+
+            results = self.music_library.search(query, libtype=type, maxresults=limit)
+            return [SoulSyncTrack(
+                title=getattr(result, "title", "Unknown Title"),
+                artist=getattr(result.artist(), "title", "Unknown Artist"),
+                album=getattr(result.album(), "title", "Unknown Album"),
+                duration=int(result.duration) if isinstance(result.duration, (int, float)) else 0,
+                track_number=int(result.trackNumber) if isinstance(result.trackNumber, (int, float)) else None,
+                year=int(result.year) if isinstance(result.year, (int, float)) else None,
+                mbid=None,
+                isrc=None,
+            ) for result in results if result]
+        except Exception as e:
+            logger.error(f"Error during search: {e}")
             return []
-        # Stub: implement actual search logic
-        return []
 
     def get_library_stats(self) -> Dict[str, int]:
         # Stub implementation
@@ -95,12 +164,58 @@ class PlexClient(MediaServerProvider):
         return []
 
     def get_all_albums(self) -> list:
-        # Stub implementation
-        return []
+        """Get all albums from the music library"""
+        if not self.ensure_connection() or not self.music_library:
+            logger.error("Not connected to Plex server or no music library")
+            return []
+        
+        try:
+            albums = self.music_library.searchAlbums(limit=99999)
+            logger.info(f"Found {len(albums)} albums in Plex library")
+            return albums
+        except Exception as e:
+            logger.error(f"Error getting all albums: {e}")
+            return []
 
     def get_all_tracks(self) -> list:
-        # Stub implementation
-        return []
+        tracks = []
+        offset = 0
+        page_size = 100
+
+        def fetch_tracks():
+            nonlocal offset, tracks
+            try:
+                if not self.music_library:
+                    logger.error("Music library is not initialized.")
+                    return
+
+                page = self.music_library.searchTracks(maxresults=page_size, offset=offset)
+                if page:
+                    for track in page:
+                        if track and track.artist() and track.album():
+                            soul_sync_track = SoulSyncTrack(
+                                title=getattr(track, "title", "Unknown Title"),
+                                artist=getattr(track.artist(), "title", "Unknown Artist"),
+                                album=getattr(track.album(), "title", "Unknown Album"),
+                                duration=int(track.duration) if isinstance(track.duration, (int, float)) else 0,
+                                track_number=int(track.trackNumber) if isinstance(track.trackNumber, (int, float)) else None,
+                                year=int(track.year) if isinstance(track.year, (int, float)) else None,
+                                mbid=None,  # Plex does not provide MBID
+                                isrc=None,  # Plex does not provide ISRC
+                            )
+                            tracks.append(soul_sync_track)
+                    offset += len(page)
+                    logger.debug(f"Fetched {len(page)} tracks (total: {len(tracks)})")
+            except Exception as e:
+                logger.error(f"Error fetching tracks: {e}")
+
+        self.job_queue.register_job("fetch_plex_tracks", fetch_tracks, interval_seconds=1)
+        self.job_queue.start()
+
+        # Wait for all jobs to complete (simplified for demonstration)
+        import time
+        time.sleep((2401 // page_size) + 1)  # Adjust based on total tracks
+        return tracks
 
     def get_track(self, track_id: str) -> dict:
         # Stub implementation
@@ -146,51 +261,6 @@ class PlexClient(MediaServerProvider):
         except Exception as e:
             logger.error(f"Error fetching music libraries: {e}")
             return []
-    def __init__(self):
-        self.server: Optional[PlexServer] = None
-        self.music_library: Optional[MusicSection] = None
-        self._connection_attempted = False
-        self._is_connecting = False
-        self._last_connection_check = 0  # Cache connection checks
-        self._connection_check_interval = 30  # Check every 30 seconds max
-        self._last_connection_attempt = 0
-        # Initialize centralized HTTP client for Plex (10 requests/second)
-        self._http = HttpClient(
-            provider='plex',
-            retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
-            rate=RateLimitConfig(requests_per_second=10.0)
-        )
-        from core.provider_capabilities import get_provider_capabilities
-
-        # Capability flags
-        self.capabilities = get_provider_capabilities('plex')
-        
-        # Register as plugin with explicit declarations
-        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
-        plugin_decl = PluginDeclaration(
-            name='plex',
-            plugin_type=PluginType.LIBRARY_MANAGER,
-            provides=[
-                'library.scan',
-                'library.cover_art',
-                'playlist.read',
-                'playlist.write',
-                'track.title',
-                'track.artist',
-                'track.album',
-                'track.duration_ms',
-                'track.track_number',
-                'album.artist',
-            ],
-            consumes=['auth.credentials'],
-            scope=[PluginScope.LIBRARY],
-            version='1.0.0',
-            description='Plex media server library manager',
-            author='SoulSync',
-            instance=self,
-            priority=100,
-        )
-        register_plugin(plugin_decl)
     
     def ensure_connection(self) -> bool:
         """Ensure connection to Plex server with lazy initialization and reconnection support."""
@@ -278,7 +348,6 @@ class PlexClient(MediaServerProvider):
                     logger.info(f"Set music library to: {library_name}")
 
                     # Store preference in database
-                    from database.music_database import MusicDatabase
                     db = MusicDatabase()
                     db.set_preference('plex_music_library', library_name)
 
@@ -308,7 +377,6 @@ class PlexClient(MediaServerProvider):
 
             # Check if user has a saved preference
             try:
-                from database.music_database import MusicDatabase
                 db = MusicDatabase()
                 preferred_library = db.get_preference('plex_music_library')
 
@@ -705,9 +773,9 @@ class PlexClient(MediaServerProvider):
         
         try:
             return {
-                'artists': len(self.music_library.searchArtists()),
-                'albums': len(self.music_library.searchAlbums()),
-                'tracks': len(self.music_library.searchTracks())
+                'artists': len(self.music_library.searchArtists(limit=99999)),
+                'albums': len(self.music_library.searchAlbums(limit=99999)),
+                'tracks': len(self.music_library.searchTracks(limit=99999))
             }
         except Exception as e:
             logger.error(f"Error getting library stats: {e}")
@@ -720,7 +788,7 @@ class PlexClient(MediaServerProvider):
             return []
         
         try:
-            artists = self.music_library.searchArtists()
+            artists = self.music_library.searchArtists(limit=99999)
             logger.info(f"Found {len(artists)} artists in Plex library")
             return artists
         except Exception as e:
@@ -928,62 +996,186 @@ class PlexClient(MediaServerProvider):
             logger.error(f"Error updating track metadata: {e}")
             return False
     
-    def trigger_library_scan(self, library_name: str = "Music") -> bool:
-        """Trigger Plex library scan for the specified library"""
+    def _trigger_scan_api(self, path: Optional[str] = None) -> bool:
+        """
+        Plex-specific: Trigger library scan on Plex server.
+        path parameter: library_name (defaults to 'Music' if not provided)
+        """
+        library_name = path or "Music"
         if not self.ensure_connection():
             return False
             
         try:
             library = self.server.library.section(library_name)
             library.update()  # Non-blocking scan request
-            logger.info(f"🎵 Triggered Plex library scan for '{library_name}'")
+            logger.info(f"Triggered Plex library scan for '{library_name}'")
             return True
         except Exception as e:
             logger.error(f"Failed to trigger library scan for '{library_name}': {e}")
             return False
     
-    def is_library_scanning(self, library_name: str = "Music") -> bool:
-        """Check if Plex library is currently scanning"""
+    def _get_scan_status_api(self) -> Dict[str, Any]:
+        """
+        Plex-specific: Get library scan status.
+        Returns dict with scanning, progress, eta_seconds, error keys.
+        """
+        library_name = "Music"
         if not self.ensure_connection():
-            logger.debug(f"🔍 DEBUG: Not connected to Plex, cannot check scan status")
-            return False
+            return {'scanning': False, 'error': 'Not connected to Plex'}
             
         try:
             library = self.server.library.section(library_name)
             
             # Check if library has a scanning attribute or is refreshing
-            # The Plex API exposes this through the library's refreshing property
             refreshing = hasattr(library, 'refreshing') and library.refreshing
-            logger.debug(f"🔍 DEBUG: Library.refreshing = {refreshing}")
             
             if refreshing:
-                logger.debug(f"🔍 DEBUG: Library is refreshing")
-                return True
+                return {
+                    'scanning': True,
+                    'progress': -1,  # Plex doesn't provide scan progress
+                    'eta_seconds': None,
+                    'error': None
+                }
             
-            # Alternative method: Check server activities for scanning
+            # Check server activities for scanning status
             try:
                 activities = self.server.activities()
-                logger.debug(f"🔍 DEBUG: Found {len(activities)} server activities")
-                
                 for activity in activities:
-                    # Look for library scan activities
                     activity_type = getattr(activity, 'type', 'unknown')
                     activity_title = getattr(activity, 'title', 'unknown')
-                    logger.debug(f"🔍 DEBUG: Activity - type: {activity_type}, title: {activity_title}")
                     
                     if (activity_type in ['library.scan', 'library.refresh'] and
                         library_name.lower() in activity_title.lower()):
-                        logger.debug(f"🔍 DEBUG: Found matching scan activity: {activity_title}")
-                        return True
-            except Exception as activities_error:
-                logger.debug(f"Could not check server activities: {activities_error}")
+                        return {
+                            'scanning': True,
+                            'progress': -1,
+                            'eta_seconds': None,
+                            'error': None
+                        }
+            except Exception as e:
+                logger.debug(f"Could not check server activities: {e}")
             
-            logger.debug(f"🔍 DEBUG: No scan activity detected")
-            return False
+            # Not scanning
+            return {
+                'scanning': False,
+                'progress': 100,
+                'eta_seconds': None,
+                'error': None
+            }
+        except Exception as e:
+            logger.error(f"Error getting Plex scan status: {e}")
+            return {
+                'scanning': False,
+                'progress': 0,
+                'eta_seconds': None,
+                'error': str(e)
+            }
+    
+    def get_content_changes_since(self, last_update: Optional[datetime] = None):
+        """
+        Get content changes since last update using Plex-specific incremental detection.
+        Uses recentlyAdded and updatedAt sorting to find new/modified content efficiently.
+        """
+        from core.content_models import ContentChanges
+        
+        if not self.ensure_connection() or not self.music_library:
+            logger.error("Not connected to Plex server or no music library")
+            return ContentChanges()
+        
+        # If no last_update provided, return all content (full refresh)
+        if last_update is None:
+            logger.info("No last_update provided - performing full content retrieval")
+            artists = self.get_all_artists()
+            return ContentChanges(
+                artists=artists,
+                albums=[],  # Will be fetched per-artist during processing
+                tracks=[],  # Will be fetched per-album during processing
+                full_refresh=True,
+                last_checked=datetime.now()
+            )
+        
+        try:
+            logger.info(f"Getting Plex content changes since {last_update}")
+            
+            # Get recently added and updated albums (up to 400 to catch more recent content)
+            all_recent_content = []
+            
+            try:
+                recently_added = self.music_library.recentlyAdded(libtype='album', maxresults=400)
+                all_recent_content.extend(recently_added)
+                logger.info(f"Found {len(recently_added)} recently added albums")
+            except:
+                # Fallback to general recently added
+                recently_added = self.music_library.recentlyAdded(maxresults=400)
+                all_recent_content.extend(recently_added)
+                logger.info(f"Found {len(recently_added)} recently added items (mixed types)")
+            
+            # Get recently updated albums (catches metadata corrections)
+            try:
+                recently_updated = self.music_library.search(sort='updatedAt:desc', libtype='album', limit=400)
+                # Remove duplicates (items that are both recently added and updated)
+                added_keys = {getattr(item, 'ratingKey', None) for item in all_recent_content}
+                unique_updated = [item for item in recently_updated if getattr(item, 'ratingKey', None) not in added_keys]
+                all_recent_content.extend(unique_updated)
+                logger.info(f"Found {len(unique_updated)} additional recently updated albums (after deduplication)")
+            except Exception as e:
+                logger.warning(f"Could not get recently updated content: {e}")
+            
+            # Filter to only get Album objects and convert Artist objects to their albums
+            recent_albums = []
+            artist_count = 0
+            album_count = 0
+            
+            for item in all_recent_content:
+                try:
+                    if hasattr(item, 'tracks') and hasattr(item, 'artist'):
+                        # This is an Album - add directly
+                        recent_albums.append(item)
+                        album_count += 1
+                    elif hasattr(item, 'albums'):
+                        # This is an Artist - get their albums
+                        try:
+                            artist_albums = list(item.albums())
+                            if artist_albums:
+                                recent_albums.extend(artist_albums)
+                                artist_count += 1
+                        except Exception as albums_error:
+                            logger.warning(f"Error getting albums from artist '{getattr(item, 'title', 'Unknown')}': {albums_error}")
+                except Exception as e:
+                    logger.warning(f"Error processing recently added item: {e}")
+                    continue
+            
+            logger.info(f"Processed {artist_count} artists → albums, {album_count} direct albums")
+            
+            # Extract unique artists from albums
+            processed_artist_ids = set()
+            artists_to_return = []
+            
+            for album in recent_albums:
+                try:
+                    album_artist = album.artist()
+                    if album_artist:
+                        artist_id = str(album_artist.ratingKey)
+                        if artist_id not in processed_artist_ids:
+                            processed_artist_ids.add(artist_id)
+                            artists_to_return.append(album_artist)
+                except Exception as e:
+                    logger.warning(f"Error getting artist for album: {e}")
+            
+            logger.info(f"Plex incremental: Found {len(artists_to_return)} artists with recent changes")
+            
+            return ContentChanges(
+                artists=artists_to_return,
+                albums=recent_albums,
+                tracks=[],  # Will be fetched per-album during processing
+                full_refresh=False,
+                last_checked=datetime.now(),
+                metadata={'recent_albums_checked': len(recent_albums)}
+            )
             
         except Exception as e:
-            logger.debug(f"Error checking if library is scanning: {e}")
-            return False
+            logger.error(f"Error getting Plex content changes: {e}")
+            return ContentChanges()
     
     def search_albums(self, album_name: str = "", artist_name: str = "", limit: int = 20) -> List[Dict[str, Any]]:
         """Search for albums in Plex library"""
@@ -1085,3 +1277,41 @@ class PlexClient(MediaServerProvider):
         
         # Return first result if no exact match
         return albums[0] if albums else None
+    
+    def get_album_tracks_as_soulsync(self, album: PlexAlbum) -> List['SoulSyncTrack']:
+        """
+        Get all tracks from a Plex album converted to SoulSyncTrack objects.
+        
+        This is the clean interface for DatabaseUpdateWorker - it receives
+        SoulSyncTrack objects instead of raw Plex track objects.
+        
+        Args:
+            album: Plex Album object
+            
+        Returns:
+            List of SoulSyncTrack objects with ISRC/MBID extracted
+        """
+        from providers.plex.adapter import convert_plex_track_to_soulsync
+
+        soul_sync_tracks = []
+        album_title = getattr(album, 'title', 'Unknown')
+
+        try:
+            all_tracks = list(album.tracks())
+            logger.info(f"[PLEX] Album '{album_title}': Starting conversion of {len(all_tracks)} tracks")
+
+            for track in all_tracks:
+                try:
+                    soul_track = convert_plex_track_to_soulsync(track)
+                    if soul_track:
+                        soul_sync_tracks.append(soul_track)
+                except Exception as track_err:
+                    logger.warning(f"[PLEX] Error converting track: {track_err}")
+
+            logger.info(f"[PLEX] Album '{album_title}': Conversion complete - {len(soul_sync_tracks)} tracks converted")
+
+        except Exception as e:
+            logger.error(f"[PLEX] ERROR converting album '{album_title}' tracks: {e}", exc_info=True)
+
+        return soul_sync_tracks
+

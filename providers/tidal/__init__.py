@@ -1,5 +1,4 @@
 from providers.tidal.client import *
-from providers.tidal.adapter import *
 
 # Import and expose OAuth blueprint for Flask registration
 try:

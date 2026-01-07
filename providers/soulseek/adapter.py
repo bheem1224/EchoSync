@@ -10,13 +10,13 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 import asyncio
 from typing import List, Optional
 from utils.logging_config import get_logger
-from plugins.provider_adapter import ProviderAdapter
 from core.models import ProviderType, Track
 from sdk.storage_service import get_storage_service
 
 logger = get_logger("soulseek_adapter")
 
-class SoulseekAdapter(ProviderAdapter):
+# SoulseekAdapter class deprecated - use convert_soulseek_track_to_soulsync instead
+class SoulseekAdapter:
     def __init__(self, soulseek_client=None):
         storage = get_storage_service()
         db = storage.get_music_database()

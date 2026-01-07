@@ -3,18 +3,19 @@
 import os
 from utils.logging_config import get_logger
 
-logger = get_logger("lyrics_client")
+logger = get_logger("lrclib_client")
 
-# Optional import of lrclib for testing and graceful fallback
+# Optional import of lrclib for graceful fallback
 try:
     from lrclib import LrcLibAPI
 except Exception:
     LrcLibAPI = None
 
-class LyricsClient:
+
+class LRCLibClient:
     """
-    Minimal, elegant LRClib client for automatic lyrics fetching.
-    Generates .lrc sidecar files during post-processing.
+    LRClib API client for fetching synchronized lyrics.
+    Creates .lrc sidecar files during post-processing.
     """
 
     def __init__(self):
@@ -25,10 +26,9 @@ class LyricsClient:
         """Initialize LRClib API with graceful fallback"""
         try:
             if LrcLibAPI is None:
-                # Module not available
                 raise ImportError("lrclib not available")
 
-            self.api = LrcLibAPI(user_agent="SoulSync/1.0 (WebUI)")
+            self.api = LrcLibAPI(user_agent="SoulSync/1.0")
             logger.debug("LRClib API client initialized")
         except ImportError:
             logger.warning("LRClib API not available - lyrics functionality disabled")
@@ -72,7 +72,7 @@ class LyricsClient:
 
             # Primary attempt: ask API for lyrics (pass album/duration if available)
             try:
-                logger.debug(f"Attempting get_lyrics: {track_name} by {artist_name} (album={album_name}, duration={duration_seconds})")
+                logger.debug(f"Attempting get_lyrics: {track_name} by {artist_name}")
                 lyrics_data = self.api.get_lyrics(
                     track_name=track_name,
                     artist_name=artist_name,
@@ -104,12 +104,10 @@ class LyricsClient:
                 return False
 
             # Prefer synced lyrics, fallback to plain text
-            # LRClib API uses synced_lyrics and plain_lyrics attributes
             lrc_content = getattr(lyrics_data, 'synced_lyrics', None) or getattr(lyrics_data, 'plain_lyrics', None)
 
             logger.debug(f"Synced lyrics available: {bool(getattr(lyrics_data, 'synced_lyrics', None))}")
             logger.debug(f"Plain lyrics available: {bool(getattr(lyrics_data, 'plain_lyrics', None))}")
-            logger.debug(f"LRC content found: {bool(lrc_content)}")
 
             if not lrc_content:
                 logger.debug(f"No usable lyrics content for: {artist_name} - {track_name}")
@@ -126,7 +124,3 @@ class LyricsClient:
         except Exception as e:
             logger.error(f"Error creating LRC file for {track_name}: {e}")
             return False
-
-
-# Global instance for use in web_server
-lyrics_client = LyricsClient()

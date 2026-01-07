@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify
 from utils.logging_config import get_logger
-from plugins.plugin_system import plugin_registry, PluginScope, PluginType
+from core.provider_registry import ProviderRegistry
 from core.provider_capabilities import get_provider_capabilities
 
 logger = get_logger("sync_route")

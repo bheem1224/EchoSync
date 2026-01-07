@@ -28,27 +28,7 @@ class ListenBrainzClient:
         # Capability flags
         self.capabilities = get_provider_capabilities('listenbrainz')
         
-        # Register as plugin with explicit declarations
-        from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
-        plugin_decl = PluginDeclaration(
-            name='listenbrainz_client',
-            plugin_type=PluginType.PLAYLIST_SERVICE,
-            provides=[
-                'playlist.read',
-                'search.playlists',
-                'track.title',
-                'track.artist',
-                'track.album',
-            ],
-            consumes=[],
-            scope=[PluginScope.SYNC, PluginScope.SEARCH],
-            version='1.0.0',
-            description='ListenBrainz playlist discovery and sync',
-            author='SoulSync',
-            instance=self,
-            priority=70,
-        )
-        register_plugin(plugin_decl)
+        # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration
 
         if self.token:
             # Validate token and get username

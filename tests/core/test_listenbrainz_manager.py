@@ -2,14 +2,14 @@
 import pytest
 import sqlite3
 from unittest.mock import MagicMock, patch, call
-from core.listenbrainz_manager import ListenBrainzManager
+from providers.listenbrainz.manager import ListenBrainzManager
 
 # --- Mock Data and Fixtures ---
 
 @pytest.fixture
 def mock_lb_client():
     """Mocks the ListenBrainzClient."""
-    with patch('core.listenbrainz_manager.ListenBrainzClient') as mock_client_class:
+    with patch('providers.listenbrainz.manager.ListenBrainzClient') as mock_client_class:
         mock_instance = MagicMock()
         mock_instance.is_authenticated.return_value = True
         

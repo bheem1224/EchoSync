@@ -27,6 +27,8 @@ from .music_database import (
     close_database
 )
 
+from .bulk_operations import BulkOperations
+
 from .engine import (
     execute_write,
     execute_write_sql,

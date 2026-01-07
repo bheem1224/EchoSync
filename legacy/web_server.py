@@ -32,10 +32,10 @@ from providers.jellyfin.client import JellyfinClient
 from providers.navidrome.client import NavidromeClient
 from providers.soulseek.client import SoulseekClient
 from providers.tidal.client import TidalClient
-from core.matching_engine import MusicMatchingEngine
+from legacy.matching_engine import MusicMatchingEngine
 from core.database_update_worker import DatabaseUpdateWorker, DatabaseStatsWorker
-from core.web_scan_manager import WebScanManager
-from core.lyrics_client import lyrics_client
+from legacy.web_scan_manager import WebScanManager
+from providers.lrclib.provider import lrclib_provider as lyrics_client
 from plugins.plugin_system import plugin_registry, PluginType, PluginScope
 from database.music_database import get_database
 from core.models import Track, DownloadStatus
@@ -7616,7 +7616,7 @@ def _detect_album_info_web(context: dict, artist: dict) -> dict:
         best_confidence = 0
         
         if tracks:
-            from core.matching_engine import MusicMatchingEngine
+            from legacy.matching_engine import MusicMatchingEngine
             matching_engine = MusicMatchingEngine()
             for track in tracks:
                 # Calculate confidence based on artist and title similarity
@@ -7933,7 +7933,7 @@ def _search_track_in_album_context_web(context: dict, spotify_artist: dict) -> d
     (Ported from GUI downloads.py)
     """
     try:
-        from core.matching_engine import MusicMatchingEngine
+        from legacy.matching_engine import MusicMatchingEngine
         matching_engine = MusicMatchingEngine()
         
         # Get album and track info from context
@@ -15074,7 +15074,7 @@ def _run_tidal_discovery_worker(playlist_id):
         print(f"🎵 Starting Tidal Spotify discovery for: {playlist.name}")
         
         # Import matching engine for validation (like sync.py)
-        from core.matching_engine import MusicMatchingEngine
+        from legacy.matching_engine import MusicMatchingEngine
         matching_engine = MusicMatchingEngine()
         
         successful_discoveries = 0
@@ -22473,7 +22473,7 @@ def get_spotify_artist_discography(artist_name):
     """Get complete artist discography from Spotify using proper matching"""
     try:
         from providers.spotify.client import SpotifyClient
-        from core.matching_engine import MusicMatchingEngine
+        from legacy.matching_engine import MusicMatchingEngine
 
         print(f"🎵 Searching Spotify for artist: {artist_name}")
 

@@ -8,7 +8,7 @@ from providers.plex.client import PlexClient, PlexTrackInfo
 from providers.jellyfin.client import JellyfinClient
 from providers.navidrome.client import NavidromeClient
 from providers.soulseek.client import SoulseekClient
-from core.matching_engine import MusicMatchingEngine, MatchResult
+from core import MatchService, MatchContext, SoulSyncTrack, MatchResult
 
 logger = get_logger("sync_service")
 
@@ -52,7 +52,7 @@ class PlaylistSyncService:
         self.progress_callbacks = {}  # Playlist-specific progress callbacks
         self.syncing_playlists = set()  # Track multiple syncing playlists
         self._cancelled = False
-        self.matching_engine = MusicMatchingEngine()
+        self.matching_engine = MatchService()
     
     def _get_active_media_client(self):
         """Get the active media client based on config settings"""

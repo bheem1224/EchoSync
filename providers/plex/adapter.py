@@ -7,121 +7,97 @@ and attaches Plex ProviderRef. Adheres to Track-centric architecture.
 
 from typing import List, Optional, Dict, Any
 from utils.logging_config import get_logger
-from plugins.provider_adapter import ProviderAdapter
 from core.models import ProviderType, Track
 from sdk.storage_service import get_storage_service
+from core.provider_base import ProviderBase
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 logger = get_logger("plex_adapter")
 
-class PlexAdapter(ProviderAdapter):
-    def __init__(self, plex_client=None):
-        storage = get_storage_service()
-        db = storage.get_music_database()
-        super().__init__(db=db, provider_type=ProviderType.PLEX)
-        self.plex = plex_client
 
-    def get_provides_fields(self) -> List[str]:
-        return [
-            "file_path",
-            "file_format",
-            "bitrate",
-            "duration_ms",
-            "title",
-            "artists",
-            "album",
-        ]
+def convert_plex_track_to_soulsync(plex_track) -> Optional[SoulSyncTrack]:
+    """
+    Convert Plex track object to SoulSyncTrack.
 
-    def get_consumes_fields(self) -> List[str]:
-        return []
+    Extracts Plex-specific metadata including file size, bit rate, bit depth, sample rate.
 
-    def requires_auth(self) -> bool:
-        return True
+    Args:
+        plex_track: Plex track object
 
-    def attach_file_metadata(self, track_id: str, file_path: str, file_format: Optional[str] = None,
-                             bitrate: Optional[int] = None, duration_ms: Optional[int] = None) -> Track:
-        """Attach local file metadata to an existing Track and mark status as verified if present."""
-        track = self.db.get_track(track_id)
-        if not track:
-            raise ValueError(f"Track {track_id} not found")
-        # Enrich metadata
-        updates: Dict[str, Any] = {
-            "file_path": file_path,
-            "file_format": file_format,
-            "bitrate": bitrate,
-            "duration_ms": duration_ms,
-        }
-        # Remove None values
-        updates = {k: v for k, v in updates.items() if v is not None}
-        track = self.enrich_track(track_id, **updates)
-        # If file_path present, set download status to verified
-        try:
-            from core.models import DownloadStatus
-            status = DownloadStatus.VERIFIED.value if file_path else DownloadStatus.COMPLETE.value
-            track = self.update_download_status(track_id, status=status)
-        except Exception:
-            pass
-        return track
+    Returns:
+        SoulSyncTrack with all available metadata, or None if conversion fails
+    """
+    try:
+        # Extract basic metadata
+        title = getattr(plex_track, 'title', None)
 
-    def ingest_library(self, limit: Optional[int] = None) -> List[Track]:
-        """Scan Plex music library and populate canonical tracks."""
-        created: List[Track] = []
-        if not self.plex:
-            logger.warning("Plex client not provided; cannot ingest library")
-            return created
-        getter = getattr(self.plex, "get_all_tracks", None)
-        if not getter:
-            logger.warning("Plex client missing get_all_tracks")
-            return created
-        try:
-            items = self.plex.get_all_tracks() or []
-            if limit is not None:
-                items = items[:limit]
-            for item in items:
-                # Extract metadata defensively
-                provider_id = str(getattr(item, "id", getattr(item, "ratingKey", "")))
-                title = getattr(item, "title", None)
-                artists = getattr(item, "artists", []) or ([getattr(item, "grandparentTitle", None)] if getattr(item, "grandparentTitle", None) else [])
-                album = getattr(item, "album", getattr(item, "parentTitle", None))
-                duration_ms = getattr(item, "duration", None)
-                # Create stub and attach provider ref
-                track_id = self.create_stub(provider_id=provider_id, title=title, artists=artists, album=album, duration_ms=duration_ms)
-                # File metadata
-                file_path = getattr(item, "mediaPath", None)
-                file_format = getattr(item, "container", None)
-                bitrate = getattr(item, "bitrate", None)
-                # Enrich and mark verified if file present
-                self.enrich_track(track_id, file_path=file_path, file_format=file_format, bitrate=bitrate)
-                if provider_id:
-                    self.attach_provider_ref(track_id, provider_id=provider_id)
-                updated = self.update_download_status(track_id, status="verified")
-                if updated:
-                    created.append(updated)
-        except Exception as e:
-            logger.error(f"Error ingesting Plex library: {e}")
-        return created
+        # Handle artist and album extraction robustly
+        artist_obj = plex_track.artist() if callable(plex_track.artist) else None
+        artist = getattr(artist_obj, 'title', None) if artist_obj else None
 
-# Register adapter in plugin system
-try:
-    from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
-    decl = PluginDeclaration(
-        name="plex_adapter",
-        plugin_type=PluginType.LIBRARY_PROVIDER,
-        provides_fields=["file_path", "file_format", "bitrate", "duration_ms", "title", "artists", "album"],
-        consumes_fields=[],
-        requires_auth=True,
-        supports_streaming=True,
-        supports_downloads=False,
-        supports_library_scan=True,
-        supports_cover_art=True,
-        supports_lyrics=False,
-        provides=["library.scan", "library.tag_write", "track.title", "track.artist", "track.album", "track.duration_ms"],
-        consumes=["auth.credentials"],
-        scope=[PluginScope.LIBRARY],
-        version="1.0.0",
-        description="Plex adapter populating local file metadata for canonical tracks",
-        author="SoulSync",
-        priority=100,
-    )
-    register_plugin(decl)
-except Exception as e:
-    logger.debug(f"Plugin declaration for plex_adapter deferred: {e}")
+        album_obj = plex_track.album() if callable(plex_track.album) else None
+        album = getattr(album_obj, 'title', None) if album_obj else None
+
+        # Debug logging to inspect artist and album objects
+        logger.debug(f"[PLEX ADAPTER] Raw artist object: {artist_obj}")
+        logger.debug(f"[PLEX ADAPTER] Raw album object: {album_obj}")
+
+        if not title or not artist:
+            logger.error(f"[PLEX ADAPTER] MISSING REQUIRED FIELDS: title='{title}', artist='{artist}' - skipping track")
+            return None
+
+        duration_ms = getattr(plex_track, 'duration', None)
+        year = getattr(plex_track, 'year', None)
+        track_number = getattr(plex_track, 'trackNumber', None)
+        disc_number = getattr(plex_track, 'discNumber', None)
+
+        # Extract file metadata
+        file_path = None
+        file_format = None
+        bitrate = None
+        bit_depth = None
+        sample_rate = None
+        file_size = None
+
+        if hasattr(plex_track, 'media') and plex_track.media:
+            media = plex_track.media[0]
+            bitrate = getattr(media, 'bitrate', None)
+
+            if hasattr(media, 'parts') and media.parts:
+                part = media.parts[0]
+                file_path = getattr(part, 'file', None)
+                file_size = getattr(part, 'size', None)
+
+            # Extract additional audio properties
+            streams = getattr(media, 'audioStreams', [])
+            if streams:
+                stream = streams[0]
+                bit_depth = getattr(stream, 'bitDepth', None)
+                sample_rate = getattr(stream, 'sampleRate', None)
+
+            # Extract container from Plex format
+            container = getattr(media, 'container', None)
+            if container:
+                file_format = container.lower()
+
+        # Use ProviderBase factory method for normalization
+        return ProviderBase.create_soul_sync_track(
+            title=title,
+            artist=artist,
+            album=album,
+            duration_ms=duration_ms,
+            year=year,
+            track_number=track_number,
+            disc_number=disc_number,
+            bitrate=bitrate,
+            bit_depth=bit_depth,
+            sample_rate=sample_rate,
+            file_size=file_size,
+            file_format=file_format,
+            file_path=file_path,
+            source='plex'
+        )
+
+    except Exception as e:
+        logger.error(f"[PLEX ADAPTER] EXCEPTION converting track: {e}", exc_info=True)
+        return None

@@ -14,7 +14,7 @@ from config.settings import config_manager
 # Import the new search result classes
 from providers.soulseek.client import TrackResult, AlbumResult
 from providers.spotify.client import SpotifyClient, Artist, Album
-from core.matching_engine import MusicMatchingEngine
+from legacy.matching_engine import MusicMatchingEngine
 from core.lyrics_client import LyricsClient
 import requests
 from typing import List, Optional

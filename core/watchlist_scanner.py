@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from database.music_database import get_database, WatchlistArtist
 from providers.spotify.client import SpotifyClient
 from core.wishlist_service import get_wishlist_service
-from core.matching_engine import MusicMatchingEngine
+from core import MatchService, MatchContext, SoulSyncTrack
 from utils.logging_config import get_logger
 
 logger = get_logger("watchlist_scanner")
@@ -111,9 +111,9 @@ class WatchlistScanner:
     
     @property
     def matching_engine(self):
-        """Get matching engine instance (lazy loading)"""
+        """Get matching engine instance (lazy loading) - now MatchService"""
         if self._matching_engine is None:
-            self._matching_engine = MusicMatchingEngine()
+            self._matching_engine = MatchService()
         return self._matching_engine
     
     def scan_all_watchlist_artists(self) -> List[ScanResult]:
@@ -1614,41 +1614,43 @@ class WatchlistScanner:
         """
         Populate seasonal content as part of watchlist scan.
 
-        IMPROVED: Integrated with discovery system
-        - Checks if seasonal content needs update (7-day threshold)
-        - Populates content for all seasons
-        - Curates seasonal playlists
+        IMPROVED: Now uses SeasonalPlaylistAlgorithm from personalized_playlists service
+        - Checks if seasonal content should be generated
+        - Uses algorithmic playlist generation system
         - Runs once per week automatically
         """
         try:
-            from core.seasonal_discovery import get_seasonal_discovery_service
+            from core.personalized_playlists import get_personalized_playlists_service, SeasonalPlaylistAlgorithm
 
             logger.info("Checking seasonal content update...")
 
-            seasonal_service = get_seasonal_discovery_service(self.spotify_client, self.database)
-
-            # Get current season to prioritize
-            current_season = seasonal_service.get_current_season()
+            playlists_service = get_personalized_playlists_service(self.database, self.spotify_client)
+            
+            # Get seasonal algorithm
+            seasonal_algo = playlists_service._algorithms.get('seasonal')
+            if not seasonal_algo or not isinstance(seasonal_algo, SeasonalPlaylistAlgorithm):
+                logger.warning("Seasonal algorithm not available - skipping seasonal content")
+                return
+            
+            current_season = seasonal_algo.get_current_season()
 
             if current_season:
-                # Always update current season if needed
-                if seasonal_service.should_populate_seasonal_content(current_season, days_threshold=7):
-                    logger.info(f"Populating current season: {current_season}")
-                    seasonal_service.populate_seasonal_content(current_season)
-                    seasonal_service.curate_seasonal_playlist(current_season)
+                # Generate current season playlist
+                logger.info(f"Generating current season playlist: {current_season}")
+                seasonal_tracks = playlists_service.generate_playlist(
+                    playlist_type='seasonal',
+                    algorithm_id='seasonal',
+                    limit=50,
+                    season_key=current_season
+                )
+                
+                if seasonal_tracks:
+                    # Extract track IDs from track dictionaries
+                    track_ids: List[str] = [str(track.get('spotify_track_id')) for track in seasonal_tracks if track.get('spotify_track_id')]
+                    self.database.save_curated_playlist(f'seasonal_{current_season}', track_ids)
+                    logger.info(f"Saved {len(track_ids)} tracks for season: {current_season}")
                 else:
-                    logger.info(f"Current season '{current_season}' is up to date")
-
-            # Update other seasons in background (less frequently - 14 day threshold)
-            from core.seasonal_discovery import SEASONAL_CONFIG
-            for season_key in SEASONAL_CONFIG.keys():
-                if season_key == current_season:
-                    continue  # Already handled above
-
-                if seasonal_service.should_populate_seasonal_content(season_key, days_threshold=14):
-                    logger.info(f"Populating season: {season_key}")
-                    seasonal_service.populate_seasonal_content(season_key)
-                    seasonal_service.curate_seasonal_playlist(season_key)
+                    logger.warning(f"No tracks found for season: {current_season}")
 
             logger.info("Seasonal content update complete")
 

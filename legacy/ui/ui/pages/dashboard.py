@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import requests
 from PIL import Image
 import io
-from core.matching_engine import MusicMatchingEngine
+from legacy.matching_engine import MusicMatchingEngine
 from ui.components.database_updater_widget import DatabaseUpdaterWidget
 from core.database_update_worker import DatabaseUpdateWorker, DatabaseStatsWorker
 from core.wishlist_service import get_wishlist_service
@@ -30,7 +30,7 @@ from utils.logging_config import get_logger
 
 from providers.soulseek.client import TrackResult
 from database.music_database import get_database
-from core.plex_scan_manager import PlexScanManager
+from legacy.plex_scan_manager import PlexScanManager
 
 # dashboard.py - Add these helper classes
 

@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, patch, call
 import time
-from core.plex_scan_manager import PlexScanManager
+from legacy.plex_scan_manager import PlexScanManager
 
 class MockPlexClient:
     def __init__(self):
