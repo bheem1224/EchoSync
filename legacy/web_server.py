@@ -25,7 +25,7 @@ from utils.path_helpers import extract_filename, docker_resolve_path
 
 # Global logger for this module
 logger = get_logger("web_server")
-from config.settings import config_manager
+from core.settings import config_manager
 from providers.spotify.client import SpotifyClient, Playlist as SpotifyPlaylist, Track as SpotifyTrack
 from providers.plex.client import PlexClient
 from providers.jellyfin.client import JellyfinClient
@@ -44,6 +44,7 @@ from services.sync_service import PlaylistSyncService
 from datetime import datetime
 import yt_dlp
 from beatport_unified_scraper import BeatportUnifiedScraper
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 # --- Flask App Setup ---
 base_dir = os.path.abspath(os.path.dirname(__file__))
@@ -5299,7 +5300,7 @@ def trigger_automatic_database_update(reason="Automatic update"):
     Helper function to trigger automatic incremental database update.
     """
     try:
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
 
         # Get the appropriate media client
@@ -16543,7 +16544,7 @@ def _run_sync_task(playlist_id, playlist_name, tracks_json):
         print(f"   jellyfin_client: {sync_service.jellyfin_client is not None}")
         
         # Check media server connection before starting
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         print(f"   Active media server: {active_server}")
         
@@ -16580,7 +16581,7 @@ def _run_sync_task(playlist_id, playlist_name, tracks_json):
                 print(f"🗃️ Database-only search for: '{spotify_track.name}' by {spotify_track.artists}")
                 try:
                     from database.music_database import MusicDatabase
-                    from config.settings import config_manager
+                    from core.settings import config_manager
                     
                     db = MusicDatabase()
                     active_server = config_manager.get_active_media_server()
@@ -16778,7 +16779,7 @@ def test_database_access():
         print(f"   ✅ Track existence check works: found={db_track is not None}, confidence={confidence}")
         
         # Test config manager
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         print(f"   ✅ Active media server: {active_server}")
         

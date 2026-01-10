@@ -9,7 +9,7 @@ import time
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # Now we can import the config_manager
-from config.settings import config_manager, SECRETS
+from core.settings import config_manager, SECRETS
 
 def run_test():
     """

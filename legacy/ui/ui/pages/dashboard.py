@@ -120,7 +120,7 @@ class PlaylistTrackAnalysisWorker(QRunnable):
                     if self._cancelled: return None, 0.0
 
                     # Use server-aware database query to check only active server
-                    from config.settings import config_manager
+                    from core.settings import config_manager
                     active_server = config_manager.get_active_media_server()
                     db_track, confidence = db.check_track_exists(query_title, artist_name, confidence_threshold=0.7, server_source=active_server)
                     
@@ -2167,7 +2167,7 @@ class ServiceTestThread(QThread):
             elif self.service == 'jellyfin':
                 # Test Jellyfin connection using HTTP request
                 try:
-                    from config.settings import config_manager
+                    from core.settings import config_manager
                     jellyfin_config = config_manager.get_jellyfin_config()
                     base_url = jellyfin_config.get('base_url', '').rstrip('/')
                     api_key = jellyfin_config.get('api_key', '')
@@ -2372,7 +2372,7 @@ class MetadataUpdaterWidget(QFrame):
         layout.setSpacing(12)
         
         # Header - Make it dynamic based on active server
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         server_display = active_server.title()
         header_label = QLabel(f"{server_display} Metadata Updater")
@@ -2758,7 +2758,7 @@ class DashboardPage(QWidget):
             # Import here to avoid circular imports
             from database import get_database
             from core.database_update_worker import DatabaseUpdateWorker
-            from config.settings import config_manager
+            from core.settings import config_manager
             
             # Get the active media client
             active_server = config_manager.get_active_media_server()
@@ -2809,7 +2809,7 @@ class DashboardPage(QWidget):
                 return
             
             # Create worker for incremental update only
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             
             # Get the appropriate client
@@ -3051,7 +3051,7 @@ class DashboardPage(QWidget):
         cards_layout.setSpacing(20)
         
         # Create service status cards with dynamic media server
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         server_name_map = {
             'plex': 'Plex',
@@ -3122,7 +3122,7 @@ class DashboardPage(QWidget):
         self.database_widget.start_button.clicked.connect(self.toggle_database_update)
         
         # Metadata updater widget (SECOND) - only show for Plex
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         
         if active_server == "plex":
@@ -3220,7 +3220,7 @@ class DashboardPage(QWidget):
             return
         
         # Get the active media server and check if client is available
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         
         if active_server == "plex" and not self.data_provider.service_clients.get('plex_client'):
@@ -3255,7 +3255,7 @@ class DashboardPage(QWidget):
                     return  # Cancel the operation
             
             # Get the active media server
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             
             # Get the appropriate client
@@ -3453,7 +3453,7 @@ class DashboardPage(QWidget):
             logger.debug(f"Service clients available: {list(self.data_provider.service_clients.keys())}")
         
         # Check active server and client availability
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         
         # Currently metadata updater only supports Plex

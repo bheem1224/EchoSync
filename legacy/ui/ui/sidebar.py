@@ -1291,7 +1291,7 @@ class ModernSidebar(QWidget):
         self.spotify_status = StatusIndicator("Spotify")
         
         # Dynamic media server status - determine which server is active
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         server_name_map = {
             'plex': 'Plex',

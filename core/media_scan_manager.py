@@ -2,6 +2,9 @@
 
 import threading
 import time
+import os
+from retrying import retry
+from contextlib import contextmanager
 from utils.logging_config import get_logger
 from core.job_queue import JobQueue
 
@@ -56,7 +59,7 @@ class MediaScanManager:
     def _get_active_media_client(self):
         """Get the active media client based on the flags/tags system."""
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
 
             # Map active server to client
@@ -76,7 +79,21 @@ class MediaScanManager:
             logger.error(f"Error determining active media server: {e}")
             return None, None
     
-    def request_scan(self, reason: str = "Download completed"):
+    @retry(stop_max_attempt_number=3, wait_fixed=2000)
+    def trigger_library_scan_with_retry(self, media_client):
+        """Retry mechanism for triggering library scans."""
+        return media_client.trigger_library_scan()
+    
+    @contextmanager
+    def lock_context(self):
+        """Context manager for thread-safe lock handling."""
+        self._lock.acquire()
+        try:
+            yield
+        finally:
+            self._lock.release()
+    
+    def request_scan(self, reason: str = "Download completed") -> None:
         """
         Request a library scan with smart debouncing logic.
         
@@ -84,7 +101,7 @@ class MediaScanManager:
             reason: Optional reason for the scan request (for logging)
         """
         logger.info(f"DEBUG: Media scan requested - reason: {reason}")
-        with self._lock:
+        with self.lock_context():
             if self._scan_in_progress:
                 # Server is currently scanning - mark that we need another scan later
                 self._downloads_during_scan = True
@@ -153,7 +170,7 @@ class MediaScanManager:
         logger.info(f"🎵 Starting {server_type.upper()} library scan...")
 
         try:
-            success = media_client.trigger_library_scan()
+            success = self.trigger_library_scan_with_retry(media_client)
             
             if success:
                 logger.info(f"✅ {server_type.upper()} library scan initiated successfully")
@@ -334,17 +351,18 @@ class MediaScanManager:
     
     def get_status(self) -> dict:
         """Get current status of the scan manager"""
-        with self._lock:
+        with self.lock_context():
             return {
                 'scan_in_progress': self._scan_in_progress,
                 'downloads_during_scan': self._downloads_during_scan,
                 'timer_active': self._timer is not None,
-                'delay_seconds': self.delay
+                'delay_seconds': self.delay,
+                'periodic_updates': self._is_doing_periodic_updates
             }
     
     def shutdown(self):
         """Clean shutdown - cancel any pending timers"""
-        with self._lock:
+        with self.lock_context():
             if self._timer:
                 self._timer.cancel()
                 self._timer = None

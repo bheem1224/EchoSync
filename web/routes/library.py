@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from web.services.library_service import LibraryAdapter
-from config.settings import config_manager
+from core.settings import config_manager
 from core.provider_registry import ProviderRegistry
 from utils.logging_config import get_logger
 import threading

@@ -6,10 +6,11 @@ Providers never own data - they only create stubs, enrich fields, or attach refe
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from enum import Enum
 import uuid
 from datetime import datetime
+import re
 
 
 class DownloadStatus(Enum):
@@ -44,9 +45,16 @@ class ProviderRef:
     metadata: Dict[str, Any] = field(default_factory=dict)  # Provider-specific extras
     last_updated: datetime = field(default_factory=datetime.now)
 
+    def validate(self) -> None:
+        """Validate the provider reference fields."""
+        if not self.provider_id:
+            raise ValueError("Provider ID cannot be empty.")
+        if self.provider_url and not re.match(r'^https?://', self.provider_url):
+            raise ValueError("Provider URL must start with http:// or https://.")
+
 
 @dataclass
-class Track:
+class SoulSyncTrack:
     """
     Canonical Track model - single source of truth for all providers.
     
@@ -89,6 +97,17 @@ class Track:
     disc_number: Optional[int] = None
     release_year: Optional[int] = None
     genres: List[str] = field(default_factory=list)
+    total_discs: Optional[int] = None
+    track_total: Optional[int] = None
+    version: Optional[str] = None
+    is_compilation: Optional[bool] = None
+    quality_tags: Optional[List[str]] = None
+    sample_rate: Optional[int] = None
+    bit_depth: Optional[int] = None
+    file_size: Optional[int] = None
+    featured_artists: Optional[List[str]] = None
+    fingerprint: Optional[str] = None
+    fingerprint_confidence: Optional[float] = None
     
     # === System Fields ===
     created_at: datetime = field(default_factory=datetime.now)
@@ -126,50 +145,35 @@ class Track:
                 # Only update if current is None or empty list
                 if current is None or (isinstance(current, list) and len(current) == 0):
                     setattr(self, key, value)
-        
+
         self.updated_at = datetime.now()
         self._calculate_confidence()
     
     def _calculate_confidence(self) -> None:
-        """Calculate confidence score based on field completeness"""
+        """Calculate confidence score based on field completeness."""
         score = 0.0
         total_weight = 0.0
-        
+
         # Core fields (higher weight)
-        if self.title:
-            score += 0.25
-        total_weight += 0.25
-        
-        if self.artists:
-            score += 0.20
-        total_weight += 0.20
-        
-        if self.album:
-            score += 0.15
-        total_weight += 0.15
-        
-        if self.duration_ms:
-            score += 0.10
-        total_weight += 0.10
-        
-        # Global identifiers (high value for matching)
-        if self.isrc:
-            score += 0.10
-        total_weight += 0.10
-        
-        if self.musicbrainz_recording_id:
-            score += 0.08
-        total_weight += 0.08
-        
-        # File presence
-        if self.file_path and self.download_status == DownloadStatus.VERIFIED:
-            score += 0.12
-        total_weight += 0.12
-        
+        field_weights = {
+            'title': 0.25,
+            'artists': 0.20,
+            'album': 0.15,
+            'duration_ms': 0.10,
+            'isrc': 0.10,
+            'musicbrainz_recording_id': 0.08,
+            'file_path': 0.12 if self.download_status == DownloadStatus.VERIFIED else 0.0
+        }
+
+        for field, weight in field_weights.items():
+            if getattr(self, field):
+                score += weight
+            total_weight += weight
+
         self.confidence_score = min(score / total_weight if total_weight > 0 else 0.0, 1.0)
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for database storage"""
+        """Convert to dictionary for database storage."""
         return {
             'track_id': self.track_id,
             'title': self.title,
@@ -190,7 +194,7 @@ class Track:
             'file_path': self.file_path,
             'file_format': self.file_format,
             'bitrate': self.bitrate,
-            'confidence_score': self.confidence_score,
+            'confidence_score': round(self.confidence_score, 2),  # Round for consistency
             'album_artist': self.album_artist,
             'track_number': self.track_number,
             'disc_number': self.disc_number,
@@ -201,8 +205,8 @@ class Track:
         }
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Track':
-        """Create Track from dictionary (database retrieval)"""
+    def from_dict(cls, data: Dict[str, Any]) -> 'SoulSyncTrack':
+        """Create Track from dictionary (database retrieval)."""
         # Parse provider_refs
         provider_refs = {}
         for key, ref_data in data.get('provider_refs', {}).items():
@@ -214,7 +218,7 @@ class Track:
                 last_updated=datetime.fromisoformat(ref_data.get('last_updated', datetime.now().isoformat()))
             )
         
-        return cls(
+        track = cls(
             track_id=data.get('track_id', str(uuid.uuid4())),
             title=data.get('title'),
             artists=data.get('artists', []),
@@ -237,7 +241,20 @@ class Track:
             created_at=datetime.fromisoformat(data.get('created_at', datetime.now().isoformat())),
             updated_at=datetime.fromisoformat(data.get('updated_at', datetime.now().isoformat()))
         )
+        return track
     
     def __repr__(self) -> str:
         artist_str = ", ".join(self.artists) if self.artists else "Unknown"
         return f"Track('{self.title or 'Unknown'}' by {artist_str}, confidence={self.confidence_score:.2f})"
+
+
+@dataclass
+class Track:
+    """
+    Placeholder for the Track class.
+    This should be implemented with the actual logic or replaced with SoulSyncTrack.
+    """
+    track_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    album: Optional[str] = None

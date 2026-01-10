@@ -82,7 +82,7 @@ def create_app() -> Flask:
 def _init_provider_clients():
     """Initialize both bundled providers and community plugins."""
     from core.provider_registry import ProviderRegistry
-    from config.settings import config_manager
+    from core.settings import config_manager
     import importlib.util
     import os
     from pathlib import Path

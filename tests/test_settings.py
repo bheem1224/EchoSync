@@ -2,7 +2,7 @@ import os
 import json
 import pytest
 from unittest.mock import patch, mock_open, MagicMock
-from config.settings import ConfigManager, SECRETS
+from core.settings import ConfigManager, SECRETS
 
 from cryptography.fernet import Fernet
 

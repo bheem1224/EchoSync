@@ -691,7 +691,7 @@ class PlaylistTrackAnalysisWorker(QRunnable):
                     if self._cancelled: return None, 0.0
 
                     # Use database check_track_exists method with consistent thresholds and active server filter
-                    from config.settings import config_manager
+                    from core.settings import config_manager
                     active_server = config_manager.get_active_media_server()
                     db_track, confidence = db.check_track_exists(query_title, artist_name, confidence_threshold=0.7, server_source=active_server)
                     
@@ -1854,7 +1854,7 @@ class PlaylistDetailsModal(QDialog):
         self.start_track_analysis()
         
         # Show analysis started message
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         server_name = active_server.title()
         QMessageBox.information(self, "Analysis Started", 
@@ -1863,7 +1863,7 @@ class PlaylistDetailsModal(QDialog):
     def start_track_analysis(self):
         """Start background track analysis against media library"""
         # Create analysis worker
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         
         if active_server == "plex":
@@ -1895,7 +1895,7 @@ class PlaylistDetailsModal(QDialog):
         """Handle analysis started signal"""
         # Get server name for log message
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             server_name = active_server.title() if active_server else "Plex"
         except:
@@ -1916,7 +1916,7 @@ class PlaylistDetailsModal(QDialog):
         missing_tracks = [r for r in results if not r.exists_in_plex]
         existing_tracks = [r for r in results if r.exists_in_plex]
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             server_name = active_server.title() if active_server else "Plex"
         except:
@@ -1932,7 +1932,7 @@ class PlaylistDetailsModal(QDialog):
         message = f"Analysis complete!\n\n"
         # Get server name for display
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             server_name = active_server.title() if active_server else "Plex"
         except:
@@ -3206,7 +3206,7 @@ class SyncPage(QWidget):
             # Import here to avoid circular imports
             from database import get_database
             from core.database_update_worker import DatabaseUpdateWorker
-            from config.settings import config_manager
+            from core.settings import config_manager
             
             # Get the active media client
             active_server = config_manager.get_active_media_server()
@@ -4116,7 +4116,7 @@ class SyncPage(QWidget):
         # Subtitle
         # Get active server name for subtitle
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             server_name = active_server.title() if active_server else "Plex"
         except:
@@ -8105,7 +8105,7 @@ class DownloadMissingTracksModal(QDialog):
         
     def start_plex_analysis(self):
         """Start media server analysis using existing worker"""
-        from config.settings import config_manager
+        from core.settings import config_manager
         active_server = config_manager.get_active_media_server()
         
         if active_server == "plex":
@@ -8165,7 +8165,7 @@ class DownloadMissingTracksModal(QDialog):
             self.process_finished.emit() 
             # Get server name for message
             try:
-                from config.settings import config_manager
+                from core.settings import config_manager
                 active_server = config_manager.get_active_media_server()
                 server_name = active_server.title() if active_server else "Plex"
             except:

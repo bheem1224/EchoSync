@@ -1,7 +1,7 @@
 """Media server selection API."""
 
 from flask import Blueprint, request, jsonify
-from config.settings import config_manager
+from core.settings import config_manager
 from utils.logging_config import get_logger
 
 logger = get_logger("media_server")

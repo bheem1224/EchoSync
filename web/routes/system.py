@@ -6,7 +6,7 @@ import os
 import platform
 import psutil
 from utils.logging_config import get_logger
-from config.settings import config_manager
+from core.settings import config_manager
 
 logger = get_logger("system_route")
 bp = Blueprint("system", __name__, url_prefix="/api")

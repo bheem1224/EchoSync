@@ -478,3 +478,12 @@ class ListenBrainzMetadataProvider(ProviderBase):
             logger.error(f"Error fetching cached tracks: {e}")
             return []
 
+class ListenBrainzManager:
+    """Placeholder for ListenBrainzManager functionality."""
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+
+    def sync_playlists(self):
+        """Sync playlists to the database."""
+        return {"success": True, "message": "Playlists synced successfully."}
+

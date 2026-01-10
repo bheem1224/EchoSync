@@ -459,7 +459,7 @@ class PersonalizedPlaylistsService:
     def _load_selected_algorithm(self) -> str:
         """Load selected algorithm from config.json"""
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             return config_manager.get('playlist_algorithm', 'default')
         except Exception as e:
             logger.warning(f"Could not load playlist algorithm from config: {e}")
@@ -468,7 +468,7 @@ class PersonalizedPlaylistsService:
     def _save_selected_algorithm(self, algorithm_id: str):
         """Save selected algorithm to config.json"""
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             config_manager.set('playlist_algorithm', algorithm_id)
         except Exception as e:
             logger.error(f"Could not save playlist algorithm to config: {e}")

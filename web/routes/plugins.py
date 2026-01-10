@@ -59,7 +59,7 @@ def disable_provider(provider_name: str):
     try:
         if ProviderRegistry.disable_provider(provider_name):
             # Also persist to config
-            from config.settings import config_manager
+            from core.settings import config_manager
             config_manager.disable_provider(provider_name)
             return jsonify({'status': 'success', 'message': f'Provider {provider_name} disabled. Restart required.'}), 200
         else:
@@ -74,7 +74,7 @@ def enable_provider(provider_name: str):
     try:
         if ProviderRegistry.enable_provider(provider_name):
             # Also persist to config
-            from config.settings import config_manager
+            from core.settings import config_manager
             config_manager.enable_provider(provider_name)
             return jsonify({'status': 'success', 'message': f'Provider {provider_name} enabled. Restart required.'}), 200
         else:

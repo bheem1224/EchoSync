@@ -79,61 +79,97 @@ class ConfigManager:
             return False
 
     def __init__(self, config_path: str = "config/config.json"):
-        # Config directory preference (in containers we expect /config)
+        # STEP 1: Set config_dir from ENV (NOT from config.json)
+        # config_dir is special: it's set only by ENV variables (for encryption key security)
         config_dir_env = os.environ.get('SOULSYNC_CONFIG_DIR')
         if config_dir_env:
             self.config_dir = Path(config_dir_env)
-        elif Path('/config').exists():
-            # Running in container with a mounted /config
+            print(f"[INFO] Using SOULSYNC_CONFIG_DIR from environment: {self.config_dir}")
+        elif Path('/config').exists() and os.path.isdir('/config'):
+            # Running in container with a mounted /config (Unix/Docker)
             self.config_dir = Path('/config')
+            print("[INFO] Using Docker default /config directory")
         else:
             # Default setup: paths relative to the application structure (dev)
-            self.config_dir = Path(__file__).parent
+            self.config_dir = Path(__file__).parent.parent / 'config'
+            print(f"[INFO] Using local config directory: {self.config_dir}")
 
-        # Data directory preference (container-friendly /data)
+        # STEP 2: Set data_dir from ENV (takes precedence over config.json)
         data_dir_env = os.environ.get('SOULSYNC_DATA_DIR')
         if data_dir_env:
             self.data_dir = Path(data_dir_env)
-        elif Path('/data').exists():
+            print(f"[INFO] Using SOULSYNC_DATA_DIR from environment: {self.data_dir}")
+        elif Path('/data').exists() and os.path.isdir('/data'):
+            # Running in container with a mounted /data (Unix/Docker)
             self.data_dir = Path('/data')
+            print("[INFO] Using Docker default /data directory")
         else:
             # Fallback to a data directory next to the project for local dev
             self.data_dir = Path(__file__).parent.parent / 'data'
+            print(f"[INFO] Using local data directory: {self.data_dir}")
 
-        # Ensure directory exists
+        # Ensure directories exist
         self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
         
-        # Paths for key and database
+        # Paths for encryption key and encrypted config database (in config_dir)
         self.key_path = self.config_dir / ".encryption_key"
-        self.config_path = self.config_dir / 'config.json' # For migration and non-secret JSON
-        self.database_path = self.config_dir / 'config.db'  # Encrypted config database
-        # Media library DB (user-visible non-secret DB for music library)
-        self.media_db_path = self.config_dir / 'media_library.db'
+        self.config_path = self.config_dir / 'config.json'  # For migration and non-secret JSON
+        self.database_path = self.config_dir / 'config.db'  # Encrypted config database (secrets)
+        
+        # Media library DB goes in data_dir (user-visible, non-secret)
+        self.media_db_path = self.data_dir / 'music_library.db'
+        
+        # Plugins directory goes in data_dir
+        self.plugins_path = self.data_dir / 'plugins'
 
-        # Ensure data dir subpaths
+        # STEP 3: Set individual storage paths from ENV (take precedence over data_dir and config.json)
+        download_dir_env = os.environ.get('SOULSYNC_DOWNLOAD_DIR')
+        library_dir_env = os.environ.get('SOULSYNC_LIBRARY_DIR')
+        log_dir_env = os.environ.get('SOULSYNC_LOG_DIR')
+        
+        # Initialize with data_dir defaults
         self.downloads_path = self.data_dir / 'downloads'
-        self.library_path = self.data_dir / 'library'
+        self.library_path = self.data_dir / 'transfer'  # Will be updated to 'library' in config
         self.logs_path = self.data_dir / 'logs'
         
-        print(f"[INFO] Config directory: {self.config_dir}")
-        print(f"[INFO] Key file path: {self.key_path}")
-        print(f"[INFO] Database path: {self.database_path}")
-        print(f"[INFO] Media DB path: {self.media_db_path}")
+        # Override with ENV variables if set
+        if download_dir_env:
+            self.downloads_path = Path(download_dir_env)
+            print(f"[INFO] Using SOULSYNC_DOWNLOAD_DIR from environment: {self.downloads_path}")
+        
+        if library_dir_env:
+            self.library_path = Path(library_dir_env)
+            print(f"[INFO] Using SOULSYNC_LIBRARY_DIR from environment: {self.library_path}")
+        
+        if log_dir_env:
+            self.logs_path = Path(log_dir_env)
+            print(f"[INFO] Using SOULSYNC_LOG_DIR from environment: {self.logs_path}")
+        
+        print(f"[INFO] Configuration directory: {self.config_dir}")
         print(f"[INFO] Data directory: {self.data_dir}")
-        print(f"[INFO] Downloads path: {self.downloads_path}")
-        print(f"[INFO] Library path: {self.library_path}")
-        print(f"[INFO] Logs path: {self.logs_path}")
+        print(f"[INFO] Encryption key path: {self.key_path}")
+        print(f"[INFO] Config database path: {self.database_path}")
+        print(f"[INFO] Media DB path: {self.media_db_path}")
+        print(f"[INFO] Plugins path: {self.plugins_path}")
         
         self.config_data: Dict[str, Any] = {}
         self.cipher: Optional[Fernet] = None
         self._initialize_encryption()
         self._load_config()
-        # Ensure data directories exist for logs/downloads/library
+        
+        # Log final resolved paths after config is loaded
+        print(f"[INFO] Final downloads path: {self.downloads_path}")
+        print(f"[INFO] Final library path: {self.library_path}")
+        print(f"[INFO] Final logs path: {self.logs_path}")
+        print(f"[INFO] Final media DB path: {self.media_db_path}")
+        
+        # Ensure data directories exist for logs/downloads/library/plugins
         try:
-            self.data_dir.mkdir(parents=True, exist_ok=True)
             self.downloads_path.mkdir(parents=True, exist_ok=True)
             self.library_path.mkdir(parents=True, exist_ok=True)
             self.logs_path.mkdir(parents=True, exist_ok=True)
+            self.plugins_path.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             print(f"[WARN] Could not create data directories: {e}")
 
@@ -348,7 +384,7 @@ class ConfigManager:
             "plex": {"base_url": "", "token": "", "auto_detect": True},
             "jellyfin": {"base_url": "", "api_key": "", "auto_detect": True},
             "navidrome": {"base_url": "", "username": "", "password": "", "auto_detect": True},
-            "soulseek": {"slskd_url": "", "api_key": "", "download_path": str(self.downloads_path), "transfer_path": str(self.library_path)},
+            "soulseek": {"slskd_url": "", "api_key": ""},
             "listenbrainz": {"token": ""},
             "logging": {"path": str(self.logs_path / 'app.log'), "level": "INFO"},
             "database": {"path": str(self.media_db_path), "max_workers": 2},
@@ -382,12 +418,14 @@ class ConfigManager:
                 "min_length_seconds": 0
             },
             "settings": {"audio_quality": "flac"},
-            # Storage paths used by UI and runtime
+            # Storage paths - Docker-first approach
+            # Users can map /config and /data, or override individual paths
             "storage": {
+                "data_dir": str(self.data_dir),
+                "config_dir": str(self.config_dir),
                 "download_dir": str(self.downloads_path),
-                "transfer_dir": str(self.library_path),
-                "log_dir": str(self.logs_path),
-                "config_dir": str(self.config_dir)
+                "library_dir": str(self.library_path),
+                "log_dir": str(self.logs_path)
             },
             # Provider/Plugin management
             "disabled_providers": []  # List of provider/plugin names to disable (e.g., ["spotify", "tidal"])
@@ -433,12 +471,95 @@ class ConfigManager:
         
         self.config_data = config_data
         
+        # Apply storage paths from config if they exist (overrides initial paths)
+        self._apply_storage_paths_from_config()
+        
         # If we have no JSON file yet, save current config to JSON for future edits
         if not json_data:
             self._save_non_secrets_to_json()
         # Normalize certain config entries (e.g., database workers)
         self._normalize_database_workers()
 
+    def _apply_storage_paths_from_config(self):
+        """Apply storage paths from loaded config to override initial defaults.
+        
+        Priority: 
+        1. If data_dir is set, update self.data_dir and derive paths from it
+        2. If individual paths (download_dir, library_dir, log_dir) are set, use those
+        3. Otherwise use the initial defaults
+        
+        This allows Docker-first approach: map /config and /data, or override individually.
+        """
+        try:
+            storage_config = self.config_data.get('storage', {})
+            
+            # First, check if data_dir is specified and update if so
+            if storage_config.get('data_dir'):
+                self.data_dir = Path(storage_config['data_dir'])
+                print(f"[INFO] Applied data_dir from config: {self.data_dir}")
+                # Update derived defaults based on new data_dir
+                # Only update if the individual paths weren't explicitly set
+                if not storage_config.get('download_dir'):
+                    self.downloads_path = self.data_dir / 'downloads'
+                if not storage_config.get('library_dir'):
+                    self.library_path = self.data_dir / 'transfer'
+                if not storage_config.get('log_dir'):
+                    self.logs_path = self.data_dir / 'logs'
+                # Also update media_db_path and plugins_path to be under new data_dir
+                self.media_db_path = self.data_dir / 'music_library.db'
+                self.plugins_path = self.data_dir / 'plugins'
+            
+            # Then apply any explicit path overrides
+            if storage_config.get('download_dir'):
+                self.downloads_path = Path(storage_config['download_dir'])
+                print(f"[INFO] Applied download_dir from config: {self.downloads_path}")
+            
+            if storage_config.get('library_dir'):
+                self.library_path = Path(storage_config['library_dir'])
+                print(f"[INFO] Applied library_dir from config: {self.library_path}")
+            
+            if storage_config.get('log_dir'):
+                self.logs_path = Path(storage_config['log_dir'])
+                print(f"[INFO] Applied log_dir from config: {self.logs_path}")
+            
+            if storage_config.get('config_dir'):
+                new_config_dir = Path(storage_config['config_dir'])
+                # Only log the difference, don't change config_dir itself to avoid breaking encryption
+                if new_config_dir != self.config_dir:
+                    print(f"[INFO] Config specifies different config_dir: {new_config_dir}")
+                    print("[WARN] config_dir cannot be changed after initialization (encryption key location)")
+            
+            # Apply logging path from config if specified
+            logging_config = self.config_data.get('logging', {})
+            if logging_config.get('path'):
+                log_path = Path(logging_config['path'])
+                # If it's a relative path, make it relative to logs_path
+                if not log_path.is_absolute():
+                    log_path = self.logs_path / log_path.name
+                    self.config_data['logging']['path'] = str(log_path.resolve())
+                    print(f"[INFO] Updated logging path to: {log_path}")
+            
+            # Update database path in config to match media_db_path
+            db_config = self.config_data.get('database', {})
+            db_config['path'] = str(self.media_db_path.resolve())
+            
+            # Create directories if they don't exist
+            self.downloads_path.mkdir(parents=True, exist_ok=True)
+            self.library_path.mkdir(parents=True, exist_ok=True)
+            self.logs_path.mkdir(parents=True, exist_ok=True)
+            self.media_db_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Update config with resolved paths so they're saved to config.json
+            # This makes config.json the source of truth
+            self.config_data['storage']['data_dir'] = str(self.data_dir.resolve())
+            self.config_data['storage']['config_dir'] = str(self.config_dir.resolve())
+            self.config_data['storage']['download_dir'] = str(self.downloads_path.resolve())
+            self.config_data['storage']['library_dir'] = str(self.library_path.resolve())
+            self.config_data['storage']['log_dir'] = str(self.logs_path.resolve())
+            
+        except Exception as e:
+            print(f"[WARN] Could not apply storage paths from config: {e}")
+    
     def _normalize_database_workers(self):
         """Ensure database.max_workers is sensible for the configured DB.
 
@@ -906,5 +1027,68 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"Error retrieving credentials for {service_name}: {e}")
             return {}
+    
+    def get_storage_paths(self) -> Dict[str, Path]:
+        """Get the actual storage paths being used by the application.
+        
+        Returns:
+            Dict with keys: download_dir, library_dir, log_dir, config_dir, data_dir, media_db, plugins
+            Values are Path objects representing the resolved absolute paths.
+        """
+        return {
+            'download_dir': self.downloads_path,
+            'library_dir': self.library_path,
+            'log_dir': self.logs_path,
+            'config_dir': self.config_dir,
+            'data_dir': self.data_dir,
+            'media_db': self.media_db_path,
+            'plugins': self.plugins_path
+        }
+    
+    def get_download_dir(self) -> Path:
+        """Get the downloads directory path."""
+        return self.downloads_path
+    
+    def get_library_dir(self) -> Path:
+        """Get the library directory path (formerly transfer_dir)."""
+        return self.library_path
+    
+    def get_log_dir(self) -> Path:
+        """Get the logs directory path."""
+        return self.logs_path
+    
+    def get_config_dir(self) -> Path:
+        """Get the config directory path."""
+        return self.config_dir
+    
+    def get_media_db_path(self) -> Path:
+        """Get the media library database path."""
+        return self.media_db_path
+    
+    def get_plugins_dir(self) -> Path:
+        """Get the plugins directory path."""
+        return self.plugins_path
 
 config_manager = ConfigManager()
+
+def get_setting(key: str, default: Any = None) -> Any:
+    """Retrieve a specific setting by key."""
+    try:
+        config = config_manager.get_settings()
+        return config.get(key, default)
+    except Exception as e:
+        print(f"[ERROR] Failed to retrieve setting '{key}': {e}")
+        return default
+
+def set_setting(key: str, value: Any) -> None:
+    """
+    Set a configuration setting.
+
+    Args:
+        key (str): The setting key.
+        value (Any): The value to set.
+    """
+    # Placeholder implementation
+    logger.info(f"Setting {key} to {value}")
+    # Actual implementation should persist the setting to a database or file
+    pass

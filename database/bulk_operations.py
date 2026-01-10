@@ -6,6 +6,7 @@ import sqlite3
 from typing import List, Any, Optional
 from contextlib import contextmanager
 from utils.logging_config import get_logger
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 logger = get_logger("bulk_operations")
 
@@ -161,72 +162,69 @@ class BulkOperations:
             logger.error(f"Error in bulk_insert_albums: {e}")
             return 0
     
-    def bulk_insert_tracks(self, tracks: List[Any], album_id: str, artist_id: str, server_source: str = "plex") -> int:
+    def bulk_insert_tracks(self, tracks: List[SoulSyncTrack], album_id: str, artist_id: str, server_source: str = "plex") -> int:
         """
-        Bulk insert or update tracks for an album.
-        
+        Bulk insert or update tracks for an album using SoulSyncTrack.
+
         Args:
-            tracks: List of track objects
+            tracks: List of SoulSyncTrack objects
             album_id: Parent album ID
             artist_id: Parent artist ID
             server_source: Source server type
-        
+
         Returns:
             Number of tracks inserted/updated
         """
         if not tracks:
             return 0
-        
+
         try:
             with self._transaction():
                 cursor = self.conn.cursor()
                 count = 0
-                
+
                 for track in tracks:
                     try:
-                        track_id = str(track.ratingKey)
-                        track_title = getattr(track, 'title', 'Unknown Track')
-                        track_number = getattr(track, 'trackNumber', None)
-                        duration = getattr(track, 'duration', None)
-                        
-                        # Get file path if available
-                        file_path = None
-                        if hasattr(track, 'media') and track.media:
-                            try:
-                                file_path = track.media[0].parts[0].file
-                            except:
-                                pass
-                        
-                        # Get bitrate if available
-                        bitrate = None
-                        if hasattr(track, 'media') and track.media:
-                            try:
-                                bitrate = track.media[0].bitrate
-                            except:
-                                pass
-                        
-                        cursor.execute("""
+                        track_id = track.external_ids.get(server_source)
+                        if not track_id:
+                            logger.warning(f"Skipping track {track.title} due to missing ID for server {server_source}")
+                            continue
+
+                        cursor.execute(
+                            """
                             INSERT OR REPLACE INTO tracks
                             (plex_track_id, album_id, artist_id, title, track_number, duration, file_path, bitrate, server_source, created_at, updated_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM tracks WHERE plex_track_id = ?), datetime('now')), datetime('now'))
-                        """, (track_id, album_id, artist_id, track_title, track_number, duration, file_path, bitrate, server_source, track_id))
-                        
+                            """,
+                            (
+                                track_id,
+                                album_id,
+                                artist_id,
+                                track.title,
+                                track.track_number,
+                                track.duration_ms,
+                                track.file_path,
+                                track.bitrate,
+                                server_source,
+                                track_id
+                            )
+                        )
                         count += 1
                     except Exception as e:
-                        logger.warning(f"Failed to insert track {getattr(track, 'title', 'Unknown')}: {e}")
+                        logger.warning(f"Failed to insert track {track.title}: {e}")
                         continue
-                
+
                 logger.debug(f"Bulk inserted/updated {count} tracks for album {album_id}")
                 return count
-                
+
         except Exception as e:
             logger.error(f"Error in bulk_insert_tracks: {e}")
             return 0
     
     def bulk_update_artist_content(self, artist: Any, albums: List[Any], server_source: str = "plex") -> tuple[int, int, int]:
         """
-        Bulk update an artist with all their albums and tracks in one transaction.
-        
+        Bulk update an artist with all their albums and tracks in one transaction using SoulSyncTrack.
+
         Args:
             artist: Artist object
             albums: List of album objects (with tracks accessible via album.tracks())
@@ -237,32 +235,41 @@ class BulkOperations:
         """
         try:
             artist_id = str(artist.ratingKey)
-            
+
             # Insert artist
             artists_count = self.bulk_insert_artists([artist], server_source)
-            
+
             albums_count = 0
             tracks_count = 0
-            
+
             # Insert albums and their tracks
             for album in albums:
                 album_id = str(album.ratingKey)
-                
+
                 # Insert album
                 albums_count += self.bulk_insert_albums([album], artist_id, server_source)
-                
+
                 # Get and insert tracks for this album
                 try:
-                    tracks = list(album.tracks())
+                    tracks = [SoulSyncTrack(
+                        title=track.title,
+                        artist=artist.title,
+                        album=album.title,
+                        duration_ms=track.duration,
+                        track_number=track.trackNumber,
+                        file_path=track.media[0].parts[0].file if track.media else None,
+                        bitrate=track.media[0].bitrate if track.media else None,
+                        external_ids={server_source: track.ratingKey}
+                    ) for track in album.tracks()]
+
                     tracks_count += self.bulk_insert_tracks(tracks, album_id, artist_id, server_source)
                 except Exception as e:
-                    logger.warning(f"Error getting tracks for album {getattr(album, 'title', 'Unknown')}: {e}")
-            
-            logger.info(f"Bulk updated artist {getattr(artist, 'title', 'Unknown')}: "
-                       f"{albums_count} albums, {tracks_count} tracks")
-            
+                    logger.warning(f"Error getting tracks for album {album.title}: {e}")
+
+            logger.info(f"Bulk updated artist {artist.title}: {albums_count} albums, {tracks_count} tracks")
+
             return (artists_count, albums_count, tracks_count)
-            
+
         except Exception as e:
             logger.error(f"Error in bulk_update_artist_content: {e}")
             return (0, 0, 0)

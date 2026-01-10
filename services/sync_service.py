@@ -57,7 +57,7 @@ class PlaylistSyncService:
     def _get_active_media_client(self):
         """Get the active media client based on config settings"""
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
 
             if active_server == "jellyfin":
@@ -369,7 +369,7 @@ class PlaylistSyncService:
                 
                 # Use the improved database check_track_exists method with server awareness
                 try:
-                    from config.settings import config_manager
+                    from core.settings import config_manager
                     active_server = config_manager.get_active_media_server()
                     db = MusicDatabase()
                     db_track, confidence = db.check_track_exists(original_title, artist_name, confidence_threshold=0.7, server_source=active_server)

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import time
 from pathlib import Path
 from utils.logging_config import get_logger
-from config.settings import config_manager
+from core.settings import config_manager
 from core.provider_capabilities import get_provider_capabilities
 
 logger = get_logger("soulseek_client")

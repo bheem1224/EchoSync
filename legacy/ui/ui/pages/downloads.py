@@ -10,7 +10,7 @@ import os
 import threading
 from threading import RLock, Lock
 from queue import Queue, Empty
-from config.settings import config_manager
+from core.settings import config_manager
 # Import the new search result classes
 from providers.soulseek.client import TrackResult, AlbumResult
 from providers.spotify.client import SpotifyClient, Artist, Album
@@ -1894,7 +1894,7 @@ class StreamingThread(QThread):
             asyncio.set_event_loop(loop)
             
             # Get paths
-            from config.settings import config_manager
+            from core.settings import config_manager
             download_path = config_manager.get('soulseek.download_path', './downloads')
             
             # Use the Stream folder in project root (not inside downloads)
@@ -3714,7 +3714,7 @@ class DownloadItem(QFrame):
                     os.system(f'xdg-open "{folder_path}"')
             else:
                 # If file doesn't exist, try to open the download directory from config
-                from config.settings import config_manager
+                from core.settings import config_manager
                 download_path = config_manager.get('soulseek.download_path', './downloads')
                 
                 system = platform.system()
@@ -4287,7 +4287,7 @@ class CompactDownloadItem(QFrame):
             print(f"[DEBUG] No file_path set for download: {self.title}")
             # Fallback to opening the general downloads folder
             try:
-                from config.settings import config_manager
+                from core.settings import config_manager
                 download_path = config_manager.get('soulseek.download_path', './downloads')
                 
                 system = platform.system()
@@ -4326,7 +4326,7 @@ class CompactDownloadItem(QFrame):
                 filename = os.path.basename(self.file_path)
                 print(f"[DEBUG] Searching for file: {filename}")
                 
-                from config.settings import config_manager
+                from core.settings import config_manager
                 download_path = config_manager.get('soulseek.download_path', './downloads')
                 
                 # Search for the file in the downloads directory tree
@@ -4882,7 +4882,7 @@ class DownloadsPage(QWidget):
         
         # --- FIX: Ensure the soulseek_client uses the download path from config ---
         if self.soulseek_client:
-            from config.settings import config_manager
+            from core.settings import config_manager
             download_path = config_manager.get('soulseek.download_path')
             if download_path and hasattr(self.soulseek_client, 'download_path'):
                 self.soulseek_client.download_path = download_path
@@ -9147,7 +9147,7 @@ class DownloadsPage(QWidget):
             print(f"🧹 Cleaning up cancelled streaming files for: {os.path.basename(filename)}")
             
             # Get downloads directory from config
-            from config.settings import config_manager
+            from core.settings import config_manager
             downloads_config = config_manager.get_downloads_config()
             download_path = downloads_config.get('path', './downloads')
             

@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QThreadPool
 from PyQt6.QtGui import QFont, QPalette, QColor
 
-from config.settings import config_manager
+from core.settings import config_manager
 from utils.logging_config import setup_logging, get_logger
 from providers.spotify.client import SpotifyClient
 from providers.plex.client import PlexClient
@@ -47,7 +47,7 @@ class ServiceStatusThread(QThread):
         self.running = True
         
         # Import here to avoid circular imports
-        from config.settings import config_manager
+        from core.settings import config_manager
         self.config_manager = config_manager
     
     def run(self):

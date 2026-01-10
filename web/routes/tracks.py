@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from database.music_database import get_database
-from core.models import Track
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 from utils.logging_config import get_logger
 
 logger = get_logger("tracks_route")
@@ -44,8 +44,8 @@ def upsert_canonical_track():
         payload = request.get_json(force=True)
         if not payload:
             return jsonify({'error': 'Missing JSON payload'}), 400
-        # Build Track and upsert
-        track = Track.from_dict(payload)
+        # Build SoulSyncTrack and upsert
+        track = SoulSyncTrack(**payload)
         db = get_database()
         db.upsert_canonical_track(track)
         return jsonify(track.to_dict())

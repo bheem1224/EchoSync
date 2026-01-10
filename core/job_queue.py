@@ -6,6 +6,7 @@ Lightweight job queue / task scheduler for SoulSync.
 - Registration API for future plugins
 - Minimal in-memory, thread-based runner (no external deps)
 """
+
 import heapq
 import threading
 import time
@@ -103,7 +104,7 @@ class JobQueue:
             )
             self._jobs[name] = job
             heapq.heappush(self._heap, job)
-            logger.info(f"Registered job '{name}' (interval={interval_seconds}, enabled={enabled})")
+            logger.info(f"Registered job: {name}")
 
     def enable_job(self, name: str):
         with self._lock:
@@ -189,78 +190,42 @@ class JobQueue:
     # Internal runner
     def _run_loop(self):
         while self._running:
-            now = time.time()
-            job = None
             with self._lock:
-                # Skip disabled jobs at the heap top
-                while self._heap and (not self._heap[0].enabled or self._heap[0].next_run > now):
-                    # If disabled, pop and continue; if future, break
-                    if not self._heap[0].enabled:
-                        heapq.heappop(self._heap)
-                    else:
-                        break
-                if self._heap and self._heap[0].next_run <= now:
+                now = time.time()
+                while self._heap and self._heap[0].next_run <= now:
                     job = heapq.heappop(self._heap)
-                    job.running = True
-            if job:
-                self._execute(job)
-            else:
-                time.sleep(self._poll_interval)
+                    if job.enabled:
+                        self._execute_job(job)
+                    elif job.manual_next_run:
+                        job.next_run = job.manual_next_run
+                        heapq.heappush(self._heap, job)
 
-    def _execute(self, job: ScheduledJob):
-        acquired = self._workers.acquire(blocking=False)
-        if not acquired:
-            # Requeue soon if no worker available
-            with self._lock:
-                job.running = False
-                job.next_run = time.time() + self._poll_interval
-                heapq.heappush(self._heap, job)
+            time.sleep(self._poll_interval)
+
+    def _execute_job(self, job: ScheduledJob):
+        if not self._workers.acquire(blocking=False):
+            logger.warning(f"No available workers for job: {job.name}")
             return
 
-        def _run_job():
+        def worker():
             try:
+                logger.info(f"Starting job: {job.name}")
                 job.last_started = time.time()
-                job.last_error = None
                 job.func()
                 job.last_success = time.time()
-                job.current_retries = 0
+                logger.info(f"Completed job: {job.name}")
             except Exception as e:
                 job.last_error = str(e)
-                job.current_retries += 1
-                logger.error(f"Job '{job.name}' failed: {e}")
+                logger.error(f"Job failed: {job.name}, Error: {e}")
             finally:
                 job.last_finished = time.time()
-                job.running = False
                 self._workers.release()
-                self._reschedule(job)
 
-        threading.Thread(target=_run_job, daemon=True).start()
-
-    def _reschedule(self, job: ScheduledJob):
-        with self._lock:
-            if not job.enabled:
-                return
-            if job.interval_seconds is None:
-                # one-off
-                if job.last_error and job.current_retries <= job.max_retries:
-                    delay = job.backoff_base * (job.backoff_factor ** (job.current_retries - 1))
-                    job.next_run = time.time() + delay
-                    heapq.heappush(self._heap, job)
-                return
-            # periodic
-            if job.manual_next_run is not None:
-                job.next_run = job.manual_next_run
-                job.manual_next_run = None
-                job.current_retries = 0
+            if job.interval_seconds:
+                job.next_run = time.time() + job.interval_seconds
                 heapq.heappush(self._heap, job)
-                return
-            if job.last_error and job.current_retries <= job.max_retries:
-                delay = job.backoff_base * (job.backoff_factor ** (job.current_retries - 1))
-            else:
-                delay = job.interval_seconds
-                job.current_retries = 0
-            job.next_run = time.time() + delay
-            heapq.heappush(self._heap, job)
+
+        threading.Thread(target=worker, daemon=True).start()
 
 
 # Global singleton

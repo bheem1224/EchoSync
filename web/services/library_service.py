@@ -3,7 +3,7 @@
 from typing import Dict, List
 import os
 from pathlib import Path
-from config.settings import config_manager
+from core.settings import config_manager
 from core.provider_registry import ProviderRegistry
 from core.provider_capabilities import get_provider_capabilities, MetadataRichness
 from database.music_database import get_database

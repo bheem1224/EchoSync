@@ -25,7 +25,6 @@ Configuration in config.json:
 }
 """
 
-import logging
 import json
 import time
 from pathlib import Path
@@ -33,21 +32,22 @@ from typing import List, Optional, Dict
 from threading import Thread, Event
 from datetime import datetime
 import threading
+import logging  # Add this import for logging levels
 
 from .matching_engine import parse_file, MatchService, MatchContext, SoulSyncTrack
 from .post_processor import PostProcessor
+from core.tiered_logger import tiered_logger
+from core.error_handler import error_handler
 from utils.logging_config import get_logger
 from core.media_scan_manager import MediaScanManager
 from core.job_queue import JobQueue
 
 logger = get_logger("auto_importer")
 
-logger = logging.getLogger(__name__)
-
 
 class AutoImporter:
     """
-    Service that monitors download folder for new audio files and auto-imports them
+    Service that monitors download folder for new audio files and auto-imports them.
     """
 
     SUPPORTED_FORMATS = {'.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.wma', '.alac', '.ape'}
@@ -63,17 +63,17 @@ class AutoImporter:
         self.config = self._load_config()
         self.auto_import_config = self.config.get("auto_import", {})
         self.storage_config = self.config.get("storage", {})
-        
+
         self.enabled = self.auto_import_config.get("enabled", False)
         self.check_interval = self.auto_import_config.get("check_interval_seconds", 3600)
-        
+
         # Get source and destination from storage config
         source_key = self.auto_import_config.get("source_folder", "download_dir")
         dest_key = self.auto_import_config.get("destination_folder", "transfer_dir")
-        
+
         self.source_folder = Path(self.storage_config.get(source_key, "./downloads")).expanduser().resolve()
         self.destination_folder = Path(self.storage_config.get(dest_key, "./Transfer")).expanduser().resolve()
-        
+
         self.file_pattern = self.auto_import_config.get("file_organization_pattern", "{Artist}/{Album}/{Title}")
         self.skip_if_tagged = self.auto_import_config.get("skip_if_already_tagged", True)
         self.log_imports = self.auto_import_config.get("log_imports", True)
@@ -82,8 +82,8 @@ class AutoImporter:
         self.post_processor = PostProcessor()
         self.is_running = False
         self.worker_thread: Optional[Thread] = None
-        self._stop_event: Event = Event()  # Properly initialize _stop_event with type annotation
-        
+        self._stop_event: Event = Event()
+
         self._import_log: List[Dict] = []
 
         # Initialize JobQueue and register the scan job
@@ -94,11 +94,11 @@ class AutoImporter:
             interval_seconds=self.check_interval,
             enabled=True
         )
-        logger.info("AutoImporter job registered with JobQueue.")
+        tiered_logger.log("normal", logging.INFO, "AutoImporter job registered with JobQueue.")
 
-        logger.info(
-            f"AutoImporter initialized (enabled={self.enabled}, interval={self.check_interval}s, "
-            f"source={self.source_folder}, dest={self.destination_folder})"
+        tiered_logger.log(
+            "normal", logging.INFO,
+            f"AutoImporter initialized (enabled={self.enabled}, interval={self.check_interval}s, source={self.source_folder}, destination={self.destination_folder})"
         )
 
     def _load_config(self) -> Dict:
@@ -297,10 +297,22 @@ class AutoImporter:
         }
 
     def _scan_and_move_files(self):
-        """Scan the download directory, auto-tag files, and move them to the transfer directory."""
-        logger.info("Scanning download directory for new files...")
-        # Logic to scan, auto-tag, and move files goes here
-        logger.info("Files moved to transfer directory.")
+        """
+        Scan the source folder for new files and move them to the destination folder.
+        """
+        try:
+            tiered_logger.log("debug", logging.INFO, "Starting scan for new files.")
+
+            # Logic to scan, auto-tag, and move files goes here
+
+            tiered_logger.log("normal", logging.INFO, "Files moved to transfer directory.")
+        except Exception as e:
+            error_handler.handle_exception(
+                lambda: (_ for _ in ()).throw(e),  # Raise the exception to log it
+                retries=0,
+                log_tier="normal"
+            )
+            tiered_logger.log("normal", logging.ERROR, f"Error during file scan: {e}")
 
 
 # Global AutoImporter instance

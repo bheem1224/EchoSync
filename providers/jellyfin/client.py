@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 from utils.logging_config import get_logger
-from config.settings import config_manager
+from core.settings import config_manager
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig, HttpError
 from core.provider_capabilities import get_provider_capabilities
 
@@ -1206,7 +1206,7 @@ class JellyfinClient(MediaServerProvider):
             existing_playlist = self.get_playlist_by_name(playlist_name)
             
             # Check if backup is enabled in config
-            from config.settings import config_manager
+            from core.settings import config_manager
             create_backup = config_manager.get('playlist_sync.create_backup', True)
             
             if existing_playlist and create_backup:

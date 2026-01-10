@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from config.settings import config_manager
+from core.settings import config_manager
 from utils.logging_config import get_logger
 import asyncio
 import aiohttp

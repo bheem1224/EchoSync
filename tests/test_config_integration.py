@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 from cryptography.fernet import Fernet
 
-from config.settings import ConfigManager, SECRETS
+from core.settings import ConfigManager, SECRETS
 
 
 @pytest.fixture

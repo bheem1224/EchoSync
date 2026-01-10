@@ -8,7 +8,7 @@ import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Optional, Any
 from utils.logging_config import get_logger
-from config.settings import config_manager
+from core.settings import config_manager
 from core.provider_types import SyncServiceProvider
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
 from core.provider_capabilities import get_provider_capabilities

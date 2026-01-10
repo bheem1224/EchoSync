@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import re
 from utils.logging_config import get_logger
-from config.settings import config_manager
+from core.settings import config_manager
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
 import threading
 from core.job_queue import JobQueue
@@ -625,7 +625,7 @@ class PlexClient(MediaServerProvider):
             existing_playlist = self.server.playlist(playlist_name)
             
             # Check if backup is enabled in config
-            from config.settings import config_manager
+            from core.settings import config_manager
             create_backup = config_manager.get('playlist_sync.create_backup', True)
             
             if create_backup:

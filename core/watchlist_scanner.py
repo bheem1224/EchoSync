@@ -546,7 +546,7 @@ class WatchlistScanner:
             for artist_name in artists_to_search:
                 for query_title in unique_title_variations:
                     # Use same database check as modals with server awareness
-                    from config.settings import config_manager
+                    from core.settings import config_manager
                     active_server = config_manager.get_active_media_server()
                     db_track, confidence = self.database.check_track_exists(query_title, artist_name, confidence_threshold=0.7, server_source=active_server)
                     

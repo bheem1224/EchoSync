@@ -35,7 +35,7 @@ class DatabaseUpdaterWidget(QFrame):
         
         # Info label - dynamic based on active server
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             if active_server == "jellyfin":
                 server_name = "Jellyfin"

@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                            QCheckBox, QSpinBox, QTextEdit, QGroupBox, QFormLayout, QMessageBox, QSizePolicy, QScrollArea)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon
-from config.settings import config_manager
+from core.settings import config_manager
 from utils.logging_config import get_logger
 import requests
 

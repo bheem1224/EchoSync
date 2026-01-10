@@ -7,7 +7,7 @@ from utils.logging_config import get_logger
 logger = get_logger("web_scan_manager")
 # Expose module-level config_manager to make tests that patch it work
 try:
-    from config.settings import config_manager
+    from core.settings import config_manager
 except Exception:
     config_manager = None
 

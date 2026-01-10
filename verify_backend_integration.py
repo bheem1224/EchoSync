@@ -43,7 +43,7 @@ def test_config_manager():
     """Test config_manager persistence."""
     print("\n=== Testing config_manager Persistence ===")
     try:
-        from config.settings import config_manager
+        from core.settings import config_manager
         
         # Test get
         test_key = 'test.verify_script'

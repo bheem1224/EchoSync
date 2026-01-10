@@ -545,7 +545,7 @@ class SinglesEPsLibraryWorker(QThread):
             print(f"   🔍 Searching for single track: '{track_name}' by '{artist_name}'")
             
             # Search for the track anywhere in the library (active server only)
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             db_track, confidence = db.check_track_exists(track_name, artist_name, confidence_threshold=0.7, server_source=active_server)
             
@@ -648,7 +648,7 @@ class SinglesEPsLibraryWorker(QThread):
                 artist_name = track['artists'][0]['name'] if track['artists'] else (ep_release.artists[0] if ep_release.artists else "")
                 
                 # Search for this track (active server only)
-                from config.settings import config_manager
+                from core.settings import config_manager
                 active_server = config_manager.get_active_media_server()
                 db_track, confidence = db.check_track_exists(track_name, artist_name, confidence_threshold=0.7, server_source=active_server)
                 
@@ -713,7 +713,7 @@ class DatabaseLibraryWorker(QThread):
             
             # Get active server for filtering
             try:
-                from config.settings import config_manager
+                from core.settings import config_manager
                 active_server = config_manager.get_active_media_server()
                 print(f"🔍 Checking albums against {active_server.upper()} library only")
             except Exception as e:
@@ -3236,7 +3236,7 @@ class ArtistsPage(QWidget):
             # Import here to avoid circular imports
             from database import get_database
             from core.database_update_worker import DatabaseUpdateWorker
-            from config.settings import config_manager
+            from core.settings import config_manager
             
             # Get the active media client
             active_server = config_manager.get_active_media_server()
@@ -3335,7 +3335,7 @@ class ArtistsPage(QWidget):
     def setup_clients(self):
         """Initialize client connections"""
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             
             self.spotify_client = SpotifyClient()
             self.plex_client = PlexClient()
@@ -4123,7 +4123,7 @@ class ArtistsPage(QWidget):
         """Start database library check in background"""
         # Get active server for dynamic toast message
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             server_name = "Jellyfin" if active_server == "jellyfin" else "Plex"
         except:
@@ -4234,7 +4234,7 @@ class ArtistsPage(QWidget):
         
         # Get active server for dynamic error message
         try:
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             server_name = "Jellyfin" if active_server == "jellyfin" else "Plex"
         except:
@@ -4427,7 +4427,7 @@ class ArtistsPage(QWidget):
             
             # Create and show the new sophisticated modal
             # Get active server and media client
-            from config.settings import config_manager
+            from core.settings import config_manager
             active_server = config_manager.get_active_media_server()
             
             if active_server == "jellyfin":
