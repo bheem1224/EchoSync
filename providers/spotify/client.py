@@ -20,45 +20,10 @@ logger = get_logger("spotify_client")
 
 def convert_spotify_track_to_soulsync(spotify_track_data: Dict[str, Any]) -> Optional[SoulSyncTrack]:
     """
-    Convert Spotify track data to SoulSyncTrack.
-    
-    Extracts ISRC from external_ids and uses shared normalization utilities.
-    This is the ONLY place that knows about Spotify-specific data structures.
-    
-    Args:
-        spotify_track_data: Raw track data from Spotify API
-        
-    Returns:
-        SoulSyncTrack with Spotify metadata, or None if conversion fails
+    Convert Spotify track data to SoulSyncTrack using factory method.
     """
     try:
-        title = spotify_track_data.get('name')
-        album = spotify_track_data.get('album', {}).get('name')
-        duration_ms = spotify_track_data.get('duration_ms')
-        
-        # Extract artist (join multiple artists with comma)
-        artists = spotify_track_data.get('artists', [])
-        artist = ', '.join([a.get('name', '') for a in artists]) if artists else None
-        
-        if not title or not artist:
-            logger.warning(f"Spotify track missing title or artist")
-            return None
-        
-        # Extract ISRC from external_ids (Spotify-specific)
-        isrc = None
-        if 'external_ids' in spotify_track_data:
-            isrc = spotify_track_data['external_ids'].get('isrc')
-        
-        # Use ProviderBase factory for normalization
-        return ProviderBase.create_soul_sync_track(
-            title=title,
-            artist=artist,
-            album=album,
-            duration_ms=duration_ms,
-            isrc=isrc,
-            source='spotify'
-        )
-    
+        return SoulSyncTrack.from_spotify(spotify_track_data)
     except Exception as e:
         logger.error(f"Error converting Spotify track to SoulSyncTrack: {e}", exc_info=True)
         return None

@@ -413,21 +413,58 @@ class PlexClient(ProviderBase):
                 bitrate, file_format, plex_track_id
             )
             
-            # Use ProviderBase factory for proper normalization (call as class method, not instance method)
-            track = ProviderBase.create_soul_sync_track(
-                title=title,
-                artist=artist,
-                album=album,
-                duration_ms=duration_ms,
-                year=year,
-                track_number=track_number,
-                disc_number=disc_number,
-                file_format=file_format,
-                file_path=file_path,
-                bitrate=bitrate,
-                provider_id=plex_track_id,
-                source='plex'
-            )
+            # Build data dict for factory
+            track_data = {
+                'title': title,
+                'titleSort': getattr(plex_track, 'titleSort', None),
+                'grandparentTitle': getattr(plex_track, 'grandparentTitle', None) or artist,
+                'grandparentSortTitle': getattr(plex_track, 'grandparentSortTitle', None),
+                'parentTitle': getattr(plex_track, 'parentTitle', None) or album,
+                'parentSortTitle': getattr(plex_track, 'parentSortTitle', None),
+                'year': year,
+                'index': track_number,
+                'parentIndex': disc_number,
+                'duration': duration_ms,
+                'ratingKey': plex_track_id,
+                'addedAt': getattr(plex_track, 'addedAt', None),
+                # Construct Media/Part structure for tech metadata
+                'Media': []
+            }
+
+            # Reconstruct Media parts if available
+            if hasattr(plex_track, 'media') and plex_track.media:
+                media_item = plex_track.media[0]
+                media_data = {
+                    'bitrate': getattr(media_item, 'bitrate', None),
+                    'container': getattr(media_item, 'container', None),
+                    'Part': []
+                }
+
+                if hasattr(media_item, 'parts') and media_item.parts:
+                    part = media_item.parts[0]
+                    part_data = {
+                        'file': getattr(part, 'file', None),
+                        'size': getattr(part, 'size', None),
+                        'Stream': []
+                    }
+
+                    if hasattr(part, 'streams') and part.streams:
+                        for stream in part.streams:
+                            stream_data = {
+                                'streamType': getattr(stream, 'streamType', None),
+                                'codec': getattr(stream, 'codec', None),
+                                'samplingRate': getattr(stream, 'samplingRate', None),
+                                'bitDepth': getattr(stream, 'bitDepth', None),
+                                'bitrate': getattr(stream, 'bitrate', None)
+                            }
+                            part_data['Stream'].append(stream_data)
+
+                    media_data['Part'].append(part_data)
+
+                track_data['Media'].append(media_data)
+
+            # Use new factory method
+            track = SoulSyncTrack.from_plex(track_data)
             
             if track:
                 logger.debug(

@@ -154,19 +154,18 @@ class SoulSyncTrack:
         )
 
     @staticmethod
-    def from_plex(data: Dict[str, Any]) -> "SoulSyncTrack":
+    def _clean_and_normalize(raw_title: str) -> tuple[str, Optional[str], str]:
         """
-        Factory method to create a SoulSyncTrack from a Plex API response.
-        Handles data cleaning, regex extraction, and normalization.
+        Shared logic for cleaning title and extracting edition.
+        Returns (clean_title, edition, sort_title_candidate)
         """
-        raw_title = data.get('title', '')
+        if not raw_title:
+            return "", None, ""
 
-        # 1. Edition Extraction
         edition = None
         clean_title = raw_title
 
         # Regex pattern for Edition extraction
-        # Targets: (Live), [Remix], - Remaster, etc.
         edition_pattern = re.compile(
             r"(?:[\(\[]| - )\s*(.*?(?:Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended).*?)(?:[\)\]]|$)",
             re.IGNORECASE
@@ -175,12 +174,10 @@ class SoulSyncTrack:
         match = edition_pattern.search(raw_title)
         if match:
             edition = match.group(1).strip()
-            # Remove the *entire match* from raw_title to generate clean_title
-            # We replace the matched string with nothing, then clean up
             start, end = match.span()
             clean_title = (raw_title[:start] + raw_title[end:]).strip()
 
-        # 2. Title Sanitization (Balanced Quote Check)
+        # Title Sanitization (Balanced Quote Check)
         clean_title = clean_title.strip()
         if len(clean_title) >= 2:
             if clean_title.startswith('"') and clean_title.endswith('"'):
@@ -188,7 +185,17 @@ class SoulSyncTrack:
             if clean_title.startswith("'") and clean_title.endswith("'"):
                 clean_title = clean_title[1:-1]
 
-        # 3. Sort Title
+        return clean_title, edition
+
+    @staticmethod
+    def from_plex(data: Dict[str, Any]) -> "SoulSyncTrack":
+        """
+        Factory method to create a SoulSyncTrack from a Plex API response.
+        """
+        raw_title = data.get('title', '')
+        clean_title, edition = SoulSyncTrack._clean_and_normalize(raw_title)
+
+        # Sort Title
         sort_title = data.get('titleSort')
         if not sort_title:
             # Fallback: Article Mover
@@ -202,7 +209,7 @@ class SoulSyncTrack:
             else:
                 sort_title = clean_title
 
-        # 4. Tech Metadata Extraction
+        # Tech Metadata Extraction
         sample_rate = None
         bit_depth = None
         file_size_bytes = None
@@ -213,7 +220,6 @@ class SoulSyncTrack:
         media_items = data.get('Media', [])
         if media_items:
             media = media_items[0]
-            # Container/Format
             file_format = media.get('container')
             bitrate = media.get('bitrate')
 
@@ -223,19 +229,16 @@ class SoulSyncTrack:
                 file_path = part.get('file')
                 file_size_bytes = part.get('size')
 
-                # Check streams for detailed audio info
                 streams = part.get('Stream', [])
                 for stream in streams:
-                    # streamType 2 is typically audio
                     if stream.get('streamType') == 2 or stream.get('codec'):
-                        # Prefer the selected/default stream, or just the first one found
                         sample_rate = stream.get('samplingRate')
                         bit_depth = stream.get('bitDepth')
                         if stream.get('bitrate'):
                             bitrate = stream.get('bitrate')
                         break
 
-        # 5. Timestamps
+        # Timestamps
         added_at = None
         if 'addedAt' in data:
             try:
@@ -246,7 +249,6 @@ class SoulSyncTrack:
         if not added_at:
             added_at = datetime.now(timezone.utc)
 
-        # 6. Identifiers
         identifiers = []
         if data.get('ratingKey'):
              identifiers.append({
@@ -255,30 +257,92 @@ class SoulSyncTrack:
                  'raw_data': data
              })
 
-        # 7. Construct Object
         return SoulSyncTrack(
             title=clean_title,
             display_title=raw_title,
-            artist_name=data.get('grandparentTitle') or data.get('parentTitle') or "Unknown Artist", # Fallback logic
+            artist_name=data.get('grandparentTitle') or data.get('parentTitle') or "Unknown Artist",
             album_title=data.get('parentTitle'),
             edition=edition,
             sort_title=sort_title,
             artist_sort_name=data.get('grandparentSortTitle'),
             album_sort_title=data.get('parentSortTitle'),
-            # album_type and release_group_id not available in standard Plex track JSON usually, left None
-
             duration=data.get('duration'),
             track_number=data.get('index'),
             disc_number=data.get('parentIndex'),
             bitrate=bitrate,
             file_path=file_path,
             file_format=file_format,
-            release_year=data.get('year'), # Plex often has 'year' at top level or parentYear
-
+            release_year=data.get('year'),
             added_at=added_at,
             sample_rate=sample_rate,
             bit_depth=bit_depth,
             file_size_bytes=file_size_bytes,
+            identifiers=identifiers
+        )
 
+    @staticmethod
+    def from_spotify(data: Dict[str, Any]) -> "SoulSyncTrack":
+        """
+        Factory method to create a SoulSyncTrack from a Spotify API response.
+        """
+        raw_title = data.get('name', '')
+        clean_title, edition = SoulSyncTrack._clean_and_normalize(raw_title)
+
+        # Sort Title (Spotify doesn't provide sort title usually, use fallback)
+        lower_title = clean_title.lower()
+        if lower_title.startswith("the "):
+            sort_title = f"{clean_title[4:]}, The"
+        elif lower_title.startswith("a "):
+            sort_title = f"{clean_title[2:]}, A"
+        elif lower_title.startswith("an "):
+            sort_title = f"{clean_title[3:]}, An"
+        else:
+            sort_title = clean_title
+
+        # Artist handling
+        artists = data.get('artists', [])
+        artist_name = ', '.join([a.get('name', '') for a in artists]) if artists else "Unknown Artist"
+
+        # Album handling
+        album = data.get('album', {})
+        album_title = album.get('name')
+        release_date = album.get('release_date', '')
+        release_year = int(release_date[:4]) if release_date and len(release_date) >= 4 else None
+
+        # Identifiers
+        identifiers = []
+        if data.get('id'):
+            identifiers.append({
+                'provider_source': 'spotify',
+                'provider_item_id': str(data['id']),
+                'raw_data': data
+            })
+
+        # ISRC
+        isrc = None
+        external_ids = data.get('external_ids', {})
+        if external_ids and 'isrc' in external_ids:
+            isrc = external_ids['isrc']
+
+        # Added At (Often passed in wrapping object in playlists, but here we assume track object)
+        # If track object comes from a playlist item, 'added_at' might be in wrapper.
+        # But this method receives the track object itself usually.
+        # We'll default to now if not provided or handle wrappers if needed.
+        # Assuming standard track object here.
+
+        return SoulSyncTrack(
+            title=clean_title,
+            display_title=raw_title,
+            artist_name=artist_name,
+            album_title=album_title,
+            edition=edition,
+            sort_title=sort_title,
+            # Spotify doesn't provide sort names or detailed tech metadata in standard endpoints
+            duration=data.get('duration_ms'),
+            track_number=data.get('track_number'),
+            disc_number=data.get('disc_number'),
+            release_year=release_year,
+            isrc=isrc,
+            added_at=datetime.now(timezone.utc), # Default, as Spotify tracks don't have added_at unless in playlist context
             identifiers=identifiers
         )
