@@ -249,12 +249,25 @@ def generate_ephemeral_cert():
 
 
 def run_with_ssl(host='0.0.0.0', port=8000, debug=False):
-    """Run Flask app with auto-generated ephemeral self-signed SSL cert.
+    """Run Flask app with optional auto-generated ephemeral self-signed SSL cert.
     
     The certificate is regenerated on each startup (ephemeral) for simplicity.
     Frontend must accept self-signed certs for internal API calls.
+    
+    Can be skipped by setting DEV_MODE=true environment variable.
     """
+    import os
+    
     app = create_app()
+    
+    # Check if development mode is enabled (skip HTTPS)
+    dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+    if dev_mode:
+        print("[DEV] Development mode enabled - skipping HTTPS certificate")
+        print("[WARNING] This is only safe for development. Use HTTPS in production!")
+        print(f"[API] Starting HTTP backend on http://{host}:{port}/api")
+        app.run(host=host, port=port, debug=debug)
+        return
     
     try:
         cert_file, key_file = generate_ephemeral_cert()

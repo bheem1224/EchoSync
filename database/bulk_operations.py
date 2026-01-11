@@ -1,275 +1,405 @@
 """
-Bulk database operations for efficient batch inserts and updates.
-Provides high-performance methods for synchronizing large amounts of content.
+Bulk import operations using SQLAlchemy 2.0 and LibraryManager.
+Efficiently ingests SoulSyncTrack objects into the database with caching.
 """
-import sqlite3
-from typing import List, Any, Optional
-from contextlib import contextmanager
-from utils.logging_config import get_logger
+from typing import List, Dict, Optional, Tuple
+from datetime import date
+
+from sqlalchemy import select, func
+from sqlalchemy.orm import sessionmaker, Session
+
 from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine import text_utils
+from utils.logging_config import get_logger
+from .music_database import Artist, Album, Track, ExternalIdentifier
 
 logger = get_logger("bulk_operations")
 
+BATCH_SIZE = 100  # Commit every N tracks
 
-class BulkOperations:
+
+class LibraryManager:
     """
-    Provides batch insert/update operations with transaction safety.
-    All methods use INSERT OR REPLACE for conflict resolution.
+    SQLAlchemy 2.0 based bulk importer for SoulSyncTrack objects.
+    Uses local caching to minimize database round-trips.
     """
-    
-    def __init__(self, connection: sqlite3.Connection, lock=None):
+
+    def __init__(self, session_factory: sessionmaker):
         """
-        Initialize bulk operations handler.
-        
+        Initialize LibraryManager.
+
         Args:
-            connection: Active SQLite connection
-            lock: Optional threading.Lock for thread-safe operations
+            session_factory: SQLAlchemy sessionmaker bound to engine
         """
-        self.conn = connection
-        self.lock = lock
-    
-    @contextmanager
-    def _transaction(self):
-        """Context manager for safe transactions with optional locking"""
-        if self.lock:
-            with self.lock:
-                try:
-                    yield
-                    self.conn.commit()
-                except Exception as e:
-                    self.conn.rollback()
-                    logger.error(f"Transaction failed, rolling back: {e}")
-                    raise
+        self.session_factory = session_factory
+        # Local caches to minimize DB lookups
+        self.artist_cache: Dict[str, int] = {}  # normalized_name -> artist_id
+        self.album_cache: Dict[Tuple[str, int], int] = {}  # (normalized_title, artist_id) -> album_id
+
+    def _normalize_name(self, name: Optional[str]) -> str:
+        """Normalize name for cache lookup."""
+        if not name:
+            return ""
+        return text_utils.normalize_text(name).lower()
+
+    def _get_or_create_artist(self, session: Session, artist_name: str) -> Artist:
+        """
+        Get or create artist. Uses cache first, then DB.
+
+        Args:
+            session: SQLAlchemy session
+            artist_name: Artist name
+
+        Returns:
+            Artist object
+        """
+        if not artist_name:
+            raise ValueError("Artist name is required")
+
+        norm_name = self._normalize_name(artist_name)
+
+        # Check cache first
+        if norm_name in self.artist_cache:
+            artist_id = self.artist_cache[norm_name]
+            # Retrieve from DB to return attached object
+            stmt = select(Artist).where(Artist.id == artist_id)
+            artist = session.execute(stmt).scalar_one()
+            return artist
+
+        # Check DB
+        stmt = select(Artist).where(
+            func.lower(Artist.name) == norm_name
+        )
+        artist = session.execute(stmt).scalar_one_or_none()
+
+        if artist is None:
+            # Create new artist
+            artist = Artist(name=artist_name)
+            session.add(artist)
+            session.flush()
+
+        # Cache it
+        self.artist_cache[norm_name] = artist.id
+        return artist
+
+    def _get_or_create_album(
+        self,
+        session: Session,
+        album_title: Optional[str],
+        artist: Artist,
+        release_year: Optional[int],
+    ) -> Optional[Album]:
+        """
+        Get or create album. Uses cache first, then DB.
+
+        Args:
+            session: SQLAlchemy session
+            album_title: Album title
+            artist: Artist object (already created/fetched)
+            release_year: Release year
+
+        Returns:
+            Album object or None if album_title is None
+        """
+        if not album_title:
+            return None
+
+        norm_title = self._normalize_name(album_title)
+        cache_key = (norm_title, artist.id)
+
+        # Check cache first
+        if cache_key in self.album_cache:
+            album_id = self.album_cache[cache_key]
+            stmt = select(Album).where(Album.id == album_id)
+            album = session.execute(stmt).scalar_one()
+            return album
+
+        # Check DB
+        stmt = select(Album).where(
+            func.lower(Album.title) == norm_title,
+            Album.artist_id == artist.id,
+        )
+        album = session.execute(stmt).scalar_one_or_none()
+
+        release_date = date(release_year, 1, 1) if release_year else None
+
+        if album is None:
+            # Create new album
+            album = Album(
+                title=album_title,
+                artist=artist,
+                release_date=release_date,
+            )
+            session.add(album)
+            session.flush()
         else:
-            try:
-                yield
-                self.conn.commit()
-            except Exception as e:
-                self.conn.rollback()
-                logger.error(f"Transaction failed, rolling back: {e}")
-                raise
-    
-    def bulk_insert_artists(self, artists: List[Any], server_source: str = "plex") -> int:
+            # Update release date if needed
+            if release_date and album.release_date != release_date:
+                album.release_date = release_date
+
+        # Cache it
+        self.album_cache[cache_key] = album.id
+        return album
+
+    def _find_track_by_identifiers(
+        self, session: Session, identifiers: List[Dict[str, any]]
+    ) -> Optional[Track]:
         """
-        Bulk insert or update artists with conflict resolution.
-        
+        Find track by checking ExternalIdentifiers.
+
         Args:
-            artists: List of artist objects (Plex/Jellyfin/Navidrome artist objects)
-            server_source: Source server type ('plex', 'jellyfin', 'navidrome')
-        
+            session: SQLAlchemy session
+            identifiers: List of identifier dicts from SoulSyncTrack
+
         Returns:
-            Number of artists inserted/updated
+            Track object or None
         """
-        if not artists:
-            return 0
-        
-        try:
-            with self._transaction():
-                cursor = self.conn.cursor()
-                count = 0
-                
-                for artist in artists:
-                    try:
-                        artist_id = str(artist.ratingKey)
-                        artist_name = getattr(artist, 'title', 'Unknown Artist')
-                        thumb_url = getattr(artist, 'thumb', None)
-                        
-                        # Get genres if available
-                        genres = []
-                        if hasattr(artist, 'genres'):
-                            try:
-                                genres = [g.tag for g in artist.genres]
-                            except:
-                                pass
-                        genres_json = ','.join(genres) if genres else None
-                        
-                        # Get summary/biography if available
-                        summary = getattr(artist, 'summary', None)
-                        
-                        # Use INSERT OR REPLACE for conflict resolution
-                        cursor.execute("""
-                            INSERT OR REPLACE INTO artists 
-                            (plex_artist_id, name, thumb_url, genres, summary, server_source, created_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM artists WHERE plex_artist_id = ?), datetime('now')), datetime('now'))
-                        """, (artist_id, artist_name, thumb_url, genres_json, summary, server_source, artist_id))
-                        
-                        count += 1
-                    except Exception as e:
-                        logger.warning(f"Failed to insert artist {getattr(artist, 'title', 'Unknown')}: {e}")
-                        continue
-                
-                logger.info(f"Bulk inserted/updated {count} artists")
-                return count
-                
-        except Exception as e:
-            logger.error(f"Error in bulk_insert_artists: {e}")
-            return 0
-    
-    def bulk_insert_albums(self, albums: List[Any], artist_id: str, server_source: str = "plex") -> int:
+        if not identifiers:
+            return None
+
+        for identifier in identifiers:
+            provider_source = identifier.get("provider_source")
+            provider_item_id = identifier.get("provider_item_id")
+
+            if not provider_source or not provider_item_id:
+                continue
+
+            stmt = (
+                select(Track)
+                .join(ExternalIdentifier)
+                .where(
+                    ExternalIdentifier.provider_source == provider_source,
+                    ExternalIdentifier.provider_item_id == provider_item_id,
+                )
+            )
+            track = session.execute(stmt).scalar_one_or_none()
+            if track:
+                return track
+
+        return None
+
+    def _find_track_by_metadata(
+        self,
+        session: Session,
+        title: str,
+        artist_id: int,
+        album_id: Optional[int],
+    ) -> Optional[Track]:
         """
-        Bulk insert or update albums for an artist.
-        
+        Fallback: find track by title + artist + album.
+
         Args:
-            albums: List of album objects
-            artist_id: Parent artist ID
-            server_source: Source server type
-        
+            session: SQLAlchemy session
+            title: Track title
+            artist_id: Artist ID
+            album_id: Album ID (optional)
+
         Returns:
-            Number of albums inserted/updated
+            Track object or None
         """
-        if not albums:
-            return 0
-        
-        try:
-            with self._transaction():
-                cursor = self.conn.cursor()
-                count = 0
-                
-                for album in albums:
-                    try:
-                        album_id = str(album.ratingKey)
-                        album_title = getattr(album, 'title', 'Unknown Album')
-                        year = getattr(album, 'year', None)
-                        thumb_url = getattr(album, 'thumb', None)
-                        
-                        # Get genres if available
-                        genres = []
-                        if hasattr(album, 'genres'):
-                            try:
-                                genres = [g.tag for g in album.genres]
-                            except:
-                                pass
-                        genres_json = ','.join(genres) if genres else None
-                        
-                        # Track count and duration
-                        track_count = getattr(album, 'leafCount', None)
-                        
-                        cursor.execute("""
-                            INSERT OR REPLACE INTO albums
-                            (plex_album_id, artist_id, title, year, thumb_url, genres, track_count, server_source, created_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM albums WHERE plex_album_id = ?), datetime('now')), datetime('now'))
-                        """, (album_id, artist_id, album_title, year, thumb_url, genres_json, track_count, server_source, album_id))
-                        
-                        count += 1
-                    except Exception as e:
-                        logger.warning(f"Failed to insert album {getattr(album, 'title', 'Unknown')}: {e}")
-                        continue
-                
-                logger.debug(f"Bulk inserted/updated {count} albums for artist {artist_id}")
-                return count
-                
-        except Exception as e:
-            logger.error(f"Error in bulk_insert_albums: {e}")
-            return 0
-    
-    def bulk_insert_tracks(self, tracks: List[SoulSyncTrack], album_id: str, artist_id: str, server_source: str = "plex") -> int:
+        norm_title = self._normalize_name(title)
+        conditions = [
+            func.lower(Track.title) == norm_title,
+            Track.artist_id == artist_id,
+        ]
+        if album_id:
+            conditions.append(Track.album_id == album_id)
+
+        stmt = select(Track).where(*conditions)
+        return session.execute(stmt).scalar_one_or_none()
+
+    def _upsert_track(
+        self, session: Session, track_data: SoulSyncTrack, artist: Artist, album: Optional[Album]
+    ) -> Track:
         """
-        Bulk insert or update tracks for an album using SoulSyncTrack.
+        Insert or update a single track.
+
+        Args:
+            session: SQLAlchemy session
+            track_data: SoulSyncTrack object
+            artist: Artist object
+            album: Album object (optional)
+
+        Returns:
+            Track object (inserted or updated)
+        """
+        # Try to find existing track
+        track = self._find_track_by_identifiers(session, track_data.identifiers)
+        if track is None:
+            track = self._find_track_by_metadata(
+                session,
+                track_data.title,
+                artist.id,
+                album.id if album else None,
+            )
+
+        if track is None:
+            # Create new track
+            track = Track(
+                title=track_data.title,
+                                edition=track_data.edition,
+                artist=artist,
+                album=album,
+                duration=track_data.duration,
+                track_number=track_data.track_number,
+                disc_number=track_data.disc_number,
+                bitrate=track_data.bitrate,
+                file_path=track_data.file_path,
+                file_format=track_data.file_format,
+                musicbrainz_id=track_data.musicbrainz_id,
+            )
+            session.add(track)
+            session.flush()
+            logger.debug(f"Created new track: {track.title} by {artist.name}")
+        else:
+            # Update existing track
+            track.title = track_data.title or track.title
+                        track.edition = track_data.edition or track.edition
+            track.duration = track_data.duration or track.duration
+            track.track_number = track_data.track_number or track.track_number
+            track.disc_number = track_data.disc_number or track.disc_number
+            track.bitrate = track_data.bitrate or track.bitrate
+            track.file_path = track_data.file_path or track.file_path
+            track.file_format = track_data.file_format or track.file_format
+            track.musicbrainz_id = track_data.musicbrainz_id or track.musicbrainz_id
+            if album and track.album_id != album.id:
+                track.album = album
+            if track.artist_id != artist.id:
+                track.artist = artist
+            logger.debug(f"Updated existing track: {track.title} by {artist.name}")
+
+        # Ensure all identifiers are linked to this track
+        for identifier in track_data.identifiers:
+            provider_source = identifier.get("provider_source")
+            provider_item_id = identifier.get("provider_item_id")
+            raw_data = identifier.get("raw_data")
+
+            if not provider_source or not provider_item_id:
+                continue
+
+            # Check if identifier already exists
+            stmt = select(ExternalIdentifier).where(
+                ExternalIdentifier.provider_source == provider_source,
+                ExternalIdentifier.provider_item_id == provider_item_id,
+            )
+            ext_id = session.execute(stmt).scalar_one_or_none()
+
+            if ext_id is None:
+                # Create new identifier
+                ext_id = ExternalIdentifier(
+                    track=track,
+                    provider_source=provider_source,
+                    provider_item_id=provider_item_id,
+                    raw_data=raw_data,
+                )
+                session.add(ext_id)
+            else:
+                # Link to track if different
+                if ext_id.track_id != track.id:
+                    ext_id.track = track
+                if raw_data is not None:
+                    ext_id.raw_data = raw_data
+
+        return track
+
+    def bulk_import(self, tracks: List[SoulSyncTrack]) -> int:
+        """
+        Bulk import SoulSyncTrack objects into database.
+        Uses local caching and batched commits for efficiency.
 
         Args:
             tracks: List of SoulSyncTrack objects
-            album_id: Parent album ID
-            artist_id: Parent artist ID
-            server_source: Source server type
 
         Returns:
-            Number of tracks inserted/updated
+            Number of tracks successfully imported
         """
         if not tracks:
+            logger.warning("No tracks provided for bulk import")
             return 0
 
+        logger.info(f"Starting bulk import of {len(tracks)} tracks")
+
+        session = self.session_factory()
+        imported_count = 0
+        failed_count = 0
+
         try:
-            with self._transaction():
-                cursor = self.conn.cursor()
-                count = 0
-
-                for track in tracks:
-                    try:
-                        track_id = track.external_ids.get(server_source)
-                        if not track_id:
-                            logger.warning(f"Skipping track {track.title} due to missing ID for server {server_source}")
-                            continue
-
-                        cursor.execute(
-                            """
-                            INSERT OR REPLACE INTO tracks
-                            (plex_track_id, album_id, artist_id, title, track_number, duration, file_path, bitrate, server_source, created_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM tracks WHERE plex_track_id = ?), datetime('now')), datetime('now'))
-                            """,
-                            (
-                                track_id,
-                                album_id,
-                                artist_id,
-                                track.title,
-                                track.track_number,
-                                track.duration_ms,
-                                track.file_path,
-                                track.bitrate,
-                                server_source,
-                                track_id
-                            )
-                        )
-                        count += 1
-                    except Exception as e:
-                        logger.warning(f"Failed to insert track {track.title}: {e}")
-                        continue
-
-                logger.debug(f"Bulk inserted/updated {count} tracks for album {album_id}")
-                return count
-
-        except Exception as e:
-            logger.error(f"Error in bulk_insert_tracks: {e}")
-            return 0
-    
-    def bulk_update_artist_content(self, artist: Any, albums: List[Any], server_source: str = "plex") -> tuple[int, int, int]:
-        """
-        Bulk update an artist with all their albums and tracks in one transaction using SoulSyncTrack.
-
-        Args:
-            artist: Artist object
-            albums: List of album objects (with tracks accessible via album.tracks())
-            server_source: Source server type
-        
-        Returns:
-            Tuple of (artists_count, albums_count, tracks_count)
-        """
-        try:
-            artist_id = str(artist.ratingKey)
-
-            # Insert artist
-            artists_count = self.bulk_insert_artists([artist], server_source)
-
-            albums_count = 0
-            tracks_count = 0
-
-            # Insert albums and their tracks
-            for album in albums:
-                album_id = str(album.ratingKey)
-
-                # Insert album
-                albums_count += self.bulk_insert_albums([album], artist_id, server_source)
-
-                # Get and insert tracks for this album
+            for idx, track_data in enumerate(tracks):
                 try:
-                    tracks = [SoulSyncTrack(
-                        title=track.title,
-                        artist=artist.title,
-                        album=album.title,
-                        duration_ms=track.duration,
-                        track_number=track.trackNumber,
-                        file_path=track.media[0].parts[0].file if track.media else None,
-                        bitrate=track.media[0].bitrate if track.media else None,
-                        external_ids={server_source: track.ratingKey}
-                    ) for track in album.tracks()]
+                    # Skip tracks with missing required fields
+                    if not track_data.title or not track_data.title.strip():
+                        failed_count += 1
+                        logger.warning(
+                            "Skipping track %s/%s due to missing title: artist='%s' album='%s'",
+                            idx + 1,
+                            len(tracks),
+                            track_data.artist_name,
+                            track_data.album_title,
+                        )
+                        continue
+                    
+                    if not track_data.artist_name or not track_data.artist_name.strip():
+                        failed_count += 1
+                        logger.warning(
+                            "Skipping track %s/%s due to missing artist: title='%s'",
+                            idx + 1,
+                            len(tracks),
+                            track_data.title,
+                        )
+                        continue
+                    
+                    logger.debug(
+                        "Processing track %s/%s: title='%s' artist='%s' album='%s'",
+                        idx + 1,
+                        len(tracks),
+                        track_data.title,
+                        track_data.artist_name,
+                        track_data.album_title,
+                    )
 
-                    tracks_count += self.bulk_insert_tracks(tracks, album_id, artist_id, server_source)
+                    # Get or create artist
+                    artist = self._get_or_create_artist(session, track_data.artist_name)
+
+                    # Get or create album
+                    album = self._get_or_create_album(
+                        session,
+                        track_data.album_title,
+                        artist,
+                        track_data.release_year,
+                    )
+
+                    # Upsert track
+                    track = self._upsert_track(session, track_data, artist, album)
+                    imported_count += 1
+
                 except Exception as e:
-                    logger.warning(f"Error getting tracks for album {album.title}: {e}")
+                    failed_count += 1
+                    logger.error(
+                        f"Failed to import track '{track_data.title}': {e}",
+                        exc_info=True,
+                    )
+                    continue
 
-            logger.info(f"Bulk updated artist {artist.title}: {albums_count} albums, {tracks_count} tracks")
+                # Batch commit every BATCH_SIZE tracks
+                if (idx + 1) % BATCH_SIZE == 0:
+                    session.commit()
+                    logger.info(
+                        f"Batch committed: {idx + 1}/{len(tracks)} tracks processed"
+                    )
 
-            return (artists_count, albums_count, tracks_count)
+            # Final commit
+            session.commit()
+            logger.info(
+                f"Bulk import complete: {imported_count} imported, {failed_count} failed"
+            )
 
         except Exception as e:
-            logger.error(f"Error in bulk_update_artist_content: {e}")
-            return (0, 0, 0)
+            session.rollback()
+            logger.error(f"Bulk import failed with exception: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+        return imported_count
+
+

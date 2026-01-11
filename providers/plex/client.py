@@ -1,286 +1,466 @@
-from core.provider_types import MediaServerProvider
-from plexapi.server import PlexServer
-from plexapi.library import LibrarySection, MusicSection
-from plexapi.audio import Track as PlexTrack, Album as PlexAlbum, Artist as PlexArtist
-from plexapi.playlist import Playlist as PlexPlaylist
-from plexapi.exceptions import PlexApiException, NotFound
-from typing import List, Optional, Dict, Any
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-import re
-from utils.logging_config import get_logger
-from core.settings import config_manager
-from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
-import threading
-from core.job_queue import JobQueue
-from core.health_check import register_health_check_job, HealthCheckResult
-from web.db.music_database import MusicDatabase
+"""
+Plex Music Provider - Refactored
+Simplified implementation using SoulSyncTrack and new core features.
+"""
+
+from core.provider_base import ProviderBase
 from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.settings import config_manager
+from core.health_check import register_health_check_job, HealthCheckResult
+from plexapi.server import PlexServer
+from plexapi.library import MusicSection
+from plexapi.audio import Track as PlexTrack
+from plexapi.exceptions import NotFound
+from typing import List, Optional, Dict, Any
+import time
+from utils.logging_config import get_logger
 
 logger = get_logger("plex_client")
 
-@dataclass
-class PlexTrackInfo:
-    id: str
-    title: str
-    artist: str
-    album: str
-    duration: int
-    track_number: Optional[int] = None
-    year: Optional[int] = None
-    rating: Optional[float] = None
+
+class PlexClient(ProviderBase):
+    """Plex music provider - streams music from Plex media server."""
     
-    @classmethod
-    def from_plex_track(cls, track: PlexTrack) -> 'PlexTrackInfo':
-        # Gracefully handle tracks that might be missing artist or album metadata in Plex
-        try:
-            artist_title = track.artist().title if track.artist() else "Unknown Artist"
-        except (NotFound, AttributeError):
-            artist_title = "Unknown Artist"
-            
-        try:
-            album_title = track.album().title if track.album() else "Unknown Album"
-        except (NotFound, AttributeError):
-            album_title = "Unknown Album"
-
-        return cls(
-            id=str(track.ratingKey),
-            title=track.title,
-            artist=artist_title,
-            album=album_title,
-            duration=track.duration,
-            track_number=track.trackNumber,
-            year=track.year,
-            rating=track.userRating
-        )
-
-@dataclass
-class PlexPlaylistInfo:
-    id: str
-    title: str
-    description: Optional[str]
-    duration: int
-    leaf_count: int
-    tracks: List[PlexTrackInfo]
-    
-    @classmethod
-    def from_plex_playlist(cls, playlist: PlexPlaylist) -> 'PlexPlaylistInfo':
-        tracks = []
-        for item in playlist.items():
-            if isinstance(item, PlexTrack):
-                tracks.append(PlexTrackInfo.from_plex_track(item))
-        
-        return cls(
-            id=str(playlist.ratingKey),
-            title=playlist.title,
-            description=playlist.summary,
-            duration=playlist.duration,
-            leaf_count=playlist.leafCount,
-            tracks=tracks
-        )
-
-class PlexClient(MediaServerProvider):
     name = "plex"
+    category = "provider"
+    supports_downloads = False
+    
     def __init__(self):
+        """Initialize Plex provider."""
         super().__init__()
         self.server: Optional[PlexServer] = None
         self.music_library: Optional[MusicSection] = None
         self._connection_attempted = False
         self._is_connecting = False
-        self._last_connection_check = 0  # Cache connection checks
-        self._connection_check_interval = 30  # Check every 30 seconds max
         self._last_connection_attempt = 0
-        # Initialize centralized HTTP client for Plex (10 requests/second)
-        self._http = HttpClient(
-            provider='plex',
-            retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
-            rate=RateLimitConfig(requests_per_second=10.0)
-        )
-        from core.provider_capabilities import get_provider_capabilities
-
-        # Capability flags
-        self.capabilities = get_provider_capabilities('plex')
-        self.job_queue = JobQueue()
-        self.job_queue.start()
+        self._connection_check_interval = 30
         self._register_health_check()
-        self.db = MusicDatabase()
-        self.credentials = config_manager.get_credentials("plex")
-
+    
     def _register_health_check(self):
+        """Register periodic health check for Plex server."""
         def plex_health_check() -> HealthCheckResult:
             try:
                 connected = self.ensure_connection()
-                if connected:
-                    return HealthCheckResult(
-                        service_name="plex",
-                        status="healthy",
-                        message="Plex server is reachable",
-                    )
-                else:
-                    return HealthCheckResult(
-                        service_name="plex",
-                        status="unhealthy",
-                        message="Plex server connection failed",
-                    )
+                status = "healthy" if connected else "unhealthy"
+                message = "Plex server is reachable" if connected else "Plex server connection failed"
+                return HealthCheckResult(
+                    service_name="plex",
+                    status=status,
+                    message=message,
+                )
             except Exception as e:
                 return HealthCheckResult(
                     service_name="plex",
                     status="unhealthy",
                     message=f"Plex connection error: {str(e)}",
                 )
-
+        
         register_health_check_job("plex_health_check", plex_health_check, interval_seconds=60)
-
+    
     def authenticate(self, **kwargs) -> bool:
+        """Authenticate with Plex server."""
+        return self.ensure_connection()
+    
+    def is_configured(self) -> bool:
+        """Check if Plex is configured and connected."""
+        return self.server is not None
+    
+    def get_logo_url(self) -> str:
+        """Return Plex logo URL."""
+        return "/static/img/plex_logo.png"
+    
+    def is_connected(self) -> bool:
+        """Compatibility method used by sync service."""
         return self.ensure_connection()
 
-    def search(self, query: str, limit: int = 10, type: str = "track") -> list:
-        # Ensure method signature matches base class
+    def search_tracks(self, query: str, limit: int = 10) -> List[SoulSyncTrack]:
+        """Compatibility wrapper for services expecting search_tracks()."""
+        return self.search(query=query, type="track", limit=limit)
+
+    def update_playlist(self, name: str, tracks: List[Any]) -> bool:
+        """Create or replace a Plex playlist with provided native Plex track items.
+
+        Expects `tracks` to be native Plex Track objects with ratingKey attributes.
+        """
+        if not self.ensure_connection() or not self.server:
+            return False
         try:
-            if not self.ensure_connection():
-                return []
+            # Try to remove existing playlist with same name (if exists)
+            try:
+                existing = self.server.playlist(name)
+                try:
+                    existing.delete()
+                except Exception:
+                    # Fallback: remove items if delete not permitted
+                    try:
+                        items = list(existing.items())
+                        if items:
+                            existing.removeItems(items)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
-            results = self.music_library.search(query, libtype=type, maxresults=limit)
-            return [SoulSyncTrack(
-                title=getattr(result, "title", "Unknown Title"),
-                artist=getattr(result.artist(), "title", "Unknown Artist"),
-                album=getattr(result.album(), "title", "Unknown Album"),
-                duration=int(result.duration) if isinstance(result.duration, (int, float)) else 0,
-                track_number=int(result.trackNumber) if isinstance(result.trackNumber, (int, float)) else None,
-                year=int(result.year) if isinstance(result.year, (int, float)) else None,
-                mbid=None,
-                isrc=None,
-            ) for result in results if result]
+            # Create new playlist with provided tracks
+            from plexapi.playlist import Playlist
+            Playlist.create(self.server, name, tracks, playlistType='audio')
+            logger.info(f"Updated Plex playlist: {name} with {len(tracks)} tracks")
+            return True
         except Exception as e:
-            logger.error(f"Error during search: {e}")
-            return []
+            logger.error(f"Error updating Plex playlist '{name}': {e}")
+            return False
 
-    def get_library_stats(self) -> Dict[str, int]:
-        # Stub implementation
-        return {}
-
-    def get_all_artists(self) -> list:
-        # Stub implementation
-        return []
-
-    def get_all_albums(self) -> list:
-        """Get all albums from the music library"""
+    # ===== CORE METHODS =====
+    
+    def search(self, query: str, type: str = "track", limit: int = 10) -> List[SoulSyncTrack]:
+        """Search for tracks in Plex library."""
         if not self.ensure_connection() or not self.music_library:
-            logger.error("Not connected to Plex server or no music library")
+            logger.warning("Plex not connected or no music library")
+            return []
+        
+        try:
+            results = self.music_library.search(query, libtype=type, maxresults=limit)
+            tracks = []
+            
+            for result in results:
+                if isinstance(result, PlexTrack):
+                    track = self._convert_track_to_soulsync(result)
+                    if track:
+                        tracks.append(track)
+            
+            logger.debug(f"Search '{query}' returned {len(tracks)} tracks")
+            return tracks
+        
+        except Exception as e:
+            logger.error(f"Error searching Plex: {e}")
+            return []
+    
+    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
+        """Fetch single track by Plex ratingKey."""
+        if not self.ensure_connection() or not self.music_library:
+            return None
+        
+        try:
+            track = self.music_library.fetchItem(int(track_id))
+            if isinstance(track, PlexTrack):
+                return self._convert_track_to_soulsync(track)
+        except Exception as e:
+            logger.error(f"Error fetching track {track_id}: {e}")
+        
+        return None
+    
+    def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch album by ID (stub - not typically needed)."""
+        # Albums are accessed through search/playlist methods
+        return None
+    
+    def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch artist by ID (stub - not typically needed)."""
+        # Artists are accessed through search/playlist methods
+        return None
+    
+    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get playlists from Plex server."""
+        if not self.ensure_connection() or not self.server:
+            return []
+        
+        try:
+            playlists = []
+            for playlist in self.server.playlists():
+                # Filter for music playlists only
+                if hasattr(playlist, 'playlistType') and playlist.playlistType == 'audio':
+                    playlists.append({
+                        'id': str(playlist.ratingKey),
+                        'name': playlist.title,
+                        'description': getattr(playlist, 'summary', None),
+                        'track_count': playlist.leafCount if hasattr(playlist, 'leafCount') else 0,
+                    })
+            
+            logger.debug(f"Found {len(playlists)} music playlists")
+            return playlists
+        
+        except Exception as e:
+            logger.error(f"Error fetching playlists: {e}")
+            return []
+    
+    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
+        """Get all tracks from a playlist."""
+        if not self.ensure_connection() or not self.server:
+            return []
+        
+        try:
+            playlist = self.server.playlist(int(playlist_id))
+            tracks = []
+            
+            for item in playlist.items():
+                if isinstance(item, PlexTrack):
+                    track = self._convert_track_to_soulsync(item)
+                    if track:
+                        tracks.append(track)
+            
+            logger.debug(f"Playlist {playlist_id} has {len(tracks)} tracks")
+            return tracks
+        
+        except Exception as e:
+            logger.error(f"Error fetching playlist {playlist_id}: {e}")
+            return []
+    
+    # ===== LIBRARY METHODS =====
+    
+    def get_music_libraries(self) -> List[Dict[str, str]]:
+        """Get all music library sections from Plex server."""
+        if not self.ensure_connection() or not self.server:
+            return []
+        
+        try:
+            libraries = []
+            for section in self.server.library.sections():
+                if section.type == 'artist':
+                    libraries.append({
+                        'title': section.title,
+                        'key': str(section.key)
+                    })
+            
+            logger.debug(f"Found {len(libraries)} music libraries")
+            return libraries
+        
+        except Exception as e:
+            logger.error(f"Error fetching libraries: {e}")
+            return []
+    
+    def set_music_library(self, library_key: str) -> bool:
+        """Set active music library by key."""
+        if not self.ensure_connection() or not self.server:
+            return False
+        
+        try:
+            section = self.server.library.section(library_key)
+            if section.type == 'artist':
+                self.music_library = section
+                logger.info(f"Set music library to: {section.title}")
+                return True
+        except Exception as e:
+            logger.error(f"Error setting music library: {e}")
+        
+        return False
+    
+    def get_all_tracks(self, limit: Optional[int] = None) -> List[SoulSyncTrack]:
+        """Get all tracks from active music library."""
+        if not self.ensure_connection() or not self.music_library:
+            logger.warning("No active music library")
+            return []
+        
+        try:
+            tracks = []
+            
+            # Use maxresults parameter to fetch tracks (Plex doesn't support offset for searchTracks)
+            # searchTracks will fetch all matching tracks up to maxresults limit
+            max_results = limit if limit else 999999
+            logger.info(f"Calling Plex searchTracks with maxresults={max_results}")
+            all_tracks = self.music_library.searchTracks(maxresults=max_results)
+            
+            logger.info(f"Plex returned {len(all_tracks)} raw tracks from library")
+            
+            conversion_errors = 0
+            skipped_non_track = 0
+            successful_conversions = 0
+            
+            for idx, item in enumerate(all_tracks):
+                # Log progress every 100 items to see if loop is hanging
+                if idx % 100 == 0 and idx > 0:
+                    logger.debug(
+                        "Processing tracks: %s/%s (%s converted, %s errors)",
+                        idx,
+                        len(all_tracks),
+                        successful_conversions,
+                        conversion_errors,
+                    )
+                
+                if isinstance(item, PlexTrack):
+                    try:
+                        track = self._convert_track_to_soulsync(item)
+                        if track:
+                            tracks.append(track)
+                            successful_conversions += 1
+                            if idx < 5:  # Log first 5 tracks for debugging
+                                logger.debug(
+                                    "Converted track #%s: %s by %s",
+                                    idx + 1,
+                                    track.title,
+                                    track.artist_name,
+                                )
+                        else:
+                            conversion_errors += 1
+                            if conversion_errors <= 3:  # Log first 3 conversion failures
+                                logger.warning(f"Conversion returned None for track: {getattr(item, 'title', 'Unknown')}")
+                    except Exception as e:
+                        conversion_errors += 1
+                        if conversion_errors <= 3:
+                            logger.error(f"Error converting track '{getattr(item, 'title', 'Unknown')}': {e}", exc_info=True)
+                else:
+                    skipped_non_track += 1
+                
+                if limit and len(tracks) >= limit:
+                    tracks = tracks[:limit]
+                    break
+            
+            logger.info(f"Track conversion complete: {successful_conversions} tracks successfully converted, {conversion_errors} errors, {skipped_non_track} non-track items skipped")
+            return tracks
+        
+        except Exception as e:
+            logger.error(f"Error fetching all tracks from Plex: {e}", exc_info=True)
+            return []
+    
+    def get_all_albums(self) -> List[Dict[str, Any]]:
+        """Get all albums from active music library."""
+        if not self.ensure_connection() or not self.music_library:
             return []
         
         try:
             albums = self.music_library.searchAlbums(limit=99999)
             logger.info(f"Found {len(albums)} albums in Plex library")
-            return albums
+            return [
+                {
+                    'id': str(album.ratingKey),
+                    'title': album.title,
+                    'artist': album.artist().title if album.artist() else 'Unknown',
+                }
+                for album in albums
+            ]
         except Exception as e:
-            logger.error(f"Error getting all albums: {e}")
+            logger.error(f"Error fetching albums: {e}")
             return []
-
-    def get_all_tracks(self) -> list:
-        tracks = []
-        offset = 0
-        page_size = 100
-
-        def fetch_tracks():
-            nonlocal offset, tracks
+    
+    def get_library_stats(self) -> Dict[str, int]:
+        """Get statistics about active library."""
+        if not self.ensure_connection() or not self.music_library:
+            return {}
+        
+        try:
+            return {
+                'total_tracks': self.music_library.totalSize if hasattr(self.music_library, 'totalSize') else 0,
+                'albums': len(self.music_library.searchAlbums(limit=99999)),
+                'artists': len(self.music_library.searchArtists(limit=99999)),
+            }
+        except Exception as e:
+            logger.error(f"Error getting library stats: {e}")
+            return {}
+    
+    # ===== INTERNAL METHODS =====
+    
+    def _convert_track_to_soulsync(self, plex_track: PlexTrack) -> Optional[SoulSyncTrack]:
+        """Convert Plex track to SoulSyncTrack using factory method."""
+        try:
+            # Extract basic metadata
+            title = getattr(plex_track, 'title', None)
+            
+            # Handle artist and album gracefully
+            artist = None
             try:
-                if not self.music_library:
-                    logger.error("Music library is not initialized.")
-                    return
-
-                page = self.music_library.searchTracks(maxresults=page_size, offset=offset)
-                if page:
-                    for track in page:
-                        if track and track.artist() and track.album():
-                            soul_sync_track = SoulSyncTrack(
-                                title=getattr(track, "title", "Unknown Title"),
-                                artist=getattr(track.artist(), "title", "Unknown Artist"),
-                                album=getattr(track.album(), "title", "Unknown Album"),
-                                duration=int(track.duration) if isinstance(track.duration, (int, float)) else 0,
-                                track_number=int(track.trackNumber) if isinstance(track.trackNumber, (int, float)) else None,
-                                year=int(track.year) if isinstance(track.year, (int, float)) else None,
-                                mbid=None,  # Plex does not provide MBID
-                                isrc=None,  # Plex does not provide ISRC
-                            )
-                            tracks.append(soul_sync_track)
-                    offset += len(page)
-                    logger.debug(f"Fetched {len(page)} tracks (total: {len(tracks)})")
-            except Exception as e:
-                logger.error(f"Error fetching tracks: {e}")
-
-        self.job_queue.register_job("fetch_plex_tracks", fetch_tracks, interval_seconds=1)
-        self.job_queue.start()
-
-        # Wait for all jobs to complete (simplified for demonstration)
-        import time
-        time.sleep((2401 // page_size) + 1)  # Adjust based on total tracks
-        return tracks
-
-    def get_track(self, track_id: str) -> dict:
-        # Stub implementation
-        return None
-
-    def get_album(self, album_id: str) -> dict:
-        # Stub implementation
-        return None
-
-    def get_artist(self, artist_id: str) -> dict:
-        # Stub implementation
-        return None
-
-    def get_user_playlists(self, user_id: Optional[str] = None) -> list:
-        # Stub implementation
-        return []
-
-    def get_playlist_tracks(self, playlist_id: str) -> list:
-        # Stub implementation
-        return []
-
-    def get_logo_url(self) -> str:
-        return "/static/img/plex_logo.png"
-
-    def is_configured(self) -> bool:
-        return self.server is not None
-    
-    def get_library(self):
-        """Get all Plex library sections."""
-        if not self.ensure_connection():
-            return []
-        try:
-            return self.server.library.sections()
+                artist_obj = plex_track.artist()
+                artist = getattr(artist_obj, 'title', None) if artist_obj else None
+                logger.debug(f"Extracted artist for '{title}': artist_obj={artist_obj}, artist_title={artist}")
+            except (NotFound, AttributeError, Exception) as e:
+                logger.warning(f"Failed to get artist for track '{title}': {e}")
+            
+            album = None
+            try:
+                album_obj = plex_track.album()
+                album = getattr(album_obj, 'title', None) if album_obj else None
+            except (NotFound, AttributeError, Exception) as e:
+                logger.debug(f"Failed to get album for track '{title}': {e}")
+            
+            if not title:
+                logger.warning(f"Skipping track - missing title")
+                return None
+            
+            if not artist:
+                logger.warning(f"Skipping track '{title}' - missing artist (artist_obj extraction failed)")
+                return None
+            
+            # Extract audio metadata
+            duration_ms = getattr(plex_track, 'duration', None)
+            year = getattr(plex_track, 'year', None)
+            track_number = getattr(plex_track, 'trackNumber', None)
+            disc_number = getattr(plex_track, 'discNumber', None)
+            
+            # Extract file metadata
+            file_path = None
+            file_format = None
+            bitrate = None
+            
+            if hasattr(plex_track, 'media') and plex_track.media:
+                media = plex_track.media[0]
+                bitrate = getattr(media, 'bitrate', None)
+                
+                if hasattr(media, 'container'):
+                    file_format = getattr(media, 'container', None)
+                
+                if hasattr(media, 'parts') and media.parts:
+                    file_path = getattr(media.parts[0], 'file', None)
+            
+            # Extract Plex track ID (ratingKey)
+            plex_track_id = str(getattr(plex_track, 'ratingKey', None))
+            
+            if not plex_track_id or plex_track_id == 'None':
+                logger.warning(f"Track '{title}' by '{artist}' has no ratingKey - cannot save to database")
+                return None
+            
+            logger.debug(
+                "Plex track data before factory: title='%s' artist='%s' album='%s' "
+                "duration=%s year=%s track#=%s disc#=%s bitrate=%s format=%s id=%s",
+                title, artist, album, duration_ms, year, track_number, disc_number,
+                bitrate, file_format, plex_track_id
+            )
+            
+            # Use ProviderBase factory for proper normalization (call as class method, not instance method)
+            track = ProviderBase.create_soul_sync_track(
+                title=title,
+                artist=artist,
+                album=album,
+                duration_ms=duration_ms,
+                year=year,
+                track_number=track_number,
+                disc_number=disc_number,
+                file_format=file_format,
+                file_path=file_path,
+                bitrate=bitrate,
+                provider_id=plex_track_id,
+                source='plex'
+            )
+            
+            if track:
+                logger.debug(
+                    "Successfully created SoulSyncTrack: '%s' by '%s' with identifiers=%s",
+                    track.title,
+                    track.artist_name,
+                    track.identifiers,
+                )
+            else:
+                logger.warning(f"create_soul_sync_track returned None for '{title}' by '{artist}'")
+            
+            return track
+        
         except Exception as e:
-            logger.error(f"Error fetching Plex library sections: {e}")
-            return []
-    
-    def get_music_libraries(self):
-        """Get only music library sections."""
-        try:
-            sections = self.get_library()
-            return [s for s in sections if s.type == 'artist']
-        except Exception as e:
-            logger.error(f"Error fetching music libraries: {e}")
-            return []
+            logger.error(f"Error converting Plex track '{getattr(plex_track, 'title', 'Unknown')}': {e}", exc_info=True)
+            return None
     
     def ensure_connection(self) -> bool:
-        """Ensure connection to Plex server with lazy initialization and reconnection support."""
-        import time
-
-        # If already connected, test it
+        """Ensure connection to Plex server with lazy initialization."""
+        # Test existing connection
         if self.server is not None:
             try:
-                # Quick connection test
                 self.server.library.sections()
                 return True
             except Exception:
                 logger.info("Plex connection lost, reconnecting...")
                 self.server = None
-
+        
         # Avoid concurrent connection attempts
         if self._is_connecting:
             return False
-
-        # Back off if we just attempted recently and failed
+        
+        # Back off if recent attempt failed
         now = time.time()
         if self._connection_attempted and (now - self._last_connection_attempt < self._connection_check_interval):
             return self.server is not None
@@ -288,1030 +468,61 @@ class PlexClient(MediaServerProvider):
         self._is_connecting = True
         try:
             self._last_connection_attempt = now
-            self._setup_client()
+            self._setup_connection()
             return self.server is not None
         finally:
             self._is_connecting = False
             self._connection_attempted = True
     
-    def _setup_client(self):
+    def _setup_connection(self):
+        """Establish connection to Plex server."""
         config = config_manager.get_plex_config()
         
         if not config.get('base_url'):
             logger.warning("Plex server URL not configured")
             return
         
+        if not config.get('token'):
+            logger.error("Plex token not configured")
+            return
+        
         try:
-            if config.get('token'):
-                # Use a longer timeout (15 seconds) to prevent read timeouts on slow servers
-                self.server = PlexServer(config['base_url'], config['token'], timeout=15)
-            else:
-                logger.error("Plex token not configured")
-                return
-            
+            # 15 second timeout to prevent hangs on slow servers
+            self.server = PlexServer(config['base_url'], config['token'], timeout=15)
             self._find_music_library()
-            logger.debug(f"Successfully connected to Plex server: {self.server.friendlyName}")
-            
+            logger.debug(f"Connected to Plex: {self.server.friendlyName}")
+        
         except Exception as e:
-            logger.error(f"Failed to connect to Plex server: {e}")
+            logger.error(f"Failed to connect to Plex: {e}")
             self.server = None
     
-    def get_available_music_libraries(self) -> List[Dict[str, str]]:
-        """Get list of all available music libraries on the Plex server"""
-        if not self.ensure_connection() or not self.server:
-            return []
-
-        try:
-            music_libraries = []
-            for section in self.server.library.sections():
-                if section.type == 'artist':
-                    music_libraries.append({
-                        'title': section.title,
-                        'key': str(section.key)
-                    })
-
-            logger.debug(f"Found {len(music_libraries)} music libraries")
-            return music_libraries
-        except Exception as e:
-            logger.error(f"Error getting music libraries: {e}")
-            return []
-
-    def set_music_library_by_name(self, library_name: str) -> bool:
-        """Set the active music library by name"""
-        if not self.server:
-            return False
-
-        try:
-            for section in self.server.library.sections():
-                if section.type == 'artist' and section.title == library_name:
-                    self.music_library = section
-                    logger.info(f"Set music library to: {library_name}")
-
-                    # Store preference in database
-                    db = MusicDatabase()
-                    db.set_preference('plex_music_library', library_name)
-
-                    return True
-
-            logger.warning(f"Music library '{library_name}' not found")
-            return False
-        except Exception as e:
-            logger.error(f"Error setting music library: {e}")
-            return False
-
     def _find_music_library(self):
+        """Automatically find and set active music library."""
         if not self.server:
             return
-
+        
         try:
-            music_sections = []
-
             # Collect all music libraries
-            for section in self.server.library.sections():
-                if section.type == 'artist':
-                    music_sections.append(section)
-
+            music_sections = [
+                section for section in self.server.library.sections()
+                if section.type == 'artist'
+            ]
+            
             if not music_sections:
                 logger.warning("No music library found on Plex server")
                 return
-
-            # Check if user has a saved preference
-            try:
-                db = MusicDatabase()
-                preferred_library = db.get_preference('plex_music_library')
-
-                if preferred_library:
-                    # Try to find the preferred library
-                    for section in music_sections:
-                        if section.title == preferred_library:
-                            self.music_library = section
-                            logger.debug(f"Using user-selected music library: {section.title}")
-                            return
-            except Exception as e:
-                logger.debug(f"Could not check library preference: {e}")
-
-            # Priority order for common library names
-            priority_names = ['Music', 'music', 'Audio', 'audio', 'Songs', 'songs']
-
-            # First, try to find a library with a priority name
-            for priority_name in priority_names:
+            
+            # Try priority names first
+            for priority_name in ['Music', 'music', 'Audio', 'audio', 'Songs', 'songs']:
                 for section in music_sections:
                     if section.title == priority_name:
                         self.music_library = section
-                        logger.debug(f"Found preferred music library: {section.title}")
+                        logger.info(f"Selected music library: {section.title}")
                         return
-
-            # If no priority match found, use the first one
+            
+            # Fall back to first music library found
             self.music_library = music_sections[0]
-            logger.debug(f"Found music library (first available): {self.music_library.title}")
-
-            # Log other available libraries if multiple exist
-            if len(music_sections) > 1:
-                other_libraries = [s.title for s in music_sections[1:]]
-                logger.info(f"Other music libraries available: {', '.join(other_libraries)}")
-
+            logger.info(f"Selected music library: {self.music_library.title}")
+        
         except Exception as e:
             logger.error(f"Error finding music library: {e}")
-    
-    def is_connected(self) -> bool:
-        """Check if connected to Plex server with cached connection checks."""
-        import time
-
-        current_time = time.time()
-
-        # Only check connection if enough time has passed or never attempted
-        if (not self._connection_attempted or
-            current_time - self._last_connection_check > self._connection_check_interval):
-
-            self._last_connection_check = current_time
-
-            # Try to connect or reconnect if not already connecting
-            if not self._is_connecting:
-                self.ensure_connection()
-
-        # For status checks, only verify server connection, not music library
-        # Music library might be None if user hasn't selected one yet
-        return self.server is not None
-
-    def is_fully_configured(self) -> bool:
-        """Check if both server is connected AND music library is selected."""
-        return self.server is not None and self.music_library is not None
-    
-    def get_all_playlists(self) -> List[PlexPlaylistInfo]:
-        if not self.ensure_connection():
-            logger.error("Not connected to Plex server")
-            return []
-        
-        playlists = []
-        
-        try:
-            for playlist in self.server.playlists():
-                if playlist.playlistType == 'audio':
-                    playlist_info = PlexPlaylistInfo.from_plex_playlist(playlist)
-                    playlists.append(playlist_info)
-            
-            logger.info(f"Retrieved {len(playlists)} audio playlists")
-            return playlists
-            
-        except Exception as e:
-            logger.error(f"Error fetching playlists: {e}")
-            return []
-    
-    def get_playlist_by_name(self, name: str) -> Optional[PlexPlaylistInfo]:
-        if not self.ensure_connection():
-            return None
-        
-        try:
-            playlist = self.server.playlist(name)
-            if playlist.playlistType == 'audio':
-                return PlexPlaylistInfo.from_plex_playlist(playlist)
-            return None
-            
-        except NotFound:
-            logger.info(f"Playlist '{name}' not found")
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching playlist '{name}': {e}")
-            return None
-    
-    def create_playlist(self, name: str, tracks) -> bool:
-        if not self.ensure_connection():
-            logger.error("Not connected to Plex server")
-            return False
-        
-        try:
-            # Handle both PlexTrackInfo objects and actual Plex track objects
-            plex_tracks = []
-            for track in tracks:
-                if hasattr(track, 'ratingKey'):
-                    # This is already a Plex track object
-                    plex_tracks.append(track)
-                elif hasattr(track, '_original_plex_track'):
-                    # This is a PlexTrackInfo object with stored original track reference
-                    original_track = track._original_plex_track
-                    if original_track is not None:
-                        plex_tracks.append(original_track)
-                        logger.debug(f"Using stored track reference for: {track.title} by {track.artist} (ratingKey: {original_track.ratingKey})")
-                    else:
-                        logger.warning(f"Stored track reference is None for: {track.title} by {track.artist}")
-                elif hasattr(track, 'title'):
-                    # Fallback: This is a PlexTrackInfo object, need to find the actual track
-                    plex_track = self._find_track(track.title, track.artist, track.album)
-                    if plex_track:
-                        plex_tracks.append(plex_track)
-                    else:
-                        logger.warning(f"Track not found in Plex: {track.title} by {track.artist}")
-            
-            logger.info(f"Processed {len(tracks)} input tracks, resulting in {len(plex_tracks)} valid Plex tracks for playlist '{name}'")
-            
-            if plex_tracks:
-                # Additional validation
-                valid_tracks = [t for t in plex_tracks if t is not None and hasattr(t, 'ratingKey')]
-                logger.info(f"Final validation: {len(valid_tracks)} valid tracks with ratingKeys")
-                
-                if valid_tracks:
-                    # Debug the track objects before creating playlist
-                    logger.debug(f"About to create playlist with tracks:")
-                    for i, track in enumerate(valid_tracks):
-                        logger.debug(f"  Track {i+1}: {track.title} (type: {type(track)}, ratingKey: {track.ratingKey})")
-                    
-                    try:
-                        playlist = self.server.createPlaylist(name, valid_tracks)
-                        logger.info(f"Created playlist '{name}' with {len(valid_tracks)} tracks")
-                        return True
-                    except Exception as create_error:
-                        logger.error(f"CreatePlaylist failed: {create_error}")
-                        # Try alternative approach - pass items as list
-                        try:
-                            playlist = self.server.createPlaylist(name, items=valid_tracks)
-                            logger.info(f"Created playlist '{name}' with {len(valid_tracks)} tracks (using items parameter)")
-                            return True
-                        except Exception as alt_error:
-                            logger.error(f"Alternative createPlaylist also failed: {alt_error}")
-                            # Try creating empty playlist first, then adding tracks
-                            try:
-                                logger.debug("Trying to create empty playlist first, then add tracks...")
-                                playlist = self.server.createPlaylist(name, [])
-                                playlist.addItems(valid_tracks)
-                                logger.info(f"Created empty playlist and added {len(valid_tracks)} tracks")
-                                return True
-                            except Exception as empty_error:
-                                logger.error(f"Empty playlist approach also failed: {empty_error}")
-                                # Final attempt: Create with first item, then add the rest
-                                try:
-                                    logger.debug("Trying to create playlist with first track, then add remaining...")
-                                    playlist = self.server.createPlaylist(name, valid_tracks[0])
-                                    if len(valid_tracks) > 1:
-                                        playlist.addItems(valid_tracks[1:])
-                                    logger.info(f"Created playlist with first track and added {len(valid_tracks)-1} more tracks")
-                                    return True
-                                except Exception as final_error:
-                                    logger.error(f"Final playlist creation attempt failed: {final_error}")
-                                    raise create_error
-                else:
-                    logger.error(f"No valid tracks with ratingKeys for playlist '{name}'")
-                    return False
-            else:
-                logger.error(f"No tracks found for playlist '{name}'")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error creating playlist '{name}': {e}")
-            return False
-    
-    def copy_playlist(self, source_name: str, target_name: str) -> bool:
-        """Copy a playlist to create a backup"""
-        if not self.ensure_connection():
-            return False
-        
-        try:
-            # Get the source playlist
-            source_playlist = self.server.playlist(source_name)
-            
-            # Get all tracks from source playlist
-            source_tracks = source_playlist.items()
-            logger.debug(f"Retrieved {len(source_tracks) if source_tracks else 0} tracks from source playlist")
-            
-            # Validate tracks
-            if not source_tracks:
-                logger.warning(f"Source playlist '{source_name}' has no tracks to copy")
-                return False
-                
-            # Filter for valid track objects
-            valid_tracks = [track for track in source_tracks if hasattr(track, 'ratingKey')]
-            logger.debug(f"Found {len(valid_tracks)} valid tracks with ratingKeys")
-            
-            if not valid_tracks:
-                logger.error(f"No valid tracks found in source playlist '{source_name}'")
-                return False
-            
-            # Delete target playlist if it exists (for overwriting backup)
-            try:
-                target_playlist = self.server.playlist(target_name)
-                target_playlist.delete()
-                logger.info(f"Deleted existing backup playlist '{target_name}'")
-            except NotFound:
-                pass  # Target doesn't exist, which is fine
-            
-            # Create new playlist with copied tracks
-            try:
-                self.server.createPlaylist(target_name, items=valid_tracks)
-                logger.info(f"✅ Created backup playlist '{target_name}' with {len(valid_tracks)} tracks")
-                return True
-            except Exception as create_error:
-                logger.error(f"Failed to create backup playlist: {create_error}")
-                # Try alternative method
-                try:
-                    new_playlist = self.server.createPlaylist(target_name)
-                    new_playlist.addItems(valid_tracks)
-                    logger.info(f"✅ Created backup playlist '{target_name}' with {len(valid_tracks)} tracks (alternative method)")
-                    return True
-                except Exception as alt_error:
-                    logger.error(f"Alternative backup creation also failed: {alt_error}")
-                    return False
-                
-        except NotFound:
-            logger.error(f"Source playlist '{source_name}' not found")
-            return False
-        except Exception as e:
-            logger.error(f"Error copying playlist '{source_name}' to '{target_name}': {e}")
-            return False
-
-    def update_playlist(self, playlist_name: str, tracks: List[PlexTrackInfo]) -> bool:
-        if not self.ensure_connection():
-            return False
-        
-        try:
-            existing_playlist = self.server.playlist(playlist_name)
-            
-            # Check if backup is enabled in config
-            from core.settings import config_manager
-            create_backup = config_manager.get('playlist_sync.create_backup', True)
-            
-            if create_backup:
-                backup_name = f"{playlist_name} Backup"
-                logger.info(f"🛡️ Creating backup playlist '{backup_name}' before sync")
-                
-                if self.copy_playlist(playlist_name, backup_name):
-                    logger.info(f"✅ Backup created successfully")
-                else:
-                    logger.warning(f"⚠️ Failed to create backup, continuing with sync")
-            
-            # Delete original and recreate
-            existing_playlist.delete()
-            return self.create_playlist(playlist_name, tracks)
-            
-        except NotFound:
-            logger.info(f"Playlist '{playlist_name}' not found, creating new one")
-            return self.create_playlist(playlist_name, tracks)
-        except Exception as e:
-            logger.error(f"Error updating playlist '{playlist_name}': {e}")
-            return False
-    
-    def _find_track(self, title: str, artist: str, album: str) -> Optional[PlexTrack]:
-        if not self.music_library:
-            return None
-        
-        try:
-            search_results = self.music_library.search(title=title, artist=artist, album=album)
-            
-            for result in search_results:
-                if isinstance(result, PlexTrack):
-                    if (result.title.lower() == title.lower() and 
-                        result.artist().title.lower() == artist.lower() and
-                        result.album().title.lower() == album.lower()):
-                        return result
-            
-            broader_search = self.music_library.search(title=title, artist=artist)
-            for result in broader_search:
-                if isinstance(result, PlexTrack):
-                    if (result.title.lower() == title.lower() and 
-                        result.artist().title.lower() == artist.lower()):
-                        return result
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error searching for track '{title}' by '{artist}': {e}")
-            return None
-    
-    def search_tracks(self, title: str, artist: str, limit: int = 15) -> List[PlexTrackInfo]:
-        """
-        Searches for tracks using an efficient, multi-stage "early exit" strategy.
-        It stops and returns results as soon as candidates are found.
-        """
-        if not self.music_library:
-            logger.warning("Plex music library not found. Cannot perform search.")
-            return []
-
-        try:
-            candidate_tracks = []
-            found_track_keys = set()
-
-            def add_candidates(tracks):
-                """Helper function to add unique tracks to the main candidate list."""
-                for track in tracks:
-                    if track.ratingKey not in found_track_keys:
-                        candidate_tracks.append(track)
-                        found_track_keys.add(track.ratingKey)
-
-            # --- Stage 1: High-Precision Search (Artist -> then filter by Title) ---
-            if artist:
-                logger.debug(f"Stage 1: Searching for artist '{artist}'")
-                artist_results = self.music_library.searchArtists(title=artist, limit=1)
-                if artist_results:
-                    plex_artist = artist_results[0]
-                    all_artist_tracks = plex_artist.tracks()
-                    lower_title = title.lower()
-                    stage1_results = [track for track in all_artist_tracks if lower_title in track.title.lower()]
-                    add_candidates(stage1_results)
-                    logger.debug(f"Stage 1 found {len(stage1_results)} candidates.")
-            
-            # --- Early Exit: If Stage 1 found results, stop here ---
-            if candidate_tracks:
-                logger.info(f"Found {len(candidate_tracks)} candidates in Stage 1. Exiting early.")
-                tracks = [PlexTrackInfo.from_plex_track(track) for track in candidate_tracks[:limit]]
-                # Store references to original tracks for playlist creation
-                for i, track_info in enumerate(tracks):
-                    if i < len(candidate_tracks):
-                        track_info._original_plex_track = candidate_tracks[i]
-                        logger.debug(f"Stored original track reference for '{track_info.title}' (ratingKey: {candidate_tracks[i].ratingKey})")
-                    else:
-                        logger.warning(f"Index mismatch: cannot store original track for '{track_info.title}'")
-                return tracks
-
-            # --- Stage 2: Flexible Keyword Search (Artist + Title combined) ---
-            search_query = f"{artist} {title}".strip()
-            logger.debug(f"Stage 2: Performing keyword search for '{search_query}'")
-            stage2_results = self.music_library.search(title=search_query, libtype='track', limit=limit)
-            add_candidates(stage2_results)
-
-            # --- Early Exit: If Stage 2 found results, stop here ---
-            if candidate_tracks:
-                logger.info(f"Found {len(candidate_tracks)} candidates in Stage 2. Exiting early.")
-                tracks = [PlexTrackInfo.from_plex_track(track) for track in candidate_tracks[:limit]]
-                # Store references to original tracks for playlist creation
-                for i, track_info in enumerate(tracks):
-                    if i < len(candidate_tracks):
-                        track_info._original_plex_track = candidate_tracks[i]
-                        logger.debug(f"Stored original track reference for '{track_info.title}' (ratingKey: {candidate_tracks[i].ratingKey})")
-                    else:
-                        logger.warning(f"Index mismatch: cannot store original track for '{track_info.title}'")
-                return tracks
-
-            # --- Stage 3: Title-Only Fallback REMOVED ---
-            # Removed to prevent false positives where tracks with same title 
-            # but different artists are incorrectly matched
-            
-            tracks = [PlexTrackInfo.from_plex_track(track) for track in candidate_tracks[:limit]]
-    
-            # Store references to original tracks for playlist creation
-            for i, track_info in enumerate(tracks):
-                if i < len(candidate_tracks):
-                    track_info._original_plex_track = candidate_tracks[i]
-                    logger.debug(f"Stored original track reference for '{track_info.title}' (ratingKey: {candidate_tracks[i].ratingKey})")
-                else:
-                    logger.warning(f"Index mismatch: cannot store original track for '{track_info.title}'")
-    
-            if tracks:
-                logger.info(f"Found {len(tracks)} total potential matches for '{title}' by '{artist}' after all stages.")
-            
-            return tracks
-            
-        except Exception as e:
-            logger.error(f"Error during multi-stage search for title='{title}', artist='{artist}': {e}")
-            import traceback
-            traceback.print_exc()
-            return []
-
-
-
-
-    def get_library_stats(self) -> Dict[str, int]:
-        if not self.music_library:
-            return {}
-        
-        try:
-            return {
-                'artists': len(self.music_library.searchArtists(limit=99999)),
-                'albums': len(self.music_library.searchAlbums(limit=99999)),
-                'tracks': len(self.music_library.searchTracks(limit=99999))
-            }
-        except Exception as e:
-            logger.error(f"Error getting library stats: {e}")
-            return {}
-    
-    def get_all_artists(self) -> List[PlexArtist]:
-        """Get all artists from the music library"""
-        if not self.ensure_connection() or not self.music_library:
-            logger.error("Not connected to Plex server or no music library")
-            return []
-        
-        try:
-            artists = self.music_library.searchArtists(limit=99999)
-            logger.info(f"Found {len(artists)} artists in Plex library")
-            return artists
-        except Exception as e:
-            logger.error(f"Error getting all artists: {e}")
-            return []
-    
-    def update_artist_genres(self, artist: PlexArtist, genres: List[str]):
-        """Update artist genres"""
-        try:
-            # Clear existing genres first
-            for genre in artist.genres:
-                artist.removeGenre(genre)
-            
-            # Add new genres
-            for genre in genres:
-                artist.addGenre(genre)
-            
-            # Use safe logging to avoid Unicode encoding errors
-            try:
-                logger.info(f"Updated genres for {artist.title}: {len(genres)} genres")
-            except UnicodeEncodeError:
-                logger.info(f"Updated genres for artist (ID: {artist.ratingKey}): {len(genres)} genres")
-            return True
-        except Exception as e:
-            logger.error(f"Error updating genres for {artist.title}: {e}")
-            return False
-    
-    def update_artist_poster(self, artist: PlexArtist, image_data: bytes):
-        """Update artist poster image"""
-        try:
-            # Upload poster using Plex API
-            upload_url = f"{self.server._baseurl}/library/metadata/{artist.ratingKey}/posters"
-            headers = {
-                'X-Plex-Token': self.server._token,
-                'Content-Type': 'image/jpeg'
-            }
-            
-            response = self._http.post(upload_url, data=image_data, headers=headers)
-            response.raise_for_status()
-            
-            # Refresh artist to see changes
-            artist.refresh()
-            logger.info(f"Updated poster for {artist.title}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error updating poster for {artist.title}: {e}")
-            return False
-    
-    def update_album_poster(self, album, image_data: bytes):
-        """Update album poster image"""
-        try:
-            # Upload poster using Plex API
-            upload_url = f"{self.server._baseurl}/library/metadata/{album.ratingKey}/posters"
-            headers = {
-                'X-Plex-Token': self.server._token,
-                'Content-Type': 'image/jpeg'
-            }
-            
-            response = self._http.post(upload_url, data=image_data, headers=headers)
-            response.raise_for_status()
-            
-            # Refresh album to see changes
-            album.refresh()
-            logger.info(f"Updated poster for album '{album.title}' by '{album.parentTitle}'")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error updating poster for album '{album.title}': {e}")
-            return False
-    
-    def parse_update_timestamp(self, artist: PlexArtist) -> Optional[datetime]:
-        """Parse the last update timestamp from artist summary"""
-        try:
-            # Get artist summary which stores our timestamp
-            summary = getattr(artist, 'summary', '') or ''
-            
-            # Look for timestamp pattern: -updatedAtYYYY-MM-DD
-            pattern = r'-updatedAt(\d{4}-\d{2}-\d{2})'
-            match = re.search(pattern, summary)
-            
-            if match:
-                date_str = match.group(1)
-                parsed_date = datetime.strptime(date_str, '%Y-%m-%d')
-                return parsed_date
-            
-            return None
-            
-        except Exception as e:
-            logger.debug(f"Error parsing timestamp for {artist.title}: {e}")
-            return None
-    
-    def is_artist_ignored(self, artist: PlexArtist) -> bool:
-        """Check if artist is manually marked to be ignored"""
-        try:
-            # Check summary field where we store timestamps and ignore flags
-            summary = getattr(artist, 'summary', '') or ''
-            return '-IgnoreUpdate' in summary
-        except Exception as e:
-            logger.debug(f"Error checking ignore status for {artist.title}: {e}")
-            return False
-    
-    def needs_update_by_age(self, artist: PlexArtist, refresh_interval_days: int) -> bool:
-        """Check if artist needs updating based on age threshold"""
-        try:
-            # First check if artist is manually ignored
-            if self.is_artist_ignored(artist):
-                logger.debug(f"Artist {artist.title} is manually ignored")
-                return False
-            
-            # If refresh_interval_days is 0, always update (full refresh)
-            if refresh_interval_days == 0:
-                return True
-            
-            last_update = self.parse_update_timestamp(artist)
-            
-            # If no timestamp found, needs update
-            if last_update is None:
-                return True
-            
-            # Check if last update is older than threshold
-            threshold_date = datetime.now() - timedelta(days=refresh_interval_days)
-            return last_update < threshold_date
-            
-        except Exception as e:
-            logger.debug(f"Error checking update age for {artist.title}: {e}")
-            return True  # Default to needing update if error
-    
-    def update_artist_biography(self, artist: PlexArtist) -> bool:
-        """Update artist summary with current timestamp"""
-        try:
-            # Get current summary/biography
-            current_summary = getattr(artist, 'summary', '') or ''
-            
-            # Preserve any IgnoreUpdate flag
-            ignore_flag = ''
-            if '-IgnoreUpdate' in current_summary:
-                ignore_flag = '-IgnoreUpdate'
-                # Remove IgnoreUpdate flag temporarily for processing
-                current_summary = current_summary.replace('-IgnoreUpdate', '').strip()
-            
-            # Remove existing timestamp if present (ensures only one timestamp)
-            pattern = r'\s*-updatedAt\d{4}-\d{2}-\d{2}\s*'
-            clean_summary = re.sub(pattern, '', current_summary).strip()
-            
-            # Build new summary with timestamp
-            today = datetime.now().strftime('%Y-%m-%d')
-            
-            # Add timestamp to summary field
-            new_summary = clean_summary
-            if ignore_flag:
-                new_summary = f"{new_summary}\n\n{ignore_flag}".strip()
-            new_summary = f"{new_summary}\n\n-updatedAt{today}".strip()
-            
-            # Use the correct Plex API syntax with .value
-            artist.edit(**{
-                'summary.value': new_summary
-            })
-            
-            # Add a small delay to let the edit process
-            import time
-            time.sleep(0.5)
-            
-            # Reload to see the changes
-            artist.reload()
-            
-            # Check if edit worked
-            updated_summary = getattr(artist, 'summary', '') or ''
-            
-            if updated_summary and '-updatedAt' in updated_summary:
-                logger.info(f"Updated summary timestamp for {artist.title}")
-                return True
-            else:
-                return False
-            
-        except Exception as e:
-            logger.error(f"Error updating summary for {artist.title}: {e}")
-            return False
-    
-    def update_track_metadata(self, track_id: str, metadata: Dict[str, Any]) -> bool:
-        if not self.ensure_connection():
-            return False
-        
-        try:
-            track = self.server.fetchItem(int(track_id))
-            if isinstance(track, PlexTrack):
-                edits = {}
-                if 'title' in metadata:
-                    edits['title'] = metadata['title']
-                if 'artist' in metadata:
-                    edits['artist'] = metadata['artist']
-                if 'album' in metadata:
-                    edits['album'] = metadata['album']
-                if 'year' in metadata:
-                    edits['year'] = metadata['year']
-                
-                if edits:
-                    track.edit(**edits)
-                    logger.info(f"Updated metadata for track: {track.title}")
-                    return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error updating track metadata: {e}")
-            return False
-    
-    def _trigger_scan_api(self, path: Optional[str] = None) -> bool:
-        """
-        Plex-specific: Trigger library scan on Plex server.
-        path parameter: library_name (defaults to 'Music' if not provided)
-        """
-        library_name = path or "Music"
-        if not self.ensure_connection():
-            return False
-            
-        try:
-            library = self.server.library.section(library_name)
-            library.update()  # Non-blocking scan request
-            logger.info(f"Triggered Plex library scan for '{library_name}'")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to trigger library scan for '{library_name}': {e}")
-            return False
-    
-    def _get_scan_status_api(self) -> Dict[str, Any]:
-        """
-        Plex-specific: Get library scan status.
-        Returns dict with scanning, progress, eta_seconds, error keys.
-        """
-        library_name = "Music"
-        if not self.ensure_connection():
-            return {'scanning': False, 'error': 'Not connected to Plex'}
-            
-        try:
-            library = self.server.library.section(library_name)
-            
-            # Check if library has a scanning attribute or is refreshing
-            refreshing = hasattr(library, 'refreshing') and library.refreshing
-            
-            if refreshing:
-                return {
-                    'scanning': True,
-                    'progress': -1,  # Plex doesn't provide scan progress
-                    'eta_seconds': None,
-                    'error': None
-                }
-            
-            # Check server activities for scanning status
-            try:
-                activities = self.server.activities()
-                for activity in activities:
-                    activity_type = getattr(activity, 'type', 'unknown')
-                    activity_title = getattr(activity, 'title', 'unknown')
-                    
-                    if (activity_type in ['library.scan', 'library.refresh'] and
-                        library_name.lower() in activity_title.lower()):
-                        return {
-                            'scanning': True,
-                            'progress': -1,
-                            'eta_seconds': None,
-                            'error': None
-                        }
-            except Exception as e:
-                logger.debug(f"Could not check server activities: {e}")
-            
-            # Not scanning
-            return {
-                'scanning': False,
-                'progress': 100,
-                'eta_seconds': None,
-                'error': None
-            }
-        except Exception as e:
-            logger.error(f"Error getting Plex scan status: {e}")
-            return {
-                'scanning': False,
-                'progress': 0,
-                'eta_seconds': None,
-                'error': str(e)
-            }
-    
-    def get_content_changes_since(self, last_update: Optional[datetime] = None):
-        """
-        Get content changes since last update using Plex-specific incremental detection.
-        Uses recentlyAdded and updatedAt sorting to find new/modified content efficiently.
-        """
-        from core.content_models import ContentChanges
-        
-        if not self.ensure_connection() or not self.music_library:
-            logger.error("Not connected to Plex server or no music library")
-            return ContentChanges()
-        
-        # If no last_update provided, return all content (full refresh)
-        if last_update is None:
-            logger.info("No last_update provided - performing full content retrieval")
-            artists = self.get_all_artists()
-            return ContentChanges(
-                artists=artists,
-                albums=[],  # Will be fetched per-artist during processing
-                tracks=[],  # Will be fetched per-album during processing
-                full_refresh=True,
-                last_checked=datetime.now()
-            )
-        
-        try:
-            logger.info(f"Getting Plex content changes since {last_update}")
-            
-            # Get recently added and updated albums (up to 400 to catch more recent content)
-            all_recent_content = []
-            
-            try:
-                recently_added = self.music_library.recentlyAdded(libtype='album', maxresults=400)
-                all_recent_content.extend(recently_added)
-                logger.info(f"Found {len(recently_added)} recently added albums")
-            except:
-                # Fallback to general recently added
-                recently_added = self.music_library.recentlyAdded(maxresults=400)
-                all_recent_content.extend(recently_added)
-                logger.info(f"Found {len(recently_added)} recently added items (mixed types)")
-            
-            # Get recently updated albums (catches metadata corrections)
-            try:
-                recently_updated = self.music_library.search(sort='updatedAt:desc', libtype='album', limit=400)
-                # Remove duplicates (items that are both recently added and updated)
-                added_keys = {getattr(item, 'ratingKey', None) for item in all_recent_content}
-                unique_updated = [item for item in recently_updated if getattr(item, 'ratingKey', None) not in added_keys]
-                all_recent_content.extend(unique_updated)
-                logger.info(f"Found {len(unique_updated)} additional recently updated albums (after deduplication)")
-            except Exception as e:
-                logger.warning(f"Could not get recently updated content: {e}")
-            
-            # Filter to only get Album objects and convert Artist objects to their albums
-            recent_albums = []
-            artist_count = 0
-            album_count = 0
-            
-            for item in all_recent_content:
-                try:
-                    if hasattr(item, 'tracks') and hasattr(item, 'artist'):
-                        # This is an Album - add directly
-                        recent_albums.append(item)
-                        album_count += 1
-                    elif hasattr(item, 'albums'):
-                        # This is an Artist - get their albums
-                        try:
-                            artist_albums = list(item.albums())
-                            if artist_albums:
-                                recent_albums.extend(artist_albums)
-                                artist_count += 1
-                        except Exception as albums_error:
-                            logger.warning(f"Error getting albums from artist '{getattr(item, 'title', 'Unknown')}': {albums_error}")
-                except Exception as e:
-                    logger.warning(f"Error processing recently added item: {e}")
-                    continue
-            
-            logger.info(f"Processed {artist_count} artists → albums, {album_count} direct albums")
-            
-            # Extract unique artists from albums
-            processed_artist_ids = set()
-            artists_to_return = []
-            
-            for album in recent_albums:
-                try:
-                    album_artist = album.artist()
-                    if album_artist:
-                        artist_id = str(album_artist.ratingKey)
-                        if artist_id not in processed_artist_ids:
-                            processed_artist_ids.add(artist_id)
-                            artists_to_return.append(album_artist)
-                except Exception as e:
-                    logger.warning(f"Error getting artist for album: {e}")
-            
-            logger.info(f"Plex incremental: Found {len(artists_to_return)} artists with recent changes")
-            
-            return ContentChanges(
-                artists=artists_to_return,
-                albums=recent_albums,
-                tracks=[],  # Will be fetched per-album during processing
-                full_refresh=False,
-                last_checked=datetime.now(),
-                metadata={'recent_albums_checked': len(recent_albums)}
-            )
-            
-        except Exception as e:
-            logger.error(f"Error getting Plex content changes: {e}")
-            return ContentChanges()
-    
-    def search_albums(self, album_name: str = "", artist_name: str = "", limit: int = 20) -> List[Dict[str, Any]]:
-        """Search for albums in Plex library"""
-        if not self.ensure_connection() or not self.music_library:
-            return []
-        
-        try:
-            albums = []
-            
-            # Perform search - different approaches based on what we're searching for
-            search_results = []
-            
-            if album_name and artist_name:
-                # Search for albums by specific artist and title
-                try:
-                    # First try searching for the artist, then filter their albums
-                    artist_results = self.music_library.searchArtists(title=artist_name, limit=3)
-                    for artist in artist_results:
-                        try:
-                            artist_albums = artist.albums()
-                            for album in artist_albums:
-                                if album_name.lower() in album.title.lower():
-                                    search_results.append(album)
-                        except Exception as e:
-                            logger.debug(f"Error getting albums for artist {artist.title}: {e}")
-                except Exception as e:
-                    logger.debug(f"Artist search failed, trying general search: {e}")
-                    # Fallback to general album search
-                    try:
-                        search_results = self.music_library.search(title=album_name)
-                        # Filter to only albums
-                        search_results = [r for r in search_results if isinstance(r, PlexAlbum)]
-                    except Exception as e2:
-                        logger.debug(f"General search also failed: {e2}")
-                        
-            elif album_name:
-                # Search for albums by title only
-                try:
-                    search_results = self.music_library.search(title=album_name)
-                    # Filter to only albums  
-                    search_results = [r for r in search_results if isinstance(r, PlexAlbum)]
-                except Exception as e:
-                    logger.debug(f"Album title search failed: {e}")
-                    
-            elif artist_name:
-                # Search for all albums by artist
-                try:
-                    artist_results = self.music_library.searchArtists(title=artist_name, limit=1)
-                    if artist_results:
-                        search_results = artist_results[0].albums()
-                except Exception as e:
-                    logger.debug(f"Artist album search failed: {e}")
-            else:
-                # Get all albums if no search terms
-                try:
-                    search_results = self.music_library.albums()
-                except Exception as e:
-                    logger.debug(f"Get all albums failed: {e}")
-            
-            # Process results and convert to standardized format
-            if search_results:
-                for result in search_results:
-                    if isinstance(result, PlexAlbum):
-                        try:
-                            # Get album info
-                            album_info = {
-                                'id': str(result.ratingKey),
-                                'title': result.title,
-                                'artist': result.artist().title if result.artist() else "Unknown Artist",
-                                'year': result.year,
-                                'track_count': len(result.tracks()) if hasattr(result, 'tracks') else 0,
-                                'plex_album': result  # Keep reference to original object
-                            }
-                            albums.append(album_info)
-                            
-                            if len(albums) >= limit:
-                                break
-                                
-                        except Exception as e:
-                            logger.debug(f"Error processing album {result.title}: {e}")
-                            continue
-            
-            logger.debug(f"Found {len(albums)} albums matching query: album='{album_name}', artist='{artist_name}'")
-            return albums
-            
-        except Exception as e:
-            logger.error(f"Error searching albums: {e}")
-            return []
-    
-    def get_album_by_name_and_artist(self, album_name: str, artist_name: str) -> Optional[Dict[str, Any]]:
-        """Get a specific album by name and artist"""
-        albums = self.search_albums(album_name, artist_name, limit=5)
-        
-        # Look for exact matches first
-        for album in albums:
-            if (album['title'].lower() == album_name.lower() and 
-                album['artist'].lower() == artist_name.lower()):
-                return album
-        
-        # Return first result if no exact match
-        return albums[0] if albums else None
-    
-    def get_album_tracks_as_soulsync(self, album: PlexAlbum) -> List['SoulSyncTrack']:
-        """
-        Get all tracks from a Plex album converted to SoulSyncTrack objects.
-        
-        This is the clean interface for DatabaseUpdateWorker - it receives
-        SoulSyncTrack objects instead of raw Plex track objects.
-        
-        Args:
-            album: Plex Album object
-            
-        Returns:
-            List of SoulSyncTrack objects with ISRC/MBID extracted
-        """
-        from providers.plex.adapter import convert_plex_track_to_soulsync
-
-        soul_sync_tracks = []
-        album_title = getattr(album, 'title', 'Unknown')
-
-        try:
-            all_tracks = list(album.tracks())
-            logger.info(f"[PLEX] Album '{album_title}': Starting conversion of {len(all_tracks)} tracks")
-
-            for track in all_tracks:
-                try:
-                    soul_track = convert_plex_track_to_soulsync(track)
-                    if soul_track:
-                        soul_sync_tracks.append(soul_track)
-                except Exception as track_err:
-                    logger.warning(f"[PLEX] Error converting track: {track_err}")
-
-            logger.info(f"[PLEX] Album '{album_title}': Conversion complete - {len(soul_sync_tracks)} tracks converted")
-
-        except Exception as e:
-            logger.error(f"[PLEX] ERROR converting album '{album_title}' tracks: {e}", exc_info=True)
-
-        return soul_sync_tracks
-

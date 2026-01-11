@@ -233,4 +233,97 @@ def clean_guid_id(guid_id: str) -> Optional[str]:
         _, identifier = guid_id.split('://', 1)
         return identifier.strip() if identifier else None
     except (ValueError, IndexError):
+
+
+        def extract_edition(title: Optional[str]) -> Tuple[str, Optional[str]]:
+            """
+            Extract edition information from track/album title.
+    
+            Detects edition keywords like: remaster, remastered, live, remix, deluxe, 
+            acoustic, original, explicit, clean, extended, radio edit, instrumental, etc.
+    
+            Args:
+                title: Track or album title potentially containing edition info
+        
+            Returns:
+                Tuple of (cleaned_title, edition_string)
+                - cleaned_title: Title with edition keywords removed
+                - edition_string: Detected edition (e.g., "Remastered", "Live", "Deluxe") or None
+        
+            Examples:
+                "Song Title (Remastered 2015)" -> ("Song Title", "Remastered")
+                "Live at Wembley" -> ("at Wembley", "Live")
+                "Deluxe Edition" -> ("", "Deluxe")
+                "Acoustic Version" -> ("", "Acoustic")
+                "Song - Radio Edit" -> ("Song", "Radio Edit")
+            """
+            if not title:
+                return ("", None)
+    
+            # Edition keywords to detect (case-insensitive)
+            EDITION_PATTERNS = [
+                # Remaster variants
+                (r'\b(remaster(?:ed)?)\b', 'Remastered'),
+                (r'\b(remastering)\b', 'Remastered'),
+        
+                # Live variants
+                (r'\b(live)\b', 'Live'),
+        
+                # Remix variants
+                (r'\b(remix(?:ed)?)\b', 'Remix'),
+                (r'\b(rmx)\b', 'Remix'),
+        
+                # Album editions
+                (r'\b(deluxe)\s*(?:edition)?\b', 'Deluxe'),
+                (r'\b(standard)\s*(?:edition)?\b', 'Standard'),
+                (r'\b(expanded)\s*(?:edition)?\b', 'Expanded'),
+                (r'\b(limited)\s*(?:edition)?\b', 'Limited'),
+                (r'\b(special)\s*(?:edition)?\b', 'Special'),
+                (r'\b(anniversary)\s*(?:edition)?\b', 'Anniversary'),
+                (r'\b(collector\'?s?)\s*(?:edition)?\b', 'Collectors'),
+        
+                # Content type
+                (r'\b(explicit)\b', 'Explicit'),
+                (r'\b(clean)\b', 'Clean'),
+                (r'\b(instrumental)\b', 'Instrumental'),
+                (r'\b(acapella|a\s*cappella)\b', 'Acapella'),
+                (r'\b(acoustic)\b', 'Acoustic'),
+                (r'\b(unplugged)\b', 'Unplugged'),
+        
+                # Version types
+                (r'\b(original)\s*(?:version|mix)?\b', 'Original'),
+                (r'\b(radio)\s*(?:edit|version|mix)?\b', 'Radio Edit'),
+                (r'\b(extended)\s*(?:version|mix)?\b', 'Extended'),
+                (r'\b(club)\s*(?:version|mix)?\b', 'Club Mix'),
+                (r'\b(album)\s*(?:version)?\b', 'Album Version'),
+                (r'\b(single)\s*(?:version)?\b', 'Single Version'),
+        
+                # Quality indicators
+                (r'\b(24\s*bit)\b', '24-bit'),
+                (r'\b(16\s*bit)\b', '16-bit'),
+                (r'\b(hi\s*res|high\s*resolution)\b', 'Hi-Res'),
+            ]
+    
+            title_lower = title.lower()
+            detected_editions = []
+            cleaned_title = title
+    
+            # Check each pattern
+            for pattern, edition_name in EDITION_PATTERNS:
+                match = re.search(pattern, title_lower, re.IGNORECASE)
+                if match:
+                    detected_editions.append(edition_name)
+                    # Remove the matched text from title (case-insensitive)
+                    cleaned_title = re.sub(pattern, '', cleaned_title, flags=re.IGNORECASE)
+    
+            # Clean up the title: remove extra spaces, parentheses, brackets, dashes
+            cleaned_title = re.sub(r'\s*[\(\[\{]\s*[\)\]\}]\s*', ' ', cleaned_title)  # Empty brackets
+            cleaned_title = re.sub(r'\s*[-–—]\s*$', '', cleaned_title)  # Trailing dashes
+            cleaned_title = re.sub(r'^\s*[-–—]\s*', '', cleaned_title)  # Leading dashes
+            cleaned_title = re.sub(r'\s+', ' ', cleaned_title).strip()
+    
+            # Return cleaned title and first detected edition (prioritize first match)
+            edition = detected_editions[0] if detected_editions else None
+    
+            return (cleaned_title, edition)
         return None

@@ -83,6 +83,7 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> loggin
         )
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
+        logger.info(f"Logging to file: {log_path}")
     
     logger.info(f"Logging initialized with level: {level}")
     return logger

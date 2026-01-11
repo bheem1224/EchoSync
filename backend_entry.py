@@ -1,6 +1,10 @@
 import asyncio
 import logging
 from typing import Any, Iterable
+from dotenv import load_dotenv
+
+# Load environment variables from .env file before importing config_manager
+load_dotenv()
 
 from core.settings import config_manager
 from utils.logging_config import setup_logging, get_logger

@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, List, Callable
-from core.tiered_logger import tiered_logger
-from core.error_handler import error_handler
-from database import get_database, MusicDatabase
+from typing import Optional
+from database import MusicDatabase, LibraryManager
 from utils.logging_config import get_logger
 from core.settings import config_manager
-from core.matching_engine.soul_sync_track import SoulSyncTrack
-import logging  # Add this import for logging levels
-from PyQt6.QtCore import QThread  # Ensure QThread is imported for GUI compatibility
+import logging
+import threading
 
 logger = get_logger("database_update_worker")
 
+try:
+    from PyQt6.QtCore import QThread
+    HAS_QTHREAD = True
+except ImportError:
+    HAS_QTHREAD = False
+    QThread = threading.Thread
 
-class DatabaseUpdateWorker(QThread):
+
+class DatabaseUpdateWorker(QThread if HAS_QTHREAD else threading.Thread):
     """
     Worker thread for updating SoulSync database with media server library data.
-    This class adheres strictly to the SoulSyncTrack model to ensure provider-agnostic behavior.
+    Syncs all tracks from media client into the database using bulk operations.
     """
 
     def __init__(
@@ -29,12 +32,16 @@ class DatabaseUpdateWorker(QThread):
         force_sequential: bool = False
     ):
         super().__init__()
+        if HAS_QTHREAD:
+            self.daemon = False
+        else:
+            self.daemon = True
 
-        self.force_sequential = force_sequential
         self.media_client = media_client
         self.server_type = server_type
         self.database_path = database_path
         self.full_refresh = full_refresh
+        self.force_sequential = force_sequential
         self.should_stop = False
 
         # Statistics tracking
@@ -44,82 +51,85 @@ class DatabaseUpdateWorker(QThread):
         self.successful_operations = 0
         self.failed_operations = 0
 
-        # Threading control - get from config or default to 5
-        database_config = config_manager.get('database', {})
-        self.max_workers = database_config.get('max_workers', 5)
-
-        tiered_logger.log(
-            "normal", logging.INFO,
-            f"DatabaseUpdateWorker initialized (server_type={self.server_type}, max_workers={self.max_workers})"
-        )
+        logger.info(f"DatabaseUpdateWorker initialized for {server_type} ({('full' if full_refresh else 'incremental')} mode)")
 
     def run(self):
-        """
-        Main execution loop for the worker thread.
-        """
-        tiered_logger.log("normal", logging.INFO, "Starting database update worker.")
+        """Main execution loop for the worker thread."""
+        logger.info(f"Starting database update worker for {self.server_type}")
         try:
-            if self.force_sequential:
-                self._process_sequentially()
-            else:
-                self._process_concurrently()
-        except Exception as e:
-            error_handler.handle_exception(
-                lambda: (_ for _ in ()).throw(e),  # Raise the exception to log it
-                retries=0,
-                log_tier="normal"
+            # Initialize database with SQLAlchemy
+            db = MusicDatabase(self.database_path)
+            db.create_all()  # Ensure schema exists
+            library_manager = LibraryManager(db.session_factory)
+            logger.debug("Database path resolved to %s", db.database_path)
+            
+            # Fetch all tracks from media client (now returns SoulSyncTrack objects)
+            logger.debug(f"Fetching library from {self.server_type}...")
+            all_tracks = self.media_client.get_all_tracks()
+            
+            if not all_tracks:
+                logger.warning(f"No tracks found in {self.server_type} library")
+                return
+            
+            logger.info(f"Found {len(all_tracks)} tracks in {self.server_type} library")
+            logger.debug("Beginning bulk import via LibraryManager")
+            
+            # Use LibraryManager to bulk import tracks
+            imported_count = library_manager.bulk_import(all_tracks)
+            
+            logger.info(f"Successfully imported {imported_count} tracks from {self.server_type}")
+            logger.debug(
+                "Bulk import finished for %s: requested=%s imported=%s", 
+                self.server_type,
+                len(all_tracks),
+                imported_count,
             )
-            tiered_logger.log("normal", logging.ERROR, f"Error in DatabaseUpdateWorker: {e}")
-        finally:
-            tiered_logger.log("normal", logging.INFO, "Database update worker finished.")
-
-    def _process_sequentially(self):
-        """
-        Process updates sequentially to avoid threading issues.
-        """
-        tiered_logger.log("debug", logging.INFO, "Processing updates sequentially.")
-        for item in self.media_client.get_library():
-            self._process_item(item)
-
-    def _process_concurrently(self):
-        """
-        Process updates using a thread pool for concurrency.
-        """
-        tiered_logger.log("debug", logging.INFO, "Processing updates concurrently.")
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = [executor.submit(self._process_item, item) for item in self.media_client.get_library()]
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    tiered_logger.log("normal", logging.ERROR, f"Error processing item: {e}")
-
-    def _process_item(self, item):
-        """
-        Process a single library item, ensuring it adheres to the SoulSyncTrack model.
-        """
-        try:
-            if not isinstance(item, SoulSyncTrack):
-                raise ValueError("Item does not conform to the SoulSyncTrack model.")
-
-            # Example processing logic
-            tiered_logger.log("debug", logging.INFO, f"Processing item: {item}")
-            self.processed_tracks += 1
-            self.successful_operations += 1
+            self.processed_tracks = imported_count
+            self.successful_operations = imported_count
+            
         except Exception as e:
+            logger.error(f"Error in DatabaseUpdateWorker: {e}", exc_info=True)
             self.failed_operations += 1
-            tiered_logger.log("normal", logging.ERROR, f"Failed to process item: {e}")
+        finally:
+            logger.info("Database update worker finished")
+
+    def stop(self):
+        """Signal the worker to stop processing"""
+        self.should_stop = True
+        logger.info("Stop signal sent to database update worker")
 
 
 class DatabaseStatsWorker:
-    """Placeholder for DatabaseStatsWorker functionality."""
+    """Collects database statistics."""
     def __init__(self):
-        pass
+        self.db = MusicDatabase()
 
     def collect_stats(self):
         """Collect database statistics."""
-        return {
-            "artists": 0,
-            "albums": 0,
-            "tracks": 0
-        }
+        try:
+            conn = self.db._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) FROM artists")
+            artist_count = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM albums")
+            album_count = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM tracks")
+            track_count = cursor.fetchone()[0]
+            
+            conn.close()
+            
+            return {
+                "artists": artist_count,
+                "albums": album_count,
+                "tracks": track_count
+            }
+        except Exception as e:
+            logger.error(f"Error collecting database stats: {e}")
+            return {
+                "artists": 0,
+                "albums": 0,
+                "tracks": 0
+            }

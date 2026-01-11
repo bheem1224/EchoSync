@@ -75,12 +75,15 @@ class ProviderBase(ABC):
         isrc: Optional[str] = None,
         musicbrainz_id: Optional[str] = None,
         musicbrainz_album_id: Optional[str] = None,
-        musicbrainz_artist_id: Optional[str] = None,
         year: Optional[int] = None,
         track_number: Optional[int] = None,
         disc_number: Optional[int] = None,
         bitrate: Optional[int] = None,
         file_format: Optional[str] = None,
+        file_path: Optional[str] = None,
+            fingerprint: Optional[str] = None,
+            quality_tags: Optional[list] = None,
+        provider_id: Optional[str] = None,
         source: Optional[str] = None,
         **extra_fields
     ) -> SoulSyncTrack:
@@ -140,45 +143,80 @@ class ProviderBase(ABC):
                         except Exception:
                             continue
                 return str(val)
+            return val  # Already a string
 
         # Coerce inputs to strings where appropriate
         title_str = _coerce_to_str(title)
         artist_str = _coerce_to_str(artist)
         album_str = _coerce_to_str(album)
-
-        # Extract version info from title
-        clean_title, version = text_utils.extract_version_info(title_str)
-
-        # Normalize text fields
-        normalized_title = text_utils.normalize_title(clean_title)
-        normalized_artist = text_utils.normalize_artist(artist_str)
+        
+        # Debug log raw inputs before processing
+        from utils.logging_config import get_logger
+        logger = get_logger("provider_base")
+        logger.debug(
+            "Factory raw inputs: title=%r artist=%r album=%r",
+            title, artist, album
+        )
+        logger.debug(
+            "Factory after coercion: title_str=%r artist_str=%r album_str=%r",
+            title_str, artist_str, album_str
+        )
+        
+    # Extract edition info from title (remaster, live, remix, etc.)
+    clean_title, edition = text_utils.extract_edition(title_str) if title_str else (None, None)
+        
+        # Normalize text fields (handle None inputs)
+        normalized_title = text_utils.normalize_title(clean_title) if clean_title else None
+        normalized_artist = text_utils.normalize_artist(artist_str) if artist_str else None
         normalized_album = text_utils.normalize_album(album_str) if album_str else None
+        
+        # Debug log to trace normalization issues
+        from utils.logging_config import get_logger
+        logger = get_logger("provider_base")
+        logger.debug(
+            "Factory normalization: title='%s'→'%s' artist='%s'→'%s' album='%s'→'%s'",
+            title_str, normalized_title, artist_str, normalized_artist, album_str, normalized_album
+        )
+        
+        # Validate required fields after normalization
+        if not normalized_title or not normalized_title.strip():
+            logger.warning(f"Skipping track creation - normalized title is empty (original: '{title_str}')")
+            return None
+        
+        if not normalized_artist or not normalized_artist.strip():
+            logger.warning(f"Skipping track creation - normalized artist is empty (original: '{artist_str}', title: '{normalized_title}')")
+            return None
         
         # Parse duration
         parsed_duration = text_utils.parse_duration_to_ms(duration_ms)
         
-        # Detect quality tags
-        quality_tags = text_utils.detect_quality_tags(bitrate, file_format)
+        # Build identifiers list for ExternalIdentifiers table
+        identifiers = []
+        if provider_id and source:
+            identifiers.append({
+                'provider_source': source,
+                'provider_item_id': str(provider_id),
+                'raw_data': extra_fields or None
+            })
         
         # Create SoulSyncTrack
         return SoulSyncTrack(
             title=normalized_title,
-            artist=normalized_artist,
-            album=normalized_album,
-            duration_ms=parsed_duration,
-            isrc=isrc.strip().upper() if isrc else None,
-            musicbrainz_id=musicbrainz_id,
-            musicbrainz_album_id=musicbrainz_album_id,
-            musicbrainz_artist_id=musicbrainz_artist_id,
-            year=year,
+            artist_name=normalized_artist,
+            album_title=normalized_album,
+                        edition=edition,
+            duration=parsed_duration,
             track_number=track_number,
             disc_number=disc_number,
             bitrate=bitrate,
             file_format=file_format,
-            quality_tags=quality_tags,
-            version=version,
-            source=source,
-            **extra_fields
+            file_path=file_path,
+            release_year=year,
+            musicbrainz_id=musicbrainz_id,
+                        isrc=isrc,
+                        fingerprint=fingerprint,
+                        quality_tags=quality_tags,
+            identifiers=identifiers
         )
     
     @staticmethod

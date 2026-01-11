@@ -20,14 +20,19 @@ Usage:
 
 from .music_database import (
     MusicDatabase,
-    DatabaseArtist,
-    DatabaseAlbum, 
-    DatabaseTrack,
+    Base,
+    Artist,
+    Album,
+    Track,
+    ExternalIdentifier,
+    UserRating,
+    AudioFingerprint,
+    Wishlist,
     get_database,
     close_database
 )
 
-from .bulk_operations import BulkOperations
+from .bulk_operations import LibraryManager
 
 from .engine import (
     execute_write,
@@ -37,9 +42,15 @@ from .engine import (
 
 __all__ = [
     'MusicDatabase',
-    'DatabaseArtist',
-    'DatabaseAlbum',
-    'DatabaseTrack', 
+    'Base',
+    'Artist',
+    'Album',
+    'Track',
+    'ExternalIdentifier',
+    'UserRating',
+    'AudioFingerprint',
+    'Wishlist',
+    'LibraryManager',
     'get_database',
     'close_database',
     'execute_write',

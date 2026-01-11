@@ -1,4 +1,4 @@
-from providers.plex.client import *
+from providers.plex.client import PlexClient
 
 # Export OAuth blueprint
 try:
@@ -6,3 +6,4 @@ try:
 except ImportError:
     oauth_bp = None
 
+__all__ = ['PlexClient', 'oauth_bp']

@@ -150,7 +150,12 @@ def update_database():
         full_refresh = (mode == "full")
         
         # Get active media server
-        active_server = config_manager.get_active_media_server()
+        try:
+            active_server = config_manager.get_active_media_server()
+        except Exception as e:
+            logger.error(f"Failed to get active media server: {e}")
+            return jsonify({"error": f"Failed to get active media server: {str(e)}"}), 500
+        
         if not active_server:
             return jsonify({"error": "No active media server configured"}), 400
         
@@ -172,42 +177,55 @@ def update_database():
         # Get provider instance
         provider = None
         try:
+            from core.provider_registry import ProviderRegistry
             provider = ProviderRegistry.create_instance(active_server)
         except Exception as e:
-            logger.error(f"Failed to create provider instance for {active_server}: {e}")
-            return jsonify({"error": f"Media server '{active_server}' not available"}), 500
+            logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
+            return jsonify({"error": f"Media server '{active_server}' not available: {str(e)}"}), 500
         
         if not provider:
             return jsonify({"error": f"Media server '{active_server}' not available"}), 500
         
         # Ensure connection
-        if not provider.ensure_connection():
-            return jsonify({"error": f"Could not connect to {active_server}"}), 500
+        try:
+            if not provider.ensure_connection():
+                return jsonify({"error": f"Could not connect to {active_server}"}), 500
+        except Exception as e:
+            logger.error(f"Connection failed for {active_server}: {e}")
+            return jsonify({"error": f"Could not connect to {active_server}: {str(e)}"}), 500
         
         # Import DatabaseUpdateWorker
-        from core.database_update_worker import DatabaseUpdateWorker
+        try:
+            from core.database_update_worker import DatabaseUpdateWorker
+        except ImportError as e:
+            logger.error(f"Failed to import DatabaseUpdateWorker: {e}")
+            return jsonify({"error": "Database update module not available"}), 500
         
         # Create and start worker
-        with _db_update_lock:
-            _db_update_worker = DatabaseUpdateWorker(
-                media_client=provider,
-                database_path=None,  # Use default path
-                full_refresh=full_refresh,
-                server_type=active_server,
-                force_sequential=True  # Force sequential for web server to avoid threading issues
-            )
+        try:
+            with _db_update_lock:
+                _db_update_worker = DatabaseUpdateWorker(
+                    media_client=provider,
+                    database_path=None,  # Use default path
+                    full_refresh=full_refresh,
+                    server_type=active_server,
+                    force_sequential=True  # Force sequential for web server to avoid threading issues
+                )
+                
+                # Start worker thread
+                _db_update_worker.start()
             
-            # Start worker thread
-            _db_update_worker.start()
-        
-        logger.info(f"Database update started ({mode} mode) for {active_server}")
-        
-        return jsonify({
-            "success": True,
-            "server": active_server,
-            "mode": mode,
-            "message": f"Database update started in {mode} mode"
-        }), 200
+            logger.info(f"Database update started ({mode} mode) for {active_server}")
+            
+            return jsonify({
+                "success": True,
+                "server": active_server,
+                "mode": mode,
+                "message": f"Database update started in {mode} mode"
+            }), 200
+        except Exception as e:
+            logger.error(f"Failed to start database update worker: {e}", exc_info=True)
+            return jsonify({"error": f"Failed to start database update: {str(e)}"}), 500
         
     except Exception as e:
         logger.error(f"Database update error: {e}", exc_info=True)

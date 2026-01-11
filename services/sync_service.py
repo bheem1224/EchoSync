@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from utils.logging_config import get_logger
 from providers.spotify.client import SpotifyClient, Playlist as SpotifyPlaylist, Track as SpotifyTrack
-from providers.plex.client import PlexClient, PlexTrackInfo
+from providers.plex.client import PlexClient
 from providers.jellyfin.client import JellyfinClient
 from providers.navidrome.client import NavidromeClient
 from providers.soulseek.client import SoulseekClient
@@ -340,7 +340,7 @@ class PlaylistSyncService:
             self.clear_progress_callback(playlist.name)
             self._cancelled = False
     
-    async def _find_track_in_media_server(self, spotify_track: SpotifyTrack) -> Tuple[Optional[PlexTrackInfo], float]:
+    async def _find_track_in_media_server(self, spotify_track: SpotifyTrack) -> Tuple[Optional[Any], float]:
         """Find a track using the same improved database matching as Download Missing Tracks modal"""
         try:
             # Check active media server connection

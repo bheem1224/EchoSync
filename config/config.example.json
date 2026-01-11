@@ -1,62 +1,99 @@
 {
   "active_media_server": "plex",
   "spotify": {
-    "client_id": "SpotifyClientID",
-    "client_secret": "SpotifyClientSecret",
-    "redirect_uri": "http://127.0.0.1:8888/callback"
+    "redirect_uri": "http://127.0.0.1:8000/api/spotify/callback"
   },
+  "spotify_accounts": [],
+  "active_spotify_account_id": null,
   "tidal": {
-    "client_id": "TidalClientID",
-    "client_secret": "TidalClientSecret",
     "redirect_uri": "http://127.0.0.1:8889/tidal/callback"
   },
+  "tidal_accounts": [],
+  "active_tidal_account_id": null,
   "plex": {
-    "base_url": "http://192.168.86.36:32400",
-    "token": "PLEX_API_TOKEN",
-    "auto_detect": true
+    "base_url": "PLEX URL",
+    "auto_detect": true,
+    "server_name": ""
   },
   "jellyfin": {
-    "base_url": "http://localhost:8096",
-    "api_key": "JELLYFIN_API_KEY",
-    "auto_detect": true
+    "base_url": "JELLYFIN URL",
+    "auto_detect": true,
+    "password": "JELLYFIN PASSWORD",
+    "username": "JELLYFIN USERNAME"
   },
   "navidrome": {
-    "base_url": "http://localhost:4533",
-    "username": "NAVIDROME_USERNAME",
-    "password": "NAVIDROME_PASSWORD",
+    "base_url": "NVADROME URL",
+    "username": "admin",
     "auto_detect": true
   },
   "soulseek": {
-    "slskd_url": "http://host.docker.internal:5030",
-    "api_key": "SoulseekAPIKey",
-    "download_path": "/app/downloads",
-    "transfer_path": "/app/Transfer"
+    "slskd_url": "SLSKD URL",
+    "server_name": ""
   },
   "logging": {
-    "path": "logs/app.log",
     "level": "INFO"
   },
   "database": {
-    "path": "database/music_library.db",
-    "max_workers": 5
+    "max_workers": 2
   },
   "metadata_enhancement": {
     "enabled": true,
     "embed_album_art": true
+  },
+  "playlist_sync": {
+    "create_backup": true
   },
   "file_organization": {
     "enabled": true,
     "templates": {
       "album_path": "$albumartist/$albumartist - $album/$track - $title",
       "single_path": "$artist/$artist - $title/$title",
-      "compilation_path": "Compilations/$album/$track - $artist - $title",
       "playlist_path": "$playlist/$artist - $title"
     }
   },
-  "playlist_sync": {
-    "create_backup": true
+  "download": {
+    "concurrency": 2,
+    "retry_count": 3,
+    "min_free_space_mb": 500
   },
-  "listenbrainz": {
-    "token": "LISTENBRAINZ_TOKEN"
-  }
+  "discovery_pool": {
+    "lookback_period_days": 90,
+    "max_tracks": 5000,
+    "new_releases_only": false
+  },
+  "quality_profile": {
+    "preset": "balanced",
+    "allowed_file_types": [
+      "flac",
+      "mp3_320",
+      "mp3_256"
+    ],
+    "min_file_size_mb": 0,
+    "max_file_size_mb": 150,
+    "min_bit_depth": 16,
+    "min_bitrate_kbps": 256,
+    "min_length_seconds": 0
+  },
+  "settings": {
+    "audio_quality": "flac"
+  },
+  "storage": {
+    "data_dir": "\\Data",
+    "download_dir": "",
+    "library_dir": "",
+    "log_dir": ""
+  },
+  "disabled_providers": [],
+  "auto_import": {
+    "enabled": true,
+    "check_interval_seconds": 3600,
+    "source_folder": "download_dir",
+    "destination_folder": "library_dir",
+    "file_organization_pattern": "{Artist}/{Album}/{TrackNumber} - {Title}",
+    "skip_if_already_tagged": true,
+    "log_imports": true
+  },
+  "quality_profiles": [],
+  "matching_profiles": {},
+  "playlist_algorithm": "DefaultPlaylistAlgorithm"
 }

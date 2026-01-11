@@ -36,90 +36,59 @@ class QualityTag(Enum):
 @dataclass
 class SoulSyncTrack:
     """
-    Unified track representation for matching, storage, and enrichment.
-    Assumes data is standardized by providers.
+    Track data container matching the SQLAlchemy database schema.
+    Acts as a pending database row - no business logic.
     """
-    # Core Fields
+    # Core Fields (for lookup)
     title: str
-    artist: str
-    album: Optional[str] = None
-    duration_ms: Optional[int] = None
-
-    # Matching Identifiers
-    isrc: Optional[str] = None
-    musicbrainz_id: Optional[str] = None
-
-    # Additional Identifiers
-    track_id: Optional[str] = None
-    musicbrainz_album_id: Optional[str] = None
-
-    # Download and File Info
-    download_status: DownloadStatus = DownloadStatus.MISSING
-    file_path: Optional[str] = None
-    file_format: Optional[str] = None
-    bitrate: Optional[int] = None
-
-    # Metadata
+    artist_name: str  # Used for artist lookup
+    album_title: Optional[str] = None  # Used for album lookup
+    edition: Optional[str] = None  # remaster, live, remix, deluxe, acoustic, etc.
+    
+    # Track Metadata
+    duration: Optional[int] = None  # Milliseconds
     track_number: Optional[int] = None
     disc_number: Optional[int] = None
+    bitrate: Optional[int] = None
+    file_path: Optional[str] = None
+    file_format: Optional[str] = None
     release_year: Optional[int] = None
-    genres: List[str] = field(default_factory=list)
+    
+    # Identifiers
+    musicbrainz_id: Optional[str] = None
+    isrc: Optional[str] = None  # International Standard Recording Code
+    
+    # Audio fingerprint for matching
+    fingerprint: Optional[str] = None
+    
+    # Quality tags for tie-breaking
+    quality_tags: Optional[List[str]] = None
+    
+    # External Provider Links (list of dicts for ExternalIdentifiers table)
+    # Format: [{'provider_source': 'plex', 'provider_item_id': '123', 'raw_data': {...}}]
+    identifiers: List[Dict[str, Any]] = field(default_factory=list)
 
-    # Confidence Score
-    confidence_score: float = 0.0
 
-    # Timestamps
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-
-    def enrich(self, **kwargs) -> None:
-        """Progressively enrich track fields."""
-        for key, value in kwargs.items():
-            if value is not None and hasattr(self, key):
-                current = getattr(self, key)
-                if current is None or (isinstance(current, list) and not current):
-                    setattr(self, key, value)
-        self.updated_at = datetime.now()
-        self._calculate_confidence()
-
-    def _calculate_confidence(self) -> None:
-        """Calculate confidence score based on field completeness."""
-        score = 0.0
-        total_weight = 0.0
-        field_weights = {
-            'title': 0.25,
-            'artist': 0.25,
-            'album': 0.15,
-            'duration_ms': 0.10,
-            'isrc': 0.10,
-            'file_path': 0.15 if self.download_status == DownloadStatus.VERIFIED else 0.0
-        }
-        for field, weight in field_weights.items():
-            if getattr(self, field):
-                score += weight
-            total_weight += weight
-        self.confidence_score = min(score / total_weight if total_weight > 0 else 0.0, 1.0)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage."""
         return {
             'title': self.title,
-            'artist': self.artist,
-            'album': self.album,
-            'duration_ms': self.duration_ms,
-            'isrc': self.isrc,
-            'musicbrainz_id': self.musicbrainz_id,
-            'download_status': self.download_status.value,
-            'file_path': self.file_path,
-            'file_format': self.file_format,
-            'bitrate': self.bitrate,
+            'artist_name': self.artist_name,
+            'album_title': self.album_title,
+                        'edition': self.edition,
+            'duration': self.duration,
             'track_number': self.track_number,
             'disc_number': self.disc_number,
+            'bitrate': self.bitrate,
+            'file_path': self.file_path,
+            'file_format': self.file_format,
             'release_year': self.release_year,
-            'genres': self.genres,
-            'confidence_score': self.confidence_score,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'musicbrainz_id': self.musicbrainz_id,
+                        'isrc': self.isrc,
+                        'fingerprint': self.fingerprint,
+                        'quality_tags': self.quality_tags,
+            'identifiers': self.identifiers,
         }
 
     @classmethod
@@ -127,20 +96,19 @@ class SoulSyncTrack:
         """Create a SoulSyncTrack from a dictionary."""
         return cls(
             title=data['title'],
-            artist=data['artist'],
-            album=data.get('album'),
-            duration_ms=data.get('duration_ms'),
-            isrc=data.get('isrc'),
-            musicbrainz_id=data.get('musicbrainz_id'),
-            download_status=DownloadStatus(data.get('download_status', 'missing')),
-            file_path=data.get('file_path'),
-            file_format=data.get('file_format'),
-            bitrate=data.get('bitrate'),
+            artist_name=data['artist_name'],
+            album_title=data.get('album_title'),
+                        edition=data.get('edition'),
+            duration=data.get('duration'),
             track_number=data.get('track_number'),
             disc_number=data.get('disc_number'),
+            bitrate=data.get('bitrate'),
+            file_path=data.get('file_path'),
+            file_format=data.get('file_format'),
             release_year=data.get('release_year'),
-            genres=data.get('genres', []),
-            confidence_score=data.get('confidence_score', 0.0),
-            created_at=datetime.fromisoformat(data['created_at']),
-            updated_at=datetime.fromisoformat(data['updated_at'])
+            musicbrainz_id=data.get('musicbrainz_id'),
+                        isrc=data.get('isrc'),
+                        fingerprint=data.get('fingerprint'),
+                        quality_tags=data.get('quality_tags'),
+            identifiers=data.get('identifiers', []),
         )

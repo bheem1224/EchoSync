@@ -1,5 +1,10 @@
 import json
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Ensure environment variables from project .env are loaded before ConfigManager initializes
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=True)
 import sqlite3
 from typing import Dict, Any, Optional, Callable
 from cryptography.fernet import Fernet
@@ -84,36 +89,45 @@ class ConfigManager:
         config_dir_env = os.environ.get('SOULSYNC_CONFIG_DIR')
         if config_dir_env:
             self.config_dir = Path(config_dir_env)
-            print(f"[INFO] Using SOULSYNC_CONFIG_DIR from environment: {self.config_dir}")
         elif Path('/config').exists() and os.path.isdir('/config'):
             # Running in container with a mounted /config (Unix/Docker)
             self.config_dir = Path('/config')
-            print("[INFO] Using Docker default /config directory")
         else:
             # Default setup: paths relative to the application structure (dev)
             self.config_dir = Path(__file__).parent.parent / 'config'
-            print(f"[INFO] Using local config directory: {self.config_dir}")
 
         # STEP 2: Set data_dir from ENV (takes precedence over config.json)
         data_dir_env = os.environ.get('SOULSYNC_DATA_DIR')
         if data_dir_env:
             self.data_dir = Path(data_dir_env)
-            print(f"[INFO] Using SOULSYNC_DATA_DIR from environment: {self.data_dir}")
         elif Path('/data').exists() and os.path.isdir('/data'):
             # Running in container with a mounted /data (Unix/Docker)
             self.data_dir = Path('/data')
-            print("[INFO] Using Docker default /data directory")
         else:
             # Fallback to a data directory next to the project for local dev
             self.data_dir = Path(__file__).parent.parent / 'data'
-            print(f"[INFO] Using local data directory: {self.data_dir}")
+        
+        # Log config and data directories at INFO level
+        logger.info(f"Config directory: {self.config_dir}")
+        logger.info(f"Data directory: {self.data_dir}")
+        
+        # At DEBUG level, also log the source (ENV vs default)
+        if config_dir_env:
+            logger.debug(f"Config directory from SOULSYNC_CONFIG_DIR")
+        else:
+            logger.debug(f"Config directory from fallback default")
+        
+        if data_dir_env:
+            logger.debug(f"Data directory from SOULSYNC_DATA_DIR")
+        else:
+            logger.debug(f"Data directory from fallback default")
 
         # Ensure directories exist
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         
-        # Paths for encryption key and encrypted config database (in config_dir)
-        self.key_path = self.config_dir / ".encryption_key"
+        # Paths for encrypted config database (in config_dir)
+        # Encryption key is stored in .env file via MASTER_KEY variable only (no file backup)
         self.config_path = self.config_dir / 'config.json'  # For migration and non-secret JSON
         self.database_path = self.config_dir / 'config.db'  # Encrypted config database (secrets)
         
@@ -136,33 +150,30 @@ class ConfigManager:
         # Override with ENV variables if set
         if download_dir_env:
             self.downloads_path = Path(download_dir_env)
-            print(f"[INFO] Using SOULSYNC_DOWNLOAD_DIR from environment: {self.downloads_path}")
+            logger.info(f"Downloads directory: {self.downloads_path}")
+        else:
+            logger.debug(f"Downloads directory (default): {self.downloads_path}")
         
         if library_dir_env:
             self.library_path = Path(library_dir_env)
-            print(f"[INFO] Using SOULSYNC_LIBRARY_DIR from environment: {self.library_path}")
+            logger.info(f"Library directory: {self.library_path}")
+        else:
+            logger.debug(f"Library directory (default): {self.library_path}")
         
         if log_dir_env:
             self.logs_path = Path(log_dir_env)
-            print(f"[INFO] Using SOULSYNC_LOG_DIR from environment: {self.logs_path}")
+            logger.info(f"Logs directory: {self.logs_path}")
+        else:
+            logger.debug(f"Logs directory (default): {self.logs_path}")
         
-        print(f"[INFO] Configuration directory: {self.config_dir}")
-        print(f"[INFO] Data directory: {self.data_dir}")
-        print(f"[INFO] Encryption key path: {self.key_path}")
-        print(f"[INFO] Config database path: {self.database_path}")
-        print(f"[INFO] Media DB path: {self.media_db_path}")
-        print(f"[INFO] Plugins path: {self.plugins_path}")
+        logger.debug(f"Config database: {self.database_path}")
+        logger.debug(f"Media DB: {self.media_db_path}")
+        logger.debug(f"Plugins directory: {self.plugins_path}")
         
         self.config_data: Dict[str, Any] = {}
         self.cipher: Optional[Fernet] = None
         self._initialize_encryption()
         self._load_config()
-        
-        # Log final resolved paths after config is loaded
-        print(f"[INFO] Final downloads path: {self.downloads_path}")
-        print(f"[INFO] Final library path: {self.library_path}")
-        print(f"[INFO] Final logs path: {self.logs_path}")
-        print(f"[INFO] Final media DB path: {self.media_db_path}")
         
         # Ensure data directories exist for logs/downloads/library/plugins
         try:
@@ -171,47 +182,83 @@ class ConfigManager:
             self.logs_path.mkdir(parents=True, exist_ok=True)
             self.plugins_path.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            print(f"[WARN] Could not create data directories: {e}")
+            logger.warning(f"Could not create data directories: {e}")
 
     def _initialize_encryption(self):
-        """Initialize Fernet cipher from MASTER_KEY or local key file."""
+        """Initialize Fernet cipher from MASTER_KEY environment variable.
+        
+        The encryption key is stored in .env file and loaded as MASTER_KEY environment variable.
+        If no key exists, a new one is generated and automatically written to .env file.
+        There is no backup file - only the ENV variable and .env persistence.
+        """
+        # First, try to get key from environment variable
         key = os.getenv("MASTER_KEY")
+        
         if key:
-            print("[INFO] Using MASTER_KEY from environment variable.")
+            # Key is set in environment (either from .env or explicit)
+            logger.debug("Using MASTER_KEY from environment variable")
             try:
                 self.cipher = Fernet(key.encode())
                 return
             except Exception as e:
-                print(f"[ERROR] Invalid MASTER_KEY: {e}")
-                raise
-
-        if self.key_path.exists():
-            try:
-                with open(self.key_path, 'rb') as f:
-                    key = f.read()
-                print(f"[INFO] Using encryption key from {self.key_path}.")
-                self.cipher = Fernet(key)
-                return
-            except Exception as e:
-                print(f"[ERROR] Failed to load encryption key: {e}")
+                logger.error(f"Invalid MASTER_KEY in environment: {e}")
                 raise
         
-        # Generate new key only if none exists
-        print(f"[WARN] No encryption key found. Generating new key at {self.key_path}.")
-        key = Fernet.generate_key()
+        # No key in environment - generate new one and persist to .env
+        logger.debug("No MASTER_KEY found. Generating new encryption key...")
+        new_key = Fernet.generate_key().decode('utf-8')
+        
+        # Save to .env file for persistence
+        self._persist_key_to_env(new_key)
+        
+        # Set in current environment so initialization completes
+        os.environ['MASTER_KEY'] = new_key
+        logger.debug(f"New encryption key generated and will persist to .env")
+        
+        self.cipher = Fernet(new_key.encode())
+    
+    def _persist_key_to_env(self, key: str):
+        """Write the encryption key to .env file for persistence."""
+        env_path = Path(__file__).parent.parent / '.env'
+        
         try:
-            self.key_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.key_path, 'wb') as f:
-                f.write(key)
-            self.key_path.chmod(0o600)
-            print(f"[OK] New key generated and saved to {self.key_path}")
-            print(f"[IMPORTANT] For Docker deployments, export this key as MASTER_KEY environment variable:")
-            print(f"[IMPORTANT] MASTER_KEY={key.decode()}")
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Read existing .env file
+            existing_content = ""
+            if env_path.exists():
+                try:
+                    with open(env_path, 'r') as f:
+                        existing_content = f.read()
+                except PermissionError:
+                    logger.debug("Cannot read .env file (permission denied). Attempting to write anyway...")
+            
+            # Remove old MASTER_KEY line if it exists
+            lines = existing_content.split('\n') if existing_content else []
+            lines = [line for line in lines if not line.strip().startswith('MASTER_KEY=')]
+            
+            # Add new MASTER_KEY at the top
+            lines.insert(0, f"MASTER_KEY={key}")
+            
+            # Write back to .env with retry logic
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    with open(env_path, 'w') as f:
+                        f.write('\n'.join(lines))
+                    logger.debug(f"Encryption key persisted to .env")
+                    return
+                except PermissionError:
+                    if attempt < max_retries - 1:
+                        import time
+                        logger.debug(f"Retrying .env write (attempt {attempt + 1}/{max_retries})...")
+                        time.sleep(1)
+                    else:
+                        raise
         except Exception as e:
-            print(f"[ERROR] Failed to save encryption key: {e}")
-            raise
-        
-        self.cipher = Fernet(key)
+            logger.warning(f"Could not persist encryption key to .env: {e}")
+            logger.warning(f"The key will be lost on next startup unless manually set!")
+            logger.warning(f"Manually add this line to your .env file: MASTER_KEY={key}")
 
     def _path_matches_any(self, key_path: str, patterns: list) -> bool:
         """Return True if key_path matches any of the patterns (supports '*' wildcards)."""
@@ -244,17 +291,12 @@ class ConfigManager:
             try:
                 encrypted_val = value[4:]
                 decrypted = self.cipher.decrypt(encrypted_val.encode()).decode()
-                # SECURITY: Only log that decryption succeeded, not the value
-                print(f"[DEBUG] Decrypted secret ({len(decrypted)} chars)")
                 return decrypted
             except Exception as e:
-                print(f"[ERROR] Decryption failed: {e}")
-                print(f"[ERROR] This usually means the encryption key has changed.")
-                print(f"[ERROR] Make sure MASTER_KEY environment variable or /config/.encryption_key is consistent.")
-                print(f"[DEBUG] Cipher initialized: {self.cipher is not None}")
+                logger.warning(f"Decryption failed: The encryption key may have changed")
                 return ""  # Return empty string on decryption failure
         elif isinstance(value, str) and value.startswith("enc:"):
-            print(f"[WARN] Found encrypted value but cipher is not initialized")
+            logger.warning(f"Found encrypted value but cipher is not initialized")
             return value
         return value
 
@@ -291,7 +333,7 @@ class ConfigManager:
             conn.commit()
             conn.close()
         except Exception as e:
-            print(f"Warning: Could not ensure database exists: {e}")
+            logger.debug(f"Could not ensure database exists: {e}")
 
     def _load_from_database(self) -> Optional[Dict[str, Any]]:
         """Load configuration from database and decrypt secrets."""
@@ -305,8 +347,7 @@ class ConfigManager:
 
             if row and row[0]:
                 config_data = json.loads(row[0])
-                print(f"[INFO] Encrypted config loaded from database")
-                print(f"[DEBUG] Cipher available: {self.cipher is not None}")
+                logger.debug(f"Encrypted config loaded from database")
                 
                 # Decrypt the data
                 decrypted_data = self._traverse_and_transform(config_data, self._decrypt_value, SECRETS)
@@ -314,18 +355,16 @@ class ConfigManager:
                 # Verify decryption worked
                 has_encrypted = self._has_undecrypted_secrets(decrypted_data)
                 if has_encrypted:
-                    print(f"[WARNING] Data still contains encrypted values after decryption attempt")
+                    logger.warning(f"Data still contains encrypted values after decryption attempt")
                 else:
-                    print(f"[OK] Successfully decrypted all secrets")
+                    logger.debug(f"All secrets decrypted successfully")
                 
                 return decrypted_data
             else:
-                print("[INFO] No config found in database")
+                logger.debug("No config found in database")
                 return None
         except Exception as e:
-            print(f"[WARNING] Could not load config from database: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.debug(f"Could not load config from database: {e}")
             return None
 
     def _save_to_database(self, config_data: Dict[str, Any]) -> bool:
@@ -346,12 +385,10 @@ class ConfigManager:
 
             conn.commit()
             conn.close()
-            print(f"[OK] Configuration saved to {self.database_path}")
+            logger.debug(f"Configuration saved to database")
             return True
         except Exception as e:
-            print(f"[ERROR] Could not save config to database: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Could not save config to database: {e}")
             return False
 
     def _load_from_config_file(self) -> Optional[Dict[str, Any]]:
@@ -360,12 +397,12 @@ class ConfigManager:
             if self.config_path.exists():
                 with open(self.config_path, 'r') as f:
                     config_data = json.load(f)
-                    print(f"[OK] Configuration loaded from {self.config_path}")
+                    logger.debug(f"Configuration loaded from {self.config_path}")
                     return config_data
             else:
                 return None
         except Exception as e:
-            print(f"Warning: Could not load config from file: {e}")
+            logger.debug(f"Could not load config from file: {e}")
             return None
 
     def _get_default_config(self) -> Dict[str, Any]:
@@ -457,17 +494,17 @@ class ConfigManager:
         # Load non-secrets from config.json
         json_data = self._load_from_config_file()
         if json_data:
-            print("[OK] Loaded non-secrets from config.json")
+            logger.debug("Loaded non-secrets from config.json")
             config_data = self._deep_merge(config_data, json_data)
         
         # Load secrets from database (encrypted)
         db_data = self._load_from_database()
         if db_data:
-            print("[OK] Loaded secrets from database")
+            logger.debug("Loaded secrets from database")
             config_data = self._deep_merge(config_data, db_data)
             # Verify decryption worked
             if self._has_undecrypted_secrets(config_data):
-                print("[WARNING] Some encrypted values still encrypted after load - key mismatch?")
+                logger.warning("Some encrypted values still encrypted after load - key mismatch?")
         
         self.config_data = config_data
         
@@ -496,7 +533,7 @@ class ConfigManager:
             # First, check if data_dir is specified and update if so
             if storage_config.get('data_dir'):
                 self.data_dir = Path(storage_config['data_dir'])
-                print(f"[INFO] Applied data_dir from config: {self.data_dir}")
+                logger.debug(f"Applied data_dir from config.json: {self.data_dir}")
                 # Update derived defaults based on new data_dir
                 # Only update if the individual paths weren't explicitly set
                 if not storage_config.get('download_dir'):
@@ -512,22 +549,22 @@ class ConfigManager:
             # Then apply any explicit path overrides
             if storage_config.get('download_dir'):
                 self.downloads_path = Path(storage_config['download_dir'])
-                print(f"[INFO] Applied download_dir from config: {self.downloads_path}")
+                logger.debug(f"Applied download_dir from config: {self.downloads_path}")
             
             if storage_config.get('library_dir'):
                 self.library_path = Path(storage_config['library_dir'])
-                print(f"[INFO] Applied library_dir from config: {self.library_path}")
+                logger.debug(f"Applied library_dir from config: {self.library_path}")
             
             if storage_config.get('log_dir'):
                 self.logs_path = Path(storage_config['log_dir'])
-                print(f"[INFO] Applied log_dir from config: {self.logs_path}")
+                logger.debug(f"Applied log_dir from config: {self.logs_path}")
             
             if storage_config.get('config_dir'):
                 new_config_dir = Path(storage_config['config_dir'])
                 # Only log the difference, don't change config_dir itself to avoid breaking encryption
                 if new_config_dir != self.config_dir:
-                    print(f"[INFO] Config specifies different config_dir: {new_config_dir}")
-                    print("[WARN] config_dir cannot be changed after initialization (encryption key location)")
+                    logger.debug(f"Config specifies different config_dir: {new_config_dir}")
+                    logger.debug("config_dir cannot be changed after initialization (encryption key location)")
             
             # Apply logging path from config if specified
             logging_config = self.config_data.get('logging', {})
@@ -537,7 +574,7 @@ class ConfigManager:
                 if not log_path.is_absolute():
                     log_path = self.logs_path / log_path.name
                     self.config_data['logging']['path'] = str(log_path.resolve())
-                    print(f"[INFO] Updated logging path to: {log_path}")
+                    logger.debug(f"Updated logging path to: {log_path}")
             
             # Update database path in config to match media_db_path
             db_config = self.config_data.get('database', {})
