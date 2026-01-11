@@ -238,23 +238,23 @@ class WeightedMatchingEngine:
             (matches: bool, reasoning: str)
         """
 
-        # If either has no version, consider it a match (no strong signal)
-        if not source.version and not candidate.version:
+        # If either has no edition, consider it a match (no strong signal)
+        if not source.edition and not candidate.edition:
             return True, "Both tracks have no version info"
 
-        if not source.version:
+        if not source.edition:
             return True, "Source has no version, accepting candidate version"
 
-        if not candidate.version:
+        if not candidate.edition:
             return True, "Candidate has no version, accepting source version"
 
-        # Both have versions - check if they're the same or related
-        source_version_lower = source.version.lower()
-        candidate_version_lower = candidate.version.lower()
+        # Both have editions - check if they're the same or related
+        source_version_lower = source.edition.lower()
+        candidate_version_lower = candidate.edition.lower()
 
         # Exact match
         if source_version_lower == candidate_version_lower:
-            return True, f"Versions match: '{source.version}'"
+            return True, f"Versions match: '{source.edition}'"
 
         # Check if both have version keywords from same family
         source_keywords = self._extract_version_keywords(source_version_lower)
@@ -266,7 +266,7 @@ class WeightedMatchingEngine:
 
         # If either is empty, mismatch
         if not source_keywords or not candidate_keywords:
-            return False, f"'{source.version}' vs '{candidate.version}' (different types)"
+            return False, f"'{source.edition}' vs '{candidate.edition}' (different types)"
 
         # Check for keyword overlap
         overlap = source_keywords & candidate_keywords
@@ -278,23 +278,15 @@ class WeightedMatchingEngine:
             return False, f"One is remix, other is original"
 
         # Otherwise, consider it a version mismatch
-        return False, f"Different versions: '{source.version}' vs '{candidate.version}'"
+        return False, f"Different versions: '{source.edition}' vs '{candidate.edition}'"
 
     def _check_edition_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> Tuple[bool, str]:
         """
-        Check if editions match (track_total, disc_number, etc)
+        Check if editions match (disc_number, etc)
 
         Returns:
             (matches: bool, reasoning: str)
         """
-
-        # If source has track_total, check if candidate matches
-        if source.track_total and candidate.track_total:
-            if source.track_total == candidate.track_total:
-                return True, f"Track totals match: {source.track_total} tracks"
-            else:
-                return False, f"Track total mismatch: {source.track_total} vs {candidate.track_total}"
-
         # If source has disc_number, check if candidate matches
         if source.disc_number and candidate.disc_number:
             if source.disc_number == candidate.disc_number:
@@ -321,13 +313,13 @@ class WeightedMatchingEngine:
             scores.append(('title', title_score, 0.6))  # 60% weight
 
         # Artist match
-        if source.artist and candidate.artist:
-            artist_score = self._fuzzy_match(source.artist, candidate.artist)
+        if source.artist_name and candidate.artist_name:
+            artist_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
             scores.append(('artist', artist_score, 0.3))  # 30% weight
 
         # Album match (if available)
-        if source.album and candidate.album:
-            album_score = self._fuzzy_match(source.album, candidate.album)
+        if source.album_title and candidate.album_title:
+            album_score = self._fuzzy_match(source.album_title, candidate.album_title)
             scores.append(('album', album_score, 0.1))  # 10% weight
 
         # If no comparison possible, return fallback
@@ -350,11 +342,11 @@ class WeightedMatchingEngine:
             Score 0.0-1.0 (1.0 = exact match, decreases with difference)
         """
 
-        if not source.duration_ms or not candidate.duration_ms:
+        if not source.duration or not candidate.duration:
             # If either has no duration, assume match
             return 1.0
 
-        diff_ms = abs(source.duration_ms - candidate.duration_ms)
+        diff_ms = abs(source.duration - candidate.duration)
         tolerance_ms = self.weights.duration_tolerance_ms
 
         if diff_ms <= tolerance_ms:
