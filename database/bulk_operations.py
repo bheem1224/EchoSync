@@ -273,30 +273,41 @@ class LibraryManager:
             session.flush()
             logger.debug(f"Created new track: {track.title} by {artist.name}")
         else:
-            # Update existing track
-            track.title = track_data.title or track.title
-            if track_data.sort_title:
-                track.sort_title = track_data.sort_title
-            if track_data.edition:
-                track.edition = track_data.edition
-
-            track.duration = track_data.duration or track.duration
-            track.track_number = track_data.track_number or track.track_number
-            track.disc_number = track_data.disc_number or track.disc_number
-            track.bitrate = track_data.bitrate or track.bitrate
-            track.file_path = track_data.file_path or track.file_path
-            track.file_format = track_data.file_format or track.file_format
-            track.sample_rate = track_data.sample_rate or track.sample_rate
-            track.bit_depth = track_data.bit_depth or track.bit_depth
-            track.file_size_bytes = track_data.file_size_bytes or track.file_size_bytes
-
-            # NOTE: Explicitly NOT updating added_at to preserve original import time
-
-            track.musicbrainz_id = track_data.musicbrainz_id or track.musicbrainz_id
+            # Update existing track (Sparse Updates)
+            # Identity fields - always update
+            track.title = track_data.title
             if album and track.album_id != album.id:
                 track.album = album
             if track.artist_id != artist.id:
                 track.artist = artist
+
+            # Metadata fields - only update if incoming is not None
+            if track_data.sort_title is not None:
+                track.sort_title = track_data.sort_title
+            if track_data.edition is not None:
+                track.edition = track_data.edition
+            if track_data.duration is not None:
+                track.duration = track_data.duration
+            if track_data.track_number is not None:
+                track.track_number = track_data.track_number
+            if track_data.disc_number is not None:
+                track.disc_number = track_data.disc_number
+            if track_data.bitrate is not None:
+                track.bitrate = track_data.bitrate
+            if track_data.file_path is not None:
+                track.file_path = track_data.file_path
+            if track_data.file_format is not None:
+                track.file_format = track_data.file_format
+            if track_data.sample_rate is not None:
+                track.sample_rate = track_data.sample_rate
+            if track_data.bit_depth is not None:
+                track.bit_depth = track_data.bit_depth
+            if track_data.file_size_bytes is not None:
+                track.file_size_bytes = track_data.file_size_bytes
+            if track_data.musicbrainz_id is not None:
+                track.musicbrainz_id = track_data.musicbrainz_id
+
+            # NOTE: Explicitly NOT updating added_at to preserve original import time
             logger.debug(f"Updated existing track: {track.title} by {artist.name}")
 
         # Ensure all identifiers are linked to this track

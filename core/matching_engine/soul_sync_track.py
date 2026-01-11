@@ -10,7 +10,7 @@ import re
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 class DownloadStatus(Enum):
@@ -38,23 +38,26 @@ class QualityTag(Enum):
 class SoulSyncTrack:
     """
     Track data container matching the SQLAlchemy database schema.
-    Acts as a pending database row - no business logic.
+    Acts as a smart object that auto-cleans data on initialization.
     """
-    # Core Fields (for lookup)
-    title: str
-    display_title: str  # Original full title
-    artist_name: str  # Used for artist lookup
-    album_title: Optional[str] = None  # Used for album lookup
-    edition: Optional[str] = None  # remaster, live, remix, deluxe, acoustic, etc.
+    # Required Fields
+    raw_title: str
+    artist_name: str
+    album_title: str
+
+    # Core Fields (Auto-Populated in __post_init__)
+    title: str = field(init=False)
+    edition: Optional[str] = None
     sort_title: Optional[str] = None
-    
+    display_title: str = field(init=False)
+
     # Artist/Album Metadata
     artist_sort_name: Optional[str] = None
     album_sort_title: Optional[str] = None
     album_type: Optional[str] = None
     album_release_group_id: Optional[str] = None
 
-    # Track Metadata
+    # Track Metadata (Defaults to None for Sparse Updates)
     duration: Optional[int] = None  # Milliseconds
     track_number: Optional[int] = None
     disc_number: Optional[int] = None
@@ -71,22 +74,70 @@ class SoulSyncTrack:
 
     # Identifiers
     musicbrainz_id: Optional[str] = None
-    isrc: Optional[str] = None  # International Standard Recording Code
+    isrc: Optional[str] = None
     
     # Audio fingerprint for matching
     fingerprint: Optional[str] = None
     
-    # Quality tags for tie-breaking
+    # Quality tags
     quality_tags: Optional[List[str]] = None
     
-    # External Provider Links (list of dicts for ExternalIdentifiers table)
-    # Format: [{'provider_source': 'plex', 'provider_item_id': '123', 'raw_data': {...}}]
+    # External Provider Links
     identifiers: List[Dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self):
+        """
+        Auto-clean and normalize data upon instantiation.
+        """
+        # 1. Populate display_title
+        self.display_title = self.raw_title
+
+        # 2. Regex Extraction for Edition
+        edition_pattern = re.compile(
+            r"(?:[\(\[]| - )\s*(.*?(?:Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original).*?)(?:[\)\]]|$)",
+            re.IGNORECASE
+        )
+
+        match = edition_pattern.search(self.raw_title)
+        clean_title = self.raw_title
+
+        if match:
+            extracted_edition = match.group(1).strip()
+            # Only set edition if not explicitly provided
+            if self.edition is None:
+                self.edition = extracted_edition
+
+            # Remove the match from title
+            start, end = match.span()
+            clean_title = (self.raw_title[:start] + self.raw_title[end:]).strip()
+
+        # 3. Balanced Quote Stripping
+        clean_title = clean_title.strip()
+        if len(clean_title) >= 2:
+            if clean_title.startswith('"') and clean_title.endswith('"'):
+                clean_title = clean_title[1:-1]
+            elif clean_title.startswith("'") and clean_title.endswith("'"):
+                clean_title = clean_title[1:-1]
+
+        self.title = clean_title
+
+        # 4. Sort Title Generation
+        if self.sort_title is None:
+            lower_title = self.title.lower()
+            if lower_title.startswith("the "):
+                self.sort_title = f"{self.title[4:]}, The"
+            elif lower_title.startswith("a "):
+                self.sort_title = f"{self.title[2:]}, A"
+            elif lower_title.startswith("an "):
+                self.sort_title = f"{self.title[3:]}, An"
+            else:
+                self.sort_title = self.title
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage."""
         return {
             'title': self.title,
+            'raw_title': self.raw_title,
             'display_title': self.display_title,
             'artist_name': self.artist_name,
             'album_title': self.album_title,
@@ -124,11 +175,13 @@ class SoulSyncTrack:
             except ValueError:
                 pass
 
-        return cls(
-            title=data['title'],
-            display_title=data.get('display_title', data['title']),
-            artist_name=data['artist_name'],
-            album_title=data.get('album_title'),
+        # Handle backward compatibility where raw_title might be missing
+        raw_title = data.get('raw_title', data.get('display_title', data.get('title', 'Unknown Title')))
+
+        track = cls(
+            raw_title=raw_title,
+            artist_name=data.get('artist_name', 'Unknown Artist'),
+            album_title=data.get('album_title', 'Unknown Album'),
             edition=data.get('edition'),
             sort_title=data.get('sort_title'),
             artist_sort_name=data.get('artist_sort_name'),
@@ -152,197 +205,4 @@ class SoulSyncTrack:
             quality_tags=data.get('quality_tags'),
             identifiers=data.get('identifiers', []),
         )
-
-    @staticmethod
-    def _clean_and_normalize(raw_title: str) -> tuple[str, Optional[str], str]:
-        """
-        Shared logic for cleaning title and extracting edition.
-        Returns (clean_title, edition, sort_title_candidate)
-        """
-        if not raw_title:
-            return "", None, ""
-
-        edition = None
-        clean_title = raw_title
-
-        # Regex pattern for Edition extraction
-        edition_pattern = re.compile(
-            r"(?:[\(\[]| - )\s*(.*?(?:Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended).*?)(?:[\)\]]|$)",
-            re.IGNORECASE
-        )
-
-        match = edition_pattern.search(raw_title)
-        if match:
-            edition = match.group(1).strip()
-            start, end = match.span()
-            clean_title = (raw_title[:start] + raw_title[end:]).strip()
-
-        # Title Sanitization (Balanced Quote Check)
-        clean_title = clean_title.strip()
-        if len(clean_title) >= 2:
-            if clean_title.startswith('"') and clean_title.endswith('"'):
-                clean_title = clean_title[1:-1]
-            if clean_title.startswith("'") and clean_title.endswith("'"):
-                clean_title = clean_title[1:-1]
-
-        return clean_title, edition
-
-    @staticmethod
-    def from_plex(data: Dict[str, Any]) -> "SoulSyncTrack":
-        """
-        Factory method to create a SoulSyncTrack from a Plex API response.
-        """
-        raw_title = data.get('title', '')
-        clean_title, edition = SoulSyncTrack._clean_and_normalize(raw_title)
-
-        # Sort Title
-        sort_title = data.get('titleSort')
-        if not sort_title:
-            # Fallback: Article Mover
-            lower_title = clean_title.lower()
-            if lower_title.startswith("the "):
-                sort_title = f"{clean_title[4:]}, The"
-            elif lower_title.startswith("a "):
-                sort_title = f"{clean_title[2:]}, A"
-            elif lower_title.startswith("an "):
-                sort_title = f"{clean_title[3:]}, An"
-            else:
-                sort_title = clean_title
-
-        # Tech Metadata Extraction
-        sample_rate = None
-        bit_depth = None
-        file_size_bytes = None
-        bitrate = None
-        file_format = None
-        file_path = None
-
-        media_items = data.get('Media', [])
-        if media_items:
-            media = media_items[0]
-            file_format = media.get('container')
-            bitrate = media.get('bitrate')
-
-            parts = media.get('Part', [])
-            if parts:
-                part = parts[0]
-                file_path = part.get('file')
-                file_size_bytes = part.get('size')
-
-                streams = part.get('Stream', [])
-                for stream in streams:
-                    if stream.get('streamType') == 2 or stream.get('codec'):
-                        sample_rate = stream.get('samplingRate')
-                        bit_depth = stream.get('bitDepth')
-                        if stream.get('bitrate'):
-                            bitrate = stream.get('bitrate')
-                        break
-
-        # Timestamps
-        added_at = None
-        if 'addedAt' in data:
-            try:
-                added_at = datetime.fromtimestamp(int(data['addedAt']), tz=timezone.utc)
-            except (ValueError, TypeError):
-                pass
-
-        if not added_at:
-            added_at = datetime.now(timezone.utc)
-
-        identifiers = []
-        if data.get('ratingKey'):
-             identifiers.append({
-                 'provider_source': 'plex',
-                 'provider_item_id': str(data['ratingKey']),
-                 'raw_data': data
-             })
-
-        return SoulSyncTrack(
-            title=clean_title,
-            display_title=raw_title,
-            artist_name=data.get('grandparentTitle') or data.get('parentTitle') or "Unknown Artist",
-            album_title=data.get('parentTitle'),
-            edition=edition,
-            sort_title=sort_title,
-            artist_sort_name=data.get('grandparentSortTitle'),
-            album_sort_title=data.get('parentSortTitle'),
-            duration=data.get('duration'),
-            track_number=data.get('index'),
-            disc_number=data.get('parentIndex'),
-            bitrate=bitrate,
-            file_path=file_path,
-            file_format=file_format,
-            release_year=data.get('year'),
-            added_at=added_at,
-            sample_rate=sample_rate,
-            bit_depth=bit_depth,
-            file_size_bytes=file_size_bytes,
-            identifiers=identifiers
-        )
-
-    @staticmethod
-    def from_spotify(data: Dict[str, Any]) -> "SoulSyncTrack":
-        """
-        Factory method to create a SoulSyncTrack from a Spotify API response.
-        """
-        raw_title = data.get('name', '')
-        clean_title, edition = SoulSyncTrack._clean_and_normalize(raw_title)
-
-        # Sort Title (Spotify doesn't provide sort title usually, use fallback)
-        lower_title = clean_title.lower()
-        if lower_title.startswith("the "):
-            sort_title = f"{clean_title[4:]}, The"
-        elif lower_title.startswith("a "):
-            sort_title = f"{clean_title[2:]}, A"
-        elif lower_title.startswith("an "):
-            sort_title = f"{clean_title[3:]}, An"
-        else:
-            sort_title = clean_title
-
-        # Artist handling
-        artists = data.get('artists', [])
-        artist_name = ', '.join([a.get('name', '') for a in artists]) if artists else "Unknown Artist"
-
-        # Album handling
-        album = data.get('album', {})
-        album_title = album.get('name')
-        release_date = album.get('release_date', '')
-        release_year = int(release_date[:4]) if release_date and len(release_date) >= 4 else None
-
-        # Identifiers
-        identifiers = []
-        if data.get('id'):
-            identifiers.append({
-                'provider_source': 'spotify',
-                'provider_item_id': str(data['id']),
-                'raw_data': data
-            })
-
-        # ISRC
-        isrc = None
-        external_ids = data.get('external_ids', {})
-        if external_ids and 'isrc' in external_ids:
-            isrc = external_ids['isrc']
-
-        # Added At (Often passed in wrapping object in playlists, but here we assume track object)
-        # If track object comes from a playlist item, 'added_at' might be in wrapper.
-        # But this method receives the track object itself usually.
-        # We'll default to now if not provided or handle wrappers if needed.
-        # Assuming standard track object here.
-
-        return SoulSyncTrack(
-            title=clean_title,
-            display_title=raw_title,
-            artist_name=artist_name,
-            album_title=album_title,
-            edition=edition,
-            sort_title=sort_title,
-            # Spotify doesn't provide sort names or detailed tech metadata in standard endpoints
-            duration=data.get('duration_ms'),
-            track_number=data.get('track_number'),
-            disc_number=data.get('disc_number'),
-            release_year=release_year,
-            isrc=isrc,
-            added_at=datetime.now(timezone.utc), # Default, as Spotify tracks don't have added_at unless in playlist context
-            identifiers=identifiers
-        )
+        return track

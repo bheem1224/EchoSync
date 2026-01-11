@@ -20,10 +20,55 @@ logger = get_logger("spotify_client")
 
 def convert_spotify_track_to_soulsync(spotify_track_data: Dict[str, Any]) -> Optional[SoulSyncTrack]:
     """
-    Convert Spotify track data to SoulSyncTrack using factory method.
+    Convert Spotify track data to SoulSyncTrack using direct instantiation.
     """
     try:
-        return SoulSyncTrack.from_spotify(spotify_track_data)
+        from datetime import datetime, timezone
+
+        # Extract basic fields
+        raw_title = spotify_track_data.get('name')
+
+        # Artist handling
+        artists = spotify_track_data.get('artists', [])
+        artist_name = ', '.join([a.get('name', '') for a in artists]) if artists else "Unknown Artist"
+
+        # Album handling
+        album = spotify_track_data.get('album', {})
+        album_title = album.get('name')
+        release_date = album.get('release_date', '')
+        release_year = int(release_date[:4]) if release_date and len(release_date) >= 4 else None
+
+        # Identifiers
+        identifiers = []
+        track_id = spotify_track_data.get('id')
+        if track_id:
+            identifiers.append({
+                'provider_source': 'spotify',
+                'provider_item_id': str(track_id),
+                'raw_data': None # Avoid storing heavy object
+            })
+
+        # ISRC
+        isrc = None
+        external_ids = spotify_track_data.get('external_ids', {})
+        if external_ids and 'isrc' in external_ids:
+            isrc = external_ids['isrc']
+
+        if not raw_title:
+            return None
+
+        return SoulSyncTrack(
+            raw_title=raw_title,
+            artist_name=artist_name,
+            album_title=album_title,
+            duration=spotify_track_data.get('duration_ms'),
+            track_number=spotify_track_data.get('track_number'),
+            disc_number=spotify_track_data.get('disc_number'),
+            release_year=release_year,
+            isrc=isrc,
+            added_at=datetime.now(timezone.utc),
+            identifiers=identifiers
+        )
     except Exception as e:
         logger.error(f"Error converting Spotify track to SoulSyncTrack: {e}", exc_info=True)
         return None
