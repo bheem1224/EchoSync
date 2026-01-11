@@ -413,20 +413,65 @@ class PlexClient(ProviderBase):
                 bitrate, file_format, plex_track_id
             )
             
-            # Use ProviderBase factory for proper normalization (call as class method, not instance method)
-            track = ProviderBase.create_soul_sync_track(
-                title=title,
-                artist=artist,
-                album=album,
-                duration_ms=duration_ms,
-                year=year,
+            # Direct instantiation of SoulSyncTrack
+            # Extract technical metadata
+            sample_rate = None
+            bit_depth = None
+            file_size_bytes = None
+
+            if hasattr(plex_track, 'media') and plex_track.media:
+                media = plex_track.media[0]
+                if hasattr(media, 'parts') and media.parts:
+                    part = media.parts[0]
+                    file_size_bytes = getattr(part, 'size', None)
+
+                    if hasattr(part, 'streams') and part.streams:
+                        for stream in part.streams:
+                            # streamType 2 is typically audio
+                            if getattr(stream, 'streamType', None) == 2 or getattr(stream, 'codec', None):
+                                sample_rate = getattr(stream, 'samplingRate', None)
+                                bit_depth = getattr(stream, 'bitDepth', None)
+                                break
+
+            # Timestamps
+            added_at = None
+            if hasattr(plex_track, 'addedAt') and plex_track.addedAt:
+                try:
+                    # Plex uses seconds for addedAt
+                    added_at = datetime.fromtimestamp(int(plex_track.addedAt), tz=timezone.utc)
+                except (ValueError, TypeError):
+                    pass
+            if not added_at:
+                added_at = datetime.now(timezone.utc)
+
+            identifiers = []
+            if plex_track_id:
+                identifiers.append({
+                    'provider_source': 'plex',
+                    'provider_item_id': plex_track_id,
+                    'raw_data': None # Avoid storing heavy object
+                })
+
+            track = SoulSyncTrack(
+                raw_title=title,
+                artist_name=artist,
+                album_title=album,
+                # Optional fields
+                sort_title=getattr(plex_track, 'titleSort', None),
+                artist_sort_name=getattr(plex_track, 'grandparentSortTitle', None),
+                album_sort_title=getattr(plex_track, 'parentSortTitle', None),
+                duration=duration_ms,
                 track_number=track_number,
                 disc_number=disc_number,
-                file_format=file_format,
-                file_path=file_path,
                 bitrate=bitrate,
-                provider_id=plex_track_id,
-                source='plex'
+                file_path=file_path,
+                file_format=file_format,
+                release_year=year,
+                added_at=added_at,
+                sample_rate=sample_rate,
+                bit_depth=bit_depth,
+                file_size_bytes=file_size_bytes,
+                identifiers=identifiers
             )
             
             if track:

@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import Generator, List, Optional, Tuple
 
 from sqlalchemy import (
+    BigInteger,
     Date,
     DateTime,
     Float,
     ForeignKey,
+    Integer,
     JSON,
     String,
     UniqueConstraint,
@@ -40,6 +42,7 @@ class Artist(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    sort_name: Mapped[Optional[str]] = mapped_column(String)
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True)
     image_url: Mapped[Optional[str]] = mapped_column(String)
 
@@ -61,6 +64,8 @@ class Album(Base):
     )
     release_date: Mapped[Optional[date]] = mapped_column(Date)
     cover_image_url: Mapped[Optional[str]] = mapped_column(String)
+    release_group_id: Mapped[Optional[str]] = mapped_column(String)
+    album_type: Mapped[Optional[str]] = mapped_column(String)
 
     artist: Mapped[Artist] = relationship(back_populates="albums")
     tracks: Mapped[List["Track"]] = relationship(
@@ -70,10 +75,11 @@ class Album(Base):
 
 class Track(Base):
     __tablename__ = "tracks"
-    edition: Mapped[Optional[str]] = mapped_column(String)  # remaster, live, remix, deluxe, acoustic, etc.
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    sort_title: Mapped[Optional[str]] = mapped_column(String)
+    edition: Mapped[Optional[str]] = mapped_column(String)  # remaster, live, remix, deluxe, acoustic, etc.
     album_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("albums.id", ondelete="CASCADE")
     )
@@ -87,6 +93,10 @@ class Track(Base):
     bitrate: Mapped[Optional[int]] = mapped_column()
     file_path: Mapped[Optional[str]] = mapped_column(String)
     file_format: Mapped[Optional[str]] = mapped_column(String)
+    sample_rate: Mapped[Optional[int]] = mapped_column(Integer)
+    bit_depth: Mapped[Optional[int]] = mapped_column(Integer)
+    file_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger)
+    added_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)

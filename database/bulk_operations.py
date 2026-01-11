@@ -3,7 +3,7 @@ Bulk import operations using SQLAlchemy 2.0 and LibraryManager.
 Efficiently ingests SoulSyncTrack objects into the database with caching.
 """
 from typing import List, Dict, Optional, Tuple
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import sessionmaker, Session
@@ -42,13 +42,14 @@ class LibraryManager:
             return ""
         return text_utils.normalize_text(name).lower()
 
-    def _get_or_create_artist(self, session: Session, artist_name: str) -> Artist:
+    def _get_or_create_artist(self, session: Session, artist_name: str, sort_name: Optional[str] = None) -> Artist:
         """
         Get or create artist. Uses cache first, then DB.
 
         Args:
             session: SQLAlchemy session
             artist_name: Artist name
+            sort_name: Optional sort name to use if creating new
 
         Returns:
             Artist object
@@ -74,7 +75,7 @@ class LibraryManager:
 
         if artist is None:
             # Create new artist
-            artist = Artist(name=artist_name)
+            artist = Artist(name=artist_name, sort_name=sort_name)
             session.add(artist)
             session.flush()
 
@@ -88,6 +89,8 @@ class LibraryManager:
         album_title: Optional[str],
         artist: Artist,
         release_year: Optional[int],
+        album_type: Optional[str] = None,
+        release_group_id: Optional[str] = None,
     ) -> Optional[Album]:
         """
         Get or create album. Uses cache first, then DB.
@@ -97,6 +100,8 @@ class LibraryManager:
             album_title: Album title
             artist: Artist object (already created/fetched)
             release_year: Release year
+            album_type: Album type (e.g. Album, EP)
+            release_group_id: MusicBrainz Release Group ID
 
         Returns:
             Album object or None if album_title is None
@@ -112,6 +117,11 @@ class LibraryManager:
             album_id = self.album_cache[cache_key]
             stmt = select(Album).where(Album.id == album_id)
             album = session.execute(stmt).scalar_one()
+            # Still might need to update metadata if it was cached but fields were missing
+            if release_group_id and not album.release_group_id:
+                album.release_group_id = release_group_id
+            if album_type and not album.album_type:
+                album.album_type = album_type
             return album
 
         # Check DB
@@ -129,13 +139,19 @@ class LibraryManager:
                 title=album_title,
                 artist=artist,
                 release_date=release_date,
+                album_type=album_type,
+                release_group_id=release_group_id,
             )
             session.add(album)
             session.flush()
         else:
-            # Update release date if needed
+            # Update metadata if needed
             if release_date and album.release_date != release_date:
                 album.release_date = release_date
+            if release_group_id and not album.release_group_id:
+                album.release_group_id = release_group_id
+            if album_type and not album.album_type:
+                album.album_type = album_type
 
         # Cache it
         self.album_cache[cache_key] = album.id
@@ -237,7 +253,8 @@ class LibraryManager:
             # Create new track
             track = Track(
                 title=track_data.title,
-                                edition=track_data.edition,
+                sort_title=track_data.sort_title,
+                edition=track_data.edition,
                 artist=artist,
                 album=album,
                 duration=track_data.duration,
@@ -246,26 +263,51 @@ class LibraryManager:
                 bitrate=track_data.bitrate,
                 file_path=track_data.file_path,
                 file_format=track_data.file_format,
+                sample_rate=track_data.sample_rate,
+                bit_depth=track_data.bit_depth,
+                file_size_bytes=track_data.file_size_bytes,
+                added_at=track_data.added_at, # Set added_at only on insert
                 musicbrainz_id=track_data.musicbrainz_id,
             )
             session.add(track)
             session.flush()
             logger.debug(f"Created new track: {track.title} by {artist.name}")
         else:
-            # Update existing track
-            track.title = track_data.title or track.title
-                        track.edition = track_data.edition or track.edition
-            track.duration = track_data.duration or track.duration
-            track.track_number = track_data.track_number or track.track_number
-            track.disc_number = track_data.disc_number or track.disc_number
-            track.bitrate = track_data.bitrate or track.bitrate
-            track.file_path = track_data.file_path or track.file_path
-            track.file_format = track_data.file_format or track.file_format
-            track.musicbrainz_id = track_data.musicbrainz_id or track.musicbrainz_id
+            # Update existing track (Sparse Updates)
+            # Identity fields - always update
+            track.title = track_data.title
             if album and track.album_id != album.id:
                 track.album = album
             if track.artist_id != artist.id:
                 track.artist = artist
+
+            # Metadata fields - only update if incoming is not None
+            if track_data.sort_title is not None:
+                track.sort_title = track_data.sort_title
+            if track_data.edition is not None:
+                track.edition = track_data.edition
+            if track_data.duration is not None:
+                track.duration = track_data.duration
+            if track_data.track_number is not None:
+                track.track_number = track_data.track_number
+            if track_data.disc_number is not None:
+                track.disc_number = track_data.disc_number
+            if track_data.bitrate is not None:
+                track.bitrate = track_data.bitrate
+            if track_data.file_path is not None:
+                track.file_path = track_data.file_path
+            if track_data.file_format is not None:
+                track.file_format = track_data.file_format
+            if track_data.sample_rate is not None:
+                track.sample_rate = track_data.sample_rate
+            if track_data.bit_depth is not None:
+                track.bit_depth = track_data.bit_depth
+            if track_data.file_size_bytes is not None:
+                track.file_size_bytes = track_data.file_size_bytes
+            if track_data.musicbrainz_id is not None:
+                track.musicbrainz_id = track_data.musicbrainz_id
+
+            # NOTE: Explicitly NOT updating added_at to preserve original import time
             logger.debug(f"Updated existing track: {track.title} by {artist.name}")
 
         # Ensure all identifiers are linked to this track
@@ -358,7 +400,11 @@ class LibraryManager:
                     )
 
                     # Get or create artist
-                    artist = self._get_or_create_artist(session, track_data.artist_name)
+                    artist = self._get_or_create_artist(
+                        session,
+                        track_data.artist_name,
+                        sort_name=track_data.artist_sort_name
+                    )
 
                     # Get or create album
                     album = self._get_or_create_album(
@@ -366,6 +412,8 @@ class LibraryManager:
                         track_data.album_title,
                         artist,
                         track_data.release_year,
+                        album_type=track_data.album_type,
+                        release_group_id=track_data.album_release_group_id
                     )
 
                     # Upsert track
@@ -401,5 +449,3 @@ class LibraryManager:
             session.close()
 
         return imported_count
-
-

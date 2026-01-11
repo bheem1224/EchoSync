@@ -27,6 +27,11 @@ class TieredLogger:
             max_bytes: Maximum size of a log file before rotation (default: 5MB).
             backup_count: Number of backup log files to keep (default: 5).
         """
+        import os
+        env_log_dir = os.getenv("SOULSYNC_LOG_DIR")
+        if env_log_dir:
+            log_dir = env_log_dir
+
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
