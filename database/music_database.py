@@ -98,6 +98,10 @@ class Track(Base):
     file_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger)
     added_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
+    acoustid_id: Mapped[Optional[str]] = mapped_column(String)
+    mb_release_id: Mapped[Optional[str]] = mapped_column(String)
+    original_release_date: Mapped[Optional[date]] = mapped_column(Date)
+
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
 
