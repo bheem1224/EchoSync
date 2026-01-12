@@ -162,9 +162,9 @@ class ProviderBase(ABC):
             title_str, artist_str, album_str
         )
         
-    # Extract edition info from title (remaster, live, remix, etc.)
-    clean_title, edition = text_utils.extract_edition(title_str) if title_str else (None, None)
-        
+        # Extract edition info from title (remaster, live, remix, etc.)
+        clean_title, edition = text_utils.extract_edition(title_str) if title_str else (None, None)
+
         # Normalize text fields (handle None inputs)
         normalized_title = text_utils.normalize_title(clean_title) if clean_title else None
         normalized_artist = text_utils.normalize_artist(artist_str) if artist_str else None
