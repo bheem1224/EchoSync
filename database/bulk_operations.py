@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.matching_engine import text_utils
 from utils.logging_config import get_logger
-from .music_database import Artist, Album, Track, ExternalIdentifier
+from .music_database import Artist, Album, Track, ExternalIdentifier, AudioFingerprint
 
 logger = get_logger("bulk_operations")
 
@@ -91,6 +91,8 @@ class LibraryManager:
         release_year: Optional[int],
         album_type: Optional[str] = None,
         release_group_id: Optional[str] = None,
+        mb_release_id: Optional[str] = None,
+        original_release_date: Optional[date] = None,
     ) -> Optional[Album]:
         """
         Get or create album. Uses cache first, then DB.
@@ -102,6 +104,8 @@ class LibraryManager:
             release_year: Release year
             album_type: Album type (e.g. Album, EP)
             release_group_id: MusicBrainz Release Group ID
+            mb_release_id: MusicBrainz Release ID
+            original_release_date: Original release date
 
         Returns:
             Album object or None if album_title is None
@@ -122,6 +126,10 @@ class LibraryManager:
                 album.release_group_id = release_group_id
             if album_type and not album.album_type:
                 album.album_type = album_type
+            if mb_release_id and not album.mb_release_id:
+                album.mb_release_id = mb_release_id
+            if original_release_date and not album.original_release_date:
+                album.original_release_date = original_release_date
             return album
 
         # Check DB
@@ -141,6 +149,8 @@ class LibraryManager:
                 release_date=release_date,
                 album_type=album_type,
                 release_group_id=release_group_id,
+                mb_release_id=mb_release_id,
+                original_release_date=original_release_date,
             )
             session.add(album)
             session.flush()
@@ -152,20 +162,24 @@ class LibraryManager:
                 album.release_group_id = release_group_id
             if album_type and not album.album_type:
                 album.album_type = album_type
+            if mb_release_id and not album.mb_release_id:
+                album.mb_release_id = mb_release_id
+            if original_release_date and not album.original_release_date:
+                album.original_release_date = original_release_date
 
         # Cache it
         self.album_cache[cache_key] = album.id
         return album
 
     def _find_track_by_identifiers(
-        self, session: Session, identifiers: List[Dict[str, any]]
+        self, session: Session, identifiers: Dict[str, any]
     ) -> Optional[Track]:
         """
         Find track by checking ExternalIdentifiers.
 
         Args:
             session: SQLAlchemy session
-            identifiers: List of identifier dicts from SoulSyncTrack
+            identifiers: Dict of identifiers from SoulSyncTrack (key=source, value=id)
 
         Returns:
             Track object or None
@@ -173,19 +187,20 @@ class LibraryManager:
         if not identifiers:
             return None
 
-        for identifier in identifiers:
-            provider_source = identifier.get("provider_source")
-            provider_item_id = identifier.get("provider_item_id")
-
-            if not provider_source or not provider_item_id:
+        for source, item_id in identifiers.items():
+            if not source or not item_id:
                 continue
+
+            # Ensure item_id is a string
+            if not isinstance(item_id, str):
+                item_id = str(item_id)
 
             stmt = (
                 select(Track)
                 .join(ExternalIdentifier)
                 .where(
-                    ExternalIdentifier.provider_source == provider_source,
-                    ExternalIdentifier.provider_item_id == provider_item_id,
+                    ExternalIdentifier.provider_source == source,
+                    ExternalIdentifier.provider_item_id == item_id,
                 )
             )
             track = session.execute(stmt).scalar_one_or_none()
@@ -311,18 +326,18 @@ class LibraryManager:
             logger.debug(f"Updated existing track: {track.title} by {artist.name}")
 
         # Ensure all identifiers are linked to this track
-        for identifier in track_data.identifiers:
-            provider_source = identifier.get("provider_source")
-            provider_item_id = identifier.get("provider_item_id")
-            raw_data = identifier.get("raw_data")
-
-            if not provider_source or not provider_item_id:
+        for source, item_id in track_data.identifiers.items():
+            if not source or not item_id:
                 continue
+
+            # Ensure item_id is a string
+            if not isinstance(item_id, str):
+                item_id = str(item_id)
 
             # Check if identifier already exists
             stmt = select(ExternalIdentifier).where(
-                ExternalIdentifier.provider_source == provider_source,
-                ExternalIdentifier.provider_item_id == provider_item_id,
+                ExternalIdentifier.provider_source == source,
+                ExternalIdentifier.provider_item_id == item_id,
             )
             ext_id = session.execute(stmt).scalar_one_or_none()
 
@@ -330,17 +345,35 @@ class LibraryManager:
                 # Create new identifier
                 ext_id = ExternalIdentifier(
                     track=track,
-                    provider_source=provider_source,
-                    provider_item_id=provider_item_id,
-                    raw_data=raw_data,
+                    provider_source=source,
+                    provider_item_id=item_id,
+                    raw_data=None, # Raw data not supported in simple dict mapping
                 )
                 session.add(ext_id)
             else:
                 # Link to track if different
                 if ext_id.track_id != track.id:
                     ext_id.track = track
-                if raw_data is not None:
-                    ext_id.raw_data = raw_data
+
+        # Handle Audio Fingerprint
+        if track_data.fingerprint:
+            stmt = select(AudioFingerprint).where(
+                AudioFingerprint.fingerprint_hash == track_data.fingerprint
+            )
+            af = session.execute(stmt).scalar_one_or_none()
+
+            if af is None:
+                af = AudioFingerprint(
+                    track=track,
+                    fingerprint_hash=track_data.fingerprint,
+                    acoustid_id=track_data.acoustid_id
+                )
+                session.add(af)
+            else:
+                if af.track_id != track.id:
+                    af.track = track
+                if track_data.acoustid_id and not af.acoustid_id:
+                    af.acoustid_id = track_data.acoustid_id
 
         return track
 
@@ -413,7 +446,9 @@ class LibraryManager:
                         artist,
                         track_data.release_year,
                         album_type=track_data.album_type,
-                        release_group_id=track_data.album_release_group_id
+                        release_group_id=track_data.album_release_group_id,
+                        mb_release_id=track_data.mb_release_id,
+                        original_release_date=track_data.original_release_date
                     )
 
                     # Upsert track

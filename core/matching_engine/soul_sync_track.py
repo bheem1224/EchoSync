@@ -10,7 +10,7 @@ import re
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, date
 
 
 class DownloadStatus(Enum):
@@ -33,6 +33,17 @@ class QualityTag(Enum):
     OGG_VORBIS = "OGG Vorbis"
     OPUS = "Opus"
 
+
+# STANDARD IDENTIFIER KEYS
+# Providers MUST use these exact keys in the 'identifiers' dict:
+# - 'musicbrainz_recording_id'  (Track ID)
+# - 'musicbrainz_artist_id'     (Artist ID)
+# - 'musicbrainz_release_id'    (Album/Release ID)
+# - 'isrc'                      (International Standard Recording Code)
+# - 'upc'                       (Universal Product Code / Barcode)
+# - 'acoustid_id'               (AcoustID UUID)
+# - 'plex_guid'                 (Plex GUID)
+# - 'spotify_id'                (Spotify ID)
 
 @dataclass
 class SoulSyncTrack:
@@ -76,6 +87,11 @@ class SoulSyncTrack:
     musicbrainz_id: Optional[str] = None
     isrc: Optional[str] = None
     
+    # New Identifiers
+    acoustid_id: Optional[str] = None
+    mb_release_id: Optional[str] = None
+    original_release_date: Optional[date] = None
+
     # Audio fingerprint for matching
     fingerprint: Optional[str] = None
     
@@ -83,14 +99,49 @@ class SoulSyncTrack:
     quality_tags: Optional[List[str]] = None
     
     # External Provider Links
-    identifiers: List[Dict[str, Any]] = field(default_factory=list)
+    identifiers: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         """
         Auto-clean and normalize data upon instantiation.
         """
+        # 0. Handle legacy identifiers (List[Dict]) -> Dict[str, str]
+        if isinstance(self.identifiers, list):
+            new_identifiers = {}
+            for item in self.identifiers:
+                # Assuming old format: {'provider_source': 'plex_guid', 'provider_item_id': '123'}
+                key = item.get('provider_source')
+                val = item.get('provider_item_id') or item.get('id')
+                if key and val:
+                    new_identifiers[key] = str(val)
+            self.identifiers = new_identifiers
+
         # 1. Populate display_title
         self.display_title = self.raw_title
+
+        # 1.5 Handle date parsing for original_release_date
+        if isinstance(self.original_release_date, str):
+            try:
+                # Attempt to parse ISO format string to date object
+                self.original_release_date = date.fromisoformat(self.original_release_date)
+            except ValueError:
+                pass
+
+        # 1.6 Sync top-level fields with identifiers
+
+        # 1. mb_release_id
+        if self.mb_release_id:
+            if isinstance(self.identifiers, dict):
+                self.identifiers['musicbrainz_release_id'] = self.mb_release_id
+        elif isinstance(self.identifiers, dict) and 'musicbrainz_release_id' in self.identifiers:
+            self.mb_release_id = self.identifiers['musicbrainz_release_id']
+
+        # 2. acoustid_id
+        if self.acoustid_id:
+            if isinstance(self.identifiers, dict):
+                self.identifiers['acoustid_id'] = self.acoustid_id
+        elif isinstance(self.identifiers, dict) and 'acoustid_id' in self.identifiers:
+            self.acoustid_id = self.identifiers['acoustid_id']
 
         # 2. Regex Extraction for Edition
         edition_pattern = re.compile(
@@ -160,6 +211,9 @@ class SoulSyncTrack:
             'file_size_bytes': self.file_size_bytes,
             'musicbrainz_id': self.musicbrainz_id,
             'isrc': self.isrc,
+            'acoustid_id': self.acoustid_id,
+            'mb_release_id': self.mb_release_id,
+            'original_release_date': self.original_release_date.isoformat() if self.original_release_date else None,
             'fingerprint': self.fingerprint,
             'quality_tags': self.quality_tags,
             'identifiers': self.identifiers,
@@ -175,8 +229,16 @@ class SoulSyncTrack:
             except ValueError:
                 pass
 
+        # Handle original_release_date extraction (string to date conversion happens in __post_init__ or here)
+        original_release_date = data.get('original_release_date')
+
         # Handle backward compatibility where raw_title might be missing
         raw_title = data.get('raw_title', data.get('display_title', data.get('title', 'Unknown Title')))
+
+        # Handle identifiers: Ensure it's passed.
+        identifiers = data.get('identifiers', {})
+        if isinstance(identifiers, list):
+             identifiers = {}
 
         track = cls(
             raw_title=raw_title,
@@ -201,8 +263,11 @@ class SoulSyncTrack:
             file_size_bytes=data.get('file_size_bytes'),
             musicbrainz_id=data.get('musicbrainz_id'),
             isrc=data.get('isrc'),
+            acoustid_id=data.get('acoustid_id'),
+            mb_release_id=data.get('mb_release_id'),
+            original_release_date=original_release_date,
             fingerprint=data.get('fingerprint'),
             quality_tags=data.get('quality_tags'),
-            identifiers=data.get('identifiers', []),
+            identifiers=identifiers,
         )
         return track

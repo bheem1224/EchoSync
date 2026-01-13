@@ -65,6 +65,8 @@ class Album(Base):
     release_date: Mapped[Optional[date]] = mapped_column(Date)
     cover_image_url: Mapped[Optional[str]] = mapped_column(String)
     release_group_id: Mapped[Optional[str]] = mapped_column(String)
+    mb_release_id: Mapped[Optional[str]] = mapped_column(String)
+    original_release_date: Mapped[Optional[date]] = mapped_column(Date)
     album_type: Mapped[Optional[str]] = mapped_column(String)
 
     artist: Mapped[Artist] = relationship(back_populates="albums")
@@ -162,6 +164,7 @@ class AudioFingerprint(Base):
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
     fingerprint_hash: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    acoustid_id: Mapped[Optional[str]] = mapped_column(String)
 
     track: Mapped[Track] = relationship(back_populates="audio_fingerprints")
 
