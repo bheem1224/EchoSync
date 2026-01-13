@@ -11,7 +11,9 @@ class ProviderRegistry:
     Supports both bundled providers and community plugins with enable/disable functionality.
     """
     _providers: Dict[str, Type[ProviderBase]] = {}
+    _provider_sources: Dict[str, str] = {}  # metadata: provider_name -> source_type
     _disabled_providers: set = set()  # Providers/plugins to skip at startup
+
     @classmethod
     def get_providers_by_type(cls, provider_type: str, exclude_disabled: bool = True) -> List[str]:
         """
@@ -47,11 +49,20 @@ class ProviderRegistry:
         return instances
 
     @classmethod
-    def register(cls, provider_cls: Type[ProviderBase]):
+    def register(cls, provider_cls: Type[ProviderBase], source_type: str = 'core'):
+        """
+        Register a provider class.
+
+        Args:
+            provider_cls: The class implementing ProviderBase.
+            source_type: 'core' for bundled providers, 'community' for plugins.
+        """
         name = getattr(provider_cls, 'name', None)
         if not name:
             raise ValueError("Provider class must have a 'name' attribute")
         cls._providers[name.lower()] = provider_cls
+        cls._provider_sources[name.lower()] = source_type
+        logger.debug(f"Registered provider '{name}' (source: {source_type})")
 
     @classmethod
     def get_provider_class(cls, name: str) -> Optional[Type[ProviderBase]]:
@@ -60,6 +71,10 @@ class ProviderRegistry:
     @classmethod
     def list_providers(cls):
         return list(cls._providers.keys())
+
+    @classmethod
+    def get_provider_source(cls, name: str) -> Optional[str]:
+        return cls._provider_sources.get(name.lower())
 
     @classmethod
     def create_instance(cls, name: str, *args, **kwargs) -> ProviderBase:
@@ -126,18 +141,3 @@ class ProviderRegistry:
         Get list of currently disabled providers.
         """
         return list(cls._disabled_providers)
-
-
-# Register all provider clients for plugin discovery
-from providers.spotify.client import SpotifyClient
-from providers.tidal.client import TidalClient
-from providers.soulseek.client import SoulseekClient
-from providers.plex.client import PlexClient
-from providers.jellyfin.client import JellyfinClient
-from providers.navidrome.client import NavidromeClient
-ProviderRegistry.register(SpotifyClient)
-ProviderRegistry.register(TidalClient)
-ProviderRegistry.register(SoulseekClient)
-ProviderRegistry.register(PlexClient)
-ProviderRegistry.register(JellyfinClient)
-ProviderRegistry.register(NavidromeClient)

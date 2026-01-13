@@ -1,14 +1,7 @@
-from providers.spotify.client import *
+from providers.spotify.client import SpotifyClient
+from providers.spotify.routes import bp
 
-# Export provider-level blueprints (if present)
-try:
-    from providers.spotify.oauth_routes import bp as oauth_bp
-except Exception:
-    oauth_bp = None
+ProviderClass = SpotifyClient
+RouteBlueprint = bp
 
-# Export provider-level blueprints (if present)
-try:
-	from providers.spotify.oauth_routes import bp as oauth_bp
-except Exception:
-	oauth_bp = None
-
+__all__ = ['ProviderClass', 'RouteBlueprint']

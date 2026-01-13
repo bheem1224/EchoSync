@@ -1,9 +1,7 @@
 from providers.plex.client import PlexClient
+from providers.plex.routes import bp
 
-# Export OAuth blueprint
-try:
-    from providers.plex.oauth_routes import oauth_bp
-except ImportError:
-    oauth_bp = None
+ProviderClass = PlexClient
+RouteBlueprint = bp
 
-__all__ = ['PlexClient', 'oauth_bp']
+__all__ = ['ProviderClass', 'RouteBlueprint']

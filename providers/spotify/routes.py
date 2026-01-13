@@ -1,3 +1,5 @@
+"""Spotify provider routes."""
+
 from flask import Blueprint, request, jsonify, redirect
 from sdk.storage_service import get_storage_service
 from utils.logging_config import get_logger
@@ -6,8 +8,8 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import time
 
-logger = get_logger("spotify_oauth")
-bp = Blueprint("spotify_oauth", __name__, url_prefix="/api/spotify")
+logger = get_logger("spotify_routes")
+bp = Blueprint("spotify_routes", __name__, url_prefix="/api/spotify")
 
 
 def _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_uri):
@@ -178,93 +180,3 @@ def oauth_callback():
         logger.error(f"Spotify callback error: {e}", exc_info=True)
         error_html = f"""<html><body style='font-family: Arial, sans-serif;'><h2>Spotify Authentication Failed</h2><p>{str(e)}</p></body></html>"""
         return error_html, 500, {"Content-Type": "text/html"}
-from flask import Blueprint, request, jsonify, redirect
-from sdk.storage_service import get_storage_service
-from utils.logging_config import get_logger
-import spotipy
-from spotipy.oauth2 import SpotifyOAuth
-import time
-
-logger = get_logger("spotify_oauth")
-bp = Blueprint("spotify_oauth", __name__, url_prefix="/api/spotify")
-
-
-@bp.get('/auth')
-def begin_auth():
-    """Start OAuth flow for Spotify. Returns an auth URL to redirect the user to.
-    Query params: account_id (optional)
-    """
-    try:
-        account_id = request.args.get('account_id')
-        storage = get_storage_service()
-        # Read client credentials from storage (service config)
-        client_id = storage.get_service_config('spotify', 'client_id')
-        client_secret = storage.get_service_config('spotify', 'client_secret')
-        redirect_uri = storage.get_service_config('spotify', 'redirect_uri') or None
-        if not client_id or not client_secret or not redirect_uri:
-            return jsonify({'error': 'Spotify client_id, client_secret, or redirect_uri not configured'}), 400
-
-        scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email"
-        # Use account_id as state so callback knows which account to save tokens under
-        state = account_id or ''
-        sp_oauth = SpotifyOAuth(client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri, scope=scope, state=state)
-        auth_url = sp_oauth.get_authorize_url(state=state)
-        return jsonify({'auth_url': auth_url}), 200
-    except Exception as e:
-        logger.error(f"Error creating Spotify auth URL: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@bp.get('/callback')
-def oauth_callback():
-    """Handle Spotify OAuth callback and exchange code for tokens.
-    Expects query params: code, state
-    """
-    try:
-        code = request.args.get('code')
-        state = request.args.get('state')  # account_id
-        storage = get_storage_service()
-        client_id = storage.get_service_config('spotify', 'client_id')
-        client_secret = storage.get_service_config('spotify', 'client_secret')
-        redirect_uri = storage.get_service_config('spotify', 'redirect_uri') or None
-        if not client_id or not client_secret or not redirect_uri:
-            return "Missing Spotify client configuration", 400
-
-        sp_oauth = SpotifyOAuth(client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri)
-        token_info = sp_oauth.get_access_token(code)
-        if not token_info:
-            logger.error('Failed to obtain token from Spotify')
-            return "Authentication failed", 400
-
-        # token_info may be dict with access_token, refresh_token, expires_at, scope
-        access_token = token_info.get('access_token')
-        refresh_token = token_info.get('refresh_token')
-        expires_at = token_info.get('expires_at')
-        scope = token_info.get('scope')
-
-        # If state contains account_id, save tokens for that account; otherwise, create a new account
-        account_id = int(state) if state and state.isdigit() else None
-        if not account_id:
-            # create a new account entry
-            account_id = storage.ensure_account('spotify', account_name=f"spotify_{int(time.time())}")
-
-        # Persist tokens
-        storage.save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at, scope)
-        storage.mark_account_authenticated(account_id)
-
-        # Optionally activate the account by default
-        try:
-            storage.toggle_account_active(account_id, True)
-        except Exception:
-            pass
-
-        # Redirect back to the web UI settings.
-        ui_base = storage.get_service_config('webui', 'base_url')
-        if ui_base:
-            ui_redirect = ui_base.rstrip('/') + '/settings/music-services'
-        else:
-            ui_redirect = 'http://localhost:5173/settings/music-services'
-        return redirect(ui_redirect)
-    except Exception as e:
-        logger.error(f"Error in Spotify OAuth callback: {e}")
-        return f"OAuth callback error: {e}", 500

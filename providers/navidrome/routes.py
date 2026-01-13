@@ -1,12 +1,12 @@
-"""Navidrome server settings API."""
+"""Navidrome provider routes."""
 
 from flask import Blueprint, request, jsonify
 from core.settings import config_manager
 from utils.logging_config import get_logger
 
-logger = get_logger("navidrome_settings")
+logger = get_logger("navidrome_routes")
 
-bp = Blueprint('navidrome_settings', __name__, url_prefix='/api/navidrome')
+bp = Blueprint('navidrome_routes', __name__, url_prefix='/api/navidrome')
 
 
 @bp.get('/settings')

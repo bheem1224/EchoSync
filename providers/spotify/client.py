@@ -333,6 +333,8 @@ class SpotifyClient(ProviderBase):
         return None
 
     def is_configured(self) -> bool:
+        if self.sp is not None:
+             return True
         return bool(getattr(self, 'client_id', None) and getattr(self, 'client_secret', None) and getattr(self, 'redirect_uri', None))
 
     def get_logo_url(self) -> str:

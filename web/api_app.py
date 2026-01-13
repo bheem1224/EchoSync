@@ -18,6 +18,7 @@ except ImportError:
     CORS_AVAILABLE = False
     print("[WARN] flask-cors not installed. Install with: pip install flask-cors")
 
+# Standard core blueprints
 from web.routes.providers import bp as providers_bp
 from web.routes.jobs import bp as jobs_bp
 from web.routes.tracks import bp as tracks_bp
@@ -26,15 +27,11 @@ from web.routes.system import bp as system_bp
 from web.routes.sync import bp as sync_bp
 from web.routes.playlists import bp as playlists_bp
 from web.routes.accounts import bp as accounts_bp
-from web.routes.tidal_accounts import bp as tidal_accounts_bp
-from web.routes.plex_settings import bp as plex_settings_bp
-from web.routes.navidrome_settings import bp as navidrome_settings_bp
-from web.routes.jellyfin_settings import bp as jellyfin_settings_bp
 from web.routes.media_server import bp as media_server_bp
 from web.routes.library import bp as library_bp
-from web.routes.slskd_settings import bp as slskd_settings_bp
-import importlib
-import providers as providers_pkg
+
+from core.plugin_loader import PluginLoader
+from core.settings import config_manager
 
 
 def create_app() -> Flask:
@@ -44,7 +41,7 @@ def create_app() -> Flask:
     if CORS_AVAILABLE:
         CORS(app, origins=['http://localhost:5173', 'https://localhost:5173'])
 
-    # Register API blueprints
+    # Register Core API blueprints
     app.register_blueprint(providers_bp)
     app.register_blueprint(jobs_bp)
     app.register_blueprint(tracks_bp)
@@ -53,154 +50,30 @@ def create_app() -> Flask:
     app.register_blueprint(sync_bp)
     app.register_blueprint(playlists_bp)
     app.register_blueprint(accounts_bp)
-    app.register_blueprint(tidal_accounts_bp)
-    app.register_blueprint(plex_settings_bp)
-    app.register_blueprint(navidrome_settings_bp)
-    app.register_blueprint(jellyfin_settings_bp)
     app.register_blueprint(media_server_bp)
     app.register_blueprint(library_bp)
-    app.register_blueprint(slskd_settings_bp)
     
-    # Dynamically register provider-specific blueprints (e.g., OAuth endpoints)
-    for prov_name in getattr(providers_pkg, '__all__', []):
-        try:
-            mod = importlib.import_module(f'providers.{prov_name}')
-            # If provider package exposes an oauth_bp or oauth_routes.bp, register it
-            bp = getattr(mod, 'oauth_bp', None)
-            if bp:
-                app.register_blueprint(bp)
-        except Exception:
-            # Ignore providers that don't expose additional routes
-            continue
+    # Initialize Plugin Loader
+    # Determine app root (parent of 'web/')
+    app_root = Path(__file__).parent.parent
+    loader = PluginLoader(app_root)
     
-    # Instantiate provider clients so they self-register in plugin_registry
-    _init_provider_clients()
-
-    return app
-
-
-def _init_provider_clients():
-    """Initialize both bundled providers and community plugins."""
+    # Load Disabled List first
     from core.provider_registry import ProviderRegistry
-    from core.settings import config_manager
-    import importlib.util
-    import os
-    from pathlib import Path
-    
-    # Load disabled providers from config
     disabled_providers = config_manager.get_disabled_providers()
     ProviderRegistry.set_disabled_providers(disabled_providers)
     
-    # Load bundled providers
-    from providers.spotify.client import SpotifyClient
-    from providers.plex.client import PlexClient
-    from providers.jellyfin.client import JellyfinClient
-    from providers.navidrome.client import NavidromeClient
-    from providers.soulseek.client import SoulseekClient
-    try:
-        from providers.tidal.client import TidalClient
-        TidalClient()  # Instantiate to trigger self-registration
-    except Exception:
-        pass  # Tidal may not be configured
+    # Scan and Load Providers/Plugins
+    loader.load_all()
     
-    SpotifyClient()
-    PlexClient()
-    JellyfinClient()
-    NavidromeClient()
-    SoulseekClient()
-    
-    # Dynamically load plugins from plugins/ folder
-    _load_plugins_from_directory()
+    # Register Dynamic Blueprints from Providers/Plugins
+    for bp in loader.get_all_blueprints():
+        try:
+            app.register_blueprint(bp)
+        except Exception as e:
+            print(f"[ERROR] Failed to register blueprint {bp.name}: {e}")
 
-
-def _load_plugins_from_directory():
-    """Dynamically scan and load plugins from the plugins/ folder.
-    
-    Plugins are discovered by looking for subdirectories with a client.py file,
-    similar to the providers/ folder structure.
-    
-    Example structure:
-        plugins/
-            my_plugin/
-                __init__.py
-                client.py  (must export a class inheriting from ProviderBase)
-    """
-    from core.provider_registry import ProviderRegistry
-    from utils.logging_config import get_logger
-    import importlib.util
-    import os
-    from pathlib import Path
-    
-    logger = get_logger("plugin_loader")
-    plugins_dir = Path(__file__).parent.parent / "plugins"
-    
-    if not plugins_dir.exists():
-        logger.debug("plugins/ directory not found, skipping plugin discovery")
-        return
-    
-    logger.info(f"Scanning {plugins_dir} for plugins...")
-    
-    try:
-        for item in plugins_dir.iterdir():
-            if not item.is_dir() or item.name.startswith('_'):
-                continue
-            
-            # Look for client.py in the plugin directory
-            client_file = item / "client.py"
-            if not client_file.exists():
-                logger.debug(f"Skipping {item.name}: no client.py found")
-                continue
-            
-            plugin_name = item.name
-            logger.info(f"Loading plugin: {plugin_name}")
-            
-            try:
-                # Dynamically import the plugin's client module
-                spec = importlib.util.spec_from_file_location(
-                    f"plugins.{plugin_name}.client",
-                    client_file
-                )
-                if spec and spec.loader:
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
-                    
-                    # Find and instantiate the provider class
-                    # Convention: look for a class named with plugin_name in CamelCase + "Client"
-                    # or just find the first ProviderBase subclass
-                    from core.provider_base import ProviderBase
-                    
-                    found_client = False
-                    for attr_name in dir(module):
-                        attr = getattr(module, attr_name)
-                        if (isinstance(attr, type) and 
-                            issubclass(attr, ProviderBase) and 
-                            attr is not ProviderBase):
-                            
-                            # Mark as plugin (community-made) vs provider (bundled)
-                            attr.category = 'plugin'
-                            
-                            # Instantiate and register
-                            try:
-                                instance = attr()
-                                logger.info(f"✓ Plugin '{plugin_name}' loaded successfully")
-                                found_client = True
-                                break
-                            except Exception as e:
-                                logger.warning(f"Failed to instantiate {attr_name} from {plugin_name}: {e}")
-                    
-                    if not found_client:
-                        logger.warning(f"No ProviderBase subclass found in {plugin_name}/client.py")
-                else:
-                    logger.error(f"Failed to load module spec for {plugin_name}")
-                    
-            except Exception as e:
-                logger.error(f"Error loading plugin '{plugin_name}': {e}")
-                import traceback
-                logger.debug(traceback.format_exc())
-    except Exception as e:
-        logger.error(f"Error scanning plugins directory: {e}")
-        import traceback
-        logger.debug(traceback.format_exc())
+    return app
 
 
 def generate_ephemeral_cert():

@@ -4,8 +4,8 @@ from utils.logging_config import get_logger
 import asyncio
 import aiohttp
 
-logger = get_logger("slskd_settings")
-bp = Blueprint("slskd_settings", __name__, url_prefix="/api/providers/soulseek")
+logger = get_logger("soulseek_routes")
+bp = Blueprint("soulseek_routes", __name__, url_prefix="/api/providers/soulseek")
 
 
 @bp.route("/settings", methods=["GET"])
@@ -162,8 +162,3 @@ def get_api_key():
     except Exception as e:
         logger.error(f"Failed to fetch API key: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
-
-
-def register_routes(app):
-    """Register slskd settings routes with Flask app."""
-    app.register_blueprint(bp)
