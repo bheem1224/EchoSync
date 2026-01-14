@@ -370,7 +370,7 @@ class PersonalizedPlaylistsService:
         playlist_algorithms support and loads them dynamically.
         """
         try:
-            from core.provider_capabilities import CAPABILITY_REGISTRY
+            from core.provider import CAPABILITY_REGISTRY
             import inspect
             
             for provider_name, capabilities in CAPABILITY_REGISTRY.items():

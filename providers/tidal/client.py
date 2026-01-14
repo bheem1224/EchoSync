@@ -9,10 +9,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Optional, Any
 from utils.logging_config import get_logger
 from core.settings import config_manager
-from core.provider_types import SyncServiceProvider
+from core.provider import SyncServiceProvider, get_provider_capabilities
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
-from core.provider_capabilities import get_provider_capabilities
-from core.provider_capabilities import get_provider_capabilities
 
 logger = get_logger("tidal_client")
 

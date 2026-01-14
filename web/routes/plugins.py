@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify
-from core.provider_registry import ProviderRegistry
+from core.provider import ProviderRegistry
 from utils.logging_config import get_logger
 
 logger = get_logger("plugins_route")

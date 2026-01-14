@@ -7,7 +7,7 @@ import json
 from utils.logging_config import get_logger
 from core.settings import config_manager
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig, HttpError
-from core.provider_capabilities import get_provider_capabilities
+from core.provider import get_provider_capabilities
 
 logger = get_logger("navidrome_client")
 
@@ -137,7 +137,7 @@ class NavidromeTrack:
             return self._client.get_album_by_id(self._album_id)
         return None
 
-from core.provider_types import MediaServerProvider
+from core.provider import MediaServerProvider
 
 class NavidromeClient(MediaServerProvider):
     name = "navidrome"

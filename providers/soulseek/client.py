@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from utils.logging_config import get_logger
 from core.settings import config_manager
-from core.provider_capabilities import get_provider_capabilities
+from core.provider import get_provider_capabilities
 
 logger = get_logger("soulseek_client")
 
@@ -199,7 +199,7 @@ class DownloadStatus:
     speed: int
     time_remaining: Optional[int] = None
 
-from core.provider_types import DownloaderProvider
+from core.provider import DownloaderProvider
 
 class SoulseekClient(DownloaderProvider):
     """Soulseek/slskd client for P2P music search and download"""
