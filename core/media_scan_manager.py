@@ -5,7 +5,7 @@ import time
 import os
 from retrying import retry
 from contextlib import contextmanager
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.job_queue import JobQueue
 
 logger = get_logger("media_scan_manager")

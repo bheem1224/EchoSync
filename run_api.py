@@ -19,7 +19,7 @@ print("SOULSYNC_DATA_DIR env:", os.environ.get("SOULSYNC_DATA_DIR"))
 from core.settings import config_manager
 
 # Setup logging from config.json settings (loaded via config_manager, which now honors .env)
-from utils.logging_config import setup_logging
+from core.tiered_logger import setup_logging
 logging_config = config_manager.get_logging_config()
 setup_logging(level=logging_config.get("level", "INFO"), log_file=logging_config.get("path"))
 

@@ -4,7 +4,7 @@ import threading
 import uuid
 import time
 from flask import Blueprint, request, jsonify
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.settings import config_manager
 
 logger = get_logger("plex_routes")

@@ -8,7 +8,7 @@ except Exception:
 from typing import Dict, List, Optional, Any
 import time
 from dataclasses import dataclass
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.provider_base import ProviderBase
 from core.matching_engine.soul_sync_track import SoulSyncTrack

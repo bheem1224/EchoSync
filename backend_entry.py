@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from core.settings import config_manager
-from utils.logging_config import setup_logging, get_logger
+from core.tiered_logger import setup_logging, get_logger
 from providers.spotify.client import SpotifyClient
 from providers.plex.client import PlexClient
 from providers.jellyfin.client import JellyfinClient

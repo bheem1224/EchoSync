@@ -14,7 +14,7 @@ from database.music_database import get_database, WatchlistArtist
 from providers.spotify.client import SpotifyClient
 from core.wishlist_service import get_wishlist_service
 from core import MatchService, MatchContext, SoulSyncTrack
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("watchlist_scanner")
 

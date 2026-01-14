@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request
 from web.services.sync_service import SyncAdapter
 from core.personalized_playlists import get_personalized_playlists_service
 from database.music_database import MusicDatabase
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import ScoringProfile
 from core.matching_engine.soul_sync_track import SoulSyncTrack

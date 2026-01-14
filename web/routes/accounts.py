@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from sdk.storage_service import get_storage_service
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("accounts_route")
 bp = Blueprint("accounts", __name__, url_prefix="/api/accounts")

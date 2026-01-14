@@ -4,7 +4,7 @@ Inherits from ProviderBase with enable/disable support
 """
 
 from typing import List, Dict, Optional, Any
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.provider_base import ProviderBase
 from core.settings import get_setting, set_setting
 from .client import LRCLibClient

@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from core.settings import config_manager
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("storage_service")
 

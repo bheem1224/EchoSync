@@ -7,7 +7,7 @@ For backward compatibility, this module remains but should not be used in new co
 Direct usage of PlexClient is recommended instead.
 """
 
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("plex_adapter")
 

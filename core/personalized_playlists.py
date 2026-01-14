@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import random
 import json
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("personalized_playlists")
 

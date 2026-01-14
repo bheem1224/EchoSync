@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
 import json
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.settings import config_manager
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig, HttpError
 from core.provider import get_provider_capabilities

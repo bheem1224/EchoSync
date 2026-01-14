@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from web.services.provider_registry import list_providers, get_providers_for_capability, get_provider
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("providers_route")
 bp = Blueprint("providers", __name__, url_prefix="/api/providers")

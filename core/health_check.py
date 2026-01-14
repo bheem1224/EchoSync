@@ -9,7 +9,7 @@ import time
 from typing import Dict, Callable, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("health_check")
 

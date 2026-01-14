@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.provider import ProviderRegistry, get_provider_capabilities
 
 logger = get_logger("sync_route")
