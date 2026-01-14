@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional
 
 from flask import Blueprint
 
-from core.provider_registry import ProviderRegistry
+from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
 from utils.logging_config import get_logger
 

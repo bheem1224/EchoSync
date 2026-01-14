@@ -31,7 +31,7 @@ def analyze_playlists():
         return jsonify({"error": "playlists list required"}), 400
 
     try:
-        from core.provider_registry import ProviderRegistry
+        from core.provider import ProviderRegistry
         from database.music_database import MusicDatabase
         
         # Get source provider instance

@@ -20,9 +20,9 @@ def test_imports():
         ("Providers route", lambda: __import__('web.routes.providers', fromlist=['bp'])),
         ("System route", lambda: __import__('web.routes.system', fromlist=['bp'])),
         ("Jobs route", lambda: __import__('web.routes.jobs', fromlist=['bp'])),
-        ("Config manager", lambda: __import__('config.settings', fromlist=['config_manager'])),
+        ("Config manager", lambda: __import__('core.settings', fromlist=['config_manager'])),
         ("Job queue", lambda: __import__('core.job_queue', fromlist=['job_queue'])),
-        ("Provider registry", lambda: __import__('core.provider_registry', fromlist=['ProviderRegistry'])),
+        ("Provider registry", lambda: __import__('core.provider', fromlist=['ProviderRegistry'])),
     ]
     
     passed = 0
@@ -125,7 +125,7 @@ def test_plugin_registry():
     """Test provider registry system."""
     print("\n=== Testing Provider Registry ===")
     try:
-        from core.provider_registry import ProviderRegistry
+        from core.provider import ProviderRegistry
         
         # Test list all
         providers = ProviderRegistry.list_providers()
