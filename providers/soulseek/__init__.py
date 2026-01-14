@@ -1,9 +1,7 @@
 from providers.soulseek.client import SoulseekClient
+from providers.soulseek.routes import bp
 
-# Register with ProviderRegistry
-from core.provider_registry import ProviderRegistry
-ProviderRegistry.register(SoulseekClient)
+ProviderClass = SoulseekClient
+RouteBlueprint = bp
 
-__all__ = ['SoulseekClient', 'soulseek_bp']
-
-
+__all__ = ['ProviderClass', 'RouteBlueprint']

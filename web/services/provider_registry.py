@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict
-from core.provider_registry import ProviderRegistry as CoreProviderRegistry
-from core.provider_capabilities import get_provider_capabilities as fetch_capabilities
+from core.provider import ProviderRegistry as CoreProviderRegistry
+from core.provider import get_provider_capabilities as fetch_capabilities
 
 # Instance for direct access (for backward compatibility and testing)
 class ProviderRegistry:

@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from web.services.library_service import LibraryAdapter
 from core.settings import config_manager
-from core.provider_registry import ProviderRegistry
+from core.provider import ProviderRegistry
 from utils.logging_config import get_logger
 import threading
 
@@ -177,7 +177,7 @@ def update_database():
         # Get provider instance
         provider = None
         try:
-            from core.provider_registry import ProviderRegistry
+            from core.provider import ProviderRegistry
             provider = ProviderRegistry.create_instance(active_server)
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)

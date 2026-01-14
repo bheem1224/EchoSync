@@ -13,7 +13,7 @@ from core.settings import config_manager
 from core.provider_base import ProviderBase
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
-from core.provider_capabilities import get_provider_capabilities
+from core.provider import get_provider_capabilities, ProviderRegistry
 
 logger = get_logger("spotify_client")
 
@@ -333,6 +333,8 @@ class SpotifyClient(ProviderBase):
         return None
 
     def is_configured(self) -> bool:
+        if self.sp is not None:
+             return True
         return bool(getattr(self, 'client_id', None) and getattr(self, 'client_secret', None) and getattr(self, 'redirect_uri', None))
 
     def get_logo_url(self) -> str:
@@ -341,7 +343,7 @@ class SpotifyClient(ProviderBase):
     def __init__(self, account_id: Optional[int] = None):
         self.sp: Optional[spotipy.Spotify] = None
         self.user_id: Optional[str] = None
-        from core.provider_registry import ProviderRegistry
+        from core.provider import ProviderRegistry
         self.account_id: Optional[int] = account_id
         # Initialize centralized HTTP client for Spotify (5 requests/second rate limit)
         self._http = HttpClient(

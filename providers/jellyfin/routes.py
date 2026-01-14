@@ -1,12 +1,12 @@
-"""Jellyfin server settings API."""
+"""Jellyfin provider routes."""
 
 from flask import Blueprint, request, jsonify
 from core.settings import config_manager
 from utils.logging_config import get_logger
 
-logger = get_logger("jellyfin_settings")
+logger = get_logger("jellyfin_routes")
 
-bp = Blueprint('jellyfin_settings', __name__, url_prefix='/api/jellyfin')
+bp = Blueprint('jellyfin_routes', __name__, url_prefix='/api/jellyfin')
 
 
 @bp.get('/settings')

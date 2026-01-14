@@ -2,8 +2,7 @@
 
 from typing import List, Dict, Optional
 
-from core.provider_registry import ProviderRegistry
-from core.provider_capabilities import get_provider_capabilities
+from core.provider import ProviderRegistry, get_provider_capabilities
 
 
 class SearchAdapter:

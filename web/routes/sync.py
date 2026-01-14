@@ -1,7 +1,6 @@
 from flask import Blueprint, jsonify
 from utils.logging_config import get_logger
-from core.provider_registry import ProviderRegistry
-from core.provider_capabilities import get_provider_capabilities
+from core.provider import ProviderRegistry, get_provider_capabilities
 
 logger = get_logger("sync_route")
 bp = Blueprint("sync", __name__, url_prefix="/api/sync")

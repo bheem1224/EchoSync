@@ -4,8 +4,7 @@ from typing import Dict, List
 import os
 from pathlib import Path
 from core.settings import config_manager
-from core.provider_registry import ProviderRegistry
-from core.provider_capabilities import get_provider_capabilities, MetadataRichness
+from core.provider import ProviderRegistry, get_provider_capabilities, MetadataRichness
 from database.music_database import get_database
 from utils.logging_config import get_logger
 

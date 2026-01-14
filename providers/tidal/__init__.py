@@ -1,8 +1,7 @@
-from providers.tidal.client import *
+from providers.tidal.client import TidalClient
+from providers.tidal.routes import bp
 
-# Import and expose OAuth blueprint for Flask registration
-try:
-    from providers.tidal.oauth_routes import bp as oauth_bp
-except ImportError:
-    oauth_bp = None
+ProviderClass = TidalClient
+RouteBlueprint = bp
 
+__all__ = ['ProviderClass', 'RouteBlueprint']
