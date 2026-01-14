@@ -27,8 +27,7 @@ def list_download_clients():
     Returns providers with supports_downloads=True capability.
     """
     try:
-        from core.provider_registry import ProviderRegistry
-        from core.provider_capabilities import CAPABILITY_REGISTRY
+        from core.provider import ProviderRegistry, CAPABILITY_REGISTRY
         
         download_clients = []
         
@@ -61,7 +60,7 @@ def get_provider_playlists(provider_name):
     """Fetch playlists from a specific provider."""
     try:
         # Get provider via registry
-        from core.provider_registry import ProviderRegistry
+        from core.provider import ProviderRegistry
         
         provider_cls = ProviderRegistry.get_provider_class(provider_name)
         if not provider_cls:
@@ -250,7 +249,7 @@ def _enrich_provider_capabilities(provider_dict, provider_name=None):
     Returns the provider dict with added capability fields.
     """
     try:
-        from core.provider_capabilities import get_provider_capabilities as fetch_capabilities
+        from core.provider import get_provider_capabilities as fetch_capabilities
         name = provider_name or provider_dict.get('name') or provider_dict.get('id')
         
         caps = fetch_capabilities(name)
