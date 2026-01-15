@@ -2,10 +2,11 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
 use chrono::NaiveDate;
+use serde::{Serialize, Deserialize};
 use crate::parser::TrackParser;
 
 #[pyclass]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SoulSyncTrack {
     // Required Fields
     #[pyo3(get, set)]
@@ -86,6 +87,60 @@ pub struct SoulSyncTrack {
     // External Provider Links
     #[pyo3(get, set)]
     pub identifiers: HashMap<String, String>, // Flattened to String: String
+}
+
+impl SoulSyncTrack {
+    pub fn new_rust(raw_title: String, artist_name: String, album_title: String) -> Self {
+         let parsed_metadata = TrackParser::clean_metadata(&raw_title, &artist_name, &album_title);
+
+         let mut track = SoulSyncTrack {
+            raw_title: raw_title.clone(),
+            artist_name: parsed_metadata.artist,
+            album_title: parsed_metadata.album.unwrap_or(album_title),
+            title: parsed_metadata.title,
+            edition: parsed_metadata.edition,
+            sort_title: None,
+            display_title: raw_title,
+            artist_sort_name: None,
+            album_sort_title: None,
+            album_type: None,
+            album_release_group_id: None,
+            duration: None,
+            track_number: None,
+            disc_number: None,
+            bitrate: None,
+            file_path: None,
+            file_format: None,
+            release_year: None,
+            added_at: None,
+            sample_rate: None,
+            bit_depth: None,
+            file_size_bytes: None,
+            musicbrainz_id: None,
+            isrc: None,
+            acoustid_id: None,
+            mb_release_id: None,
+            original_release_date: None,
+            fingerprint: None,
+            quality_tags: Some(parsed_metadata.quality_tags),
+            identifiers: HashMap::new(),
+        };
+
+        // Auto-generate sort title
+        if track.sort_title.is_none() {
+            let lower = track.title.to_lowercase();
+            if lower.starts_with("the ") {
+                 track.sort_title = Some(format!("{}, The", &track.title[4..]));
+            } else if lower.starts_with("a ") {
+                 track.sort_title = Some(format!("{}, A", &track.title[2..]));
+            } else if lower.starts_with("an ") {
+                 track.sort_title = Some(format!("{}, An", &track.title[3..]));
+            } else {
+                 track.sort_title = Some(track.title.clone());
+            }
+        }
+        track
+    }
 }
 
 #[pymethods]
@@ -367,6 +422,140 @@ impl SoulSyncTrack {
         }
         dict.insert("identifiers".to_string(), ids_dict.into());
 
+        Ok(dict)
+    }
+}
+
+#[pyclass]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Artist {
+    #[pyo3(get, set)]
+    pub id: Option<i64>,
+    #[pyo3(get, set)]
+    pub name: String,
+    #[pyo3(get, set)]
+    pub sort_name: Option<String>,
+    #[pyo3(get, set)]
+    pub bio: Option<String>,
+    #[pyo3(get, set)]
+    pub musicbrainz_id: Option<String>,
+    #[pyo3(get, set)]
+    pub album_ids: Vec<i64>,
+}
+
+#[pymethods]
+impl Artist {
+    #[new]
+    #[pyo3(signature = (name, sort_name=None, bio=None, musicbrainz_id=None))]
+    fn new(name: String, sort_name: Option<String>, bio: Option<String>, musicbrainz_id: Option<String>) -> Self {
+        Artist {
+            id: None,
+            name,
+            sort_name,
+            bio,
+            musicbrainz_id,
+            album_ids: Vec::new(),
+        }
+    }
+
+    fn to_dict(&self, py: Python<'_>) -> PyResult<HashMap<String, PyObject>> {
+        let mut dict = HashMap::new();
+        dict.insert("id".to_string(), self.id.into_pyobject(py)?.into_any().unbind());
+        dict.insert("name".to_string(), self.name.clone().into_pyobject(py)?.into_any().unbind());
+        dict.insert("sort_name".to_string(), self.sort_name.clone().into_pyobject(py)?.into_any().unbind());
+        dict.insert("bio".to_string(), self.bio.clone().into_pyobject(py)?.into_any().unbind());
+        dict.insert("musicbrainz_id".to_string(), self.musicbrainz_id.clone().into_pyobject(py)?.into_any().unbind());
+        dict.insert("album_ids".to_string(), self.album_ids.clone().into_pyobject(py)?.into_any().unbind());
+        Ok(dict)
+    }
+}
+
+#[pyclass]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Album {
+    #[pyo3(get, set)]
+    pub id: Option<i64>,
+    #[pyo3(get, set)]
+    pub title: String,
+    #[pyo3(get, set)]
+    pub artist_id: i64,
+    #[pyo3(get, set)]
+    pub release_year: Option<i32>,
+    #[pyo3(get, set)]
+    pub album_type: Option<String>,
+    #[pyo3(get, set)]
+    pub release_group_id: Option<String>,
+    #[pyo3(get, set)]
+    pub track_ids: Vec<i64>,
+}
+
+#[pymethods]
+impl Album {
+    #[new]
+    #[pyo3(signature = (title, artist_id, release_year=None, album_type=None, release_group_id=None))]
+    fn new(
+        title: String,
+        artist_id: i64,
+        release_year: Option<i32>,
+        album_type: Option<String>,
+        release_group_id: Option<String>,
+    ) -> Self {
+        Album {
+            id: None,
+            title,
+            artist_id,
+            release_year,
+            album_type,
+            release_group_id,
+            track_ids: Vec::new(),
+        }
+    }
+
+    fn to_dict(&self, py: Python<'_>) -> PyResult<HashMap<String, PyObject>> {
+        let mut dict = HashMap::new();
+        dict.insert("id".to_string(), self.id.into_pyobject(py)?.into_any().unbind());
+        dict.insert("title".to_string(), self.title.clone().into_pyobject(py)?.into_any().unbind());
+        dict.insert("artist_id".to_string(), self.artist_id.into_pyobject(py)?.into_any().unbind());
+        dict.insert("release_year".to_string(), self.release_year.into_pyobject(py)?.into_any().unbind());
+        dict.insert("album_type".to_string(), self.album_type.clone().into_pyobject(py)?.into_any().unbind());
+        dict.insert("release_group_id".to_string(), self.release_group_id.clone().into_pyobject(py)?.into_any().unbind());
+        dict.insert("track_ids".to_string(), self.track_ids.clone().into_pyobject(py)?.into_any().unbind());
+        Ok(dict)
+    }
+}
+
+#[pyclass]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReleaseGroup {
+    #[pyo3(get, set)]
+    pub id: String, // MBID or internal ID
+    #[pyo3(get, set)]
+    pub title: String,
+    #[pyo3(get, set)]
+    pub first_release_year: Option<i32>,
+    #[pyo3(get, set)]
+    pub album_ids: Vec<i64>, // Different editions
+}
+
+#[pymethods]
+impl ReleaseGroup {
+    #[new]
+    #[pyo3(signature = (id, title, first_release_year=None))]
+    fn new(id: String, title: String, first_release_year: Option<i32>) -> Self {
+        ReleaseGroup {
+            id,
+            title,
+            first_release_year,
+            album_ids: Vec::new(),
+        }
+    }
+
+    fn to_dict(&self, py: Python<'_>) -> PyResult<HashMap<String, PyObject>> {
+         let mut dict = HashMap::new();
+        dict.insert("id".to_string(), self.id.clone().into_pyobject(py)?.into_any().unbind());
+        dict.insert("title".to_string(), self.title.clone().into_pyobject(py)?.into_any().unbind());
+        dict.insert("first_release_year".to_string(), self.first_release_year.into_pyobject(py)?.into_any().unbind());
+        dict.insert("album_ids".to_string(), self.album_ids.clone().into_pyobject(py)?.into_any().unbind());
         Ok(dict)
     }
 }
