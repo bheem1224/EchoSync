@@ -5,6 +5,8 @@ mod library_manager;
 mod config_manager;
 mod health;
 mod worker;
+pub mod errors;
+pub mod provider_trait;
 
 use structs::SoulSyncTrack;
 use library_manager::LibraryManager;
