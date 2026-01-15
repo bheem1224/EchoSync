@@ -5,6 +5,7 @@ mod library_manager;
 mod config_manager;
 mod health;
 mod worker;
+mod parser;
 mod matching;
 mod search_manager;
 pub mod errors;
@@ -41,3 +42,6 @@ fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<WishlistManager>()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod test_parser;

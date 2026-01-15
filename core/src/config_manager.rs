@@ -2,11 +2,12 @@ use aes_gcm::aead::AeadCore;
 use pyo3::prelude::*;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::env;
 use std::sync::{Arc, Mutex};
 use aes_gcm::{
-    aead::{Aead, KeyInit, OsRng},
-    Aes256Gcm, Nonce, AeadCore
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+    Aes256Gcm, Nonce
 };
 use sha2::{Sha256, Digest};
 use base64::prelude::*;
