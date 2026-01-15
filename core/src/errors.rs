@@ -3,10 +3,10 @@ use pyo3::prelude::*;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError, PyConnectionError};
 
-create_exception!(core, SoulSyncError, PyException);
+create_exception!(core, PySoulSyncError, PyException);
 
 #[derive(Error, Debug)]
-pub enum SoulSyncErrorEnum {
+pub enum SoulSyncError {
     #[error("Database error: {0}")]
     DatabaseError(#[from] rusqlite::Error),
 
@@ -32,23 +32,17 @@ pub enum SoulSyncErrorEnum {
     Other(String),
 }
 
-impl From<SoulSyncErrorEnum> for PyErr {
-    fn from(err: SoulSyncErrorEnum) -> PyErr {
+impl From<SoulSyncError> for PyErr {
+    fn from(err: SoulSyncError) -> PyErr {
         match err {
-            // Map DatabaseError to SoulSyncError (or keep RuntimeError if preferred, but user requested custom class)
-            // Ideally, we might want subclasses like SoulSyncDatabaseError, but for now we map to the base custom error
-            // OR we map to standard Python exceptions where they make sense, and SoulSyncError for domain errors.
-            // Let's stick to the previous mapping but maybe wrap generic errors in SoulSyncError?
-            // Actually, the user asked to "ensure SoulSyncError is exposed".
-            // Let's use SoulSyncError for domain-specific things or generic fallbacks.
-            SoulSyncErrorEnum::DatabaseError(e) => PyRuntimeError::new_err(format!("Database Error: {}", e)),
-            SoulSyncErrorEnum::ConfigError(e) => PyValueError::new_err(format!("Config Error: {}", e)),
-            SoulSyncErrorEnum::NetworkError(e) => PyConnectionError::new_err(format!("Network Error: {}", e)),
-            SoulSyncErrorEnum::IoError(e) => PyRuntimeError::new_err(format!("IO Error: {}", e)),
-            SoulSyncErrorEnum::LimitExceeded(e) => SoulSyncError::new_err(format!("Limit Exceeded: {}", e)),
-            SoulSyncErrorEnum::ProviderError(e) => SoulSyncError::new_err(format!("Provider Error: {}", e)),
-            SoulSyncErrorEnum::Other(e) => SoulSyncError::new_err(format!("Unexpected Error: {}", e)),
-            SoulSyncErrorEnum::UnknownClient(e) => SoulSyncError::new_err(format!("Unknown Client: {}", e)),
+            SoulSyncError::DatabaseError(e) => PyRuntimeError::new_err(format!("Database Error: {}", e)),
+            SoulSyncError::ConfigError(e) => PyValueError::new_err(format!("Config Error: {}", e)),
+            SoulSyncError::NetworkError(e) => PyConnectionError::new_err(format!("Network Error: {}", e)),
+            SoulSyncError::IoError(e) => PyRuntimeError::new_err(format!("IO Error: {}", e)),
+            SoulSyncError::LimitExceeded(e) => PySoulSyncError::new_err(format!("Limit Exceeded: {}", e)),
+            SoulSyncError::ProviderError(e) => PySoulSyncError::new_err(format!("Provider Error: {}", e)),
+            SoulSyncError::UnknownClient(e) => PySoulSyncError::new_err(format!("Unknown Client: {}", e)),
+            SoulSyncError::Other(e) => PySoulSyncError::new_err(format!("Unexpected Error: {}", e)),
         }
     }
 }
