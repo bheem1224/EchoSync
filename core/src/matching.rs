@@ -1,38 +1,24 @@
 use pyo3::prelude::*;
 use crate::structs::SoulSyncTrack;
 use std::collections::HashSet;
-use strsim::{jaro_winkler, levenshtein};
+use strsim::jaro_winkler;
 use once_cell::sync::Lazy;
 
 // --- Constants (Weights) ---
-#[allow(dead_code)]
 const TITLE_WEIGHT: f64 = 0.6;
-#[allow(dead_code)]
 const ARTIST_WEIGHT: f64 = 0.3;
-#[allow(dead_code)]
 const ALBUM_WEIGHT: f64 = 0.1;
-#[allow(dead_code)]
 const DURATION_WEIGHT: f64 = 0.5; // Contribution to total score
-#[allow(dead_code)]
 const TEXT_WEIGHT: f64 = 0.5; // Contribution to total score
-#[allow(dead_code)]
 const QUALITY_BONUS: f64 = 0.05; // 5% bonus
-#[allow(dead_code)]
-const FINGERPRINT_WEIGHT: f64 = 1.0;
 
-#[allow(dead_code)]
 const DURATION_TOLERANCE_MS: i64 = 10000; // 10 seconds
-#[allow(dead_code)]
 const FUZZY_MATCH_THRESHOLD: f64 = 0.7;
 
-#[allow(dead_code)]
 const VERSION_MISMATCH_PENALTY: f64 = 0.5; // 50% penalty
-#[allow(dead_code)]
 const EDITION_MISMATCH_PENALTY: f64 = 0.3; // 30% penalty
-#[allow(dead_code)]
 const TEXT_MATCH_FALLBACK: f64 = 0.0;
 
-#[allow(dead_code)]
 static VERSION_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     let mut s = HashSet::new();
     s.insert("remix"); s.insert("rmx"); s.insert("mix"); s.insert("edit");
@@ -59,9 +45,15 @@ pub struct MatchResult {
     pub reasoning: String,
 }
 
-pub struct WeightedMatchingEngine;
+#[pyclass]
+pub struct MatchingEngine;
 
-impl WeightedMatchingEngine {
+impl MatchingEngine {
+    
+    /// Compatibility wrapper for SearchManager
+    pub fn compare(target: &SoulSyncTrack, candidate: &SoulSyncTrack) -> f64 {
+        Self::calculate_match(target, candidate).confidence_score
+    }
 
     pub fn calculate_match(source: &SoulSyncTrack, candidate: &SoulSyncTrack) -> MatchResult {
         let mut score = 0.0;
