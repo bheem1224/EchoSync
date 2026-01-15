@@ -22,7 +22,10 @@ pub enum SoulSyncError {
     #[error("Provider error: {0}")]
     ProviderError(String),
 
-    #[error("Unexpected error: {0}")]
+    #[error("Unknown client: {0}")]
+    UnknownClient(String),
+
+    #[error("Other error: {0}")]
     Other(String),
 }
 
