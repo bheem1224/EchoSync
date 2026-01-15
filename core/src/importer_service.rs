@@ -30,7 +30,7 @@ impl ImporterService {
     /// Starts the file watcher on the given directory.
     /// Uses a background thread to process events and sync with LibraryManager.
     /// Note: This spawns a thread that creates its own Python GIL context when needed.
-    fn start_watcher(&self, py: Python<'_>, path: String, library_manager: Py<LibraryManager>) -> PyResult<()> {
+    fn start_watcher(&self, _py: Python<'_>, path: String, library_manager: Py<LibraryManager>) -> PyResult<()> {
         let (tx, rx): (Sender<Result<Event>>, Receiver<Result<Event>>) = channel();
 
         // Initialize Watcher
@@ -112,7 +112,7 @@ fn handle_event(event: Event, library_manager: &Py<LibraryManager>, pp: &PostPro
                              if let Some(track) = pp.read_tags_rust(s) {
                                  Python::with_gil(|py| {
                                      let manager = library_manager.borrow(py);
-                                     if let Err(e) = manager.upsert_track(&track) {
+                                     if let Err(e) = manager.upsert_track(track) {
                                          error!("Failed to upsert track {}: {}", s, e);
                                      }
                                  });
@@ -129,7 +129,7 @@ fn handle_event(event: Event, library_manager: &Py<LibraryManager>, pp: &PostPro
                      info!("File removed: {}", s);
                      Python::with_gil(|py| {
                          let manager = library_manager.borrow(py);
-                         if let Err(e) = manager.delete_track_by_path(s) {
+                         if let Err(e) = manager.delete_track_by_path(s.to_string()) {
                              error!("Failed to delete track {}: {}", s, e);
                          }
                      });
