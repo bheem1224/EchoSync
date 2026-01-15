@@ -390,4 +390,32 @@ impl LibraryManager {
 
         Ok(final_track_id)
     }
+
+    /// Helper for batch upserts
+    pub fn process_batch(&self, tracks: Vec<SoulSyncTrack>) -> PyResult<usize> {
+        let conn_guard = self.conn.lock().unwrap();
+        let mut conn = conn_guard;
+        let tx = conn.transaction().map_err(|e| {
+             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to start transaction: {}", e))
+        })?;
+
+        let mut count = 0;
+        for track in tracks {
+            // We ignore individual errors to keep processing?
+            // Or fail batch?
+            // Prompt says "maximum speed".
+            // Usually batch implies all-or-nothing or best-effort.
+            // Let's do best-effort catch within transaction, or just bubble up.
+            // If we want "single transaction", failure usually rolls back everything.
+            // Let's fail fast for data integrity.
+            self.upsert_track_inner(&tx, &track)?;
+            count += 1;
+        }
+
+        tx.commit().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to commit transaction: {}", e))
+        })?;
+
+        Ok(count)
+    }
 }
