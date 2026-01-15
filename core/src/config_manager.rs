@@ -7,7 +7,7 @@ use std::sync::Mutex; // Not strictly needed if we don't have interior mutabilit
 // But here, paths and key are set at creation and immutable.
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
-    Aes256Gcm, Nonce
+    Aes256Gcm, Nonce, AeadCore
 };
 use sha2::{Sha256, Digest};
 use base64::prelude::*;
@@ -115,7 +115,7 @@ impl ConfigManager {
              let py_obj = pythonize(py, val).map_err(|e| {
                  PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to pythonize value: {}", e))
              })?;
-             Ok(Some(py_obj))
+             Ok(Some(py_obj.unbind()))
         } else {
             Ok(None)
         }
