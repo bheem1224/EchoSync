@@ -9,4 +9,18 @@ name = "core"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = "0.27.0"
+pyo3 = { version = "0.27.0", features = ["extension-module", "chrono"] }
+pyo3-log = "0.13.2"
+rusqlite = { version = "0.33.0", features = ["bundled", "chrono"] }
+chrono = { version = "0.4.39", features = ["serde"] }
+regex = "1.11.1"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+aes-gcm = "0.10.3"
+base64 = "0.22.1"
+rand = "0.8.5"
+serde_json = "1.0.133"
+reqwest = { version = "0.12.9", features = ["blocking", "json"] }
+tokio = { version = "1.41.1", features = ["full"] }
+sha2 = "0.10.8"
+pythonize = "0.27.0"
