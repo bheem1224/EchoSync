@@ -71,3 +71,4 @@ fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(test)]
 mod test_parser;
+pub mod provider_manager;
