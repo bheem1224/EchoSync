@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use cron::Schedule;
 use std::str::FromStr;
 use chrono::Utc;
@@ -22,6 +22,11 @@ struct Job {
     func: Py<PyAny>,
     tags: Vec<String>,
     next_run: Mutex<Option<chrono::DateTime<Utc>>>,
+    // Retry logic
+    max_retries: u32,
+    backoff_base: f64,
+    backoff_factor: f64,
+    current_retries: Mutex<u32>,
 }
 
 #[pymethods]
@@ -35,7 +40,17 @@ impl Scheduler {
         }
     }
 
-    fn register_job(&self, name: String, cron_expression: String, func: Py<PyAny>, tags: Vec<String>) -> PyResult<()> {
+    #[pyo3(signature = (name, cron_expression, func, tags, max_retries=None, backoff_base=None, backoff_factor=None))]
+    fn register_job(
+        &self,
+        name: String,
+        cron_expression: String,
+        func: Py<PyAny>,
+        tags: Vec<String>,
+        max_retries: Option<u32>,
+        backoff_base: Option<f64>,
+        backoff_factor: Option<f64>,
+    ) -> PyResult<()> {
         let schedule = Schedule::from_str(&cron_expression)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid cron expression: {}", e)))?;
 
@@ -49,6 +64,10 @@ impl Scheduler {
             func,
             tags,
             next_run: Mutex::new(next_run),
+            max_retries: max_retries.unwrap_or(3),
+            backoff_base: backoff_base.unwrap_or(2.0),
+            backoff_factor: backoff_factor.unwrap_or(1.0),
+            current_retries: Mutex::new(0),
         }));
         info!("Registered job: {}", name);
         Ok(())
@@ -99,9 +118,11 @@ impl Scheduler {
                         if next <= now {
                             // Check locks BEFORE updating schedule
                             if self.can_acquire_locks(&job.tags) {
-                                // Update next run
+                                // Update next run to the next CRON time tentatively.
+                                // If the job fails and enters retry, the worker thread will overwrite this.
+                                // We must do this here to prevent double-scheduling if the job is fast.
                                 *next_run_guard = job.schedule.upcoming(Utc).next();
-                                // Release guard before spawning to avoid holding it too long (though spawn is fast)
+                                // Release guard before spawning
                                 drop(next_run_guard);
 
                                 self.spawn_job(job.clone());
@@ -148,7 +169,6 @@ impl Scheduler {
         let running_jobs = self.running_jobs.clone();
         let name = job.name.clone();
         let tags = job.tags.clone();
-        // We don't need to clone func, we use the Arc
 
         // Mark as running
         {
@@ -159,14 +179,44 @@ impl Scheduler {
         thread::spawn(move || {
             info!("Starting job: {}", name);
 
-            Python::with_gil(|py| {
-                if let Err(e) = job.func.call0(py) {
-                    error!("Job {} failed: {}", name, e);
-                    e.print(py);
-                }
+            let result = Python::with_gil(|py| {
+                job.func.call0(py)
             });
 
-            info!("Finished job: {}", name);
+            match result {
+                Ok(_) => {
+                    info!("Finished job: {} (Success)", name);
+                    // Reset retry count on success
+                    let mut retries = job.current_retries.lock().unwrap();
+                    *retries = 0;
+                },
+                Err(e) => {
+                    warn!("Job {} failed: {}", name, e);
+                    Python::with_gil(|py| e.print(py)); // Print trace to stderr
+
+                    let mut retries = job.current_retries.lock().unwrap();
+                    *retries += 1;
+
+                    if *retries <= job.max_retries {
+                        // Calculate backoff
+                        // delay = factor * (base ^ (retries - 1))
+                        let exponent = *retries as i32 - 1;
+                        let delay_secs = job.backoff_factor * job.backoff_base.powi(exponent);
+                        let delay = chrono::Duration::milliseconds((delay_secs * 1000.0) as i64);
+
+                        let next_retry = Utc::now() + delay;
+
+                        warn!("Scheduling retry {}/{} for job {} at {}", *retries, job.max_retries, name, next_retry);
+
+                        let mut next_run = job.next_run.lock().unwrap();
+                        *next_run = Some(next_retry);
+                    } else {
+                        error!("Job {} exhausted all {} retries. Waiting for next scheduled run.", name, job.max_retries);
+                        *retries = 0;
+                        // next_run is already set to the next cron time by the main loop.
+                    }
+                }
+            }
 
             // Remove from running
             let mut r = running_jobs.lock().unwrap();

@@ -25,6 +25,7 @@ use logging::TieredLogger;
 use limiter::RateLimiter;
 use scheduler::Scheduler;
 use wishlist::WishlistManager;
+use errors::SoulSyncError;
 
 #[pymodule]
 fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -40,6 +41,10 @@ fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RateLimiter>()?;
     m.add_class::<Scheduler>()?;
     m.add_class::<WishlistManager>()?;
+
+    // Register the custom exception
+    m.add("SoulSyncError", m.py().get_type::<SoulSyncError>())?;
+
     Ok(())
 }
 
