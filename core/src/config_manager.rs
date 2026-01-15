@@ -42,26 +42,15 @@ impl ConfigManager {
         fs::create_dir_all(&data_dir)?;
         fs::create_dir_all(&log_dir)?;
 
-        // B. Master Key Bootstrap
-        let master_key = match env::var("MASTER_KEY") {
-            Ok(k) if !k.is_empty() => k,
-            _ => {
-                let mut key_bytes = [0u8; 32];
-                OsRng.fill_bytes(&mut key_bytes);
-                let new_key = BASE64_STANDARD.encode(key_bytes);
-
-                // Set in process env
-                // SAFETY: We are in a single-threaded init phase (conceptually) or just accepting the risk for bootstrap.
-                // Rust considers set_var unsafe in multi-threaded programs.
-                unsafe {
-                    env::set_var("MASTER_KEY", &new_key);
-                }
-
-                warn!("⚠️ MASTER_KEY not found! Generated temporary key: {}. Save this to your ENV variables immediately to prevent data loss on restart!", new_key);
-                println!("⚠️ MASTER_KEY not found! Generated temporary key: {}. Save this to your ENV variables immediately to prevent data loss on restart!", new_key);
-
-                new_key
-            }
+        // B. Master Key Bootstrap (Hybrid Fallback)
+        let master_key = if let Ok(k) = env::var("MASTER_KEY") {
+             if !k.is_empty() {
+                 k
+             } else {
+                 bootstrap_key(&config_dir)?
+             }
+        } else {
+             bootstrap_key(&config_dir)?
         };
 
         // Derive 32-byte key
@@ -195,6 +184,36 @@ impl ConfigManager {
             Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>("Secret not found"))
         }
     }
+}
+
+fn bootstrap_key(config_dir: &Path) -> PyResult<String> {
+    let key_file = config_dir.join("master.key");
+
+    // Check file
+    if key_file.exists() {
+        let key = fs::read_to_string(&key_file).map_err(|e| {
+             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to read master.key: {}", e))
+        })?;
+        let trimmed = key.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok(trimmed);
+        }
+    }
+
+    // Generate new
+    let mut key_bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut key_bytes);
+    let new_key = BASE64_STANDARD.encode(key_bytes);
+
+    // Write to file
+    fs::write(&key_file, &new_key).map_err(|e| {
+         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to write master.key: {}", e))
+    })?;
+
+    warn!("⚠️ MASTER_KEY not found! Generated new master.key in {:?}. For higher security, move this value to the MASTER_KEY env var and delete the file.", key_file);
+    println!("⚠️ MASTER_KEY not found! Generated new master.key in {:?}. For higher security, move this value to the MASTER_KEY env var and delete the file.", key_file);
+
+    Ok(new_key)
 }
 
 // Helper for path resolution
