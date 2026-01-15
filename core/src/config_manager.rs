@@ -123,7 +123,8 @@ impl ConfigManager {
 
     fn set_secret(&self, provider_id: String, key: String, value: String) -> PyResult<()> {
         let cipher = Aes256Gcm::new(&self.key.into());
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits
+        // Use AeadCore to generate nonce
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
         let ciphertext = cipher.encrypt(&nonce, value.as_bytes())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Encryption failed: {}", e)))?;
