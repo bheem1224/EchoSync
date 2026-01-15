@@ -1,11 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use regex::Regex;
 use std::collections::HashMap;
 use chrono::NaiveDate;
-use std::sync::OnceLock;
-
-static EDITION_REGEX: OnceLock<Regex> = OnceLock::new();
+use crate::parser::TrackParser;
 
 #[pyclass]
 #[derive(Clone, Debug)]
@@ -145,13 +142,16 @@ impl SoulSyncTrack {
             }
         }
 
+        // Use TrackParser to clean and normalize initial data
+        let parsed_metadata = TrackParser::clean_metadata(&raw_title, &artist_name, &album_title);
+
         // Initialize instance
         let mut track = SoulSyncTrack {
             raw_title: raw_title.clone(),
-            artist_name,
-            album_title,
-            title: String::new(), // Will be set below
-            edition: None,
+            artist_name: parsed_metadata.artist,
+            album_title: parsed_metadata.album.unwrap_or(album_title.to_string()),
+            title: parsed_metadata.title,
+            edition: parsed_metadata.edition,
             sort_title: None,
             display_title: raw_title.clone(),
             artist_sort_name: None,
@@ -175,7 +175,7 @@ impl SoulSyncTrack {
             mb_release_id: None,
             original_release_date: None,
             fingerprint: None,
-            quality_tags: None,
+            quality_tags: Some(parsed_metadata.quality_tags),
             identifiers: final_identifiers,
         };
 
@@ -228,7 +228,10 @@ impl SoulSyncTrack {
                 };
             }
 
+            // Note: If edition is passed in kwargs, it might override extracted edition.
+            // We'll let kwargs override.
             extract_opt!(edition, String);
+
             extract_opt!(sort_title, String);
             extract_opt!(artist_sort_name, String);
             extract_opt!(album_sort_title, String);
@@ -249,7 +252,19 @@ impl SoulSyncTrack {
             extract_opt!(acoustid_id, String);
             extract_opt!(mb_release_id, String);
             extract_opt!(fingerprint, String);
-            extract_opt!(quality_tags, Vec<String>);
+
+            // Append quality tags if provided in kwargs
+            if let Some(val) = kw.get_item("quality_tags")? {
+                 if !val.is_none() {
+                     if let Ok(mut v) = val.extract::<Vec<String>>() {
+                         if let Some(ref mut existing) = track.quality_tags {
+                             existing.append(&mut v);
+                         } else {
+                             track.quality_tags = Some(v);
+                         }
+                     }
+                 }
+            }
 
             extract_date_opt!(original_release_date);
             extract_datetime_opt!(added_at);
@@ -270,49 +285,7 @@ impl SoulSyncTrack {
             track.acoustid_id = Some(aid.clone());
         }
 
-        // 2. Regex Extraction for Edition
-        let regex = EDITION_REGEX.get_or_init(|| {
-            Regex::new(r"(?i)(?:[\(\[]| - )\s*(.*?(?:Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original).*?)(?:[\)\]]|$)").unwrap()
-        });
-
-        let mut clean_title = track.raw_title.clone();
-
-        // Find the *first* match.
-        // Note: Python `search` finds the first location.
-        if let Some(caps) = regex.captures(&track.raw_title) {
-            if let Some(match_1) = caps.get(1) {
-                 let extracted_edition = match_1.as_str().trim().to_string();
-                 if track.edition.is_none() {
-                     track.edition = Some(extracted_edition);
-                 }
-            }
-
-            if let Some(whole_match) = caps.get(0) {
-                 let start = whole_match.start();
-                 let end = whole_match.end();
-                 // Remove the match from title
-                 // Rust strings are UTF-8, need to be careful with indices, but regex indices are byte offsets, which String supports
-                 let mut s = clean_title.clone();
-                 s.replace_range(start..end, "");
-                 clean_title = s.trim().to_string();
-            }
-        }
-
-        // 3. Balanced Quote Stripping
-        clean_title = clean_title.trim().to_string();
-        if clean_title.len() >= 2 {
-            let bytes = clean_title.as_bytes();
-            let first = bytes[0];
-            let last = bytes[bytes.len() - 1];
-
-            if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
-                clean_title = clean_title[1..clean_title.len()-1].to_string();
-            }
-        }
-
-        track.title = clean_title;
-
-        // 4. Sort Title Generation
+        // 4. Sort Title Generation (if not provided)
         if track.sort_title.is_none() {
             let lower = track.title.to_lowercase();
             if lower.starts_with("the ") {
@@ -333,22 +306,8 @@ impl SoulSyncTrack {
     fn to_dict(&self, py: Python<'_>) -> PyResult<HashMap<String, PyObject>> {
         let mut dict = HashMap::new();
 
-        // In PyO3 0.27, IntoPy is gone or deprecated for IntoPyObject or similar.
-        // We use `IntoPyObject` which returns Result.
-        // Or simply `to_object(py)` if we import `ToPyObject`? But that failed.
-        // Let's use `IntoPyObject::into_py_object`?
-        // Actually, `Py<PyAny>` is `PyObject`.
-        // Let's use `IntoPy::into_py` if it existed, but it seems removed in 0.27 preview?
-        // Wait, 0.27 might be very new.
-        // Let's use `val.into_py_any(py)`?
-        // Let's try `val.into_pyobject(py)` and convert back to `PyObject` (Py<PyAny>).
-
-        // Fallback: Using `IntoPyObject` trait.
-
         macro_rules! insert {
             ($key:expr, $val:expr) => {
-                 // .into_py_object(py) returns Result<Bound<'py, PyAny>>
-                 // .unbind() converts Bound to Py<PyAny> (PyObject)
                 if let Ok(obj) = $val.clone().into_pyobject(py) {
                      dict.insert($key.to_string(), obj.into_any().unbind());
                 }

@@ -3,10 +3,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::env;
-use std::sync::Mutex; // Not strictly needed if we don't have interior mutability that requires sync across threads for these fields, but generic PyClass usually implies strict thread safety. Actually, PyClass struct fields are immutable by default unless Mutex used.
-// But here, paths and key are set at creation and immutable.
+use std::sync::Mutex;
 use aes_gcm::{
-    aead::{Aead, KeyInit, OsRng},
+    aead::{Aead, KeyInit, OsRng, AeadCore},
     Aes256Gcm, Nonce
 };
 use sha2::{Sha256, Digest};
@@ -115,7 +114,7 @@ impl ConfigManager {
              let py_obj = pythonize(py, val).map_err(|e| {
                  PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to pythonize value: {}", e))
              })?;
-             Ok(Some(py_obj))
+             Ok(Some(py_obj.into()))
         } else {
             Ok(None)
         }
