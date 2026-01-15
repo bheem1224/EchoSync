@@ -5,12 +5,18 @@ mod library_manager;
 mod config_manager;
 mod health;
 mod worker;
+mod logging;
+mod limiter;
+mod scheduler;
 
 use structs::SoulSyncTrack;
 use library_manager::LibraryManager;
 use config_manager::ConfigManager;
 use health::HealthMonitor;
 use worker::BackgroundWorker;
+use logging::TieredLogger;
+use limiter::RateLimiter;
+use scheduler::Scheduler;
 
 #[pymodule]
 fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -21,5 +27,8 @@ fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ConfigManager>()?;
     m.add_class::<HealthMonitor>()?;
     m.add_class::<BackgroundWorker>()?;
+    m.add_class::<TieredLogger>()?;
+    m.add_class::<RateLimiter>()?;
+    m.add_class::<Scheduler>()?;
     Ok(())
 }
