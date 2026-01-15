@@ -75,7 +75,7 @@ impl LibraryManager {
         *running = false;
     }
 
-    fn upsert_track(&self, track: &SoulSyncTrack) -> PyResult<i64> {
+    pub fn upsert_track(&self, track: &SoulSyncTrack) -> PyResult<i64> {
         let conn_guard = self.conn.lock().unwrap();
         let mut conn = conn_guard;
         let tx = conn.transaction().map_err(|e| {
@@ -298,7 +298,7 @@ impl LibraryManager {
         Ok(track_id)
     }
 
-    fn upsert_track_inner(&self, tx: &Transaction, track: &SoulSyncTrack) -> PyResult<i64> {
+    pub fn upsert_track_inner(&self, tx: &Transaction, track: &SoulSyncTrack) -> PyResult<i64> {
         // 1. Get Dependencies
         let artist_id = self.get_or_create_artist(tx, &track.artist_name, track.artist_sort_name.as_deref())?;
 
@@ -460,5 +460,21 @@ impl LibraryManager {
         })?;
 
         Ok(count)
+    }
+
+    pub fn get_all_paths(&self) -> PyResult<HashSet<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT file_path FROM tracks WHERE file_path IS NOT NULL").unwrap();
+        let paths: HashSet<String> = stmt.query_map([], |row| row.get(0)).unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        Ok(paths)
+    }
+
+    pub fn delete_track_by_path(&self, path: &str) -> PyResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM tracks WHERE file_path = ?1", params![path])
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to delete track: {}", e)))?;
+        Ok(())
     }
 }
