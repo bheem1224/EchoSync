@@ -1,16 +1,23 @@
-use pyo3::prelude::*;
 use thiserror::Error;
+use pyo3::prelude::*;
+use pyo3::exceptions::{PyRuntimeError, PyValueError, PyConnectionError};
 
 #[derive(Error, Debug)]
 pub enum SoulSyncError {
     #[error("Database error: {0}")]
-    DatabaseError(String),
+    DatabaseError(#[from] rusqlite::Error),
+
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 
     #[error("Network error: {0}")]
-    NetworkError(String),
+    NetworkError(#[from] reqwest::Error),
 
-    #[error("Download error: {0}")]
-    DownloadError(String),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Limit exceeded: {0}")]
+    LimitExceeded(String),
 
     #[error("Provider error: {0}")]
     ProviderError(String),
@@ -22,13 +29,16 @@ pub enum SoulSyncError {
     Other(String),
 }
 
-// Implement From<SoulSyncError> for PyErr
 impl From<SoulSyncError> for PyErr {
     fn from(err: SoulSyncError) -> PyErr {
         match err {
-            SoulSyncError::DatabaseError(msg) => pyo3::exceptions::PyIOError::new_err(msg),
-            SoulSyncError::NetworkError(msg) => pyo3::exceptions::PyConnectionError::new_err(msg),
-            _ => pyo3::exceptions::PyRuntimeError::new_err(err.to_string()),
+            SoulSyncError::DatabaseError(e) => PyRuntimeError::new_err(format!("Database Error: {}", e)),
+            SoulSyncError::ConfigError(e) => PyValueError::new_err(format!("Config Error: {}", e)),
+            SoulSyncError::NetworkError(e) => PyConnectionError::new_err(format!("Network Error: {}", e)),
+            SoulSyncError::IoError(e) => PyRuntimeError::new_err(format!("IO Error: {}", e)),
+            SoulSyncError::LimitExceeded(e) => PyRuntimeError::new_err(format!("Limit Exceeded: {}", e)),
+            SoulSyncError::ProviderError(e) => PyRuntimeError::new_err(format!("Provider Error: {}", e)),
+            SoulSyncError::Other(e) => PyRuntimeError::new_err(format!("Unexpected Error: {}", e)),
         }
     }
 }

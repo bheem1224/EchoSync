@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
-    Aes256Gcm, Nonce // Or Aes128Gcm
+    Aes256Gcm, Nonce, AeadCore
 };
 use sha2::{Sha256, Digest};
 use base64::prelude::*;
@@ -80,11 +80,10 @@ impl ConfigManager {
         // Assuming top level or simple key.
         // Let's support simple top-level for now.
         if let Some(val) = v.get(&key) {
-             if let Some(s) = val.as_str() {
-                 Ok(Some(s.to_string()))
-             } else {
-                 Ok(Some(val.to_string()))
-             }
+             let py_obj = pythonize(py, val).map_err(|e| {
+                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to pythonize value: {}", e))
+             })?;
+             Ok(Some(py_obj.unbind()))
         } else {
             Ok(None)
         }
@@ -92,7 +91,8 @@ impl ConfigManager {
 
     fn set_secret(&self, provider_id: String, key: String, value: String) -> PyResult<()> {
         let cipher = Aes256Gcm::new(&self.key.into());
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; unique per message
+        // Use AeadCore to generate nonce
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
         let ciphertext = cipher.encrypt(&nonce, value.as_bytes())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Encryption failed: {}", e)))?;
