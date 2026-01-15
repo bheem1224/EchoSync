@@ -1,7 +1,10 @@
 use pyo3::prelude::*;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use std::thread;
+use std::path::PathBuf;
 use log::{debug, info, warn, error};
 use crate::structs::SoulSyncTrack;
 use crate::config_manager;
@@ -9,20 +12,13 @@ use chrono::NaiveDate;
 
 #[pyclass]
 pub struct LibraryManager {
-    // We use Arc<Mutex<>> because PyO3 classes must be Send + Sync, and rusqlite::Connection is not Sync.
-    // However, for single-threaded usage or if we open connection per operation, we might adjust.
-    // But since this is a LibraryManager, keeping one connection seems appropriate if we lock it.
-    // Better yet: Store the path and open connection on demand or use a pool.
-    // Given the prompt implies simple usage, let's store the path and manage connections internally
-    // or keep a mutex guarded connection.
-    // A Mutex<Connection> is standard for simple sharing.
     conn: Arc<Mutex<Connection>>,
-
-    // Caches
-    // Normalized Name -> Artist ID
     artist_cache: Arc<Mutex<HashMap<String, i64>>>,
-    // (Normalized Title, Artist ID) -> Album ID
     album_cache: Arc<Mutex<HashMap<(String, i64), i64>>>,
+
+    // Debouncing Logic
+    pending_scans: Arc<Mutex<HashMap<String, (Instant, Py<PyAny>)>>>,
+    scan_running: Arc<Mutex<bool>>,
 }
 
 #[pymethods]
@@ -45,22 +41,42 @@ impl LibraryManager {
              PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to enable FK: {}", e))
         })?;
 
-        Ok(LibraryManager {
+        let manager = LibraryManager {
             conn: Arc::new(Mutex::new(conn)),
             artist_cache: Arc::new(Mutex::new(HashMap::new())),
             album_cache: Arc::new(Mutex::new(HashMap::new())),
-        })
+            pending_scans: Arc::new(Mutex::new(HashMap::new())),
+            scan_running: Arc::new(Mutex::new(true)),
+        };
+
+        // Start background scanner thread
+        manager.start_scan_monitor();
+
+        Ok(manager)
+    }
+
+    /// Schedules a debounced scan for the given path.
+    /// If a scan is already pending for this path, the timer is reset.
+    fn debounced_scan(&self, path: String, callback: Py<PyAny>) {
+        let mut pending = self.pending_scans.lock().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+
+        if pending.contains_key(&path) {
+            debug!("Rescheduling scan for path: {}", path);
+        } else {
+            debug!("Scheduling new scan for path: {}", path);
+        }
+
+        pending.insert(path, (deadline, callback));
+    }
+
+    fn stop(&self) {
+        let mut running = self.scan_running.lock().unwrap();
+        *running = false;
     }
 
     fn upsert_track(&self, track: &SoulSyncTrack) -> PyResult<i64> {
         let conn_guard = self.conn.lock().unwrap();
-        // Rusqlite connection is mutable.
-        // We need to drop the guard if we want to run long operations? No, sqlite is blocking.
-        // But we need a mutable reference to conn to start transaction.
-        // MutexGuard implements DerefMut.
-        // However, we want to allow other threads to read? SQLite is single-writer.
-        // Let's just lock for the duration of the upsert.
-
         let mut conn = conn_guard;
         let tx = conn.transaction().map_err(|e| {
              PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to start transaction: {}", e))
@@ -76,7 +92,6 @@ impl LibraryManager {
                 Ok(track_id)
             }
             Err(e) => {
-                // Rollback happens automatically when tx is dropped without commit
                 Err(e)
             }
         }
@@ -84,6 +99,61 @@ impl LibraryManager {
 }
 
 impl LibraryManager {
+    fn start_scan_monitor(&self) {
+        let pending = self.pending_scans.clone();
+        let running = self.scan_running.clone();
+
+        thread::spawn(move || {
+            loop {
+                // Check if we should stop
+                {
+                    let r = running.lock().unwrap();
+                    if !*r {
+                        break;
+                    }
+                }
+
+                thread::sleep(Duration::from_millis(500));
+
+                let now = Instant::now();
+                let mut tasks_to_run = Vec::new();
+
+                // Check for expired timers
+                {
+                    let mut map = pending.lock().unwrap();
+                    let keys: Vec<String> = map.keys().cloned().collect();
+
+                    for key in keys {
+                        // Check if expired
+                        let should_run = if let Some((deadline, _)) = map.get(&key) {
+                            now >= *deadline
+                        } else {
+                            false
+                        };
+
+                        if should_run {
+                            // Remove and take ownership of callback
+                            if let Some((_, callback)) = map.remove(&key) {
+                                tasks_to_run.push((key, callback));
+                            }
+                        }
+                    }
+                }
+
+                // Execute tasks
+                for (path, callback) in tasks_to_run {
+                    info!("Executing scan for path: {}", path);
+                    Python::with_gil(|py| {
+                        if let Err(e) = callback.call1(py, (path.clone(),)) {
+                            error!("Scan callback failed for path {}: {}", path, e);
+                            e.print(py);
+                        }
+                    });
+                }
+            }
+        });
+    }
+
     fn normalize(&self, s: &str) -> String {
         s.trim().to_lowercase()
     }
@@ -144,20 +214,6 @@ impl LibraryManager {
         {
             let cache = self.album_cache.lock().unwrap();
             if let Some(id) = cache.get(&cache_key) {
-                 // Note: Legacy updates metadata even if cached. We should verify if that's strictly needed for every upsert.
-                 // The prompt says "replicate logic". Legacy code updates metadata if it's missing.
-                 // Doing that here would require refetching or assuming cache is incomplete.
-                 // For now, let's assume if it's in cache, we trust it, or we do a quick update.
-                 // To stick to "exact logic", we should update if fields are missing.
-                 // But for simplicity/speed in Rust, let's fetch from DB if we need to check fields.
-                 // Actually, legacy *fetches* from DB if in cache to return the object.
-                 // Here we work with IDs. Let's just update the DB blindly for the metadata if it's sparse?
-                 // No, that's wasteful.
-                 // Let's rely on the DB check for now, or just return the ID.
-                 // The legacy code explicitly checks "if release_group_id and not album.release_group_id".
-                 // We will skip that optimization for the cache hit path to keep this clean,
-                 // OR we can implement an update query that only updates if NULL.
-
                  let sql = "UPDATE albums SET
                     release_group_id = COALESCE(release_group_id, ?1),
                     album_type = COALESCE(album_type, ?2),
@@ -166,11 +222,11 @@ impl LibraryManager {
                     release_date = COALESCE(release_date, ?5)
                     WHERE id = ?6";
 
-                 let release_date = release_year.map(|y| NaiveDate::from_ymd_opt(y, 1, 1).unwrap()); // Simplify date creation
+                 let release_date = release_year.map(|y| NaiveDate::from_ymd_opt(y, 1, 1).unwrap());
 
                  tx.execute(sql, params![
                      release_group_id, album_type, mb_release_id, original_release_date, release_date, id
-                 ]).unwrap(); // Ignore error
+                 ]).unwrap();
 
                 return Ok(*id);
             }
@@ -266,12 +322,6 @@ impl LibraryManager {
         // 3. Insert or Update
         let final_track_id = if let Some(tid) = track_id {
             // UPDATE
-            // Sparse update logic: only update fields if they are not None in `track`
-            // COALESCE(?, col) doesn't work directly because we pass the value.
-            // We construct the query dynamically or use many COALESCEs
-            // In Rust rusqlite, we can just use COALESCE(?1, col) if we pass NULL for None.
-            // rusqlite's ToSql matches Option<T> to NULL if None.
-
             let sql = "UPDATE tracks SET
                 title = ?1,
                 artist_id = ?2,
@@ -401,13 +451,6 @@ impl LibraryManager {
 
         let mut count = 0;
         for track in tracks {
-            // We ignore individual errors to keep processing?
-            // Or fail batch?
-            // Prompt says "maximum speed".
-            // Usually batch implies all-or-nothing or best-effort.
-            // Let's do best-effort catch within transaction, or just bubble up.
-            // If we want "single transaction", failure usually rolls back everything.
-            // Let's fail fast for data integrity.
             self.upsert_track_inner(&tx, &track)?;
             count += 1;
         }

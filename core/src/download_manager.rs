@@ -58,7 +58,7 @@ pub trait DownloadClient: Send + Sync {
 struct DownloadContext {
     track: SoulSyncTrack,
     client_name: String,
-    external_id: String,
+    external_id: String, // Kept but field on DownloadItem uses it
 }
 
 #[pyclass]
@@ -136,7 +136,7 @@ impl DownloadManager {
     /// The orchestration tick. Should be called periodically.
     /// Returns a list of newly completed DownloadItems.
     fn tick(&self) -> PyResult<Vec<DownloadItem>> {
-        let mut completed_items = Vec::new();
+        let mut completed_items: Vec<DownloadItem> = Vec::new();
 
         // We need to lock both maps.
         // To avoid deadlocks, locking order doesn't matter much here as we only hold them briefly,
@@ -151,7 +151,11 @@ impl DownloadManager {
         for ext_id in keys {
             if let Some(ctx) = downloads_guard.get_mut(&ext_id) {
                 if let Some(client) = clients_guard.get(&ctx.client_name) {
-                    match client.get_status(&ext_id) {
+
+                    // Explicitly typed result for clarity/inference
+                    let result: Result<DownloadStatus, SoulSyncError> = client.get_status(&ext_id);
+
+                    match result {
                         Ok(status) => {
                             if status.state == "Completed" {
                                 // Download finished!
@@ -218,7 +222,7 @@ impl DownloadManager {
         let mut result = Vec::new();
         for (ext_id, ctx) in downloads_guard.iter() {
 
-             let status = if let Some(client) = clients_guard.get(&ctx.client_name) {
+             let status: DownloadStatus = if let Some(client) = clients_guard.get(&ctx.client_name) {
                  client.get_status(ext_id).unwrap_or(DownloadStatus::new("Failed".to_string(), 0.0, Some("Check failed".to_string())))
              } else {
                  DownloadStatus::new("Failed".to_string(), 0.0, Some("Client missing".to_string()))

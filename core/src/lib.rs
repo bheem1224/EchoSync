@@ -14,6 +14,7 @@ mod logging;
 mod limiter;
 mod scheduler;
 mod wishlist;
+mod download_manager;
 
 use structs::SoulSyncTrack;
 use library_manager::LibraryManager;
@@ -25,6 +26,9 @@ use logging::TieredLogger;
 use limiter::RateLimiter;
 use scheduler::Scheduler;
 use wishlist::WishlistManager;
+use errors::PySoulSyncError;
+use parser::TrackParser;
+use download_manager::{DownloadManager, DownloadStatus, DownloadItem};
 
 #[pymodule]
 fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -40,6 +44,14 @@ fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RateLimiter>()?;
     m.add_class::<Scheduler>()?;
     m.add_class::<WishlistManager>()?;
+    m.add_class::<TrackParser>()?;
+    m.add_class::<DownloadManager>()?;
+    m.add_class::<DownloadStatus>()?;
+    m.add_class::<DownloadItem>()?;
+
+    // Register the custom exception as "SoulSyncError"
+    m.add("SoulSyncError", m.py().get_type::<PySoulSyncError>())?;
+
     Ok(())
 }
 

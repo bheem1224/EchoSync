@@ -6,25 +6,19 @@ use std::path::{Path, PathBuf};
 use std::env;
 use std::sync::{Arc, Mutex};
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
+    aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce
 };
 use sha2::{Sha256, Digest};
 use base64::prelude::*;
 use serde_json::Value;
+use pythonize::pythonize;
 
 #[pyclass]
 pub struct ConfigManager {
     config_path: PathBuf,
     db_path: PathBuf,
     key: [u8; 32],
-    // We keep a connection for secrets? Or open on demand?
-    // SQLite is light, opening on demand is fine, but keeping it is better for performance if frequent.
-    // However, for secrets, frequency is low.
-    // Let's keep it simple and open on demand or reuse if we want.
-    // Given the prompt "Secure Storage", let's use a mutex-protected connection or just path.
-    // Prompt says "State: It must hold the config.json path and the config.db path."
-    // It doesn't strictly say it holds a connection.
 }
 
 #[pymethods]
@@ -67,7 +61,7 @@ impl ConfigManager {
         })
     }
 
-    fn get_setting(&self, key: String) -> PyResult<Option<String>> {
+    fn get_setting(&self, py: Python, key: String) -> PyResult<Option<PyObject>> {
         if !self.config_path.exists() {
             return Ok(None);
         }
@@ -77,9 +71,6 @@ impl ConfigManager {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to parse JSON: {}", e))
         })?;
 
-        // Support dot notation? Prompt says "get_setting(key: String)".
-        // Assuming top level or simple key.
-        // Let's support simple top-level for now.
         if let Some(val) = v.get(&key) {
              let py_obj = pythonize(py, val).map_err(|e| {
                  PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to pythonize value: {}", e))

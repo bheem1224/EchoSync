@@ -1,6 +1,9 @@
 use thiserror::Error;
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyRuntimeError, PyValueError, PyConnectionError};
+use pyo3::create_exception;
+use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError, PyConnectionError};
+
+create_exception!(core, PySoulSyncError, PyException);
 
 #[derive(Error, Debug)]
 pub enum SoulSyncError {
@@ -36,9 +39,10 @@ impl From<SoulSyncError> for PyErr {
             SoulSyncError::ConfigError(e) => PyValueError::new_err(format!("Config Error: {}", e)),
             SoulSyncError::NetworkError(e) => PyConnectionError::new_err(format!("Network Error: {}", e)),
             SoulSyncError::IoError(e) => PyRuntimeError::new_err(format!("IO Error: {}", e)),
-            SoulSyncError::LimitExceeded(e) => PyRuntimeError::new_err(format!("Limit Exceeded: {}", e)),
-            SoulSyncError::ProviderError(e) => PyRuntimeError::new_err(format!("Provider Error: {}", e)),
-            SoulSyncError::Other(e) => PyRuntimeError::new_err(format!("Unexpected Error: {}", e)),
+            SoulSyncError::LimitExceeded(e) => PySoulSyncError::new_err(format!("Limit Exceeded: {}", e)),
+            SoulSyncError::ProviderError(e) => PySoulSyncError::new_err(format!("Provider Error: {}", e)),
+            SoulSyncError::UnknownClient(e) => PySoulSyncError::new_err(format!("Unknown Client: {}", e)),
+            SoulSyncError::Other(e) => PySoulSyncError::new_err(format!("Unexpected Error: {}", e)),
         }
     }
 }

@@ -1,11 +1,11 @@
 use regex::Regex;
 use once_cell::sync::Lazy;
 use std::collections::HashSet;
+use pyo3::prelude::*;
 
 // --- Regex Constants ---
 
 // Artist - Title format (most common)
-// Added anchor `$` to ensure we match the end or version group at the end
 static PATTERN_ARTIST_TITLE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^(?P<artist>[^-]+?)\s*[-–]\s*(?P<title>.+?)(?:\s*\((?P<version>[^)]+)\))?$").unwrap()
 });
@@ -26,7 +26,7 @@ static PATTERN_VERSION: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(?:remix|rmx|mix|version|ver\.?|edit|extended|instrumental|acapella|bootleg|cover|remaster|remastered|original|club|radio|house|deep|progressive)\b").unwrap()
 });
 
-// Edition extraction (from original struct)
+// Edition extraction
 static EDITION_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)(?:[\(\[]| - )\s*(.*?(?:Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original).*?)(?:[\)\]]|$)").unwrap()
 });
@@ -44,7 +44,6 @@ static PATTERN_QUALITY_OPUS: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bOpus\
 static PATTERN_QUALITY_WMA: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bWMA\b").unwrap());
 
 // Junk Patterns
-// Added matching for empty brackets/parens which might result from other cleanups
 static PATTERN_JUNK: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(?:www\d+|320|192|256|FLAC|MP3|AAC|OGG|WAV|m4a|flac|mp3|aac|ogg|wav)[\.\s]*$|^\[.*?\]|\{.*?\}|<.*?>|_+|~.*?~|\[\s*\]|\(\s*\)").unwrap()
 });
@@ -57,33 +56,44 @@ static PATTERN_YEAR: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\((?P<year>19\d{2}|20\d{2})\)|\[(?P<year_bracket>19\d{2}|20\d{2})\]").unwrap()
 });
 
-// Parenthetical content
 #[allow(dead_code)]
 static PATTERN_PARENTHETICAL: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\s*\(([^)]+)\)\s*").unwrap()
 });
 
 
+#[pyclass]
 #[derive(Debug, Clone, Default)]
 pub struct ParsedMetadata {
+    #[pyo3(get)]
     pub title: String,
+    #[pyo3(get)]
     pub artist: String,
+    #[pyo3(get)]
     pub album: Option<String>,
+    #[pyo3(get)]
     pub edition: Option<String>,
+    #[pyo3(get)]
     pub quality_tags: Vec<String>,
     #[allow(dead_code)]
+    #[pyo3(get)]
     pub track_number: Option<i32>,
     #[allow(dead_code)]
+    #[pyo3(get)]
     pub disc_number: Option<i32>,
     #[allow(dead_code)]
+    #[pyo3(get)]
     pub release_year: Option<i32>,
 }
 
+#[pyclass]
 pub struct TrackParser;
 
+#[pymethods]
 impl TrackParser {
 
     /// Main entry point for cleaning metadata for SoulSyncTrack::new
+    #[staticmethod]
     pub fn clean_metadata(
         raw_title: &str,
         artist_name: &str,
@@ -130,6 +140,7 @@ impl TrackParser {
     }
 
     /// Parse a raw filename string (e.g. "Artist - Title")
+    #[staticmethod]
     pub fn parse_filename(filename: &str) -> ParsedMetadata {
         let mut working_string = filename.trim().to_string();
 
@@ -214,7 +225,10 @@ impl TrackParser {
             release_year: year,
         }
     }
+}
 
+// Internal implementation details (not exposed to Python unless wrapped in pymethods)
+impl TrackParser {
     pub fn extract_edition(text: &str) -> Option<(String, String)> {
         // Use the legacy regex logic
         // Find first match
