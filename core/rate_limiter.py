@@ -1,17 +1,33 @@
-# Minimal rate limit stub (per-process)
+"""
+Rate Limiter Module for SoulSync
+
+This module provides a generic rate limiter and a decorator for rate-limiting function calls.
+"""
+
 import time
 import asyncio
 from typing import Callable, Optional
 
+# Global dictionary to track last call times for the decorator
 _last_call = {}
 
 def rate_limited(key: str, min_interval_sec: float) -> Callable:
+    """
+    Decorator to rate limit a function call based on a key and interval.
+
+    Args:
+        key: A unique identifier for the rate limit bucket.
+        min_interval_sec: Minimum time in seconds between calls.
+
+    Returns:
+        A dictionary {"rate_limited": True} if limited, otherwise the function result.
+    """
     def decorator(fn):
         def wrapper(*args, **kwargs):
             now = time.time()
             prev = _last_call.get(key, 0)
             if now - prev < min_interval_sec:
-                # skip/deny for now; production should return 429
+                # skip/deny for now; production should return 429 or handle retry
                 return {"rate_limited": True}
             _last_call[key] = now
             return fn(*args, **kwargs)
@@ -19,6 +35,9 @@ def rate_limited(key: str, min_interval_sec: float) -> Callable:
     return decorator
 
 class RateLimiter:
+    """
+    A generic token-bucket style rate limiter (window-based).
+    """
     def __init__(self, max_requests: int, window_seconds: float):
         self.max_requests = max_requests
         self.window_seconds = window_seconds

@@ -1,6 +1,6 @@
 from flask import Blueprint, Response
 import json
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.job_queue import list_jobs as jq_list_jobs
 
 logger = get_logger("jobs_route")

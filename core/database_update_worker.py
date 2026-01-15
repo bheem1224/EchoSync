@@ -2,7 +2,7 @@
 
 from typing import Optional
 from database import MusicDatabase, LibraryManager
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.settings import config_manager
 import logging
 import threading

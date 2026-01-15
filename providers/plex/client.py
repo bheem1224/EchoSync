@@ -14,7 +14,7 @@ from plexapi.exceptions import NotFound
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import time
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("plex_client")
 

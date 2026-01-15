@@ -151,7 +151,7 @@ class ProviderBase(ABC):
         album_str = _coerce_to_str(album)
         
         # Debug log raw inputs before processing
-        from utils.logging_config import get_logger
+        from core.tiered_logger import get_logger
         logger = get_logger("provider_base")
         logger.debug(
             "Factory raw inputs: title=%r artist=%r album=%r",
@@ -172,7 +172,7 @@ class ProviderBase(ABC):
         normalized_album = text_utils.normalize_album(album_str) if album_str else None
         
         # Debug log to trace normalization issues
-        from utils.logging_config import get_logger
+        from core.tiered_logger import get_logger
         logger = get_logger("provider_base")
         logger.debug(
             "Factory normalization: title='%s'→'%s' artist='%s'→'%s' album='%s'→'%s'",

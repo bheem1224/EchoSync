@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker, Session
 
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.matching_engine import text_utils
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from .music_database import Artist, Album, Track, ExternalIdentifier, AudioFingerprint
 
 logger = get_logger("bulk_operations")

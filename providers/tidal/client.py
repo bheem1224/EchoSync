@@ -7,7 +7,7 @@ import hashlib
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Optional, Any
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.provider import SyncServiceProvider, get_provider_capabilities
 from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig

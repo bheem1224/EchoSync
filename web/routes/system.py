@@ -5,7 +5,7 @@ import json
 import os
 import platform
 import psutil
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.settings import config_manager
 
 logger = get_logger("system_route")

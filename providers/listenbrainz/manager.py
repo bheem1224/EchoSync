@@ -6,7 +6,7 @@ Manages caching of ListenBrainz playlists and metadata enrichment
 import json
 from typing import List, Dict, Optional, Any
 from datetime import datetime
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.provider_base import ProviderBase
 from core.job_queue import register_job
 from database.music_database import get_database

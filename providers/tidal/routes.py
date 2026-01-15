@@ -1,7 +1,7 @@
 """Tidal provider routes."""
 from flask import Blueprint, request, jsonify
 from sdk.storage_service import get_storage_service
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("tidal_routes")
 bp = Blueprint("tidal_routes", __name__, url_prefix="/api/accounts/tidal")

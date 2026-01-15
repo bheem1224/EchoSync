@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request
 from web.services.library_service import LibraryAdapter
 from core.settings import config_manager
 from core.provider import ProviderRegistry
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 import threading
 
 logger = get_logger("library")

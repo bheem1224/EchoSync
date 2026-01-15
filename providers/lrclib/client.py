@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import os
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("lrclib_client")
 
