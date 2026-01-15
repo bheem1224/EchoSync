@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.job_queue import JobQueue
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("wishlist_service")
 

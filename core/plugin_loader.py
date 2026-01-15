@@ -11,7 +11,7 @@ from flask import Blueprint
 
 from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("plugin_loader")
 

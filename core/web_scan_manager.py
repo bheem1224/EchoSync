@@ -1,4 +1,4 @@
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("web_scan_manager")
 

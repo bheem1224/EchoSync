@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, List
 from pathlib import Path
 
 from core.settings import config_manager
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("config_database")
 

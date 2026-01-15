@@ -11,7 +11,7 @@ from cryptography.fernet import Fernet
 from pathlib import Path
 import copy
 from database import get_database
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("config_manager")
 

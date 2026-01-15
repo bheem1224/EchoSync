@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from database.music_database import get_database
 from core.matching_engine.soul_sync_track import SoulSyncTrack
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("tracks_route")
 bp = Blueprint("tracks", __name__, url_prefix="/api/tracks")

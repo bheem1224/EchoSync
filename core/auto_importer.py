@@ -38,7 +38,7 @@ from .matching_engine import parse_file, MatchService, MatchContext, SoulSyncTra
 from .post_processor import PostProcessor
 from core.tiered_logger import tiered_logger
 from core.error_handler import error_handler
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.media_scan_manager import MediaScanManager
 from core.job_queue import JobQueue
 

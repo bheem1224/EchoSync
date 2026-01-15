@@ -6,7 +6,7 @@ and attaches Jellyfin ProviderRef. Adheres to Track-centric architecture.
 """
 
 from typing import List, Optional, Dict, Any
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
 from sdk.storage_service import get_storage_service
 from core.provider_base import ProviderBase

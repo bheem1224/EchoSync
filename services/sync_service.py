@@ -2,7 +2,7 @@ import asyncio
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from providers.spotify.client import SpotifyClient, Playlist as SpotifyPlaylist, Track as SpotifyTrack
 from providers.plex.client import PlexClient
 from providers.jellyfin.client import JellyfinClient

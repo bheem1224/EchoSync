@@ -8,11 +8,11 @@ HealthCheckRegistry, and other core components.
 
 import logging
 import traceback
-import time  # Add this import for the sleep function
-from typing import Callable, Optional, Any  # Ensure Any is imported for type annotations
-from core.tiered_logger import tiered_logger  # Use the tiered logger for better logging
+import time
+from typing import Callable, Optional, Any
+from core.tiered_logger import tiered_logger, get_logger
 
-logger = logging.getLogger("error_handler")
+logger = get_logger(__name__)
 
 class ErrorHandler:
     """
@@ -47,6 +47,7 @@ class ErrorHandler:
             try:
                 return func()
             except Exception as e:
+                # Use tiered logger for specific tier request, or standard logger
                 tiered_logger.log(log_tier, logging.ERROR, f"Error in function {func.__name__}: {e}")
                 tiered_logger.log(log_tier, logging.DEBUG, traceback.format_exc())
 

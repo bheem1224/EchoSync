@@ -21,7 +21,7 @@ from datetime import datetime
 from core.provider_base import ProviderBase
 from core.content_models import ContentChanges
 from core.matching_engine.soul_sync_track import SoulSyncTrack
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 
 logger = get_logger("core.provider")
 

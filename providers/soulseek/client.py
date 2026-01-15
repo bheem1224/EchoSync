@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 import time
 from pathlib import Path
-from utils.logging_config import get_logger
+from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.provider import get_provider_capabilities
 
