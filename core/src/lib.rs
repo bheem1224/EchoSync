@@ -1,13 +1,17 @@
 use pyo3::prelude::*;
 
-/// A Python module implemented in Rust.
-#[pymodule]
-mod core {
-    use pyo3::prelude::*;
+mod structs;
+mod library_manager;
+mod config_manager;
 
-    /// Formats the sum of two numbers as string.
-    #[pyfunction]
-    fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-        Ok((a + b).to_string())
-    }
+use structs::SoulSyncTrack;
+use library_manager::LibraryManager;
+
+#[pymodule]
+fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pyo3_log::init();
+
+    m.add_class::<SoulSyncTrack>()?;
+    m.add_class::<LibraryManager>()?;
+    Ok(())
 }
