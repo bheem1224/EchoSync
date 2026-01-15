@@ -5,6 +5,8 @@ mod library_manager;
 mod config_manager;
 mod health;
 mod worker;
+pub mod errors;
+pub mod provider_trait;
 mod logging;
 mod limiter;
 mod scheduler;
