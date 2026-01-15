@@ -6,8 +6,8 @@ use std::env;
 use std::sync::Mutex; // Not strictly needed if we don't have interior mutability that requires sync across threads for these fields, but generic PyClass usually implies strict thread safety. Actually, PyClass struct fields are immutable by default unless Mutex used.
 // But here, paths and key are set at creation and immutable.
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm, Nonce
+    aead::{Aead, KeyInit, OsRng},
+    Aes256Gcm, Nonce, AeadCore
 };
 use sha2::{Sha256, Digest};
 use base64::prelude::*;
