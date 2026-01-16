@@ -164,3 +164,19 @@ pub fn get_database_path() -> PathBuf {
         PathBuf::from("data").join("music_library.db")
     }
 }
+
+pub fn get_config_path() -> PathBuf {
+    if let Ok(p) = std::env::var("SOULSYNC_CONFIG_DIR") {
+        PathBuf::from(p).join("config.db")
+    } else {
+        PathBuf::from("data").join("config.db")
+    }
+}
+
+pub fn get_config_path() -> PathBuf {
+    if let Ok(p) = std::env::var("SOULSYNC_CONFIG_DIR") {
+        PathBuf::from(p).join("config.json")
+    } else {
+        PathBuf::from("data").join("config.json")
+    }
+}
