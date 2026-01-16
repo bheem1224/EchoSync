@@ -63,8 +63,9 @@ class PlexClient(ProviderBase):
         return self.ensure_connection()
     
     def is_configured(self) -> bool:
-        """Check if Plex is configured and connected."""
-        return self.server is not None
+        """Check if Plex is configured (has credentials)."""
+        config = config_manager.get_plex_config()
+        return bool(config.get('base_url') and config.get('token'))
     
     def get_logo_url(self) -> str:
         """Return Plex logo URL."""
