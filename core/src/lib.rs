@@ -33,7 +33,7 @@ use crate::config_manager::ConfigManager;
 use crate::provider_cache::ProviderCache;
 
 #[pymodule]
-fn core(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn soulsync_core(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize logging
     pyo3_log::init();
 
@@ -42,6 +42,8 @@ fn core(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Artist>()?;
     m.add_class::<Album>()?;
     m.add_class::<ReleaseGroup>()?;
+    m.add_class::<SoulSyncTrack>()?;
+    m.add_class::<LibraryManager>()?;
 
     // Register Services
     m.add_class::<LibraryManager>()?;

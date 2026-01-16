@@ -451,15 +451,20 @@ pub struct LibraryManager {
 
 #[pymethods]
 impl LibraryManager {
-    #[new]
-    fn new() -> PyResult<Self> {
-        let db_path = config_manager::get_database_path();
+#[new]
+    fn new(db_path: Option<String>) -> PyResult<Self> {
+        // Fix: explicit conversion to PathBuf
+        let final_path = match db_path {
+            Some(path_str) => std::path::PathBuf::from(path_str), // Convert String -> PathBuf
+            None => config_manager::get_database_path(),          // Already returns PathBuf
+        };
 
         let (sender, receiver) = unbounded();
 
         // Spawn Actor Thread
         thread::spawn(move || {
-            match LibraryActor::new(db_path) {
+            // Pass the PathBuf directly
+            match LibraryActor::new(final_path) {
                 Ok(mut actor) => actor.run(receiver),
                 Err(e) => error!("Failed to initialize LibraryActor: {}", e),
             }
@@ -471,7 +476,6 @@ impl LibraryManager {
             scan_running: Arc::new(Mutex::new(true)),
         };
 
-        // Start background scanner thread (Separate from DB Actor)
         manager.start_scan_monitor();
 
         Ok(manager)
