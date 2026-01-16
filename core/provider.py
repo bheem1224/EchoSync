@@ -221,7 +221,7 @@ class ProviderCapabilities:
 CAPABILITY_REGISTRY: Dict[str, ProviderCapabilities] = {
     'spotify': ProviderCapabilities(
         name='spotify',
-        supports_playlists=PlaylistSupport.READ,
+        supports_playlists=PlaylistSupport.READ_WRITE,
         search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
         metadata=MetadataRichness.HIGH,
         supports_cover_art=True,
