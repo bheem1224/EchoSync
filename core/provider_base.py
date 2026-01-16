@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.matching_engine import text_utils
+from core.request_manager import RequestManager
 
 
 class ProviderBase(ABC):
@@ -13,11 +14,19 @@ class ProviderBase(ABC):
     Core/Database/MatchingEngine are SMART - they process SoulSyncTrack objects.
     
     All providers must implement these methods.
+    
+    Attributes:
+        http: RequestManager instance for making HTTP requests with rate limiting and retries.
+              MANDATORY: All HTTP requests must use this, not requests.get() directly.
     """
     name: str  # Unique provider name (e.g., 'spotify', 'tidal', 'plex')
     category: str = 'provider'  # 'provider' (bundled, stable) or 'plugin' (community, unstable)
     supports_downloads: bool = False  # Indicates if provider supports downloads
     enabled: bool = True  # Flag to enable/disable provider without deleting files
+
+    def __init__(self):
+        """Initialize provider with HTTP client."""
+        self.http = RequestManager(self.name)
 
     @abstractmethod
     def authenticate(self, **kwargs) -> bool:

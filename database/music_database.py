@@ -182,6 +182,22 @@ class Wishlist(Base):
     )
 
 
+class WatchlistArtist(Base):
+    """Model for tracking watched artists and their scan status."""
+    __tablename__ = "watchlist_artists"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    spotify_artist_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    artist_name: Mapped[str] = mapped_column(String, nullable=False)
+    last_scan_timestamp: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    image_url: Mapped[Optional[str]] = mapped_column(String)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
@@ -284,6 +300,7 @@ __all__ = [
     "UserRating",
     "AudioFingerprint",
     "Wishlist",
+    "WatchlistArtist",
     "MusicDatabase",
     "get_database",
     "close_database",

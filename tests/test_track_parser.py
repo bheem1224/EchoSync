@@ -27,35 +27,35 @@ class TestTrackParserBasic:
         """Test basic 'Artist - Title' format"""
         track = self.parser.parse_filename("The Weeknd - Blinding Lights")
         assert track is not None
-        assert track.artist.lower() == "the weeknd"
+        assert track.artist_name.lower() == "the weeknd"
         assert track.title.lower() == "blinding lights"
 
     def test_artist_album_title(self):
         """Test 'Artist - Album - Title' format"""
         track = self.parser.parse_filename("Daft Punk - Homework - Da Funk")
         assert track is not None
-        assert "daft punk" in track.artist.lower()
+        assert "daft punk" in track.artist_name.lower()
         # Album might not be captured correctly, that's ok for this format
 
     def test_with_file_extension(self):
         """Test parsing with file extension"""
         track = self.parser.parse_filename("Dua Lipa - Don't Start Now.mp3")
         assert track is not None
-        assert "dua lipa" in track.artist.lower()
+        assert "dua lipa" in track.artist_name.lower()
         assert "don't start now" in track.title.lower() or "dont start now" in track.title.lower()
 
     def test_with_brackets_junk(self):
         """Test removal of bracketed junk"""
         track = self.parser.parse_filename("[www.beatport.com] Deadmau5 - Fn Pig")
         assert track is not None
-        assert "deadmau5" in track.artist.lower()
+        assert "deadmau5" in track.artist_name.lower()
         assert "fn pig" in track.title.lower()
 
     def test_with_year(self):
         """Test extraction of year"""
         track = self.parser.parse_filename("David Bowie - Space Oddity (1969)")
         assert track is not None
-        assert track.year == 1969
+        assert track.release_year == 1969
 
     def test_empty_string(self):
         """Test handling of empty string"""
@@ -230,7 +230,7 @@ class TestTrackParserFeatured:
         track = self.parser.parse_filename("DJ Khaled - God Did featuring Drake")
         assert track is not None
         # Should extract something
-        assert track.artist is not None or track.title is not None
+        assert track.artist_name is not None or track.title is not None
 
 
 class TestTrackParserEdgeCases:
@@ -243,7 +243,7 @@ class TestTrackParserEdgeCases:
         """Test handling of special characters"""
         track = self.parser.parse_filename("Björk - Jóga (Remix)")
         assert track is not None
-        assert track.artist is not None
+        assert track.artist_name is not None
         assert track.title is not None
 
     def test_emoji_and_unicode(self):
@@ -256,27 +256,27 @@ class TestTrackParserEdgeCases:
         long_title = "A" * 200
         track = self.parser.parse_filename(f"Artist - {long_title}")
         assert track is not None
-        assert track.artist is not None
+        assert track.artist_name is not None
 
     def test_multiple_dashes(self):
         """Test filename with multiple dashes"""
         track = self.parser.parse_filename("Artist - Album - Title - Remix")
         assert track is not None
-        assert track.artist is not None
+        assert track.artist_name is not None
 
     def test_whitespace_normalization(self):
         """Test normalization of excess whitespace"""
         track = self.parser.parse_filename("  Artist   -   Title   ")
         assert track is not None
         # Should normalize whitespace
-        assert track.artist is not None
+        assert track.artist_name is not None
         assert track.title is not None
 
     def test_parenthetical_with_number(self):
         """Test parenthetical with year and version"""
         track = self.parser.parse_filename("Kraftwerk - The Robots (2009 Remaster)")
         assert track is not None
-        assert track.artist is not None
+        assert track.artist_name is not None
 
 
 class TestTrackParserConfig:
@@ -297,7 +297,7 @@ class TestTrackParserConfig:
         track = parser.parse_filename("Artist Name - Song Title")
         assert track is not None
         # Should preserve case
-        assert track.artist == "Artist Name"
+        assert track.artist_name == "Artist Name"
 
     def test_config_disable_junk_removal(self):
         """Test disabling junk removal"""
@@ -319,7 +319,7 @@ class TestTrackParserIntegration:
         """Test Beatport-style filename"""
         track = self.parser.parse_filename("Disclosure - Latch (Mark Ronson Remix) [Edited]")
         assert track is not None
-        assert track.artist is not None
+        assert track.artist_name is not None
         assert track.title is not None
 
     def test_soulseek_format(self):
@@ -332,13 +332,13 @@ class TestTrackParserIntegration:
         """Test Spotify metadata format"""
         track = self.parser.parse_filename("The Weeknd - Blinding Lights - Radio Edit")
         assert track is not None
-        assert track.artist is not None
+        assert track.artist_name is not None
 
     def test_compilation_album_format(self):
         """Test compilation album track"""
         track = self.parser.parse_filename("01. Artist Name - Song Title (Remix Version) [WAV]")
         assert track is not None
-        assert track.artist is not None
+        assert track.artist_name is not None
 
 
 if __name__ == "__main__":

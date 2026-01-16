@@ -107,9 +107,9 @@ class TestPostProcessorPatternGeneration:
     def test_simple_pattern(self):
         """Test simple pattern substitution"""
         track = SoulSyncTrack(
-            title="Song Title",
-            artist="Artist Name",
-            album="Album Name",
+            raw_title="Song Title",
+            artist_name="Artist Name",
+            album_title="Album Name",
         )
 
         pattern = "{Artist}/{Album}/{Title}{ext}"
@@ -126,9 +126,9 @@ class TestPostProcessorPatternGeneration:
     def test_pattern_with_year(self):
         """Test pattern with year substitution"""
         track = SoulSyncTrack(
-            title="Song",
-            artist="Artist",
-            album="Album",
+            raw_title="Song",
+            artist_name="Artist",
+            album_title="Album",
             year=2024,
         )
 
@@ -142,9 +142,9 @@ class TestPostProcessorPatternGeneration:
     def test_pattern_with_track_number(self):
         """Test pattern with track number (zero-padded)"""
         track = SoulSyncTrack(
-            title="Song",
-            artist="Artist",
-            album="Album",
+            raw_title="Song",
+            artist_name="Artist",
+            album_title="Album",
             track_number=5,
         )
 
@@ -158,7 +158,7 @@ class TestPostProcessorPatternGeneration:
     def test_pattern_missing_fields(self):
         """Test pattern with missing fields (should use defaults)"""
         track = SoulSyncTrack(
-            title="Song",
+            raw_title="Song",
             # No artist, album, year
         )
 
@@ -173,9 +173,9 @@ class TestPostProcessorPatternGeneration:
     def test_pattern_with_special_chars_in_values(self):
         """Test pattern with special characters in metadata"""
         track = SoulSyncTrack(
-            title="Song: The <Remix>",
-            artist="Artist & Friends",
-            album="Album (2024)",
+            raw_title="Song: The <Remix>",
+            artist_name="Artist & Friends",
+            album_title="Album (2024)",
         )
 
         pattern = "{Artist}/{Album}/{Title}{ext}"
@@ -321,9 +321,9 @@ class TestPostProcessorIntegration:
         source_file.touch()
 
         track = SoulSyncTrack(
-            title="Song",
-            artist="Artist",
-            album="Album",
+            raw_title="Song",
+            artist_name="Artist",
+            album_title="Album",
             year=2024,
         )
 
@@ -342,7 +342,7 @@ class TestPostProcessorIntegration:
         """Test organize_file with non-existent source"""
         missing_file = self.base_dir / "missing.mp3"
 
-        track = SoulSyncTrack(title="Song", artist="Artist")
+        track = SoulSyncTrack(raw_title="Song", artist_name="Artist")
         dest_dir = self.base_dir / "organized"
 
         result = self.processor.organize_file(
@@ -366,9 +366,9 @@ class TestPostProcessorIntegration:
         dest_path.touch()
 
         track = SoulSyncTrack(
-            title="test",
-            artist="Artist",
-            album="Album",
+            raw_title="test",
+            artist_name="Artist",
+            album_title="Album",
         )
 
         result = self.processor.organize_file(
@@ -389,7 +389,7 @@ class TestPostProcessorTagWriting:
     def test_write_tags_missing_file(self):
         """Test write_tags with missing file"""
         missing_file = Path("/nonexistent/file.mp3")
-        track = SoulSyncTrack(title="Song", artist="Artist")
+        track = SoulSyncTrack(raw_title="Song", artist_name="Artist")
 
         result = self.processor.write_tags(missing_file, track)
 
@@ -403,7 +403,7 @@ class TestPostProcessorTagWriting:
 
         try:
             processor = PostProcessor(check_mutagen=False)
-            track = SoulSyncTrack(title="Song", artist="Artist")
+            track = SoulSyncTrack(raw_title="Song", artist_name="Artist")
 
             result = processor.write_tags(tmp_path, track)
             # Should fail or warn about missing mutagen
@@ -425,9 +425,9 @@ class TestPostProcessorTagWriting:
         try:
             processor = PostProcessor(check_mutagen=False)
             track = SoulSyncTrack(
-                title="Song Title",
-                artist="Artist Name",
-                album="Album Name",
+                raw_title="Song Title",
+                artist_name="Artist Name",
+                album_title="Album Name",
                 year=2024,
                 track_number=5,
             )
@@ -454,9 +454,9 @@ class TestPostProcessorEdgeCases:
         long_title = "C" * 100
 
         track = SoulSyncTrack(
-            title=long_title,
-            artist=long_artist,
-            album=long_album,
+            raw_title=long_title,
+            artist_name=long_artist,
+            album_title=long_album,
         )
 
         pattern = "{Artist}/{Album}/{Title}{ext}"
@@ -471,7 +471,7 @@ class TestPostProcessorEdgeCases:
 
     def test_special_folder_names(self):
         """Test handling of special folder names in pattern"""
-        track = SoulSyncTrack(title="Song", artist="Artist")
+        track = SoulSyncTrack(raw_title="Song", artist_name="Artist")
 
         # Pattern with special chars that will be sanitized
         pattern = "{Artist}/[{Year}] {Album}/{Title}{ext}"
@@ -483,7 +483,7 @@ class TestPostProcessorEdgeCases:
 
     def test_duplicate_slashes_in_pattern(self):
         """Test cleanup of duplicate slashes in generated path"""
-        track = SoulSyncTrack(title="Song", artist="Artist", album="Album")
+        track = SoulSyncTrack(raw_title="Song", artist_name="Artist", album_title="Album")
 
         # Pattern that might create double slashes
         pattern = "{Artist}//{Album}/{Title}{ext}"

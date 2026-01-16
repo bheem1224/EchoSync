@@ -1050,17 +1050,36 @@ class ConfigManager:
 
     def get_service_credentials(self, service_name: str) -> Dict[str, Any]:
         """
-        Retrieve credentials for a specific service from the database.
+        Retrieve credentials for a specific service from the config database.
         - service_name: Name of the service (e.g., 'plex', 'spotify').
         Returns a dictionary of credentials or an empty dictionary if not found.
         """
-        db = get_database()
         try:
-            with db._get_connection() as conn:
+            from database.config_database import ConfigDatabase
+            config_db = ConfigDatabase()
+            
+            # Get the service ID first
+            service_id = None
+            with config_db._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT key, value FROM service_configs WHERE service_id = (SELECT id FROM services WHERE name = ?)", (service_name,))
+                c.execute("SELECT id FROM services WHERE name = ?", (service_name,))
+                row = c.fetchone()
+                if row:
+                    service_id = row[0]
+            
+            if not service_id:
+                return {}
+            
+            # Get all config values for this service
+            result = {}
+            with config_db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT config_key, config_value FROM service_config WHERE service_id = ?", (service_id,))
                 rows = c.fetchall()
-                return {row[0]: row[1] for row in rows} if rows else {}
+                for row in rows:
+                    result[row[0]] = row[1]
+            
+            return result
         except Exception as e:
             logger.error(f"Error retrieving credentials for {service_name}: {e}")
             return {}
