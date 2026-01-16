@@ -451,20 +451,19 @@ pub struct LibraryManager {
 
 #[pymethods]
 impl LibraryManager {
-#[new]
+    #[new]
     fn new(db_path: Option<String>) -> PyResult<Self> {
-        // Fix: explicit conversion to PathBuf
-        let final_path = match db_path {
-            Some(path_str) => std::path::PathBuf::from(path_str), // Convert String -> PathBuf
-            None => config_manager::get_database_path(),          // Already returns PathBuf
+        let path = if let Some(p) = db_path {
+            PathBuf::from(p)
+        } else {
+            config_manager::get_database_path()
         };
 
         let (sender, receiver) = unbounded();
 
         // Spawn Actor Thread
         thread::spawn(move || {
-            // Pass the PathBuf directly
-            match LibraryActor::new(final_path) {
+            match LibraryActor::new(path) {
                 Ok(mut actor) => actor.run(receiver),
                 Err(e) => error!("Failed to initialize LibraryActor: {}", e),
             }
