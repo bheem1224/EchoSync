@@ -462,7 +462,8 @@ class ConfigManager:
                 "config_dir": str(self.config_dir),
                 "download_dir": str(self.downloads_path),
                 "library_dir": str(self.library_path),
-                "log_dir": str(self.logs_path)
+                "log_dir": str(self.logs_path),
+                "plugins_dir": str(self.plugins_path)
             },
             # Provider/Plugin management
             "disabled_providers": []  # List of provider/plugin names to disable (e.g., ["spotify", "tidal"])

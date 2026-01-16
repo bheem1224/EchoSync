@@ -50,12 +50,16 @@ class StorageService:
         from database import get_database
         return get_database()
     
-    def ensure_account(self, service_name: str, account_name: str) -> Optional[int]:
-        """Ensure account exists - stub operation."""
-        # In the new system, accounts are managed through the database
-        # This is a no-op that returns a placeholder account_id
-        print("WARNING: ensure_account() is deprecated. Use database.ensure_account() instead.")
-        return None
+    def ensure_account(self, service_name: str, account_name: str, display_name: Optional[str] = None, user_id: Optional[str] = None) -> Optional[int]:
+        """Ensure account exists - redirects to config_database."""
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            service_id = db.get_or_create_service_id(service_name)
+            return db.ensure_account(service_id, account_name=account_name, display_name=display_name, user_id=user_id)
+        except Exception as e:
+            print(f"[ERROR] ensure_account failed: {e}")
+            return None
     
     def save_account_token(self, account_id: int, access_token: str, refresh_token: Optional[str] = None, 
                           token_type: str = 'Bearer', expires_at: Optional[float] = None, 
