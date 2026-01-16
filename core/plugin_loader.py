@@ -12,6 +12,7 @@ from flask import Blueprint
 from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
 from core.tiered_logger import get_logger
+from core.settings import config_manager
 
 logger = get_logger("plugin_loader")
 
@@ -25,12 +26,13 @@ class PluginLoader:
     def __init__(self, app_root: Path):
         self.app_root = app_root
         self.providers_dir = app_root / "providers"
-        self.plugins_dir = app_root / "plugins"
+        self.plugins_dir = config_manager.get_plugins_dir()
         self.loaded_blueprints: List[Blueprint] = []
 
     def load_all(self):
         """Scan and load all providers and plugins."""
         logger.info("Starting plugin discovery...")
+        logger.debug(f"Using plugins directory: {self.plugins_dir}")
 
         # 1. Load Core Providers
         self._scan_directory(self.providers_dir, source_type='core')
