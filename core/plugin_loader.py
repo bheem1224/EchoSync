@@ -32,6 +32,7 @@ class PluginLoader:
     def load_all(self):
         """Scan and load all providers and plugins."""
         logger.info("Starting plugin discovery...")
+        logger.debug(f"Using plugins directory: {self.plugins_dir}")
 
         # 1. Load Core Providers
         self._scan_directory(self.providers_dir, source_type='core')
