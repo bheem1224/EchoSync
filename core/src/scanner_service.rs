@@ -58,7 +58,7 @@ impl ScannerService {
         for db_path in &db_paths {
             if !fs_paths.contains(db_path) && db_path.starts_with(&root_path) {
                 // Only remove if it belongs to the scanned root!
-                manager.delete_track_by_path(db_path)?;
+                manager.delete_track_by_path(db_path.to_string())?;
                 removed_count += 1;
             }
         }

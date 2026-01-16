@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::parser::TrackParser;
-    use crate::matching::WeightedMatchingEngine;
+    use crate::matching::MatchingEngine;
     use crate::structs::SoulSyncTrack;
     use std::collections::HashMap;
 
@@ -106,7 +106,7 @@ mod tests {
              identifiers: HashMap::new(),
         };
 
-        let result = WeightedMatchingEngine::calculate_match(&source, &candidate);
+        let result = MatchingEngine::calculate_match(&source, &candidate);
         println!("Match Result: {:?}", result);
         assert!(result.passed_version_check);
         assert!(result.confidence_score > 90.0);

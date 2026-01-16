@@ -43,11 +43,14 @@ impl BackgroundWorker {
             }
         }
 
-        if batch.is_empty() {
+        let count = batch.len();
+        if count == 0 {
             return Ok(0);
         }
 
         let lm = self.library_manager.borrow(py);
-        lm.process_batch(batch)
+        // process_batch now returns () because it is fire-and-forget
+        lm.process_batch(batch)?;
+        Ok(count)
     }
 }
