@@ -542,9 +542,10 @@ class ConfigManager:
                     self.library_path = self.data_dir / 'transfer'
                 if not storage_config.get('log_dir'):
                     self.logs_path = self.data_dir / 'logs'
-                # Also update media_db_path and plugins_path to be under new data_dir
+                if not storage_config.get('plugins_dir'):
+                    self.plugins_path = self.data_dir / 'plugins'
+                # Also update media_db_path to be under new data_dir
                 self.media_db_path = self.data_dir / 'music_library.db'
-                self.plugins_path = self.data_dir / 'plugins'
             
             # Then apply any explicit path overrides
             if storage_config.get('download_dir'):
@@ -558,6 +559,10 @@ class ConfigManager:
             if storage_config.get('log_dir'):
                 self.logs_path = Path(storage_config['log_dir'])
                 logger.debug(f"Applied log_dir from config: {self.logs_path}")
+
+            if storage_config.get('plugins_dir'):
+                self.plugins_path = Path(storage_config['plugins_dir'])
+                logger.debug(f"Applied plugins_dir from config: {self.plugins_path}")
             
             if storage_config.get('config_dir'):
                 new_config_dir = Path(storage_config['config_dir'])
@@ -593,6 +598,7 @@ class ConfigManager:
             self.config_data['storage']['download_dir'] = str(self.downloads_path.resolve())
             self.config_data['storage']['library_dir'] = str(self.library_path.resolve())
             self.config_data['storage']['log_dir'] = str(self.logs_path.resolve())
+            self.config_data['storage']['plugins_dir'] = str(self.plugins_path.resolve())
             
         except Exception as e:
             print(f"[WARN] Could not apply storage paths from config: {e}")
