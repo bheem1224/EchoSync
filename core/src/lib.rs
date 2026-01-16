@@ -1,75 +1,54 @@
 use pyo3::prelude::*;
+use std::sync::Arc;
 
-mod structs;
-mod library_manager;
-mod config_manager;
-mod health;
-mod worker;
-mod parser;
-mod matching;
-mod search_manager;
-pub mod errors;
+pub mod structs;
+pub mod library_manager;
+pub mod scanner_service;
+pub mod importer_service;
 pub mod provider_trait;
-pub mod provider_cache; 
-mod logging;
-mod limiter;
-mod scheduler;
-mod wishlist;
-mod download_manager;
-mod post_processor;
-mod scanner_service;
-mod importer_service;
+pub mod provider_manager;
+pub mod provider_cache;
+pub mod config_manager;
+pub mod errors;
+pub mod download_manager;
+pub mod parser;
+pub mod matching;
+pub mod limiter;
+pub mod search_manager;
+pub mod post_processor;
+pub mod logging;
+pub mod health;
+pub mod wishlist;
+pub mod worker;
+pub mod scheduler;
 
-use structs::{SoulSyncTrack, Artist, Album, ReleaseGroup};
-use library_manager::LibraryManager;
-use config_manager::ConfigManager;
-use health::HealthMonitor;
-use worker::BackgroundWorker;
-use search_manager::SearchManager;
-use logging::TieredLogger;
-use limiter::RateLimiter;
-use scheduler::Scheduler;
-use wishlist::WishlistManager;
-use errors::PySoulSyncError;
-use parser::TrackParser;
-use download_manager::{DownloadManager, DownloadStatus, DownloadItem};
-use post_processor::PostProcessor;
-use scanner_service::ScannerService;
-use importer_service::ImporterService;
+// Removed path_helper as it does not exist in Rust source
+
+use crate::structs::{SoulSyncTrack, Artist, Album, ReleaseGroup};
+use crate::library_manager::LibraryManager;
+use crate::scanner_service::ScannerService;
+use crate::importer_service::ImporterService;
+use crate::provider_manager::ProviderManager;
+use crate::config_manager::ConfigManager;
+use crate::provider_cache::ProviderCache;
 
 #[pymodule]
-fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn core(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Initialize logging
     pyo3_log::init();
 
+    // Register Structs
     m.add_class::<SoulSyncTrack>()?;
     m.add_class::<Artist>()?;
     m.add_class::<Album>()?;
     m.add_class::<ReleaseGroup>()?;
 
+    // Register Services
     m.add_class::<LibraryManager>()?;
-    m.add_class::<ConfigManager>()?;
-    m.add_class::<HealthMonitor>()?;
-    m.add_class::<BackgroundWorker>()?;
-    m.add_class::<SearchManager>()?;
-    m.add_class::<TieredLogger>()?;
-    m.add_class::<RateLimiter>()?;
-    m.add_class::<Scheduler>()?;
-    m.add_class::<WishlistManager>()?;
-    m.add_class::<TrackParser>()?;
-    m.add_class::<DownloadManager>()?;
-    m.add_class::<DownloadStatus>()?;
-    m.add_class::<DownloadItem>()?;
-
-    m.add_class::<PostProcessor>()?;
     m.add_class::<ScannerService>()?;
     m.add_class::<ImporterService>()?;
-
-    // Register the custom exception as "SoulSyncError"
-    m.add("SoulSyncError", m.py().get_type::<PySoulSyncError>())?;
+    m.add_class::<ProviderManager>()?;
+    m.add_class::<ConfigManager>()?;
 
     Ok(())
 }
-
-#[cfg(test)]
-mod test_parser;
-pub mod provider_manager;

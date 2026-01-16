@@ -25,12 +25,6 @@ impl ProviderContext {
     }
 
     pub fn get_config<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, Box<dyn std::error::Error + Send + Sync>> {
-        // Fetch config specific to this provider? Or global?
-        // The prompt asked for "get_config_value<T>".
-        // Assuming the provider might store its settings under its provider_id namespace or globally.
-        // For now, we expose the direct key access from the config manager.
-        // If the provider wants scoped settings, they can prepend their ID to the key or we can handle it here.
-        // Given the ConfigManager uses a JSON file, keys are likely "spotify.client_id", etc.
         self.config.get_config_value(key)
     }
 
@@ -56,5 +50,18 @@ pub trait Provider: Send + Sync {
     fn capabilities(&self) -> Capabilities;
 
     #[instrument(skip(self, ctx), fields(provider_id = %ctx.provider_id, query = %query))]
-    async fn search(&self, ctx: &ProviderContext, query: &str) -> Result<Vec<SoulSyncTrack>, SoulSyncError>;
+    async fn search(&self, ctx: &ProviderContext, query: &str) -> Result<Vec<SoulSyncTrack>, SoulSyncError> {
+        unimplemented!("Provider::search")
+    }
+
+    #[instrument(skip(self, ctx), fields(provider_id = %ctx.provider_id))]
+    async fn download(&self, ctx: &ProviderContext, track: &SoulSyncTrack) -> Result<crate::download_manager::DownloadStatus, SoulSyncError> {
+         Err(SoulSyncError::ProviderError("Download not implemented".to_string()))
+    }
+}
+
+pub trait ProviderFactory: Send + Sync {
+    fn id(&self) -> &str;
+    fn description(&self) -> &str;
+    fn new_provider(&self, ctx: ProviderContext) -> Box<dyn Provider>;
 }
