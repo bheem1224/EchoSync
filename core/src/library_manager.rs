@@ -452,14 +452,18 @@ pub struct LibraryManager {
 #[pymethods]
 impl LibraryManager {
     #[new]
-    fn new() -> PyResult<Self> {
-        let db_path = config_manager::get_database_path();
+    fn new(db_path: Option<String>) -> PyResult<Self> {
+        let path = if let Some(p) = db_path {
+            PathBuf::from(p)
+        } else {
+            config_manager::get_database_path()
+        };
 
         let (sender, receiver) = unbounded();
 
         // Spawn Actor Thread
         thread::spawn(move || {
-            match LibraryActor::new(db_path) {
+            match LibraryActor::new(path) {
                 Ok(mut actor) => actor.run(receiver),
                 Err(e) => error!("Failed to initialize LibraryActor: {}", e),
             }
