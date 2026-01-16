@@ -102,13 +102,14 @@ class StorageService:
     def list_accounts(self, service_name: Optional[str] = None) -> list:
         """List all accounts or accounts for a specific service."""
         try:
-            from database.config_database import ConfigDatabase
-            config_db = ConfigDatabase()
-            if hasattr(config_db, 'list_accounts'):
-                if service_name:
-                    return config_db.list_accounts(service_name)
-                return config_db.list_accounts()
-            return []
+            from database.config_database import get_config_database
+            config_db = get_config_database()
+
+            service_id = None
+            if service_name:
+                service_id = config_db.get_or_create_service_id(service_name)
+
+            return config_db.get_accounts(service_id=service_id)
         except Exception as e:
             print(f"[ERROR] list_accounts failed: {e}")
             return []
