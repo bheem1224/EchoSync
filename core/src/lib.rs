@@ -10,6 +10,7 @@ mod matching;
 mod search_manager;
 pub mod errors;
 pub mod provider_trait;
+pub mod provider_cache; 
 mod logging;
 mod limiter;
 mod scheduler;
