@@ -1,13 +1,15 @@
 import asyncio
 import aiohttp
 import os
-from typing import List, Optional, Dict, Any
+import re
+from typing import List, Optional, Dict, Any, Union
 from dataclasses import dataclass
 import time
 from pathlib import Path
 from core.tiered_logger import get_logger
 from core.settings import config_manager
-from core.provider import get_provider_capabilities
+from core.provider import get_provider_capabilities, DownloaderProvider
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 logger = get_logger("soulseek_client")
 
@@ -199,7 +201,6 @@ class DownloadStatus:
     speed: int
     time_remaining: Optional[int] = None
 
-from core.provider import DownloaderProvider
 
 class SoulseekClient(DownloaderProvider):
     """Soulseek/slskd client for P2P music search and download"""
@@ -207,6 +208,7 @@ class SoulseekClient(DownloaderProvider):
     supports_downloads = True
 
     def __init__(self):
+        super().__init__()
         self.base_url: Optional[str] = None
         self.api_key: Optional[str] = None
         self.download_path: Path = Path("./downloads")
@@ -416,6 +418,34 @@ class SoulseekClient(DownloaderProvider):
                 except:
                     pass
     
+    def _convert_to_soulsync_track(self, result: TrackResult) -> SoulSyncTrack:
+        """Convert TrackResult to SoulSyncTrack"""
+        # Create base track
+        soul_track = self.create_soul_sync_track(
+            title=result.title or result.filename,
+            artist=result.artist or "Unknown Artist",
+            album=result.album or "Unknown Album",
+            duration_ms=(result.duration * 1000) if result.duration else None,
+            track_number=result.track_number,
+            bitrate=result.bitrate,
+            file_format=result.quality,
+            file_path=result.filename,
+            source="soulseek",
+            provider_id=result.filename, # Use filename as unique ID for Soulseek
+        )
+
+        # Manually inject metadata into identifiers for download process
+        if soul_track:
+             soul_track.identifiers['username'] = result.username
+             soul_track.identifiers['size'] = result.size
+             soul_track.identifiers['quality_score'] = result.quality_score
+             soul_track.identifiers['free_upload_slots'] = result.free_upload_slots
+             soul_track.identifiers['upload_speed'] = result.upload_speed
+             soul_track.identifiers['queue_length'] = result.queue_length
+             soul_track.identifiers['provider_item_id'] = result.filename
+
+        return soul_track
+
     def _process_search_responses(self, responses_data: List[Dict[str, Any]]) -> tuple[List[TrackResult], List[AlbumResult]]:
         """Process search response data into TrackResult and AlbumResult objects"""
         from collections import defaultdict
@@ -424,15 +454,12 @@ class SoulseekClient(DownloaderProvider):
         all_tracks = []
         albums_by_path = defaultdict(list)
         
-        
-        
         # Audio file extensions to filter for
         audio_extensions = {'.mp3', '.flac', '.ogg', '.aac', '.wma', '.wav', '.m4a'}
         
         for response_data in responses_data:
             username = response_data.get('username', '')
             files = response_data.get('files', [])
-            
             
             for file_data in files:
                 filename = file_data.get('filename', '')
@@ -478,7 +505,6 @@ class SoulseekClient(DownloaderProvider):
         # Individual tracks are those not part of any album
         individual_tracks = [track for track in all_tracks if track.filename not in album_track_filenames]
         
-       
         return individual_tracks, album_results
     
     def _extract_album_path(self, filename: str) -> Optional[str]:
@@ -1264,28 +1290,6 @@ class SoulseekClient(DownloaderProvider):
             logger.error(f"Error during search history buffer maintenance: {e}")
             return False
     
-    async def search_and_download_best(self, query: str) -> Optional[str]:
-        results = await self._async_search(query)
-
-        if not results:
-            logger.warning(f"No results found for: {query}")
-            return None
-
-        # Use quality profile filtering
-        filtered_results = self.filter_results_by_quality_preference(results)
-
-        if not filtered_results:
-            logger.warning(f"No suitable quality results found for: {query}")
-            return None
-
-        best_result = filtered_results[0]
-        quality_info = f"{best_result.quality.upper()}"
-        if best_result.bitrate:
-            quality_info += f" {best_result.bitrate}kbps"
-
-        logger.info(f"Downloading: {best_result.filename} ({quality_info}) from {best_result.username}")
-        return await self.download(best_result.username, best_result.filename, best_result.size)
-    
     async def check_connection(self) -> bool:
         """Check if slskd is running and accessible"""
         if not self.base_url:
@@ -1298,14 +1302,14 @@ class SoulseekClient(DownloaderProvider):
             logger.debug(f"Connection check failed: {e}")
             return False
     
-    def filter_results_by_quality_preference(self, results: List[TrackResult], quality_profile: Optional[Dict[str, Any]] = None) -> List[TrackResult]:
+    def filter_results_by_quality_preference(self, results: List[SoulSyncTrack], quality_profile: Optional[Dict[str, Any]] = None) -> List[SoulSyncTrack]:
         """
         Filter candidates based on user's quality profile with file size constraints.
         Uses priority waterfall logic: tries highest priority quality first, falls back to lower priorities.
         Returns candidates matching quality profile constraints, sorted by confidence and size.
         
         Args:
-            results: List of TrackResult objects to filter
+            results: List of SoulSyncTrack objects to filter
             quality_profile: Optional quality profile dict. If not provided, uses default profile.
         """
         if not results:
@@ -1332,13 +1336,16 @@ class SoulseekClient(DownloaderProvider):
         size_filtered_all = []
 
         for candidate in results:
-            if not candidate.quality:
+            if not candidate.file_format:
                 quality_buckets['other'].append(candidate)
                 continue
 
-            track_format = candidate.quality.lower()
+            track_format = candidate.file_format.lower()
             track_bitrate = candidate.bitrate or 0
-            file_size_mb = candidate.size / (1024 * 1024)  # Convert bytes to MB
+
+            # Get size from identifiers if possible
+            size_bytes = candidate.identifiers.get('size', 0) if candidate.identifiers else 0
+            file_size_mb = size_bytes / (1024 * 1024)  # Convert bytes to MB
 
             # Categorize and apply file size constraints
             if track_format == 'flac':
@@ -1385,8 +1392,9 @@ class SoulseekClient(DownloaderProvider):
                 quality_buckets['other'].append(candidate)
 
         # Sort each bucket by quality score and size
+        # We stored quality_score in identifiers for this purpose
         for bucket in quality_buckets.values():
-            bucket.sort(key=lambda x: (x.quality_score, x.size), reverse=True)
+            bucket.sort(key=lambda x: (x.identifiers.get('quality_score', 0) if x.identifiers else 0, x.identifiers.get('size', 0) if x.identifiers else 0), reverse=True)
 
         # Debug logging
         for quality, bucket in quality_buckets.items():
@@ -1417,7 +1425,7 @@ class SoulseekClient(DownloaderProvider):
             # Return candidates that passed size checks (even if quality disabled)
             # This respects file size constraints while allowing any quality
             if size_filtered_all:
-                size_filtered_all.sort(key=lambda x: (x.quality_score, x.size), reverse=True)
+                size_filtered_all.sort(key=lambda x: (x.identifiers.get('quality_score', 0) if x.identifiers else 0, x.identifiers.get('size', 0) if x.identifiers else 0), reverse=True)
                 logger.info(f"Quality Filter: Returning {len(size_filtered_all)} fallback candidates (size-filtered, any quality)")
                 return size_filtered_all
             else:
@@ -1582,7 +1590,7 @@ class SoulseekClient(DownloaderProvider):
         }
     
     # Synchronous wrapper methods for base class compatibility
-    def search(self, query: str, type: str = "track", limit: int = 10) -> List[Dict[str, Any]]:
+    def search(self, query: str, type: str = "track", limit: int = 10) -> List[SoulSyncTrack]:
         """Synchronous search wrapper - runs async search in new event loop"""
         try:
             # Create new event loop for synchronous call
@@ -1592,32 +1600,12 @@ class SoulseekClient(DownloaderProvider):
                 # Call the async search method
                 tracks, albums = loop.run_until_complete(self._async_search(query, timeout=30))
                 
-                # Convert to dict format expected by base class
+                # Convert TrackResults to SoulSyncTracks
                 results = []
                 for track in tracks:
-                    results.append({
-                        'type': 'track',
-                        'username': track.username,
-                        'filename': track.filename,
-                        'size': track.size,
-                        'bitrate': track.bitrate,
-                        'quality': track.quality,
-                        'artist': track.artist,
-                        'title': track.title,
-                        'album': track.album
-                    })
-                
-                for album in albums:
-                    results.append({
-                        'type': 'album',
-                        'username': album.username,
-                        'album_path': album.album_path,
-                        'album_title': album.album_title,
-                        'artist': album.artist,
-                        'track_count': album.track_count,
-                        'total_size': album.total_size,
-                        'dominant_quality': album.dominant_quality
-                    })
+                    soul_track = self._convert_to_soulsync_track(track)
+                    if soul_track:
+                        results.append(soul_track)
                 
                 return results[:limit]
             finally:
@@ -1626,6 +1614,116 @@ class SoulseekClient(DownloaderProvider):
             logger.error(f"Error in synchronous search: {e}")
             return []
     
+    def search_track(self, track: SoulSyncTrack) -> List[SoulSyncTrack]:
+        """
+        Search for a track using fallback strategies.
+        Returns a list of candidates converted to SoulSyncTrack.
+        """
+        queries = []
+
+        # Strategy 1: Artist + Title
+        if track.artist_name and track.title:
+            queries.append(f"{track.artist_name} {track.title}")
+
+        # Strategy 2: Album + Title
+        if track.album_title and track.title:
+            queries.append(f"{track.album_title} {track.title}")
+
+        results = []
+
+        # Run async searches in a new loop
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                # Try explicit combinations first
+                for query in queries:
+                    logger.info(f"Trying search strategy: {query}")
+                    tracks, _ = loop.run_until_complete(self._async_search(query, timeout=30))
+
+                    if tracks:
+                        logger.info(f"Found {len(tracks)} results for query: {query}")
+                        # Convert and return immediately on first success
+                        for t in tracks:
+                            st = self._convert_to_soulsync_track(t)
+                            if st:
+                                results.append(st)
+                        return results
+
+                    logger.debug(f"No results for strategy: {query}, trying next...")
+
+                # Strategy 3: Just Title (filtered by artist)
+                if not results and track.title and len(track.title) > 4:
+                    logger.info(f"Trying search strategy: {track.title} (with artist filter)")
+                    tracks, _ = loop.run_until_complete(self._async_search(track.title, timeout=30))
+
+                    if tracks:
+                        logger.info(f"Found {len(tracks)} results for title query, filtering by artist...")
+                        target_artist = track.artist_name.lower() if track.artist_name else ""
+
+                        for t in tracks:
+                            # Filter: Check if track.artist_name is in t.artist or t.filename
+                            match = False
+                            if target_artist:
+                                if t.artist and target_artist in t.artist.lower():
+                                    match = True
+                                elif target_artist in t.filename.lower():
+                                    match = True
+
+                            if match:
+                                st = self._convert_to_soulsync_track(t)
+                                if st:
+                                    results.append(st)
+
+                        logger.info(f"Filtered to {len(results)} matches for artist '{track.artist_name}'")
+                        return results
+
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"Error in search_track: {e}")
+
+        return results
+
+    def download_track(self, track: SoulSyncTrack, quality_profile: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """
+        Full download workflow: Search -> Filter -> Download
+        """
+        logger.info(f"Starting download workflow for: {track.artist_name} - {track.title}")
+
+        # 1. Search for candidates
+        candidates = self.search_track(track)
+        if not candidates:
+            logger.warning("No candidates found for track")
+            return None
+
+        # 2. Filter using quality profile
+        filtered_candidates = self.filter_results_by_quality_preference(candidates, quality_profile)
+        if not filtered_candidates:
+            logger.warning("No candidates matched quality profile")
+            return None
+
+        best_candidate = filtered_candidates[0]
+
+        # 3. Extract download info from identifiers
+        if not best_candidate.identifiers:
+            logger.error("Best candidate missing identifiers, cannot download")
+            return None
+
+        username = best_candidate.identifiers.get('username')
+        # We stored filename manually in provider_item_id
+        filename = best_candidate.identifiers.get('provider_item_id')
+        size = best_candidate.identifiers.get('size', 0)
+
+        if not username or not filename:
+            logger.error(f"Invalid download parameters: username={username}, filename={filename}")
+            return None
+
+        logger.info(f"Selected candidate: {filename} from {username}")
+
+        # 4. Initiate download
+        return self.download(username, filename, size)
+
     def download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
         """Synchronous download wrapper - runs async download in new event loop"""
         try:
