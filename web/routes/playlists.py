@@ -94,9 +94,9 @@ def analyze_playlists():
                 for source_track in source_tracks:
                     # source_track is now SoulSyncTrack from provider (Spotify, Plex, etc.)
                     track_title = source_track.title
-                    track_artist = source_track.artist
-                    track_album = source_track.album or ''
-                    track_duration = source_track.duration_ms
+                    track_artist = source_track.artist_name
+                    track_album = source_track.album_title or ''
+                    track_duration = source_track.duration
                     track_isrc = source_track.isrc
                     
                     # Search database for matching tracks
