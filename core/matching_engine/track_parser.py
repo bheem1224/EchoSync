@@ -175,20 +175,24 @@ class TrackParser:
 
         # Build SoulSyncTrack
         try:
+            album_title = parsed_data.get('album')
+            if not album_title:
+                album_title = ""
+
             track = SoulSyncTrack(
-                title=parsed_data.get('title', ''),
-                artist=parsed_data.get('artist', ''),
-                album=parsed_data.get('album'),
-                year=year,
-                version=version,
-                is_compilation=is_compilation,
+                raw_title=parsed_data.get('title', ''),
+                artist_name=parsed_data.get('artist', ''),
+                album_title=album_title,
+                release_year=year,
+                edition=version,
                 quality_tags=quality_tags,
                 track_number=track_number,
                 disc_number=disc_number,
+                album_type='compilation' if is_compilation else None
             )
 
             # Validate the track
-            if track.validate():
+            if track.raw_title and track.artist_name:
                 return track
             return None
 

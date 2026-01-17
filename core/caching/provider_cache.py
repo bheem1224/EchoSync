@@ -16,6 +16,7 @@ from typing import Any, Callable, Optional, TypeVar, cast
 from pathlib import Path
 import hashlib
 
+from sqlalchemy import text
 from database import MusicDatabase
 
 logger = logging.getLogger(__name__)
@@ -36,10 +37,29 @@ class ProviderCache:
         """
         if db_path is None:
             # Standard location
+            # Note: This assumes relative path from this file
+            # core/caching/provider_cache.py -> .../data/music_library.db
             db_path = Path(__file__).parent.parent.parent / "data" / "music_library.db"
 
         self.db_path = db_path
         self.db = MusicDatabase(db_path)
+        self._ensure_table()
+
+    def _ensure_table(self):
+        """Ensure the cache table exists."""
+        try:
+            with self.db.engine.connect() as conn:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS parsed_tracks (
+                        raw_string TEXT PRIMARY KEY,
+                        parsed_json TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        ttl_expires_at TIMESTAMP
+                    )
+                """))
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error ensuring cache table: {e}")
 
     def get(self, key: str, ttl_seconds: int = 3600) -> Optional[Any]:
         """
@@ -53,15 +73,15 @@ class ProviderCache:
             Cached value or None if not found/expired
         """
         try:
-            # Query parsed_tracks table
-            query = """
+            query = text("""
                 SELECT parsed_json FROM parsed_tracks
-                WHERE raw_string = ?
+                WHERE raw_string = :key
                 AND (ttl_expires_at IS NULL OR ttl_expires_at > CURRENT_TIMESTAMP)
                 LIMIT 1
-            """
+            """)
 
-            result = self.db.query_one(query, (key,))
+            with self.db.engine.connect() as conn:
+                result = conn.execute(query, {"key": key}).fetchone()
 
             if result:
                 try:
@@ -95,14 +115,19 @@ class ProviderCache:
             # Calculate expiration time
             expires_at = datetime.utcnow() + timedelta(seconds=ttl_seconds)
 
-            # Insert or replace in parsed_tracks table
-            query = """
+            query = text("""
                 INSERT OR REPLACE INTO parsed_tracks
                 (raw_string, parsed_json, created_at, ttl_expires_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP, ?)
-            """
+                VALUES (:key, :value, CURRENT_TIMESTAMP, :expires)
+            """)
 
-            self.db.execute(query, (key, json_value, expires_at.isoformat()))
+            with self.db.engine.connect() as conn:
+                conn.execute(query, {
+                    "key": key,
+                    "value": json_value,
+                    "expires": expires_at
+                })
+                conn.commit()
             return True
 
         except Exception as e:
@@ -120,8 +145,10 @@ class ProviderCache:
             True if successful, False otherwise
         """
         try:
-            query = "DELETE FROM parsed_tracks WHERE raw_string = ?"
-            self.db.execute(query, (key,))
+            query = text("DELETE FROM parsed_tracks WHERE raw_string = :key")
+            with self.db.engine.connect() as conn:
+                conn.execute(query, {"key": key})
+                conn.commit()
             return True
         except Exception as e:
             logger.error(f"Error deleting from cache: {e}")
@@ -135,14 +162,15 @@ class ProviderCache:
             Number of entries deleted
         """
         try:
-            query = """
+            query = text("""
                 DELETE FROM parsed_tracks
                 WHERE ttl_expires_at IS NOT NULL
                 AND ttl_expires_at <= CURRENT_TIMESTAMP
-            """
-            self.db.execute(query)
-            logger.info("Cleared expired cache entries")
-            return 1  # We don't have rowcount easily available
+            """)
+            with self.db.engine.connect() as conn:
+                result = conn.execute(query)
+                conn.commit()
+                return result.rowcount
         except Exception as e:
             logger.error(f"Error clearing expired cache: {e}")
             return 0
@@ -155,9 +183,10 @@ class ProviderCache:
             True if successful
         """
         try:
-            query = "DELETE FROM parsed_tracks"
-            self.db.execute(query)
-            logger.info("Cleared all cache entries")
+            query = text("DELETE FROM parsed_tracks")
+            with self.db.engine.connect() as conn:
+                conn.execute(query)
+                conn.commit()
             return True
         except Exception as e:
             logger.error(f"Error clearing cache: {e}")
@@ -253,10 +282,12 @@ def invalidate_cache_for(pattern: str) -> int:
     """
     cache = get_cache()
     try:
-        query = "DELETE FROM parsed_tracks WHERE raw_string LIKE ?"
-        cache.db.execute(query, (pattern,))
-        logger.info(f"Invalidated cache entries matching: {pattern}")
-        return 1
+        query = text("DELETE FROM parsed_tracks WHERE raw_string LIKE :pattern")
+        with cache.db.engine.connect() as conn:
+            result = conn.execute(query, {"pattern": pattern})
+            conn.commit()
+            logger.info(f"Invalidated cache entries matching: {pattern}")
+            return result.rowcount
     except Exception as e:
         logger.error(f"Error invalidating cache: {e}")
         return 0

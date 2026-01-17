@@ -104,21 +104,21 @@ def analyze_playlists():
                     best_score = 0
                     try:
                         # Get all candidates from database with similar title/artist
-                        conn = db._get_connection()
-                        cursor = conn.cursor()
+                        from sqlalchemy import text
                         
-                        # Quick text search for candidates (artist + title), include ISRC
-                        cursor.execute("""
-                            SELECT t.id, t.title, t.duration, a.name as artist_name, a.id as artist_id, t.isrc
-                            FROM tracks t
-                            JOIN artists a ON t.artist_id = a.id
-                            WHERE LOWER(a.name) LIKE LOWER(?)
-                            OR LOWER(t.title) LIKE LOWER(?)
-                            LIMIT 20
-                        """, (f"%{track_artist}%", f"%{track_title}%"))
-                        
-                        candidates = cursor.fetchall()
-                        conn.close()
+                        with db.engine.connect() as conn:
+                            # Quick text search for candidates (artist + title), include ISRC
+                            query = text("""
+                                SELECT t.id, t.title, t.duration, a.name as artist_name, a.id as artist_id, t.isrc
+                                FROM tracks t
+                                JOIN artists a ON t.artist_id = a.id
+                                WHERE LOWER(a.name) LIKE LOWER(:artist)
+                                OR LOWER(t.title) LIKE LOWER(:title)
+                                LIMIT 20
+                            """)
+
+                            result = conn.execute(query, {"artist": f"%{track_artist}%", "title": f"%{track_title}%"})
+                            candidates = result.fetchall()
                         
                         # Score each candidate using matching engine
                         best_match = None
