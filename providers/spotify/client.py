@@ -107,6 +107,12 @@ class SpotifyClient(SyncServiceProvider):
     def __init__(self, account_id: Optional[int] = None):
         self.sp: Optional[spotipy.Spotify] = None
         self.user_id: Optional[str] = None
+
+        # Auto-detect active account if not provided
+        if account_id is None:
+            from core.settings import config_manager
+            account_id = config_manager.get('active_spotify_account_id')
+
         self.account_id: Optional[int] = account_id
 
         # Initialize centralized HTTP client for Spotify (5 requests/second rate limit)

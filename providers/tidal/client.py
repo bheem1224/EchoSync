@@ -47,6 +47,10 @@ class TidalClient(SyncServiceProvider):
         return "/static/img/tidal_logo.png"
 
     def __init__(self, account_id: Optional[str] = None):
+        # Auto-detect active account if not provided
+        if account_id is None:
+            account_id = config_manager.get('active_tidal_account_id')
+
         self.account_id = account_id
         self.client_id = None
         self.client_secret = None

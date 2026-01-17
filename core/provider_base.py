@@ -211,10 +211,10 @@ class ProviderBase(ABC):
         
         # Create SoulSyncTrack
         return SoulSyncTrack(
-            title=normalized_title,
-            artist_name=normalized_artist,
-            album_title=normalized_album,
-                        edition=edition,
+            raw_title=title_str,
+            artist_name=artist_str,
+            album_title=album_str,
+            edition=edition,
             duration=parsed_duration,
             track_number=track_number,
             disc_number=disc_number,
