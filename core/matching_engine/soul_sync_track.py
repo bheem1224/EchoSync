@@ -76,6 +76,7 @@ class SoulSyncTrack:
     file_path: Optional[str] = None
     file_format: Optional[str] = None
     release_year: Optional[int] = None
+    version: Optional[str] = None  # e.g., "Remix", "Live", "Extended"
     added_at: Optional[datetime] = None
 
     # Technical Metadata
@@ -95,8 +96,9 @@ class SoulSyncTrack:
     # Audio fingerprint for matching
     fingerprint: Optional[str] = None
     
-    # Quality tags
+    # Quality tags and flags
     quality_tags: Optional[List[str]] = None
+    is_compilation: Optional[bool] = None
     
     # External Provider Links
     identifiers: Dict[str, Any] = field(default_factory=dict)
@@ -162,7 +164,15 @@ class SoulSyncTrack:
             start, end = match.span()
             clean_title = (self.raw_title[:start] + self.raw_title[end:]).strip()
 
-        # 3. Balanced Quote Stripping
+        # 3. Strip Featured Artist Attribution
+        # Remove (feat. ...), [feat. ...], or trailing "feat. ..." after all other info is extracted
+        attribution_pattern = re.compile(
+            r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+.*?[\]\)]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$",
+            re.IGNORECASE
+        )
+        clean_title = attribution_pattern.sub("", clean_title).strip()
+
+        # 4. Balanced Quote Stripping
         clean_title = clean_title.strip()
         if len(clean_title) >= 2:
             if clean_title.startswith('"') and clean_title.endswith('"'):
@@ -172,7 +182,7 @@ class SoulSyncTrack:
 
         self.title = clean_title
 
-        # 4. Sort Title Generation
+        # 5. Sort Title Generation
         if self.sort_title is None:
             lower_title = self.title.lower()
             if lower_title.startswith("the "):

@@ -5,8 +5,10 @@ from providers.plex.client import PlexClient
 
 @pytest.fixture
 def plex_client():
-    client = PlexClient()
-    return client
+    with patch('providers.plex.client.config_manager') as mock_cm:
+        mock_cm.get_plex_config.return_value = {}
+        client = PlexClient()
+        return client
 
 def test_initialization(plex_client):
     assert plex_client.name == 'plex'
@@ -15,8 +17,11 @@ def test_initialization(plex_client):
     assert plex_client.music_library is None
 
 def test_is_configured_false(plex_client):
-    assert plex_client.is_configured() is False
+    with patch('providers.plex.client.config_manager') as mock_cm:
+        mock_cm.get_plex_config.return_value = {}
+        assert plex_client.is_configured() is False
 
 def test_is_configured_true(plex_client):
-    plex_client.server = MagicMock()
-    assert plex_client.is_configured() is True
+    with patch('providers.plex.client.config_manager') as mock_cm:
+        mock_cm.get_plex_config.return_value = {'base_url': 'http://plex', 'token': 'abc'}
+        assert plex_client.is_configured() is True

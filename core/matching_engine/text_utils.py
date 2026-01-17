@@ -50,12 +50,19 @@ def normalize_title(title: Optional[str]) -> str:
     - Lowercase
     - Remove accents
     - Remove extra spaces
+    - Strip trailing/parenthetical featured-artist markers (feat./featuring/with)
     - Keep alphanumeric + common punctuation
     """
     if not title:
         return ""
     
     normalized = normalize_text(title)
+    
+    # Remove parenthetical/bracketed featured artist clauses
+    normalized = re.sub(r"\s*[\(\[\{]\s*(feat\.?|featuring|with)\b[^\)\]\}]*[\)\]\}]", "", normalized, flags=re.IGNORECASE)
+    # Remove trailing feat/with clauses
+    normalized = re.sub(r"\s+(feat\.?|featuring|with)\b.*$", "", normalized, flags=re.IGNORECASE)
+    
     # Keep alphanumeric, spaces, hyphens, parentheses, quotes
     normalized = re.sub(r'[^\w\s\-\(\)\'\"]', '', normalized)
     

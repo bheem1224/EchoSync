@@ -82,6 +82,16 @@ class StorageService:
         except Exception as e:
             print(f"[ERROR] mark_account_authenticated failed: {e}")
             return False
+
+    def get_account_token(self, account_id: int) -> Optional[dict]:
+        """Get account token - redirects to database."""
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            return db.get_account_token(account_id)
+        except Exception as e:
+            print(f"[ERROR] get_account_token failed: {e}")
+            return None
     
     def toggle_account_active(self, account_id: int, active: bool) -> bool:
         """Toggle account active status - redirects to database."""

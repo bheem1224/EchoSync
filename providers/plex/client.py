@@ -169,14 +169,26 @@ class PlexClient(ProviderBase):
         try:
             playlists = []
             for playlist in self.server.playlists():
-                # Filter for music playlists only
-                if hasattr(playlist, 'playlistType') and playlist.playlistType == 'audio':
-                    playlists.append({
-                        'id': str(playlist.ratingKey),
-                        'name': playlist.title,
-                        'description': getattr(playlist, 'summary', None),
-                        'track_count': playlist.leafCount if hasattr(playlist, 'leafCount') else 0,
-                    })
+                # Filter for music playlists only (robustly handle None and alternate attribute names)
+                if not playlist:
+                    continue
+
+                # Support both 'playlistType' and possible variants like 'playlist_type'
+                playlist_type = ''
+                if hasattr(playlist, 'playlistType'):
+                    playlist_type = getattr(playlist, 'playlistType') or ''
+                elif hasattr(playlist, 'playlist_type'):
+                    playlist_type = getattr(playlist, 'playlist_type') or ''
+
+                if str(playlist_type).lower() != 'audio':
+                    continue
+
+                playlists.append({
+                    'id': str(getattr(playlist, 'ratingKey', None)),
+                    'name': getattr(playlist, 'title', None),
+                    'description': getattr(playlist, 'summary', None),
+                    'track_count': getattr(playlist, 'leafCount', 0),
+                })
             
             logger.debug(f"Found {len(playlists)} music playlists")
             return playlists
@@ -350,6 +362,38 @@ class PlexClient(ProviderBase):
     
     # ===== INTERNAL METHODS =====
     
+    def _extract_version_suffix(self, text: str) -> tuple[str, Optional[str]]:
+        """Extract version suffix from text in parentheses or common edition suffixes.
+        
+        E.g., "Wake Me Up (Avicii by Avicii)" -> ("Wake Me Up", "Avicii by Avicii")
+        E.g., "All the Things She Said" Music Video -> ("All the Things She Said", "Music Video")
+        E.g., "True (Avicii by Avicii)" -> ("True", "Avicii by Avicii")
+        """
+        import re
+        
+        # First check for common edition suffixes (case-insensitive)
+        edition_patterns = [
+            r'\s+(?:Music\s+Video|Official\s+Video|Video|Live\s+Version|Acoustic\s+Version|Remix|Remaster|Extended\s+Version)\s*$',
+            r'\s*\(([^)]*)\)\s*$'  # Then try parentheses
+        ]
+        
+        for pattern in edition_patterns:
+            if pattern == r'\s*\(([^)]*)\)\s*$':
+                match = re.search(pattern, text)
+                if match:
+                    base = text[: match.start()].strip()
+                    version = match.group(1).strip()
+                    if base and version:
+                        return base, version
+            else:
+                match = re.search(pattern, text)
+                if match:
+                    base = text[: match.start()].strip()
+                    version = match.group(0).strip().lower()
+                    return base, version
+        
+        return text, None
+    
     def _convert_track_to_soulsync(self, plex_track: PlexTrack) -> Optional[SoulSyncTrack]:
         """Convert Plex track to SoulSyncTrack using factory method."""
         try:
@@ -368,19 +412,33 @@ class PlexClient(ProviderBase):
             album = None
             try:
                 album_obj = plex_track.album()
-                album = getattr(album_obj, 'title', None) if album_obj else None
+                album = getattr(album_obj, 'title', None) or "Unknown Album"
             except (NotFound, AttributeError, Exception) as e:
                 logger.debug(f"Failed to get album for track '{title}': {e}")
             
             if not title:
-                logger.warning(f"Skipping track - missing title")
+                logger.warning("Skipping track - missing title")
                 return None
             
             if not artist:
                 logger.warning(f"Skipping track '{title}' - missing artist (artist_obj extraction failed)")
                 return None
             
-            # Extract audio metadata
+            # Remove version suffix from title if it matches album version
+            # E.g., if title is "Wake Me Up (Avicii by Avicii)" and album is "True (Avicii by Avicii)"
+            # Extract "(Avicii by Avicii)" from both and remove from title if they match
+            title_base, title_version = self._extract_version_suffix(title)
+            album_base, album_version = self._extract_version_suffix(album)
+            
+            if title_version and album_version and title_version.lower() == album_version.lower():
+                logger.debug(f"Removing matching version suffix '{title_version}' from title '{title}'")
+                title = title_base
+            elif album and title.lower().endswith(f"({album.lower()})"):
+                # Fallback to original logic for exact album name matches
+                logger.debug(f"Removing album name '{album}' from title '{title}'")
+                title = title[: -(len(album) + 2)].strip()  # Remove " (Album Name)"
+
+            # Extract other metadata
             duration_ms = getattr(plex_track, 'duration', None)
             year = getattr(plex_track, 'year', None)
             track_number = getattr(plex_track, 'trackNumber', None)
@@ -487,7 +545,7 @@ class PlexClient(ProviderBase):
                 logger.warning(f"create_soul_sync_track returned None for '{title}' by '{artist}'")
             
             return track
-        
+
         except Exception as e:
             logger.error(f"Error converting Plex track '{getattr(plex_track, 'title', 'Unknown')}': {e}", exc_info=True)
             return None

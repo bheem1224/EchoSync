@@ -2,10 +2,11 @@
 Bulk import operations using SQLAlchemy 2.0 and LibraryManager.
 Efficiently ingests SoulSyncTrack objects into the database with caching.
 """
+from collections import defaultdict
 from typing import List, Dict, Optional, Tuple
 from datetime import date, datetime
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.orm import sessionmaker, Session
 
 from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -241,7 +242,7 @@ class LibraryManager:
 
     def _upsert_track(
         self, session: Session, track_data: SoulSyncTrack, artist: Artist, album: Optional[Album]
-    ) -> Track:
+    ) -> tuple[Track, bool]:
         """
         Insert or update a single track.
 
@@ -252,7 +253,8 @@ class LibraryManager:
             album: Album object (optional)
 
         Returns:
-            Track object (inserted or updated)
+            Tuple of (Track object, is_new: bool)
+            is_new is True if track was newly created, False if updated
         """
         # Try to find existing track
         track = self._find_track_by_identifiers(session, track_data.identifiers)
@@ -287,6 +289,7 @@ class LibraryManager:
             session.add(track)
             session.flush()
             logger.debug(f"Created new track: {track.title} by {artist.name}")
+            is_new = True
         else:
             # Update existing track (Sparse Updates)
             # Identity fields - always update
@@ -324,6 +327,7 @@ class LibraryManager:
 
             # NOTE: Explicitly NOT updating added_at to preserve original import time
             logger.debug(f"Updated existing track: {track.title} by {artist.name}")
+            is_new = False
 
         # Ensure all identifiers are linked to this track
         for source, item_id in track_data.identifiers.items():
@@ -375,7 +379,40 @@ class LibraryManager:
                 if track_data.acoustid_id and not af.acoustid_id:
                     af.acoustid_id = track_data.acoustid_id
 
-        return track
+        return track, is_new
+
+    def _delete_missing_tracks(self, session: Session, observed_identifiers: Dict[str, set[str]]) -> int:
+        """Remove tracks that are no longer present for a given provider source.
+
+        Args:
+            session: SQLAlchemy session
+            observed_identifiers: Map of provider_source -> set of provider_item_id values seen in this import
+
+        Returns:
+            Number of tracks deleted
+        """
+        if not observed_identifiers:
+            return 0
+
+        deleted_track_ids: set[int] = set()
+
+        for source, item_ids in observed_identifiers.items():
+            stmt = select(Track.id).join(ExternalIdentifier).where(
+                ExternalIdentifier.provider_source == source
+            )
+
+            # If no items were observed for this provider, delete all entries for that source
+            if item_ids:
+                stmt = stmt.where(~ExternalIdentifier.provider_item_id.in_(item_ids))
+
+            stale_ids = session.execute(stmt).scalars().all()
+            deleted_track_ids.update(stale_ids)
+
+        if not deleted_track_ids:
+            return 0
+
+        session.execute(delete(Track).where(Track.id.in_(list(deleted_track_ids))))
+        return len(deleted_track_ids)
 
     def bulk_import(self, tracks: List[SoulSyncTrack]) -> int:
         """
@@ -386,7 +423,7 @@ class LibraryManager:
             tracks: List of SoulSyncTrack objects
 
         Returns:
-            Number of tracks successfully imported
+            Number of tracks processed (new + updated)
         """
         if not tracks:
             logger.warning("No tracks provided for bulk import")
@@ -396,7 +433,9 @@ class LibraryManager:
 
         session = self.session_factory()
         imported_count = 0
+        updated_count = 0
         failed_count = 0
+        observed_identifiers: Dict[str, set[str]] = defaultdict(set)
 
         try:
             for idx, track_data in enumerate(tracks):
@@ -452,8 +491,20 @@ class LibraryManager:
                     )
 
                     # Upsert track
-                    track = self._upsert_track(session, track_data, artist, album)
-                    imported_count += 1
+                    track, is_new = self._upsert_track(session, track_data, artist, album)
+
+                    # Track identifier observations for deletion detection
+                    for source, item_id in (track_data.identifiers or {}).items():
+                        if not source or item_id is None:
+                            continue
+                        if not isinstance(item_id, str):
+                            item_id = str(item_id)
+                        observed_identifiers[source].add(item_id)
+
+                    if is_new:
+                        imported_count += 1
+                    else:
+                        updated_count += 1
 
                 except Exception as e:
                     failed_count += 1
@@ -470,10 +521,17 @@ class LibraryManager:
                         f"Batch committed: {idx + 1}/{len(tracks)} tracks processed"
                     )
 
-            # Final commit
+            # Final commit for inserts/updates
             session.commit()
+
+            # Remove tracks that no longer exist for observed providers
+            deleted_count = self._delete_missing_tracks(session, observed_identifiers)
+            if deleted_count:
+                session.commit()
+
+            total_processed = imported_count + updated_count
             logger.info(
-                f"Bulk import complete: {imported_count} imported, {failed_count} failed"
+                f"Bulk import complete: {imported_count} new, {updated_count} updated, {deleted_count} deleted, {failed_count} failed (total processed: {total_processed})"
             )
 
         except Exception as e:
@@ -483,4 +541,4 @@ class LibraryManager:
         finally:
             session.close()
 
-        return imported_count
+        return total_processed

@@ -141,16 +141,16 @@ class TrackParser:
         # Extract track/disk numbers
         track_number, disc_number = self._extract_track_numbers(working_string)
 
-        # Remove junk before parsing
-        if self.config.remove_junk_chars:
-            working_string = self._remove_junk(working_string)
-
-        # Extract quality tags
+        # Extract quality tags BEFORE removing junk (since junk removal removes brackets)
         quality_tags = []
         if self.config.extract_quality_tags:
             quality_tags = self._extract_quality_tags(working_string)
             # Remove quality info for cleaner parsing
             working_string = self._remove_quality_markers(working_string)
+
+        # Remove junk before parsing
+        if self.config.remove_junk_chars:
+            working_string = self._remove_junk(working_string)
 
         # Extract version/remix info
         version = None
@@ -184,6 +184,8 @@ class TrackParser:
                 track_number=track_number,
                 disc_number=disc_number,
                 quality_tags=quality_tags,
+                is_compilation=is_compilation,
+                version=version,
             )
 
             return track
@@ -227,16 +229,16 @@ class TrackParser:
             else:
                 tags.append(QualityTag.FLAC_16BIT.value)
 
+        elif self.PATTERNS['quality_aac'].search(text):
+            tags.append(QualityTag.AAC.value)
+        elif self.PATTERNS['quality_alac'].search(text):
+            tags.append(QualityTag.ALAC.value)
         elif self.PATTERNS['quality_mp3_320'].search(text):
             tags.append(QualityTag.MP3_320KBPS.value)
         elif self.PATTERNS['quality_mp3_256'].search(text):
             tags.append(QualityTag.MP3_256KBPS.value)
         elif self.PATTERNS['quality_mp3_192'].search(text):
             tags.append(QualityTag.MP3_192KBPS.value)
-        elif self.PATTERNS['quality_aac'].search(text):
-            tags.append(QualityTag.AAC.value)
-        elif self.PATTERNS['quality_alac'].search(text):
-            tags.append(QualityTag.ALAC.value)
         elif self.PATTERNS['quality_ogg'].search(text):
             tags.append(QualityTag.OGG_VORBIS.value)
         elif self.PATTERNS['quality_opus'].search(text):
