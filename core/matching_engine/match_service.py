@@ -202,7 +202,6 @@ class MatchService:
         matcher = WeightedMatchingEngine(profile)
         return matcher.calculate_match(track_a, track_b)
 
-    @provider_cache(ttl_seconds=3600, key_prefix="parse")
     def parse_filename(self, raw_string: str) -> Optional[SoulSyncTrack]:
         """
         Parse a raw filename into SoulSyncTrack (cached)
@@ -213,7 +212,24 @@ class MatchService:
         Returns:
             Parsed SoulSyncTrack or None
         """
-        return self.parser.parse_filename(raw_string)
+        import hashlib
+        key_str = f"parse|{raw_string}"
+        cache_key = hashlib.md5(key_str.encode()).hexdigest()
+
+        cached_data = self.cache.get(cache_key)
+        if cached_data:
+            try:
+                # Ensure we return a SoulSyncTrack object, not a dict
+                if isinstance(cached_data, dict):
+                    return SoulSyncTrack.from_dict(cached_data)
+            except Exception as e:
+                logger.warning(f"Failed to deserialize cached track: {e}")
+
+        result = self.parser.parse_filename(raw_string)
+        if result:
+            self.cache.set(cache_key, result.to_dict())
+
+        return result
 
     def parse_and_match(
         self,
@@ -286,12 +302,19 @@ class MatchService:
 
         scores = [m.confidence_score for m in matches]
 
+        # Calculate median
+        median = 0.0
+        if scores:
+            mid = len(scores) // 2
+            median = scores[mid] if len(scores) % 2 != 0 else (scores[mid-1] + scores[mid]) / 2
+
         return {
             "total_candidates": len(candidates),
             "matches_found": len(matches),
             "best_score": scores[0],
             "worst_match_score": scores[-1],
             "average_score": sum(scores) / len(scores),
+            "median_score": median,
             "matches_above_80": len([s for s in scores if s >= 80]),
             "matches_above_90": len([s for s in scores if s >= 90]),
         }

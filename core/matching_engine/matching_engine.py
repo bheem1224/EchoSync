@@ -38,6 +38,9 @@ class MatchResult:
     version_penalty_applied: float
     edition_penalty_applied: float
     reasoning: str  # Human-readable explanation
+    target_source: Optional[str] = None  # e.g., plex, jellyfin
+    target_identifier: Optional[str] = None  # e.g., Plex ratingKey
+    target_exists: bool = False  # True if identifier is present for target
 
 
 class WeightedMatchingEngine:
@@ -73,7 +76,9 @@ class WeightedMatchingEngine:
     def calculate_match(
         self,
         source: SoulSyncTrack,
-        candidate: SoulSyncTrack
+        candidate: SoulSyncTrack,
+        target_source: Optional[str] = None,
+        target_identifier: Optional[str] = None,
     ) -> MatchResult:
         """
         Calculate match confidence between source and candidate tracks
@@ -99,7 +104,7 @@ class WeightedMatchingEngine:
         # If both tracks have ISRC and they match exactly, instant 100% confidence
         if source.isrc and candidate.isrc:
             if source.isrc.strip().upper() == candidate.isrc.strip().upper():
-                return MatchResult(
+                return self._attach_target_context(MatchResult(
                     confidence_score=100.0,
                     passed_version_check=True,
                     passed_edition_check=True,
@@ -109,9 +114,162 @@ class WeightedMatchingEngine:
                     version_penalty_applied=0.0,
                     edition_penalty_applied=0.0,
                     reasoning="ISRC match (identical recording - instant 100% confidence)"
-                )
+                ), target_source, target_identifier)
             else:
                 reasoning_parts.append("ISRC available but no match (different recordings)")
+
+        # Continue with standard matching...
+        return self._attach_target_context(
+            self._calculate_standard_match(source, candidate),
+            target_source,
+            target_identifier,
+        )
+
+    def calculate_title_duration_match(
+        self,
+        source: SoulSyncTrack,
+        candidate: SoulSyncTrack,
+        target_source: Optional[str] = None,
+        target_identifier: Optional[str] = None,
+    ) -> MatchResult:
+        """
+        Calculate match for Tier 2 fallback: exact title + duration only (ignores artist).
+        Used when artist metadata is unreliable but title+duration are reliable.
+
+        Stricter criteria:
+        - ISRC match = instant 100%
+        - Exact title match required (case-insensitive, normalized)
+        - Duration within 2 seconds or 2% (stricter than standard)
+        - Returns 90-100% confidence if both pass
+
+        Args:
+            source: Source track
+            candidate: Candidate track
+
+        Returns:
+            MatchResult with confidence score
+        """
+        reasoning_parts = []
+
+        # Check ISRC first (highest confidence)
+        if source.isrc and candidate.isrc:
+            if source.isrc.strip().upper() == candidate.isrc.strip().upper():
+                return self._attach_target_context(MatchResult(
+                    confidence_score=100.0,
+                    passed_version_check=True,
+                    passed_edition_check=True,
+                    fuzzy_text_score=1.0,
+                    duration_match_score=1.0,
+                    quality_bonus_applied=0.0,
+                    version_penalty_applied=0.0,
+                    edition_penalty_applied=0.0,
+                    reasoning="Tier 2: ISRC match (instant 100%)"
+                ), target_source, target_identifier)
+            else:
+                reasoning_parts.append("ISRC mismatch (different recordings)")
+                return self._attach_target_context(MatchResult(
+                    confidence_score=0.0,
+                    passed_version_check=False,
+                    passed_edition_check=False,
+                    fuzzy_text_score=0.0,
+                    duration_match_score=0.0,
+                    quality_bonus_applied=0.0,
+                    version_penalty_applied=0.0,
+                    edition_penalty_applied=0.0,
+                    reasoning=" | ".join(reasoning_parts)
+                ), target_source, target_identifier)
+
+        # Title must be exact match (normalized)
+        source_title_norm = self._normalize_string_for_comparison(source.title or "")
+        candidate_title_norm = self._normalize_string_for_comparison(candidate.title or "")
+
+        if source_title_norm != candidate_title_norm:
+            reasoning_parts.append(f"Title mismatch: '{source.title}' != '{candidate.title}'")
+            return self._attach_target_context(MatchResult(
+                confidence_score=0.0,
+                passed_version_check=False,
+                passed_edition_check=False,
+                fuzzy_text_score=0.0,
+                duration_match_score=0.0,
+                quality_bonus_applied=0.0,
+                version_penalty_applied=0.0,
+                edition_penalty_applied=0.0,
+                reasoning=" | ".join(reasoning_parts)
+            ), target_source, target_identifier)
+
+        reasoning_parts.append("Title exact match")
+
+        # Duration must be within strict tolerance (2 seconds since artist is ignored)
+        if not source.duration or not candidate.duration:
+            reasoning_parts.append("Missing duration - cannot validate")
+            return self._attach_target_context(MatchResult(
+                confidence_score=0.0,
+                passed_version_check=False,
+                passed_edition_check=False,
+                fuzzy_text_score=1.0,
+                duration_match_score=0.0,
+                quality_bonus_applied=0.0,
+                version_penalty_applied=0.0,
+                edition_penalty_applied=0.0,
+                reasoning=" | ".join(reasoning_parts)
+            ), target_source, target_identifier)
+
+        duration_diff_ms = abs(source.duration - candidate.duration)
+        tolerance_ms = 2000  # 2 seconds strict tolerance for Tier 2
+
+        if duration_diff_ms > tolerance_ms:
+            reasoning_parts.append(
+                f"Duration outside tolerance: {duration_diff_ms}ms > {tolerance_ms}ms "
+                f"({source.duration}ms vs {candidate.duration}ms)"
+            )
+            return MatchResult(
+                confidence_score=0.0,
+                passed_version_check=False,
+                passed_edition_check=False,
+                fuzzy_text_score=1.0,
+                duration_match_score=0.0,
+                quality_bonus_applied=0.0,
+                version_penalty_applied=0.0,
+                edition_penalty_applied=0.0,
+                reasoning=" | ".join(reasoning_parts)
+            )
+
+        # Calculate confidence based on duration proximity
+        duration_score = 1.0 - (duration_diff_ms / tolerance_ms) * 0.1  # Max 10% deduction
+        confidence = 90.0 + (duration_score * 10.0)  # 90-100% range
+
+        reasoning_parts.append(
+            f"Duration match: {duration_diff_ms}ms difference (within {tolerance_ms}ms tolerance)"
+        )
+        reasoning_parts.append(f"Tier 2: Title+Duration match (artist ignored) → {confidence:.1f}%")
+
+        return self._attach_target_context(MatchResult(
+            confidence_score=confidence,
+            passed_version_check=True,
+            passed_edition_check=True,
+            fuzzy_text_score=1.0,
+            duration_match_score=duration_score,
+            quality_bonus_applied=0.0,
+            version_penalty_applied=0.0,
+            edition_penalty_applied=0.0,
+            reasoning=" | ".join(reasoning_parts)
+        ), target_source, target_identifier)
+
+    def _calculate_standard_match(
+        self,
+        source: SoulSyncTrack,
+        candidate: SoulSyncTrack
+    ) -> MatchResult:
+        """
+        Standard matching logic (original calculate_match implementation)
+        """
+        score = 0.0
+        max_possible_score = 0.0
+        version_penalty = 0.0
+        edition_penalty = 0.0
+        quality_bonus = 0.0
+        fingerprint_score = 0.0
+        reasoning_parts = []
         
         # ===== STEP 0b: FINGERPRINT MATCHING (if available) =====
         # Check fingerprints first - if they match, we can be very confident
@@ -230,6 +388,18 @@ class WeightedMatchingEngine:
             reasoning=" | ".join(reasoning_parts)
         )
 
+    def _attach_target_context(
+        self,
+        result: MatchResult,
+        target_source: Optional[str],
+        target_identifier: Optional[str],
+    ) -> MatchResult:
+        if target_source:
+            result.target_source = target_source
+            result.target_identifier = target_identifier
+            result.target_exists = bool(target_identifier)
+        return result
+
     def _check_version_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> Tuple[bool, str]:
         """
         Check if versions match
@@ -297,9 +467,80 @@ class WeightedMatchingEngine:
         # No strong edition signals
         return True, "No edition info to compare"
 
+    def _tokenize_artists(self, artist_string: str) -> set:
+        """
+        Tokenize artist string into individual artist names.
+        Splits by &, feat., featuring, with, and, commas.
+        
+        Args:
+            artist_string: Artist name(s) as string
+            
+        Returns:
+            Set of normalized artist tokens
+        """
+        import re
+        
+        if not artist_string:
+            return set()
+        
+        # Split by common delimiters
+        # Matches: &, feat., ft., featuring, with, and, ,
+        tokens = re.split(r'\s*(?:&|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b|\band\b|,)\s*', artist_string, flags=re.IGNORECASE)
+        
+        # Normalize each token
+        normalized = set()
+        for token in tokens:
+            token = token.strip()
+            if token:
+                # Normalize using the same logic as string comparison
+                normalized.add(self._normalize_string_for_comparison(token))
+        
+        return normalized
+    
+    def _check_artist_subset_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> Tuple[bool, float, str]:
+        """
+        Check if one artist list is a subset of the other (tokenized intersection).
+        Used as a rescue mechanism when fuzzy matching fails.
+        
+        Logic: If 100% of artists in the shorter list appear in the longer list,
+        and duration is within 2 seconds, consider it a valid match.
+        
+        Args:
+            source: Source track
+            candidate: Candidate track
+            
+        Returns:
+            Tuple of (is_subset_match, confidence_boost, reasoning)
+        """
+        if not source.artist_name or not candidate.artist_name:
+            return False, 0.0, "Missing artist info"
+        
+        source_tokens = self._tokenize_artists(source.artist_name)
+        candidate_tokens = self._tokenize_artists(candidate.artist_name)
+        
+        if not source_tokens or not candidate_tokens:
+            return False, 0.0, "Could not tokenize artists"
+        
+        # Check if one is a subset of the other
+        if source_tokens.issubset(candidate_tokens):
+            subset_pct = len(source_tokens) / len(candidate_tokens) * 100
+            return True, 1.0, f"Source artists are subset of candidate ({source.artist_name} ⊆ {candidate.artist_name}, {subset_pct:.0f}% overlap)"
+        elif candidate_tokens.issubset(source_tokens):
+            subset_pct = len(candidate_tokens) / len(source_tokens) * 100
+            return True, 1.0, f"Candidate artists are subset of source ({candidate.artist_name} ⊆ {source.artist_name}, {subset_pct:.0f}% overlap)"
+        else:
+            # Check partial intersection
+            intersection = source_tokens & candidate_tokens
+            if intersection:
+                overlap_pct = len(intersection) / min(len(source_tokens), len(candidate_tokens)) * 100
+                return False, 0.0, f"Partial artist overlap: {overlap_pct:.0f}% ({intersection})"
+            else:
+                return False, 0.0, "No artist token overlap"
+
     def _calculate_fuzzy_text_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> float:
         """
-        Calculate fuzzy text match score for title, artist, album
+        Calculate fuzzy text match score for title, artist, album.
+        Includes artist subset rescue mechanism.
 
         Returns:
             Score 0.0-1.0
@@ -310,17 +551,31 @@ class WeightedMatchingEngine:
         # Title match (most important)
         if source.title and candidate.title:
             title_score = self._fuzzy_match(source.title, candidate.title)
-            scores.append(('title', title_score, 0.6))  # 60% weight
+            scores.append(('title', title_score, self.weights.title_weight))
 
-        # Artist match
+        # Artist match with subset rescue
         if source.artist_name and candidate.artist_name:
             artist_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
-            scores.append(('artist', artist_score, 0.3))  # 30% weight
+            
+            # If fuzzy match is low, check for artist subset match
+            # Rescue mechanism: if one artist list is subset of other AND duration is tight (within 2s)
+            if artist_score < 0.8:  # Only attempt rescue if fuzzy score is low
+                is_subset, subset_score, subset_reason = self._check_artist_subset_match(source, candidate)
+                
+                if is_subset:
+                    # Check duration as guard rail (must be within 2 seconds)
+                    if source.duration and candidate.duration:
+                        duration_diff_ms = abs(source.duration - candidate.duration)
+                        if duration_diff_ms <= 2000:  # 2 second tolerance for subset rescue
+                            artist_score = subset_score  # Promote to 1.0
+                            # Note: reasoning will be logged in the main matching flow
+            
+            scores.append(('artist', artist_score, self.weights.artist_weight))
 
         # Album match (if available)
         if source.album_title and candidate.album_title:
             album_score = self._fuzzy_match(source.album_title, candidate.album_title)
-            scores.append(('album', album_score, 0.1))  # 10% weight
+            scores.append(('album', album_score, self.weights.album_weight))
 
         # If no comparison possible, return fallback
         if not scores:
@@ -379,11 +634,13 @@ class WeightedMatchingEngine:
 
     def _normalize_string_for_comparison(self, s: str) -> str:
         """
-        Normalize string for comparison (lowercase, remove special chars, etc)
+        Normalize string for comparison (lowercase, remove special chars, strip featured artists)
         """
 
         import re
         s = s.lower()
+        # Strip featured artist markers first
+        s = re.sub(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+.*?[\]\)]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$", "", s, flags=re.IGNORECASE)
         # Remove special characters but keep spaces
         s = re.sub(r'[^\w\s]', '', s)
         # Collapse multiple spaces

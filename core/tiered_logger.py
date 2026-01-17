@@ -6,15 +6,107 @@ This module provides a centralized logging utility that integrates:
 - Automatic source tagging (e.g., [core], [provider plex])
 - Tiered file logging (normal.log, debug.log, verbose.log)
 - Console logging with colors and Unicode safety (Windows compatible)
+- Windows-safe file rotation with deferred rollover
 """
 
 import logging
 import sys
 import re
 import os
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
+
+# --- Custom Windows-Safe Rotating File Handler ---
+
+class SafeRotatingFileHandler(RotatingFileHandler):
+    """
+    RotatingFileHandler that handles Windows file locking gracefully.
+    Defers rollover if the file is locked, avoiding PermissionError.
+    Silently skips rotation and continues logging if file cannot be rotated.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._rotation_failed = False  # Track if rotation failed to avoid spam
+    
+    def shouldRollover(self, record):
+        """Override to skip rollover check if last rotation failed."""
+        # If last rotation failed and we're still within the same file size threshold,
+        # don't try again immediately to avoid log spam
+        if self._rotation_failed:
+            # Reset flag after a while (10MB of additional writes)
+            if self.stream and self.stream.tell() > (self.maxBytes + 10*1024*1024):
+                self._rotation_failed = False
+            else:
+                return False  # Skip rollover attempt
+        return super().shouldRollover(record)
+    
+    def doRollover(self):
+        """
+        Override doRollover to handle Windows file locking.
+        If rollover fails due to file being locked, silently skip and continue logging.
+        """
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        
+        # Try to rotate with exponential backoff for Windows
+        max_retries = 5
+        rotation_succeeded = False
+        
+        for attempt in range(max_retries):
+            try:
+                if self.backupCount > 0:
+                    # Rotate backup files
+                    for i in range(self.backupCount - 1, 0, -1):
+                        sfn = self.rotation_filename(f"{self.baseFilename}.{i}")
+                        dfn = self.rotation_filename(f"{self.baseFilename}.{i + 1}")
+                        if os.path.exists(sfn):
+                            if os.path.exists(dfn):
+                                try:
+                                    os.remove(dfn)
+                                except OSError:
+                                    pass
+                            try:
+                                os.rename(sfn, dfn)
+                            except OSError:
+                                if attempt < max_retries - 1:
+                                    delay = 0.05 * (2 ** attempt)  # Exponential backoff
+                                    time.sleep(delay)
+                                    raise  # Re-raise to retry outer loop
+                    
+                    # Rename current file to .1
+                    dfn = self.rotation_filename(f"{self.baseFilename}.1")
+                    if os.path.exists(dfn):
+                        try:
+                            os.remove(dfn)
+                        except OSError:
+                            pass
+                    
+                    # Critical: rename the main log file
+                    os.rename(self.baseFilename, dfn)
+                
+                rotation_succeeded = True
+                self._rotation_failed = False
+                break  # Success
+                
+            except OSError as e:
+                if attempt < max_retries - 1:
+                    delay = 0.05 * (2 ** attempt)  # Exponential backoff: 50ms, 100ms, 200ms, 400ms, 800ms
+                    time.sleep(delay)
+                else:
+                    # After all retries failed, silently skip rotation
+                    # Don't spam stderr - just mark as failed and continue logging
+                    self._rotation_failed = True
+        
+        # Always reopen the stream, even if rotation failed
+        try:
+            self.stream = self._open()
+        except Exception as e:
+            # If we can't even open the stream, we have a serious problem
+            print(f"CRITICAL: Cannot open log file {self.baseFilename}: {e}", file=sys.stderr)
+            self.stream = None
 
 # --- Formatters ---
 
@@ -148,10 +240,10 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
         log_path.mkdir(parents=True, exist_ok=True)
 
         def add_file_handler(filename, level):
-            handler = RotatingFileHandler(
+            handler = SafeRotatingFileHandler(
                 log_path / filename,
-                maxBytes=5*1024*1024,
-                backupCount=5,
+                maxBytes=10*1024*1024,  # 10MB - larger files, less frequent rotation
+                backupCount=3,  # Fewer backups to reduce rotation complexity
                 encoding='utf-8'
             )
             handler.setLevel(level)

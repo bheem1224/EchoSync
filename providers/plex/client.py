@@ -63,8 +63,9 @@ class PlexClient(ProviderBase):
         return self.ensure_connection()
     
     def is_configured(self) -> bool:
-        """Check if Plex is configured and connected."""
-        return self.server is not None
+        """Check if Plex is configured (has credentials)."""
+        config = config_manager.get_plex_config()
+        return bool(config.get('base_url') and config.get('token'))
     
     def get_logo_url(self) -> str:
         """Return Plex logo URL."""
@@ -109,6 +110,103 @@ class PlexClient(ProviderBase):
             return True
         except Exception as e:
             logger.error(f"Error updating Plex playlist '{name}': {e}")
+            return False
+
+    # ===== SYNC HELPERS =====
+    def _find_managed_playlist(self, desired_name: str, marker: str = "⇄", management_tag: str = "managed by SoulSync"):
+        """Find a managed playlist by name using the 3-step rule:
+
+        1) Base name matches when stripping marker
+        2) Accept if summary/description contains management_tag OR name contains marker
+        Returns playlist or None
+        """
+        if not self.ensure_connection() or not self.server:
+            return None
+
+        try:
+            for playlist in self.server.playlists():
+                if not playlist:
+                    continue
+                title = getattr(playlist, 'title', '') or ''
+                summary = getattr(playlist, 'summary', '') or ''
+
+                base_title = title.replace(marker, '').strip()
+                if base_title != desired_name:
+                    continue
+
+                cond_name_has_marker = marker in title
+                cond_summary_managed = management_tag.lower() in summary.lower()
+
+                if (cond_name_has_marker and base_title == desired_name) or (cond_summary_managed and base_title == desired_name):
+                    return playlist
+        except Exception as e:
+            logger.debug(f"Error while scanning Plex playlists for managed match: {e}")
+        return None
+
+    def add_tracks_to_managed_playlist(
+        self,
+        playlist_name: str,
+        rating_keys: List[str],
+        marker: str = "⇄",
+        overwrite: bool = True,
+    ) -> bool:
+        """Ensure managed playlist exists and overwrite with provided ratingKeys.
+
+        Marker defaults to U+21C4 (⇄). Playlist is considered managed if either name contains marker
+        or summary includes "managed by SoulSync".
+        """
+        if not self.ensure_connection() or not self.server or not self.music_library:
+            return False
+
+        management_tag = "managed by SoulSync"
+        create_name = f"{playlist_name} {marker}".strip()
+
+        playlist = self._find_managed_playlist(playlist_name, marker=marker, management_tag=management_tag)
+
+        try:
+            items = []
+            for rk in rating_keys:
+                try:
+                    item = self.server.fetchItem(rk)
+                    if item:
+                        items.append(item)
+                except Exception as fe:
+                    logger.debug(f"Failed to fetch Plex item for ratingKey {rk}: {fe}")
+
+            if not items:
+                logger.warning("No valid Plex items found for provided rating keys; skipping playlist update")
+                return False
+
+            if playlist is None:
+                from plexapi.playlist import Playlist
+                Playlist.create(self.server, create_name, items, playlistType='audio')
+                try:
+                    created = self.server.playlist(create_name)
+                    if created and hasattr(created, 'editSummary'):
+                        created.editSummary(management_tag)
+                except Exception:
+                    pass
+                logger.info(f"Created Plex playlist '{create_name}' with {len(items)} tracks")
+                return True
+
+            if overwrite:
+                try:
+                    existing_items = list(playlist.items())
+                    if existing_items:
+                        playlist.removeItems(existing_items)
+                except Exception as clear_err:
+                    logger.debug(f"Failed to clear playlist '{playlist.title}': {clear_err}")
+
+            playlist.addItems(items)
+            logger.info(f"Updated Plex playlist '{playlist.title}' with {len(items)} tracks (overwrite={overwrite})")
+            try:
+                if hasattr(playlist, 'editSummary'):
+                    playlist.editSummary(management_tag)
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            logger.error(f"Error syncing Plex playlist '{playlist_name}': {e}")
             return False
 
     # ===== CORE METHODS =====
@@ -168,14 +266,26 @@ class PlexClient(ProviderBase):
         try:
             playlists = []
             for playlist in self.server.playlists():
-                # Filter for music playlists only
-                if hasattr(playlist, 'playlistType') and playlist.playlistType == 'audio':
-                    playlists.append({
-                        'id': str(playlist.ratingKey),
-                        'name': playlist.title,
-                        'description': getattr(playlist, 'summary', None),
-                        'track_count': playlist.leafCount if hasattr(playlist, 'leafCount') else 0,
-                    })
+                # Filter for music playlists only (robustly handle None and alternate attribute names)
+                if not playlist:
+                    continue
+
+                # Support both 'playlistType' and possible variants like 'playlist_type'
+                playlist_type = ''
+                if hasattr(playlist, 'playlistType'):
+                    playlist_type = getattr(playlist, 'playlistType') or ''
+                elif hasattr(playlist, 'playlist_type'):
+                    playlist_type = getattr(playlist, 'playlist_type') or ''
+
+                if str(playlist_type).lower() != 'audio':
+                    continue
+
+                playlists.append({
+                    'id': str(getattr(playlist, 'ratingKey', None)),
+                    'name': getattr(playlist, 'title', None),
+                    'description': getattr(playlist, 'summary', None),
+                    'track_count': getattr(playlist, 'leafCount', 0),
+                })
             
             logger.debug(f"Found {len(playlists)} music playlists")
             return playlists
@@ -349,6 +459,38 @@ class PlexClient(ProviderBase):
     
     # ===== INTERNAL METHODS =====
     
+    def _extract_version_suffix(self, text: str) -> tuple[str, Optional[str]]:
+        """Extract version suffix from text in parentheses or common edition suffixes.
+        
+        E.g., "Wake Me Up (Avicii by Avicii)" -> ("Wake Me Up", "Avicii by Avicii")
+        E.g., "All the Things She Said" Music Video -> ("All the Things She Said", "Music Video")
+        E.g., "True (Avicii by Avicii)" -> ("True", "Avicii by Avicii")
+        """
+        import re
+        
+        # First check for common edition suffixes (case-insensitive)
+        edition_patterns = [
+            r'\s+(?:Music\s+Video|Official\s+Video|Video|Live\s+Version|Acoustic\s+Version|Remix|Remaster|Extended\s+Version)\s*$',
+            r'\s*\(([^)]*)\)\s*$'  # Then try parentheses
+        ]
+        
+        for pattern in edition_patterns:
+            if pattern == r'\s*\(([^)]*)\)\s*$':
+                match = re.search(pattern, text)
+                if match:
+                    base = text[: match.start()].strip()
+                    version = match.group(1).strip()
+                    if base and version:
+                        return base, version
+            else:
+                match = re.search(pattern, text)
+                if match:
+                    base = text[: match.start()].strip()
+                    version = match.group(0).strip().lower()
+                    return base, version
+        
+        return text, None
+    
     def _convert_track_to_soulsync(self, plex_track: PlexTrack) -> Optional[SoulSyncTrack]:
         """Convert Plex track to SoulSyncTrack using factory method."""
         try:
@@ -367,19 +509,33 @@ class PlexClient(ProviderBase):
             album = None
             try:
                 album_obj = plex_track.album()
-                album = getattr(album_obj, 'title', None) if album_obj else None
+                album = getattr(album_obj, 'title', None) or "Unknown Album"
             except (NotFound, AttributeError, Exception) as e:
                 logger.debug(f"Failed to get album for track '{title}': {e}")
             
             if not title:
-                logger.warning(f"Skipping track - missing title")
+                logger.warning("Skipping track - missing title")
                 return None
             
             if not artist:
                 logger.warning(f"Skipping track '{title}' - missing artist (artist_obj extraction failed)")
                 return None
             
-            # Extract audio metadata
+            # Remove version suffix from title if it matches album version
+            # E.g., if title is "Wake Me Up (Avicii by Avicii)" and album is "True (Avicii by Avicii)"
+            # Extract "(Avicii by Avicii)" from both and remove from title if they match
+            title_base, title_version = self._extract_version_suffix(title)
+            album_base, album_version = self._extract_version_suffix(album)
+            
+            if title_version and album_version and title_version.lower() == album_version.lower():
+                logger.debug(f"Removing matching version suffix '{title_version}' from title '{title}'")
+                title = title_base
+            elif album and title.lower().endswith(f"({album.lower()})"):
+                # Fallback to original logic for exact album name matches
+                logger.debug(f"Removing album name '{album}' from title '{title}'")
+                title = title[: -(len(album) + 2)].strip()  # Remove " (Album Name)"
+
+            # Extract other metadata
             duration_ms = getattr(plex_track, 'duration', None)
             year = getattr(plex_track, 'year', None)
             track_number = getattr(plex_track, 'trackNumber', None)
@@ -486,7 +642,7 @@ class PlexClient(ProviderBase):
                 logger.warning(f"create_soul_sync_track returned None for '{title}' by '{artist}'")
             
             return track
-        
+
         except Exception as e:
             logger.error(f"Error converting Plex track '{getattr(plex_track, 'title', 'Unknown')}': {e}", exc_info=True)
             return None

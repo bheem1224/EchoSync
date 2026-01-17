@@ -7,7 +7,7 @@ import os
 from contextlib import contextmanager
 from datetime import datetime, date
 from pathlib import Path
-from typing import Generator, List, Optional, Tuple
+from typing import Dict, Generator, List, Optional, Tuple
 
 from sqlalchemy import (
     BigInteger,
@@ -249,6 +249,39 @@ class MusicDatabase:
         finally:
             session.close()
 
+    def get_external_identifier_map(self, provider_source: str, track_ids: List[int]) -> Dict[int, str]:
+        """Return a map of track_id -> provider_item_id for a provider.
+
+        Used to quickly determine whether tracks already exist on a target source
+        (e.g., Plex ratingKeys) without issuing repeated lookups.
+        """
+        if not track_ids:
+            return {}
+
+        with self.session_scope() as session:
+            rows = (
+                session.query(
+                    ExternalIdentifier.track_id,
+                    ExternalIdentifier.provider_item_id,
+                )
+                .filter(
+                    ExternalIdentifier.provider_source == provider_source,
+                    ExternalIdentifier.track_id.in_(track_ids),
+                )
+                .all()
+            )
+
+            return {track_id: provider_item_id for track_id, provider_item_id in rows}
+
+    def get_external_identifier(self, provider_source: str, track_id: int) -> Optional[str]:
+        """Return a single provider_item_id for a track/provider if present."""
+        mapping = self.get_external_identifier_map(provider_source, [track_id])
+        return mapping.get(track_id)
+
+    def track_has_external_identifier(self, provider_source: str, track_id: int) -> bool:
+        """Boolean helper for quick existence checks."""
+        return bool(self.get_external_identifier(provider_source, track_id))
+
     @property
     def session_factory(self):
         """Expose the configured sessionmaker for external consumers (e.g., LibraryManager)."""
@@ -268,6 +301,58 @@ class MusicDatabase:
         """Return total tracks stored."""
         with self.session_scope() as session:
             return session.query(Track).count()
+
+    def check_track_exists(self, title: str, artist: str, confidence_threshold: float = 0.7, server_source: str = None) -> Tuple[Optional[Track], float]:
+        """Check if a track exists in the database using fuzzy matching."""
+        # Local imports to avoid potential circular dependency at module level
+        from core.matching_engine.matching_engine import WeightedMatchingEngine
+        from core.matching_engine.scoring_profile import ExactSyncProfile
+        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        from sqlalchemy import or_
+
+        profile = ExactSyncProfile()
+        engine = WeightedMatchingEngine(profile)
+
+        # Create source track object
+        source_track = SoulSyncTrack(
+            raw_title=title,
+            artist_name=artist,
+            album_title=""
+        )
+
+        best_match = None
+        best_score = 0.0
+
+        with self.session_scope() as session:
+            # Find candidates
+            candidates = session.query(Track).join(Artist).filter(
+                or_(
+                    Artist.name.ilike(f"%{artist}%"),
+                    Track.title.ilike(f"%{title}%")
+                )
+            ).limit(50).all()
+
+            for candidate in candidates:
+                # Convert DB track to SoulSyncTrack for comparison
+                cand_obj = SoulSyncTrack(
+                    raw_title=candidate.title,
+                    artist_name=candidate.artist.name,
+                    album_title=candidate.album.title if candidate.album else "",
+                    duration=candidate.duration,
+                )
+
+                result = engine.calculate_match(source_track, cand_obj)
+                if result.confidence_score > best_score:
+                    best_score = result.confidence_score
+                    best_match = candidate
+
+            if best_match:
+                session.expunge(best_match)
+
+        if best_score >= (confidence_threshold * 100):
+            return best_match, best_score / 100.0
+
+        return None, 0.0
 
     def dispose(self) -> None:
         self.engine.dispose()

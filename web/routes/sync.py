@@ -1,97 +1,96 @@
 from flask import Blueprint, jsonify
 from core.tiered_logger import get_logger
-from core.provider import ProviderRegistry, get_provider_capabilities
+from core.provider import ProviderRegistry, get_provider_capabilities, PlaylistSupport
 
 logger = get_logger("sync_route")
 bp = Blueprint("sync", __name__, url_prefix="/api/sync")
 
 
-def _serialize_plugin(plugin):
-    """Serialize a plugin with optional capability enrichment for sync planning."""
-    data = plugin.to_dict()
+def _serialize_provider(provider_name):
+    """Serialize a provider with capabilities for sync planning."""
     try:
-        caps = get_provider_capabilities(plugin.name)
-        data.update({
+        caps = get_provider_capabilities(provider_name)
+        return {
+            "name": provider_name,
+            "display_name": caps.name.title(),
             "playlist_support": caps.supports_playlists.name,
             "metadata_richness": caps.metadata.name,
             "supports_streaming": caps.supports_streaming,
             "supports_library_scan": caps.supports_library_scan,
-        })
-        data["supports_playlist_write"] = caps.supports_playlists.name == "READ_WRITE"
+            "supports_playlist_write": caps.supports_playlists == PlaylistSupport.READ_WRITE,
+            "supports_cover_art": caps.supports_cover_art,
+        }
     except KeyError:
-        data.setdefault("playlist_support", "UNKNOWN")
-        data["supports_playlist_write"] = "playlist.write" in (data.get("provides") or [])
-    return data
-
-
-def _dedup_by_name(items):
-    seen = set()
-    deduped = []
-    for item in items:
-        name = item.get("name")
-        if name in seen:
-            continue
-        seen.add(name)
-        deduped.append(item)
-    return deduped
+        return {
+            "name": provider_name,
+            "display_name": provider_name.title(),
+            "playlist_support": "UNKNOWN",
+            "supports_playlist_write": False,
+            "metadata_richness": "LOW",
+            "supports_streaming": False,
+            "supports_library_scan": False,
+        }
 
 
 def build_sync_options():
-    """Construct sync source/target options from registered plugins."""
+    """Construct sync source/target options from registered providers."""
     sources = []
     provider_targets = []
     library_targets = []
 
-    for plugin in plugin_registry.list_all():
-        if not getattr(plugin, "enabled", True):
+    for provider_name in ProviderRegistry.list_providers():
+        if ProviderRegistry.is_provider_disabled(provider_name):
             continue
 
-        data = _serialize_plugin(plugin)
-        scopes = set(plugin.scope or [])
+        try:
+            caps = get_provider_capabilities(provider_name)
+            data = _serialize_provider(provider_name)
 
-        is_playlist_provider = (
-            plugin.plugin_type == PluginType.PLAYLIST_PROVIDER or
-            PluginScope.SYNC in scopes
-        )
-        is_library_provider = (
-            plugin.plugin_type == PluginType.LIBRARY_PROVIDER or
-            PluginScope.LIBRARY in scopes
-        )
+            # Playlist Provider (Source or Target)
+            if caps.supports_playlists in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
+                sources.append(data)
 
-        if is_playlist_provider:
-            sources.append(data)
-            provider_targets.append(data)
-        if is_library_provider:
-            library_targets.append(data)
+            if caps.supports_playlists == PlaylistSupport.READ_WRITE:
+                provider_targets.append(data)
+
+            # Library Provider (Target)
+            if caps.supports_library_scan:
+                library_targets.append(data)
+
+        except Exception as e:
+            logger.error(f"Error processing provider {provider_name} capabilities: {e}")
+            continue
 
     return {
-        "sources": _dedup_by_name(sources),
+        "sources": sources,
         "targets": {
-            "providers": _dedup_by_name(provider_targets),
-            "libraries": _dedup_by_name(library_targets),
+            "providers": provider_targets,
+            "libraries": library_targets,
         },
-        # UI is allowed to pick multiple sources/targets simultaneously
         "multi_source_supported": True,
         "multi_target_supported": True,
     }
 
 
 def build_sync_status():
-    """Build a minimal sync status payload.
-
-    Returns:
-        dict: status with last_run, running_jobs, queued_jobs, errors, active_sync_providers
-    """
+    """Build a minimal sync status payload."""
     try:
         # Placeholder values until job system endpoints are wired
-        last_run = None  # could be ISO timestamp in future
+        last_run = None
         running_jobs = 0
         queued_jobs = 0
         errors = []
 
-        # Count providers that operate in SYNC scope (playlist providers)
-        sync_providers = plugin_registry.get_plugins_by_scope(PluginScope.SYNC)
-        active_sync_providers = len([p for p in sync_providers if p.enabled])
+        # Count active playlist providers
+        active_sync_providers = 0
+        for name in ProviderRegistry.list_providers():
+            if not ProviderRegistry.is_provider_disabled(name):
+                try:
+                    caps = get_provider_capabilities(name)
+                    if caps.supports_playlists in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
+                        active_sync_providers += 1
+                except:
+                    pass
 
         return {
             "last_run": last_run,
@@ -120,6 +119,6 @@ def sync_status():
 
 @bp.get("/options")
 def sync_options():
-    """Return sync source/target options derived from plugin registry."""
+    """Return sync source/target options derived from provider registry."""
     options = build_sync_options()
     return jsonify(options)

@@ -1,9 +1,9 @@
 import asyncio
 from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from core.tiered_logger import get_logger
-from providers.spotify.client import SpotifyClient, Playlist as SpotifyPlaylist, Track as SpotifyTrack
+from providers.spotify.client import SpotifyClient
 from providers.plex.client import PlexClient
 from providers.jellyfin.client import JellyfinClient
 from providers.navidrome.client import NavidromeClient
@@ -11,6 +11,12 @@ from providers.soulseek.client import SoulseekClient
 from core import MatchService, MatchContext, SoulSyncTrack, MatchResult
 
 logger = get_logger("sync_service")
+
+@dataclass
+class SpotifyPlaylist:
+    id: str
+    name: str
+    tracks: List[SoulSyncTrack] = field(default_factory=list)
 
 @dataclass
 class SyncResult:
@@ -167,13 +173,12 @@ class PlaylistSyncService:
                 
                 # Update progress for each track
                 progress_percent = 20 + (40 * (i + 1) / total_tracks)  # 20-60% for matching
-                # Extract artist name from both string and dict formats
-                if track.artists:
-                    first_artist = track.artists[0]
-                    artist_name = first_artist if isinstance(first_artist, str) else (first_artist.get('name', 'Unknown') if isinstance(first_artist, dict) else str(first_artist))
-                    current_track_name = f"{artist_name} - {track.name}"
+
+                if track.artist_name:
+                    current_track_name = f"{track.artist_name} - {track.title}"
                 else:
-                    current_track_name = track.name
+                    current_track_name = track.title
+
                 self._update_progress(playlist.name, "Matching tracks", current_track_name, progress_percent, 5, 2, 
                                     total_tracks=total_tracks,
                                     matched_tracks=len([r for r in match_results if r.is_match]),
@@ -282,11 +287,11 @@ class PlaylistSyncService:
                             spotify_track_data = original_track_data
                         else:
                             spotify_track_data = {
-                                'id': spotify_track.id,
-                                'name': spotify_track.name,
-                                'artists': [{'name': a} if isinstance(a, str) else a for a in spotify_track.artists],
-                                'album': {'name': spotify_track.album},
-                                'duration_ms': spotify_track.duration_ms,
+                                'id': spotify_track.identifiers.get('spotify') or spotify_track.identifiers.get('provider_id'),
+                                'name': spotify_track.title,
+                                'artists': [{'name': spotify_track.artist_name}],
+                                'album': {'name': spotify_track.album_title},
+                                'duration_ms': spotify_track.duration,
                                 'popularity': getattr(spotify_track, 'popularity', 0),
                                 'preview_url': getattr(spotify_track, 'preview_url', None),
                                 'external_urls': getattr(spotify_track, 'external_urls', {})
@@ -340,7 +345,7 @@ class PlaylistSyncService:
             self.clear_progress_callback(playlist.name)
             self._cancelled = False
     
-    async def _find_track_in_media_server(self, spotify_track: SpotifyTrack) -> Tuple[Optional[Any], float]:
+    async def _find_track_in_media_server(self, spotify_track: SoulSyncTrack) -> Tuple[Optional[Any], float]:
         """Find a track using the same improved database matching as Download Missing Tracks modal"""
         try:
             # Check active media server connection
@@ -352,84 +357,74 @@ class PlaylistSyncService:
             # Use the SAME improved database matching as PlaylistTrackAnalysisWorker
             from database.music_database import MusicDatabase
             
-            original_title = spotify_track.name
+            original_title = spotify_track.title
+            artist_name = spotify_track.artist_name
             
-            # Try each artist (same as modal logic)
-            for artist in spotify_track.artists:
-                if self._cancelled:
-                    return None, 0.0
+            if self._cancelled:
+                return None, 0.0
 
-                # Extract artist name from both string and dict formats
-                if isinstance(artist, str):
-                    artist_name = artist
-                elif isinstance(artist, dict) and 'name' in artist:
-                    artist_name = artist['name']
-                else:
-                    artist_name = str(artist)
+            # Use the improved database check_track_exists method with server awareness
+            try:
+                from core.settings import config_manager
+                active_server = config_manager.get_active_media_server()
+                db = MusicDatabase()
+                db_track, confidence = db.check_track_exists(original_title, artist_name, confidence_threshold=0.7, server_source=active_server)
                 
-                # Use the improved database check_track_exists method with server awareness
-                try:
-                    from core.settings import config_manager
-                    active_server = config_manager.get_active_media_server()
-                    db = MusicDatabase()
-                    db_track, confidence = db.check_track_exists(original_title, artist_name, confidence_threshold=0.7, server_source=active_server)
+                if db_track and confidence >= 0.7:
+                    logger.debug(f"✔️ Database match found for '{original_title}' by '{artist_name}': '{db_track.title}' with confidence {confidence:.2f}")
                     
-                    if db_track and confidence >= 0.7:
-                        logger.debug(f"✔️ Database match found for '{original_title}' by '{artist_name}': '{db_track.title}' with confidence {confidence:.2f}")
-                        
-                        # Fetch the actual track object from active media server using the database track ID
-                        try:
-                            if server_type == "jellyfin":
-                                # For Jellyfin, create a track object from database info (Jellyfin doesn't have fetchItem)
-                                class JellyfinTrackFromDB:
-                                    def __init__(self, db_track):
-                                        self.ratingKey = db_track.id
-                                        self.title = db_track.title
-                                        self.id = db_track.id
-                                
-                                actual_track = JellyfinTrackFromDB(db_track)
-                                logger.debug(f"✔️ Created Jellyfin track object for '{db_track.title}' (ID: {actual_track.ratingKey})")
-                                return actual_track, confidence
-                            elif server_type == "navidrome":
-                                # For Navidrome, create a track object from database info (similar to Jellyfin)
-                                class NavidromeTrackFromDB:
+                    # Fetch the actual track object from active media server using the database track ID
+                    try:
+                        if server_type == "jellyfin":
+                            # For Jellyfin, create a track object from database info (Jellyfin doesn't have fetchItem)
+                            class JellyfinTrackFromDB:
                                     def __init__(self, db_track):
                                         self.ratingKey = db_track.id
                                         self.title = db_track.title
                                         self.id = db_track.id
 
-                                actual_track = NavidromeTrackFromDB(db_track)
-                                logger.debug(f"✔️ Created Navidrome track object for '{db_track.title}' (ID: {actual_track.ratingKey})")
-                                return actual_track, confidence
-                            else:
-                                # For Plex, use the original fetchItem approach
-                                # Validate that the track ID is numeric (Plex requirement)
-                                try:
-                                    track_id = int(db_track.id)
-                                    actual_plex_track = media_client.server.fetchItem(track_id)
-                                    if actual_plex_track and hasattr(actual_plex_track, 'ratingKey'):
-                                        logger.debug(f"✔️ Successfully fetched actual Plex track for '{db_track.title}' (ratingKey: {actual_plex_track.ratingKey})")
-                                        return actual_plex_track, confidence
-                                    else:
-                                        logger.warning(f"❌ Fetched Plex track for '{db_track.title}' lacks ratingKey attribute")
-                                except ValueError:
-                                    logger.warning(f"❌ Invalid Plex track ID format for '{db_track.title}' (ID: {db_track.id}) - skipping this track")
-                                    continue
-                                
-                        except Exception as fetch_error:
-                            logger.error(f"❌ Failed to fetch actual {server_type} track for '{db_track.title}' (ID: {db_track.id}): {fetch_error}")
-                            # Continue to try other artists rather than fail completely
-                            continue
-                        
-                except Exception as db_error:
-                    logger.error(f"Error checking track existence for '{original_title}' by '{artist_name}': {db_error}")
-                    continue
+                            actual_track = JellyfinTrackFromDB(db_track)
+                            logger.debug(f"✔️ Created Jellyfin track object for '{db_track.title}' (ID: {actual_track.ratingKey})")
+                            return actual_track, confidence
+                        elif server_type == "navidrome":
+                            # For Navidrome, create a track object from database info (similar to Jellyfin)
+                            class NavidromeTrackFromDB:
+                                    def __init__(self, db_track):
+                                        self.ratingKey = db_track.id
+                                        self.title = db_track.title
+                                        self.id = db_track.id
+
+                            actual_track = NavidromeTrackFromDB(db_track)
+                            logger.debug(f"✔️ Created Navidrome track object for '{db_track.title}' (ID: {actual_track.ratingKey})")
+                            return actual_track, confidence
+                        else:
+                            # For Plex, use the original fetchItem approach
+                            # Validate that the track ID is numeric (Plex requirement)
+                            try:
+                                track_id = int(db_track.id)
+                                actual_plex_track = media_client.server.fetchItem(track_id)
+                                if actual_plex_track and hasattr(actual_plex_track, 'ratingKey'):
+                                    logger.debug(f"✔️ Successfully fetched actual Plex track for '{db_track.title}' (ratingKey: {actual_plex_track.ratingKey})")
+                                    return actual_plex_track, confidence
+                                else:
+                                    logger.warning(f"❌ Fetched Plex track for '{db_track.title}' lacks ratingKey attribute")
+                            except ValueError:
+                                logger.warning(f"❌ Invalid Plex track ID format for '{db_track.title}' (ID: {db_track.id}) - skipping this track")
+                                return None, 0.0
+
+                    except Exception as fetch_error:
+                        logger.error(f"❌ Failed to fetch actual {server_type} track for '{db_track.title}' (ID: {db_track.id}): {fetch_error}")
+                        # Continue to try other artists rather than fail completely
+                        return None, 0.0
+
+            except Exception as db_error:
+                logger.error(f"Error checking track existence for '{original_title}' by '{artist_name}': {db_error}")
             
-            logger.debug(f"❌ No database match found for '{original_title}' by any of the artists {spotify_track.artists}")
+            logger.debug(f"❌ No database match found for '{original_title}' by artist '{artist_name}'")
             return None, 0.0
             
         except Exception as e:
-            logger.error(f"Error searching for track '{spotify_track.name}': {e}")
+            logger.error(f"Error searching for track '{spotify_track.title}': {e}")
             return None, 0.0
     
     async def sync_multiple_playlists(self, playlist_names: List[str], download_missing: bool = False) -> List[SyncResult]:
@@ -448,9 +443,20 @@ class PlaylistSyncService:
     def _get_spotify_playlist(self, playlist_name: str) -> Optional[SpotifyPlaylist]:
         try:
             playlists = self.spotify_client.get_user_playlists()
-            for playlist in playlists:
-                if playlist.name.lower() == playlist_name.lower():
-                    return playlist
+            # playlists is List[Dict]
+            target_playlist = None
+            for p in playlists:
+                if p['name'].lower() == playlist_name.lower():
+                    target_playlist = p
+                    break
+
+            if target_playlist:
+                tracks = self.spotify_client.get_playlist_tracks(target_playlist['id'])
+                return SpotifyPlaylist(
+                    id=target_playlist['id'],
+                    name=target_playlist['name'],
+                    tracks=tracks
+                )
             return None
         except Exception as e:
             logger.error(f"Error fetching Spotify playlist: {e}")
@@ -540,7 +546,7 @@ class PlaylistSyncService:
 
             for result in match_results[:10]:
                 track_info = {
-                    "spotify_track": f"{result.spotify_track.name} - {result.spotify_track.artists[0]}",
+                    "spotify_track": f"{result.spotify_track.title} - {result.spotify_track.artist_name}",
                     f"{server_type}_match": getattr(result, 'plex_track', None).title if getattr(result, 'plex_track', None) else None,
                     "confidence": result.confidence,
                     "status": "available" if result.is_match else "needs_download"
@@ -556,7 +562,7 @@ class PlaylistSyncService:
     def get_library_comparison(self) -> Dict[str, Any]:
         try:
             spotify_playlists = self.spotify_client.get_user_playlists()
-            spotify_track_count = sum(len(p.tracks) for p in spotify_playlists)
+            spotify_track_count = sum(p.get('track_count', 0) for p in spotify_playlists)
 
             media_client, server_type = self._get_active_media_client()
             if not media_client:

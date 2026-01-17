@@ -208,18 +208,39 @@ class JobQueue:
             return
 
         def worker():
-            try:
-                logger.info(f"Starting job: {job.name}")
-                job.last_started = time.time()
-                job.func()
-                job.last_success = time.time()
-                logger.info(f"Completed job: {job.name}")
-            except Exception as e:
-                job.last_error = str(e)
-                logger.error(f"Job failed: {job.name}, Error: {e}")
-            finally:
-                job.last_finished = time.time()
-                self._workers.release()
+            attempt = 0
+            while True:
+                try:
+                    logger.info(f"Starting job: {job.name} (attempt {attempt + 1})")
+                    job.running = True
+                    job.last_started = time.time()
+                    job.func()
+                    job.last_success = time.time()
+                    job.last_error = None
+                    job.current_retries = 0
+                    logger.info(f"Completed job: {job.name}")
+                    break
+                except Exception as e:
+                    job.last_error = str(e)
+                    job.current_retries += 1
+                    attempt += 1
+                    logger.error(f"Job failed: {job.name}, attempt {attempt}, error: {e}")
+
+                    if job.current_retries >= job.max_retries:
+                        logger.error(
+                            f"Job '{job.name}' exceeded max retries ({job.max_retries}); giving up"
+                        )
+                        break
+
+                    backoff = job.backoff_base * (job.backoff_factor ** (job.current_retries - 1))
+                    logger.info(f"Retrying job '{job.name}' in {backoff:.1f}s")
+                    time.sleep(backoff)
+                    continue
+                finally:
+                    job.last_finished = time.time()
+                    job.running = False
+
+            self._workers.release()
 
             if job.interval_seconds:
                 job.next_run = time.time() + job.interval_seconds

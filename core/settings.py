@@ -52,35 +52,26 @@ class ConfigManager:
         - register_if_missing: auto-register service if not present
         Returns True if all writes succeed, False otherwise.
         """
-        from database.music_database import get_database
-        db = get_database()
+        from database.config_database import get_config_database
+        db = get_config_database()
         sensitive_keys = sensitive_keys or ['client_secret', 'access_token', 'refresh_token']
         try:
-            with db._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("SELECT id FROM services WHERE name = ?", (service_name,))
-                row = c.fetchone()
-                service_id = row[0] if row else None
-                if not service_id and register_if_missing:
-                    service_id = db.register_service(
-                        name=service_name,
-                        display_name=service_name.capitalize(),
-                        service_type='streaming',
-                        description=f'{service_name.capitalize()} music streaming service'
-                    )
-                if not service_id:
-                    print(f"[ERROR] Could not find or register service: {service_name}")
-                    return False
-                all_ok = True
-                for k, v in credentials.items():
-                    is_sensitive = k in sensitive_keys
-                    ok = db.set_service_config(service_id, k, v, is_sensitive=is_sensitive)
-                    if not ok:
-                        print(f"[ERROR] Failed to set {k} for {service_name}")
-                        all_ok = False
-                return all_ok
+            # Use public methods of ConfigDatabase to ensure correct DB context
+            service_id = db.get_or_create_service_id(service_name)
+            if not service_id:
+                logger.error(f"Could not find or register service: {service_name}")
+                return False
+
+            all_ok = True
+            for k, v in credentials.items():
+                is_sensitive = k in sensitive_keys
+                ok = db.set_service_config(service_id, k, v, is_sensitive=is_sensitive)
+                if not ok:
+                    logger.error(f"Failed to set {k} for {service_name}")
+                    all_ok = False
+            return all_ok
         except Exception as e:
-            print(f"[ERROR] set_service_credentials failed: {e}")
+            logger.error(f"set_service_credentials failed: {e}")
             return False
 
     def __init__(self, config_path: str = "config/config.json"):
@@ -462,7 +453,8 @@ class ConfigManager:
                 "config_dir": str(self.config_dir),
                 "download_dir": str(self.downloads_path),
                 "library_dir": str(self.library_path),
-                "log_dir": str(self.logs_path)
+                "log_dir": str(self.logs_path),
+                "plugins_dir": str(self.plugins_path)
             },
             # Provider/Plugin management
             "disabled_providers": []  # List of provider/plugin names to disable (e.g., ["spotify", "tidal"])
@@ -1061,17 +1053,11 @@ class ConfigManager:
         Returns a dictionary of credentials or an empty dictionary if not found.
         """
         try:
-            from database.config_database import ConfigDatabase
-            config_db = ConfigDatabase()
+            from database.config_database import get_config_database
+            config_db = get_config_database()
             
             # Get the service ID first
-            service_id = None
-            with config_db._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("SELECT id FROM services WHERE name = ?", (service_name,))
-                row = c.fetchone()
-                if row:
-                    service_id = row[0]
+            service_id = config_db.get_or_create_service_id(service_name)
             
             if not service_id:
                 return {}

@@ -59,16 +59,16 @@ class TestProviderCapabilitiesAPI:
         
         enriched = _enrich_provider_capabilities(plugin_dict, 'spotify')
         
-    
         # Spotify supports streaming and search
         assert enriched['supports_streaming'] is True
         assert enriched['supports_downloads'] is False
         assert enriched['supports_library_scan'] is False
         # playlist_support is returned as enum name
-        assert enriched['playlist_support'] == 'READ'
+        assert enriched['playlist_support'] == 'READ_WRITE'
         # search_capabilities is returned as dict
         assert enriched['search_capabilities']['tracks'] is True
         assert enriched['search_capabilities']['playlists'] is True
+
     def test_enrich_provider_capabilities_plex(self):
         """Test enrichment for Plex provider."""
         from web.routes.providers import _enrich_provider_capabilities

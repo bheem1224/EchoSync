@@ -42,10 +42,15 @@ def _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_
 @bp.get('/auth')
 def begin_auth():
     """Start OAuth flow for Spotify. Returns an auth URL to redirect the user to.
-    Query params: account_id (optional)
+    Query params: account_id (required)
     """
     try:
         account_id = request.args.get('account_id')
+        
+        # account_id is required for proper state management
+        if not account_id:
+            return jsonify({'error': 'account_id parameter is required'}), 400
+        
         storage = get_storage_service()
 
         # Read client credentials from storage (service config)
@@ -69,10 +74,10 @@ def begin_auth():
 
         scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email"
         # Use account_id as state so callback knows which account to save tokens under
-        state = account_id or ''
+        state = str(account_id)
         sp_oauth = SpotifyOAuth(client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri, scope=scope, state=state, show_dialog=True)
         auth_url = sp_oauth.get_authorize_url()
-        logger.info(f"Generated Spotify authorize URL (truncated): {auth_url[:120]}")
+        logger.info(f"Generated Spotify authorize URL for account {account_id}")
         return jsonify({'auth_url': auth_url}), 200
     except Exception as e:
         logger.error(f"Error creating Spotify auth URL: {e}")

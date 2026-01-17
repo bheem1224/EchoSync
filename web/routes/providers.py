@@ -75,30 +75,39 @@ def get_provider_playlists(provider_name):
         if not plugin:
             return jsonify({'error': f'Provider {provider_name} instance not found'}), 404
         
-        # For multi-account providers (Spotify, Tidal), check if any accounts exist
+        # For multi-account providers (Spotify, Tidal), try to use specific account if available
         multi_account_providers = ['spotify', 'tidal']
         if provider_name in multi_account_providers:
-            # Check if provider has accounts configured
-            from sdk.storage_service import get_storage_service
-            storage = get_storage_service()
-            
-            accounts = storage.list_accounts(provider_name)
-            if not accounts or len(accounts) == 0:
-                return jsonify({'error': f'No {provider_name.title()} accounts configured. Please add an account in Settings → {provider_name.title()}.'}), 400
-            
-            # Use first account for now (TODO: add account selection UI)
-            account_id = accounts[0]['id']
-            
-            if provider_name == 'spotify':
-                from providers.spotify.client import SpotifyClient
-                plugin = SpotifyClient(account_id=account_id)
-            elif provider_name == 'tidal':
-                from providers.tidal.client import TidalClient
-                plugin = TidalClient(account_id=str(account_id))
-        else:
-            # For single-account providers, check if configured
-            if hasattr(plugin, 'is_configured') and not plugin.is_configured():
-                return jsonify({'error': f'{provider_name} is not configured. Please configure it in Settings first.'}), 400
+            try:
+                from sdk.storage_service import get_storage_service
+                storage = get_storage_service()
+
+                accounts = storage.list_accounts(provider_name)
+                if accounts and len(accounts) > 0:
+                    # Use first account for now
+                    account_id = accounts[0]['id']
+
+                    if provider_name == 'spotify':
+                        from providers.spotify.client import SpotifyClient
+                        plugin = SpotifyClient(account_id=account_id)
+                    elif provider_name == 'tidal':
+                        from providers.tidal.client import TidalClient
+                        plugin = TidalClient(account_id=str(account_id))
+            except Exception as e:
+                logger.warning(f"Error checking accounts for {provider_name}: {e}")
+                # Fallback to default plugin instance
+
+        # Check if configured (common for all providers)
+        if hasattr(plugin, 'is_configured') and not plugin.is_configured():
+            # If specifically not configured, return empty list (200) instead of error (400)
+            # This allows the UI to render "No playlists" or handle empty state gracefully
+            logger.info(f"Provider {provider_name} is not configured, returning empty list")
+            return jsonify({
+                'provider': provider_name,
+                'items': [],
+                'total': 0,
+                'status': 'not_configured'
+            }), 200
         
         # Check if it has a get_user_playlists method
         if not hasattr(plugin, 'get_user_playlists'):
