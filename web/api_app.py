@@ -8,6 +8,7 @@ import os
 import ssl
 import tempfile
 import subprocess
+import logging
 from pathlib import Path
 from flask import Flask
 
@@ -17,6 +18,17 @@ try:
 except ImportError:
     CORS_AVAILABLE = False
     print("[WARN] flask-cors not installed. Install with: pip install flask-cors")
+
+class SensitiveRequestFilter(logging.Filter):
+    """Filter to downgrade sensitive request logs to DEBUG level."""
+    def filter(self, record):
+        msg = record.getMessage()
+        # Check for sensitive endpoints/params
+        if "/api/spotify/callback" in msg or "code=" in msg or "token=" in msg:
+            # Downgrade to DEBUG level so it doesn't show in standard INFO logs
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
 
 # Standard core blueprints
 from web.routes.providers import bp as providers_bp
@@ -37,6 +49,10 @@ from core.settings import config_manager
 def create_app() -> Flask:
     app = Flask(__name__)
     
+    # Configure sensitive logging filter for Werkzeug
+    werkzeug_logger = logging.getLogger('werkzeug')
+    werkzeug_logger.addFilter(SensitiveRequestFilter())
+
     # Enable CORS for frontend (if flask-cors is installed)
     if CORS_AVAILABLE:
         CORS(app, origins=['http://localhost:5173', 'https://localhost:5173'])

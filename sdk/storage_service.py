@@ -66,11 +66,9 @@ class StorageService:
                           scope: Optional[str] = None) -> bool:
         """Save account token - redirects to database."""
         try:
-            from database import get_database
-            db = get_database()
-            if hasattr(db, 'save_account_token'):
-                return db.save_account_token(account_id, access_token, refresh_token, token_type, expires_at, scope)
-            return True
+            from database.config_database import get_config_database
+            db = get_config_database()
+            return db.save_account_token(account_id, access_token, refresh_token, token_type, expires_at, scope)
         except Exception as e:
             print(f"[ERROR] save_account_token failed: {e}")
             return False
@@ -78,11 +76,9 @@ class StorageService:
     def mark_account_authenticated(self, account_id: int) -> bool:
         """Mark account as authenticated - redirects to database."""
         try:
-            from database import get_database
-            db = get_database()
-            if hasattr(db, 'mark_account_authenticated'):
-                return db.mark_account_authenticated(account_id)
-            return True
+            from database.config_database import get_config_database
+            db = get_config_database()
+            return db.mark_account_authenticated(account_id)
         except Exception as e:
             print(f"[ERROR] mark_account_authenticated failed: {e}")
             return False
@@ -90,13 +86,31 @@ class StorageService:
     def toggle_account_active(self, account_id: int, active: bool) -> bool:
         """Toggle account active status - redirects to database."""
         try:
-            from database import get_database
-            db = get_database()
-            if hasattr(db, 'toggle_account_active'):
-                return db.toggle_account_active(account_id, active)
-            return True
+            from database.config_database import get_config_database
+            db = get_config_database()
+            return db.toggle_account_active(account_id, active)
         except Exception as e:
             print(f"[ERROR] toggle_account_active failed: {e}")
+            return False
+
+    def delete_account(self, account_id: int) -> bool:
+        """Delete an account - redirects to database."""
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            return db.delete_account(account_id)
+        except Exception as e:
+            print(f"[ERROR] delete_account failed: {e}")
+            return False
+
+    def update_account_name(self, account_id: int, new_name: str) -> bool:
+        """Update account name - redirects to database."""
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            return db.update_account_name(account_id, new_name)
+        except Exception as e:
+            print(f"[ERROR] update_account_name failed: {e}")
             return False
     
     def list_accounts(self, service_name: Optional[str] = None) -> list:
