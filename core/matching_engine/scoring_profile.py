@@ -34,6 +34,11 @@ class ScoringWeights:
     # Text matching weights (0.0 - 1.0 scale, higher = more important)
     text_weight: float = 0.4  # How important is text match?
 
+    # Inner text matching weights (relative importance within text_weight)
+    title_weight: float = 0.6
+    artist_weight: float = 0.3
+    album_weight: float = 0.1
+
     # Duration matching weight
     duration_weight: float = 0.2  # How important is duration match?
 
@@ -59,6 +64,9 @@ class ScoringWeights:
         # Note: weights don't need to sum to 1.0 since we normalize in the matching engine
         return all([
             0.0 <= self.text_weight <= 1.0,
+            0.0 <= self.title_weight <= 1.0,
+            0.0 <= self.artist_weight <= 1.0,
+            0.0 <= self.album_weight <= 1.0,
             0.0 <= self.duration_weight <= 1.0,
             0.0 <= self.fingerprint_weight <= 1.0,
             0.0 <= self.quality_bonus <= 1.0,
@@ -70,6 +78,9 @@ class ScoringWeights:
         """Convert to dictionary for JSON serialization"""
         return {
             'text_weight': self.text_weight,
+            'title_weight': self.title_weight,
+            'artist_weight': self.artist_weight,
+            'album_weight': self.album_weight,
             'duration_weight': self.duration_weight,
             'fingerprint_weight': self.fingerprint_weight,
             'quality_bonus': self.quality_bonus,
@@ -132,7 +143,10 @@ class ExactSyncProfile(ScoringProfile):
     def __init__(self):
         self.description = "Exact track identification for structured metadata (Spotify/Tidal/Plex)"
         self.weights = ScoringWeights(
-            text_weight=0.70,  # Combined title (35%) + artist (35%) = 70%
+            text_weight=0.80,  # Combined title (35%) + artist (35%) + album (10%) = 80%
+            title_weight=0.4375,  # 35/80
+            artist_weight=0.4375, # 35/80
+            album_weight=0.125,   # 10/80
             duration_weight=0.20,  # 20% - allow ~3s variance
             fingerprint_weight=0.0,  # NO fingerprint for metadata matching
             quality_bonus=0.05,  # 5% bonus for quality
@@ -180,7 +194,10 @@ class DownloadSearchProfile(ScoringProfile):
     def __init__(self):
         self.description = "Tolerant matching for P2P downloads with messy filenames"
         self.weights = ScoringWeights(
-            text_weight=0.70,  # Combined title (40%) + artist (30%) = 70%
+            text_weight=0.80,  # Combined title (40%) + artist (30%) + album (10%) = 80%
+            title_weight=0.50,  # 40/80
+            artist_weight=0.375, # 30/80
+            album_weight=0.125,  # 10/80
             duration_weight=0.20,  # 20% - BS detector (>5s = likely wrong)
             fingerprint_weight=0.0,  # No fingerprint for search
             quality_bonus=0.10,  # 5-10% bonus if format matches request

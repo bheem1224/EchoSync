@@ -310,17 +310,17 @@ class WeightedMatchingEngine:
         # Title match (most important)
         if source.title and candidate.title:
             title_score = self._fuzzy_match(source.title, candidate.title)
-            scores.append(('title', title_score, 0.6))  # 60% weight
+            scores.append(('title', title_score, self.weights.title_weight))
 
         # Artist match
         if source.artist_name and candidate.artist_name:
             artist_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
-            scores.append(('artist', artist_score, 0.3))  # 30% weight
+            scores.append(('artist', artist_score, self.weights.artist_weight))
 
         # Album match (if available)
         if source.album_title and candidate.album_title:
             album_score = self._fuzzy_match(source.album_title, candidate.album_title)
-            scores.append(('album', album_score, 0.1))  # 10% weight
+            scores.append(('album', album_score, self.weights.album_weight))
 
         # If no comparison possible, return fallback
         if not scores:
