@@ -112,6 +112,103 @@ class PlexClient(ProviderBase):
             logger.error(f"Error updating Plex playlist '{name}': {e}")
             return False
 
+    # ===== SYNC HELPERS =====
+    def _find_managed_playlist(self, desired_name: str, marker: str = "⇄", management_tag: str = "managed by SoulSync"):
+        """Find a managed playlist by name using the 3-step rule:
+
+        1) Base name matches when stripping marker
+        2) Accept if summary/description contains management_tag OR name contains marker
+        Returns playlist or None
+        """
+        if not self.ensure_connection() or not self.server:
+            return None
+
+        try:
+            for playlist in self.server.playlists():
+                if not playlist:
+                    continue
+                title = getattr(playlist, 'title', '') or ''
+                summary = getattr(playlist, 'summary', '') or ''
+
+                base_title = title.replace(marker, '').strip()
+                if base_title != desired_name:
+                    continue
+
+                cond_name_has_marker = marker in title
+                cond_summary_managed = management_tag.lower() in summary.lower()
+
+                if (cond_name_has_marker and base_title == desired_name) or (cond_summary_managed and base_title == desired_name):
+                    return playlist
+        except Exception as e:
+            logger.debug(f"Error while scanning Plex playlists for managed match: {e}")
+        return None
+
+    def add_tracks_to_managed_playlist(
+        self,
+        playlist_name: str,
+        rating_keys: List[str],
+        marker: str = "⇄",
+        overwrite: bool = True,
+    ) -> bool:
+        """Ensure managed playlist exists and overwrite with provided ratingKeys.
+
+        Marker defaults to U+21C4 (⇄). Playlist is considered managed if either name contains marker
+        or summary includes "managed by SoulSync".
+        """
+        if not self.ensure_connection() or not self.server or not self.music_library:
+            return False
+
+        management_tag = "managed by SoulSync"
+        create_name = f"{playlist_name} {marker}".strip()
+
+        playlist = self._find_managed_playlist(playlist_name, marker=marker, management_tag=management_tag)
+
+        try:
+            items = []
+            for rk in rating_keys:
+                try:
+                    item = self.server.fetchItem(rk)
+                    if item:
+                        items.append(item)
+                except Exception as fe:
+                    logger.debug(f"Failed to fetch Plex item for ratingKey {rk}: {fe}")
+
+            if not items:
+                logger.warning("No valid Plex items found for provided rating keys; skipping playlist update")
+                return False
+
+            if playlist is None:
+                from plexapi.playlist import Playlist
+                Playlist.create(self.server, create_name, items, playlistType='audio')
+                try:
+                    created = self.server.playlist(create_name)
+                    if created and hasattr(created, 'editSummary'):
+                        created.editSummary(management_tag)
+                except Exception:
+                    pass
+                logger.info(f"Created Plex playlist '{create_name}' with {len(items)} tracks")
+                return True
+
+            if overwrite:
+                try:
+                    existing_items = list(playlist.items())
+                    if existing_items:
+                        playlist.removeItems(existing_items)
+                except Exception as clear_err:
+                    logger.debug(f"Failed to clear playlist '{playlist.title}': {clear_err}")
+
+            playlist.addItems(items)
+            logger.info(f"Updated Plex playlist '{playlist.title}' with {len(items)} tracks (overwrite={overwrite})")
+            try:
+                if hasattr(playlist, 'editSummary'):
+                    playlist.editSummary(management_tag)
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            logger.error(f"Error syncing Plex playlist '{playlist_name}': {e}")
+            return False
+
     # ===== CORE METHODS =====
     
     def search(self, query: str, type: str = "track", limit: int = 10) -> List[SoulSyncTrack]:

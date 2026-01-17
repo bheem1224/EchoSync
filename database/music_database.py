@@ -7,7 +7,7 @@ import os
 from contextlib import contextmanager
 from datetime import datetime, date
 from pathlib import Path
-from typing import Generator, List, Optional, Tuple
+from typing import Dict, Generator, List, Optional, Tuple
 
 from sqlalchemy import (
     BigInteger,
@@ -248,6 +248,39 @@ class MusicDatabase:
             raise
         finally:
             session.close()
+
+    def get_external_identifier_map(self, provider_source: str, track_ids: List[int]) -> Dict[int, str]:
+        """Return a map of track_id -> provider_item_id for a provider.
+
+        Used to quickly determine whether tracks already exist on a target source
+        (e.g., Plex ratingKeys) without issuing repeated lookups.
+        """
+        if not track_ids:
+            return {}
+
+        with self.session_scope() as session:
+            rows = (
+                session.query(
+                    ExternalIdentifier.track_id,
+                    ExternalIdentifier.provider_item_id,
+                )
+                .filter(
+                    ExternalIdentifier.provider_source == provider_source,
+                    ExternalIdentifier.track_id.in_(track_ids),
+                )
+                .all()
+            )
+
+            return {track_id: provider_item_id for track_id, provider_item_id in rows}
+
+    def get_external_identifier(self, provider_source: str, track_id: int) -> Optional[str]:
+        """Return a single provider_item_id for a track/provider if present."""
+        mapping = self.get_external_identifier_map(provider_source, [track_id])
+        return mapping.get(track_id)
+
+    def track_has_external_identifier(self, provider_source: str, track_id: int) -> bool:
+        """Boolean helper for quick existence checks."""
+        return bool(self.get_external_identifier(provider_source, track_id))
 
     @property
     def session_factory(self):

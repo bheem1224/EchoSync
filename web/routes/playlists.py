@@ -8,6 +8,10 @@ from core.tiered_logger import get_logger
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import ScoringProfile
 from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.job_queue import job_queue
+from web.utils.event_bus import event_bus
+from core.sync_history import sync_history
+import time
 
 logger = get_logger("playlists_api")
 bp = Blueprint("playlists", __name__, url_prefix="/api/playlists")
@@ -23,6 +27,7 @@ def analyze_playlists():
     payload = request.get_json(silent=True) or {}
     source = payload.get("source")
     target = payload.get("target")
+    target_source = payload.get("target_source") or target
     playlists = payload.get("playlists") or []
     quality_profile = payload.get("quality_profile", "Auto")
 
@@ -204,11 +209,25 @@ def analyze_playlists():
                                         f"Either no exact title match exists or all candidates outside {sql_duration_tolerance_ms}ms tolerance."
                                     )
                         
+                        # Prefetch external identifiers for target source, if provided
+                        external_ids_map = {}
+                        if target_source and candidates:
+                            candidate_ids = [row[0] for row in candidates]
+                            try:
+                                external_ids_map = db.get_external_identifier_map(target_source, candidate_ids)
+                            except Exception as ext_err:
+                                logger.debug(
+                                    f"External identifier lookup failed for target '{target_source}': {ext_err}"
+                                )
+
                         # Score each candidate using matching engine
                         best_match = None
+                        best_match_track_id = None
+                        best_match_target_id = None
                         # Collect diagnostics for unmatched verbose logging
                         candidate_diagnostics = []
                         for candidate_row in candidates:
+                            candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
                             candidate_track = SoulSyncTrack(
                                 raw_title=candidate_row[1],
                                 artist_name=candidate_row[3],
@@ -219,10 +238,20 @@ def analyze_playlists():
                             # Choose scoring method based on tier
                             if tier2_mode:
                                 # Tier 2: Use title+duration only matching (ignores artist)
-                                result = matching_engine.calculate_title_duration_match(source_track, candidate_track)
+                                result = matching_engine.calculate_title_duration_match(
+                                    source_track,
+                                    candidate_track,
+                                    target_source=target_source,
+                                    target_identifier=candidate_target_id,
+                                )
                             else:
                                 # Tier 1: Use standard full matching
-                                result = matching_engine.calculate_match(source_track, candidate_track)
+                                result = matching_engine.calculate_match(
+                                    source_track,
+                                    candidate_track,
+                                    target_source=target_source,
+                                    target_identifier=candidate_target_id,
+                                )
                             
                             logger.debug(f"Match score for '{track_title}' vs '{candidate_track.title}': {result.confidence_score}")
                             
@@ -249,6 +278,8 @@ def analyze_playlists():
                             if result.confidence_score > best_score:
                                 best_score = result.confidence_score
                                 best_match = (candidate_row[0], result)
+                                best_match_track_id = candidate_row[0]
+                                best_match_target_id = candidate_target_id
                         
                         # Determine result based on best score
                         if best_score >= 85:  # High confidence threshold
@@ -315,7 +346,12 @@ def analyze_playlists():
                         "album": track_album,
                         "duration": duration_str,
                         "library_match": library_match,
-                        "download_status": "-"
+                        "download_status": "-",
+                        "matched_track_id": best_match_track_id,
+                        "match_score": best_score,
+                        "target_source": target_source,
+                        "target_identifier": best_match_target_id,
+                        "target_exists": bool(best_match_target_id),
                     })
                     
             except Exception as e:
@@ -333,15 +369,36 @@ def analyze_playlists():
         
         total_tracks = len(all_tracks)
         
+        # Build sync-ready payload with matched pairs
+        matched_pairs = []
+        missing_tracks = []
+        for track in all_tracks:
+            if track.get("matched_track_id") and track.get("target_identifier"):
+                matched_pairs.append({
+                    "track_id": track["matched_track_id"],
+                    "target_identifier": track["target_identifier"],
+                })
+            elif not track.get("matched_track_id"):
+                missing_tracks.append({
+                    "title": track["title"],
+                    "artist": track["artist"],
+                    "album": track["album"],
+                })
+        
         return jsonify({
             "summary": {
                 "total_tracks": total_tracks,
                 "found_in_library": found_count,
                 "missing_tracks": missing_count,
                 "downloaded": 0,
-                "quality_profile": quality_profile
+                "quality_profile": quality_profile,
+                "source": source,
+                "target": target_source,
+                "matched_pairs": matched_pairs,
+                "can_sync": len(matched_pairs) > 0,
             },
-            "tracks": all_tracks
+            "tracks": all_tracks,
+            "missing": missing_tracks,
         }), 200
         
     except Exception as e:
@@ -352,15 +409,387 @@ def analyze_playlists():
 @bp.post("/sync")
 def trigger_sync():
     payload = request.get_json(silent=True) or {}
-    adapter = SyncAdapter()
-    result = adapter.trigger_sync(payload)
-    # Echo requested download + quality so UI can display
-    result.update({
-        "download_missing": bool(payload.get("download_missing")),
-        "quality_profile": payload.get("quality_profile")
-    })
-    status = 202 if result.get("accepted") else 400
-    return jsonify(result), status
+    target = payload.get("target_source") or payload.get("target")
+    playlist_name = payload.get("playlist_name")
+    matches = payload.get("matches") or []
+    download_missing = payload.get("download_missing", False)
+    source = payload.get("source", "unknown")
+
+    if not target:
+        return jsonify({"accepted": False, "error": "target_source required"}), 400
+
+    if not playlist_name:
+        return jsonify({"accepted": False, "error": "playlist_name required"}), 400
+
+    # Detect sync mode: tier-to-tier (streaming↔streaming) vs local-server (streaming→plex)
+    tier_to_tier_providers = {"spotify", "tidal", "apple_music"}
+    local_server_providers = {"plex", "jellyfin", "navidrome"}
+    
+    is_source_tier = source in tier_to_tier_providers
+    is_target_tier = target in tier_to_tier_providers
+    is_source_server = source in local_server_providers
+    is_target_server = target in local_server_providers
+    
+    sync_mode = None
+    if is_source_tier and is_target_tier:
+        sync_mode = "tier-to-tier"
+    elif is_source_tier and is_target_server:
+        sync_mode = "local-server"
+    elif is_source_server and is_target_tier:
+        sync_mode = "server-to-tier"
+    else:
+        sync_mode = "unknown"
+    
+    logger.info(f"Sync mode detected: {sync_mode} ({source} → {target})")
+
+    # For non-Plex targets, return not implemented
+    if target == "plex":
+        # Local-server sync: add tracks to managed playlist with overwrite
+        return _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode)
+    elif target in tier_to_tier_providers:
+        # Tier-to-tier sync: add tracks to target provider's playlist
+        return _sync_to_tier(payload, source, target, playlist_name, matches, download_missing, sync_mode)
+    else:
+        return jsonify({"accepted": False, "error": f"Sync to {target} not implemented"}), 400
+
+
+def _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode):
+    """Sync matched tracks to a Plex managed playlist."""
+    # Collect ratingKeys from matches (target_identifier)
+    rating_keys = [m.get("target_identifier") for m in matches if m.get("target_identifier")]
+    if not rating_keys:
+        return jsonify({"accepted": False, "error": "No Plex ratingKeys provided in matches"}), 400
+
+    # Schedule a one-off sync job with retry/backoff
+    job_name = f"sync:plex:{playlist_name}:{int(time.time())}"
+
+    def _run_sync():
+        from providers.plex.client import PlexClient
+
+        marker = "⇄"
+        total = len(rating_keys)
+        event_bus.publish(job_name, "sync_started", {
+            "playlist": playlist_name,
+            "target": target,
+            "total": total,
+            "download_missing": download_missing,
+            "sync_mode": sync_mode,
+        })
+
+        try:
+            client = PlexClient()
+            if not client.ensure_connection():
+                raise RuntimeError("Plex connection failed")
+
+            valid_keys = []
+            for idx, rk in enumerate(rating_keys):
+                event_bus.publish(job_name, "track_started", {
+                    "index": idx,
+                    "rating_key": rk,
+                    "total": total,
+                })
+                try:
+                    item = client.server.fetchItem(rk) if client.server else None
+                    if not item:
+                        raise RuntimeError("Track not found on Plex")
+                    valid_keys.append(rk)
+                    event_bus.publish(job_name, "track_synced", {
+                        "index": idx,
+                        "rating_key": rk,
+                    })
+                except Exception as fe:
+                    event_bus.publish(job_name, "track_failed", {
+                        "index": idx,
+                        "rating_key": rk,
+                        "error": str(fe),
+                    })
+
+            if not valid_keys:
+                raise RuntimeError("No valid Plex items resolved for playlist sync")
+
+            # Local-server sync: overwrite managed playlist
+            updated = client.add_tracks_to_managed_playlist(
+                playlist_name,
+                valid_keys,
+                marker=marker,
+                overwrite=True,
+            )
+            event_bus.publish(job_name, "playlist_updated", {
+                "playlist": playlist_name,
+                "synced": len(valid_keys),
+                "failed": total - len(valid_keys),
+                "updated": bool(updated),
+            })
+
+            event_bus.publish(job_name, "sync_complete", {
+                "playlist": playlist_name,
+                "synced": len(valid_keys),
+                "failed": total - len(valid_keys),
+                "target": target,
+                "sync_mode": sync_mode,
+            })
+            
+            # Record in history
+            sync_history.record_sync(
+                source=source,
+                target=target,
+                playlist=playlist_name,
+                total=total,
+                synced=len(valid_keys),
+                failed=total - len(valid_keys),
+                download_missing=download_missing,
+                job_name=job_name,
+            )
+        except Exception as e:
+            event_bus.publish(job_name, "sync_error", {"message": str(e)})
+            raise
+
+    try:
+        job_queue.register_job(
+            name=job_name,
+            func=_run_sync,
+            interval_seconds=None,
+            enabled=True,
+            max_retries=3,
+            backoff_base=5.0,
+            backoff_factor=2.0,
+        )
+        job_queue.run_now(job_name)
+    except Exception as e:
+        logger.error(f"Failed to schedule Plex sync job '{job_name}': {e}")
+        return jsonify({"accepted": False, "error": f"Failed to schedule sync: {e}"}), 500
+
+    return jsonify({
+        "accepted": True,
+        "job": job_name,
+        "target": target,
+        "playlist": playlist_name,
+        "match_count": len(rating_keys),
+        "sync_mode": sync_mode,
+        "events_path": f"/api/playlists/sync/events?job={job_name}",
+    }), 202
+
+
+def _sync_to_tier(payload, source, target, playlist_name, matches, download_missing, sync_mode):
+    """Sync matched tracks to a tier provider (Spotify, Tidal, etc.)."""
+    # Collect provider-specific IDs from matches (target_identifier for tier target)
+    track_ids = [m.get("target_identifier") for m in matches if m.get("target_identifier")]
+    if not track_ids:
+        return jsonify({"accepted": False, "error": f"No {target} track IDs provided in matches"}), 400
+
+    # Schedule a one-off sync job
+    job_name = f"sync:{target}:{playlist_name}:{int(time.time())}"
+
+    def _run_sync():
+        event_bus.publish(job_name, "sync_started", {
+            "playlist": playlist_name,
+            "target": target,
+            "total": len(track_ids),
+            "download_missing": download_missing,
+            "sync_mode": sync_mode,
+        })
+
+        try:
+            from core.provider import ProviderRegistry
+            target_provider = ProviderRegistry.get_provider(target)
+            
+            if not target_provider:
+                raise RuntimeError(f"Provider {target} not found")
+
+            # Add tracks to target provider's playlist
+            synced = 0
+            failed = 0
+            
+            for idx, track_id in enumerate(track_ids):
+                event_bus.publish(job_name, "track_started", {
+                    "index": idx,
+                    "track_id": track_id,
+                    "total": len(track_ids),
+                })
+                try:
+                    # Provider-specific add-to-playlist logic
+                    target_provider.add_to_playlist(playlist_name, track_id)
+                    synced += 1
+                    event_bus.publish(job_name, "track_synced", {
+                        "index": idx,
+                        "track_id": track_id,
+                    })
+                except Exception as fe:
+                    failed += 1
+                    event_bus.publish(job_name, "track_failed", {
+                        "index": idx,
+                        "track_id": track_id,
+                        "error": str(fe),
+                    })
+
+            event_bus.publish(job_name, "sync_complete", {
+                "playlist": playlist_name,
+                "synced": synced,
+                "failed": failed,
+                "target": target,
+                "sync_mode": sync_mode,
+            })
+            
+            # Record in history
+            sync_history.record_sync(
+                source=source,
+                target=target,
+                playlist=playlist_name,
+                total=len(track_ids),
+                synced=synced,
+                failed=failed,
+                download_missing=download_missing,
+                job_name=job_name,
+            )
+        except Exception as e:
+            event_bus.publish(job_name, "sync_error", {"message": str(e)})
+            raise
+
+    try:
+        job_queue.register_job(
+            name=job_name,
+            func=_run_sync,
+            interval_seconds=None,
+            enabled=True,
+            max_retries=3,
+            backoff_base=5.0,
+            backoff_factor=2.0,
+        )
+        job_queue.run_now(job_name)
+    except Exception as e:
+        logger.error(f"Failed to schedule {target} sync job '{job_name}': {e}")
+        return jsonify({"accepted": False, "error": f"Failed to schedule sync: {e}"}), 500
+
+    return jsonify({
+        "accepted": True,
+        "job": job_name,
+        "target": target,
+        "playlist": playlist_name,
+        "track_count": len(track_ids),
+        "sync_mode": sync_mode,
+        "events_path": f"/api/playlists/sync/events?job={job_name}",
+    }), 202
+
+
+@bp.get("/sync/events")
+def sync_events():
+    job_name = request.args.get("job")
+    since = request.args.get("since", type=int)
+
+    if not job_name:
+        return jsonify({"error": "job query parameter required"}), 400
+
+    events = event_bus.get_events(job_name, since_id=since)
+    return jsonify({
+        "job": job_name,
+        "events": events,
+        "count": len(events),
+    }), 200
+
+
+@bp.get("/sync/history")
+def sync_history_endpoint():
+    """Get recent sync records for observability."""
+    source = request.args.get("source")
+    target = request.args.get("target")
+    limit = request.args.get("limit", 20, type=int)
+    
+    records = sync_history.get_records(source=source, target=target)
+    recent = records[-limit:] if records else []
+    
+    return jsonify({
+        "records": [r.to_dict() for r in recent],
+        "total": len(recent),
+    }), 200
+
+
+@bp.post("/download-missing")
+def download_missing_tracks():
+    """Trigger downloads for missing tracks identified during analysis.
+    
+    Accepts a list of missing track metadata and enqueues download jobs.
+    """
+    payload = request.get_json(silent=True) or {}
+    missing = payload.get("missing") or []
+    
+    if not missing:
+        return jsonify({"accepted": False, "error": "missing tracks list required"}), 400
+    
+    job_name = f"download:missing:{int(time.time())}"
+    
+    def _run_downloads():
+        from core.download_service import DownloadService
+        
+        event_bus.publish(job_name, "download_started", {
+            "total": len(missing),
+        })
+        
+        try:
+            service = DownloadService()
+            success_count = 0
+            
+            for idx, track_info in enumerate(missing):
+                event_bus.publish(job_name, "download_started_track", {
+                    "index": idx,
+                    "title": track_info.get("title"),
+                    "artist": track_info.get("artist"),
+                })
+                
+                try:
+                    # Use track title/artist to search for download
+                    success = service.download_track(
+                        title=track_info.get("title"),
+                        artist=track_info.get("artist"),
+                        album=track_info.get("album"),
+                    )
+                    if success:
+                        success_count += 1
+                        event_bus.publish(job_name, "download_complete_track", {
+                            "index": idx,
+                            "title": track_info.get("title"),
+                        })
+                    else:
+                        event_bus.publish(job_name, "download_failed_track", {
+                            "index": idx,
+                            "title": track_info.get("title"),
+                            "reason": "Not found or already exists",
+                        })
+                except Exception as e:
+                    event_bus.publish(job_name, "download_failed_track", {
+                        "index": idx,
+                        "title": track_info.get("title"),
+                        "error": str(e),
+                    })
+            
+            event_bus.publish(job_name, "download_complete", {
+                "total": len(missing),
+                "success": success_count,
+                "failed": len(missing) - success_count,
+            })
+        except Exception as e:
+            event_bus.publish(job_name, "download_error", {"message": str(e)})
+            raise
+    
+    try:
+        job_queue.register_job(
+            name=job_name,
+            func=_run_downloads,
+            interval_seconds=None,
+            enabled=True,
+            max_retries=1,
+            backoff_base=5.0,
+        )
+        job_queue.run_now(job_name)
+    except Exception as e:
+        logger.error(f"Failed to schedule download job '{job_name}': {e}")
+        return jsonify({"accepted": False, "error": f"Failed to schedule downloads: {e}"}), 500
+    
+    return jsonify({
+        "accepted": True,
+        "job": job_name,
+        "track_count": len(missing),
+        "events_path": f"/api/playlists/sync/events?job={job_name}",
+    }), 202
 
 
 # ========================================
@@ -488,3 +917,193 @@ def get_all_daily_mixes():
     except Exception as e:
         logger.error(f"Error fetching daily mixes: {e}")
         return jsonify({"error": "Failed to fetch daily mixes"}), 500
+
+
+@bp.post("/sync/schedule")
+def schedule_recurring_sync():
+    """Schedule a recurring playlist sync job (e.g., every 6 hours)."""
+    payload = request.get_json(silent=True) or {}
+    source = payload.get("source")
+    target = payload.get("target_source") or payload.get("target")
+    playlists = payload.get("playlists", [])
+    interval = payload.get("interval", 3600)  # Default: 1 hour in seconds
+    download_missing = payload.get("download_missing", False)
+    enabled = payload.get("enabled", True)
+
+    if not source or not target or not playlists:
+        return jsonify({"error": "source, target, and playlists required"}), 400
+
+    if interval < 300:
+        return jsonify({"error": "interval must be at least 300 seconds (5 minutes)"}), 400
+
+    # Create scheduled sync config
+    from core.settings import config_manager
+    scheduled_syncs = config_manager.get("scheduled_syncs", [])
+    
+    sync_config = {
+        "id": f"sync:{source}:{target}:{int(time.time())}",
+        "source": source,
+        "target": target,
+        "playlists": playlists,
+        "interval": interval,
+        "download_missing": download_missing,
+        "enabled": enabled,
+        "created_at": time.time(),
+    }
+    
+    scheduled_syncs.append(sync_config)
+    config_manager.set("scheduled_syncs", scheduled_syncs)
+    config_manager.save_config()
+    
+    # Register the job immediately if enabled
+    if enabled:
+        _register_scheduled_sync_job(sync_config)
+    
+    logger.info(f"Scheduled sync created: {sync_config['id']} (interval: {interval}s)")
+    return jsonify({
+        "accepted": True,
+        "sync_id": sync_config["id"],
+        "interval": interval,
+    }), 201
+
+
+@bp.get("/sync/scheduled")
+def list_scheduled_syncs():
+    """List all scheduled playlist sync jobs."""
+    from core.settings import config_manager
+    scheduled_syncs = config_manager.get("scheduled_syncs", [])
+    
+    # Enrich with job status from job_queue
+    for sync in scheduled_syncs:
+        job_name = f"scheduled:{sync['id']}"
+        if job_name in job_queue.jobs:
+            job_info = job_queue.jobs[job_name]
+            sync["running"] = job_queue.running.get(job_name, False)
+            sync["last_run"] = job_info.get("last_run")
+            sync["last_error"] = job_info.get("last_error")
+        else:
+            sync["running"] = False
+    
+    return jsonify({
+        "scheduled_syncs": scheduled_syncs,
+        "count": len(scheduled_syncs),
+    }), 200
+
+
+@bp.delete("/sync/scheduled/<sync_id>")
+def delete_scheduled_sync(sync_id):
+    """Delete a scheduled sync job."""
+    from core.settings import config_manager
+    scheduled_syncs = config_manager.get("scheduled_syncs", [])
+    
+    # Find and remove sync
+    updated_syncs = [s for s in scheduled_syncs if s.get("id") != sync_id]
+    if len(updated_syncs) == len(scheduled_syncs):
+        return jsonify({"error": "Sync not found"}), 404
+    
+    config_manager.set("scheduled_syncs", updated_syncs)
+    config_manager.save_config()
+    
+    # Unregister from job queue
+    job_name = f"scheduled:{sync_id}"
+    if job_name in job_queue.jobs:
+        job_queue.unregister_job(job_name)
+    
+    logger.info(f"Scheduled sync deleted: {sync_id}")
+    return jsonify({"accepted": True}), 200
+
+
+def _register_scheduled_sync_job(sync_config):
+    """Register a scheduled sync config as a recurring job in the job queue."""
+    job_name = f"scheduled:{sync_config['id']}"
+    source = sync_config["source"]
+    target = sync_config["target"]
+    playlists = sync_config["playlists"]
+    download_missing = sync_config.get("download_missing", False)
+    interval = sync_config["interval"]
+
+    def _run_scheduled_sync():
+        try:
+            # Analyze playlists
+            from database.music_database import MusicDatabase
+            db = MusicDatabase()
+            from core.provider import ProviderRegistry
+            
+            source_provider = ProviderRegistry.get_provider(source)
+            if not source_provider:
+                raise RuntimeError(f"Source provider {source} not found")
+
+            # Fetch playlists and run matching (abbreviated)
+            all_tracks = []
+            for playlist_id in playlists:
+                try:
+                    playlist_tracks = source_provider.get_playlist_tracks(playlist_id)
+                    all_tracks.extend(playlist_tracks)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch playlist {playlist_id}: {e}")
+            
+            if not all_tracks:
+                logger.warning(f"No tracks found for scheduled sync {sync_config['id']}")
+                return
+
+            # Match against target provider
+            target_provider = ProviderRegistry.get_provider(target)
+            if not target_provider:
+                raise RuntimeError(f"Target provider {target} not found")
+
+            matches = []
+            for track in all_tracks:
+                try:
+                    # Search target provider
+                    search_results = target_provider.search(track.get("title"), track.get("artist"))
+                    if search_results:
+                        best_match = search_results[0]
+                        matches.append({
+                            "track_id": track.get("id"),
+                            "target_identifier": best_match.get("id"),
+                        })
+                except Exception as e:
+                    logger.debug(f"Failed to match track: {e}")
+
+            if matches:
+                # Trigger sync with matched tracks
+                playlist_name = f"Synced Playlist ({sync_config['id']})"
+                if target == "plex":
+                    _sync_to_plex({
+                        "source": source,
+                        "target": target,
+                    }, source, target, playlist_name, matches, download_missing, "scheduled")
+                elif target in {"spotify", "tidal", "apple_music"}:
+                    _sync_to_tier({
+                        "source": source,
+                        "target": target,
+                    }, source, target, playlist_name, matches, download_missing, "scheduled")
+        except Exception as e:
+            logger.error(f"Scheduled sync {sync_config['id']} failed: {e}")
+            raise
+
+    try:
+        job_queue.register_job(
+            name=job_name,
+            func=_run_scheduled_sync,
+            interval_seconds=interval,
+            enabled=True,
+            max_retries=3,
+            backoff_base=5.0,
+            backoff_factor=2.0,
+        )
+        logger.info(f"Registered scheduled sync job: {job_name} (interval: {interval}s)")
+    except Exception as e:
+        logger.error(f"Failed to register scheduled sync job '{job_name}': {e}")
+
+
+def load_scheduled_syncs_on_startup():
+    """Load all enabled scheduled syncs from config at startup."""
+    from core.settings import config_manager
+    scheduled_syncs = config_manager.get("scheduled_syncs", [])
+    
+    for sync_config in scheduled_syncs:
+        if sync_config.get("enabled", True):
+            _register_scheduled_sync_job(sync_config)
+    
+    logger.info(f"Loaded {len([s for s in scheduled_syncs if s.get('enabled')])} scheduled syncs")

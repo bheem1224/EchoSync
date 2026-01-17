@@ -38,6 +38,9 @@ class MatchResult:
     version_penalty_applied: float
     edition_penalty_applied: float
     reasoning: str  # Human-readable explanation
+    target_source: Optional[str] = None  # e.g., plex, jellyfin
+    target_identifier: Optional[str] = None  # e.g., Plex ratingKey
+    target_exists: bool = False  # True if identifier is present for target
 
 
 class WeightedMatchingEngine:
@@ -73,7 +76,9 @@ class WeightedMatchingEngine:
     def calculate_match(
         self,
         source: SoulSyncTrack,
-        candidate: SoulSyncTrack
+        candidate: SoulSyncTrack,
+        target_source: Optional[str] = None,
+        target_identifier: Optional[str] = None,
     ) -> MatchResult:
         """
         Calculate match confidence between source and candidate tracks
@@ -99,7 +104,7 @@ class WeightedMatchingEngine:
         # If both tracks have ISRC and they match exactly, instant 100% confidence
         if source.isrc and candidate.isrc:
             if source.isrc.strip().upper() == candidate.isrc.strip().upper():
-                return MatchResult(
+                return self._attach_target_context(MatchResult(
                     confidence_score=100.0,
                     passed_version_check=True,
                     passed_edition_check=True,
@@ -109,17 +114,23 @@ class WeightedMatchingEngine:
                     version_penalty_applied=0.0,
                     edition_penalty_applied=0.0,
                     reasoning="ISRC match (identical recording - instant 100% confidence)"
-                )
+                ), target_source, target_identifier)
             else:
                 reasoning_parts.append("ISRC available but no match (different recordings)")
 
         # Continue with standard matching...
-        return self._calculate_standard_match(source, candidate)
+        return self._attach_target_context(
+            self._calculate_standard_match(source, candidate),
+            target_source,
+            target_identifier,
+        )
 
     def calculate_title_duration_match(
         self,
         source: SoulSyncTrack,
-        candidate: SoulSyncTrack
+        candidate: SoulSyncTrack,
+        target_source: Optional[str] = None,
+        target_identifier: Optional[str] = None,
     ) -> MatchResult:
         """
         Calculate match for Tier 2 fallback: exact title + duration only (ignores artist).
@@ -143,7 +154,7 @@ class WeightedMatchingEngine:
         # Check ISRC first (highest confidence)
         if source.isrc and candidate.isrc:
             if source.isrc.strip().upper() == candidate.isrc.strip().upper():
-                return MatchResult(
+                return self._attach_target_context(MatchResult(
                     confidence_score=100.0,
                     passed_version_check=True,
                     passed_edition_check=True,
@@ -153,10 +164,10 @@ class WeightedMatchingEngine:
                     version_penalty_applied=0.0,
                     edition_penalty_applied=0.0,
                     reasoning="Tier 2: ISRC match (instant 100%)"
-                )
+                ), target_source, target_identifier)
             else:
                 reasoning_parts.append("ISRC mismatch (different recordings)")
-                return MatchResult(
+                return self._attach_target_context(MatchResult(
                     confidence_score=0.0,
                     passed_version_check=False,
                     passed_edition_check=False,
@@ -166,7 +177,7 @@ class WeightedMatchingEngine:
                     version_penalty_applied=0.0,
                     edition_penalty_applied=0.0,
                     reasoning=" | ".join(reasoning_parts)
-                )
+                ), target_source, target_identifier)
 
         # Title must be exact match (normalized)
         source_title_norm = self._normalize_string_for_comparison(source.title or "")
@@ -174,7 +185,7 @@ class WeightedMatchingEngine:
 
         if source_title_norm != candidate_title_norm:
             reasoning_parts.append(f"Title mismatch: '{source.title}' != '{candidate.title}'")
-            return MatchResult(
+            return self._attach_target_context(MatchResult(
                 confidence_score=0.0,
                 passed_version_check=False,
                 passed_edition_check=False,
@@ -184,14 +195,14 @@ class WeightedMatchingEngine:
                 version_penalty_applied=0.0,
                 edition_penalty_applied=0.0,
                 reasoning=" | ".join(reasoning_parts)
-            )
+            ), target_source, target_identifier)
 
         reasoning_parts.append("Title exact match")
 
         # Duration must be within strict tolerance (2 seconds since artist is ignored)
         if not source.duration or not candidate.duration:
             reasoning_parts.append("Missing duration - cannot validate")
-            return MatchResult(
+            return self._attach_target_context(MatchResult(
                 confidence_score=0.0,
                 passed_version_check=False,
                 passed_edition_check=False,
@@ -201,7 +212,7 @@ class WeightedMatchingEngine:
                 version_penalty_applied=0.0,
                 edition_penalty_applied=0.0,
                 reasoning=" | ".join(reasoning_parts)
-            )
+            ), target_source, target_identifier)
 
         duration_diff_ms = abs(source.duration - candidate.duration)
         tolerance_ms = 2000  # 2 seconds strict tolerance for Tier 2
@@ -232,7 +243,7 @@ class WeightedMatchingEngine:
         )
         reasoning_parts.append(f"Tier 2: Title+Duration match (artist ignored) → {confidence:.1f}%")
 
-        return MatchResult(
+        return self._attach_target_context(MatchResult(
             confidence_score=confidence,
             passed_version_check=True,
             passed_edition_check=True,
@@ -242,7 +253,7 @@ class WeightedMatchingEngine:
             version_penalty_applied=0.0,
             edition_penalty_applied=0.0,
             reasoning=" | ".join(reasoning_parts)
-        )
+        ), target_source, target_identifier)
 
     def _calculate_standard_match(
         self,
@@ -376,6 +387,18 @@ class WeightedMatchingEngine:
             edition_penalty_applied=edition_penalty,
             reasoning=" | ".join(reasoning_parts)
         )
+
+    def _attach_target_context(
+        self,
+        result: MatchResult,
+        target_source: Optional[str],
+        target_identifier: Optional[str],
+    ) -> MatchResult:
+        if target_source:
+            result.target_source = target_source
+            result.target_identifier = target_identifier
+            result.target_exists = bool(target_identifier)
+        return result
 
     def _check_version_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> Tuple[bool, str]:
         """

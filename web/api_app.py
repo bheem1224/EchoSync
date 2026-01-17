@@ -89,6 +89,13 @@ def create_app() -> Flask:
         except Exception as e:
             print(f"[ERROR] Failed to register blueprint {bp.name}: {e}")
 
+    # Load scheduled sync jobs on startup
+    from web.routes.playlists import load_scheduled_syncs_on_startup
+    try:
+        load_scheduled_syncs_on_startup()
+    except Exception as e:
+        print(f"[WARN] Failed to load scheduled syncs: {e}")
+
     return app
 
 
