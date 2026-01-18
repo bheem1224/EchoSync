@@ -107,8 +107,21 @@ class DownloadManager:
             self._loop_task = None
         logger.info("Download Manager background task stopped")
 
+    async def _recover_stuck_items(self):
+        """Reset items stuck in 'searching' state back to 'queued' on startup."""
+        with self.db.session_scope() as session:
+            stuck_items = session.query(Download).filter(Download.status == "searching").all()
+            if stuck_items:
+                logger.warning(f"Found {len(stuck_items)} stuck downloads. Resetting to 'queued'.")
+                for item in stuck_items:
+                    item.status = "queued"
+                    item.updated_at = datetime.utcnow()
+
     async def _process_loop(self):
         """Main control loop: Process Queue -> Check Active"""
+        # 0. Recover stuck items on startup
+        await self._recover_stuck_items()
+
         while not self._shutdown:
             try:
                 # 1. Process Queued Items

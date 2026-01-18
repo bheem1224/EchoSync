@@ -4,7 +4,7 @@ from core.tiered_logger import get_logger
 import asyncio
 import aiohttp
 
-logger = get_logger("soulseek_routes")
+logger = get_logger("slskd_routes")
 bp = Blueprint("soulseek_routes", __name__, url_prefix="/api/providers/soulseek")
 
 

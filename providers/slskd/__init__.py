@@ -1,7 +1,7 @@
-from providers.soulseek.client import SoulseekClient
-from providers.soulseek.routes import bp
+from providers.slskd.client import SlskdProvider
+from providers.slskd.routes import bp
 
-ProviderClass = SoulseekClient
+ProviderClass = SlskdProvider
 RouteBlueprint = bp
 
 __all__ = ['ProviderClass', 'RouteBlueprint']

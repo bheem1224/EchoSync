@@ -8,11 +8,12 @@ load_dotenv()
 
 from core.settings import config_manager
 from core.tiered_logger import setup_logging, get_logger
+from core.services.download_manager import get_download_manager
 from providers.spotify.client import SpotifyClient
 from providers.plex.client import PlexClient
 from providers.jellyfin.client import JellyfinClient
 from providers.navidrome.client import NavidromeClient
-from providers.soulseek.client import SoulseekClient
+from providers.slskd.client import SlskdProvider
 
 logger = get_logger("backend")
 
@@ -21,7 +22,7 @@ class ServiceStatusMonitor:
     """Background service monitor that periodically checks provider connectivity."""
 
     def __init__(self, spotify: SpotifyClient, plex: PlexClient, jellyfin: JellyfinClient,
-                 navidrome: NavidromeClient, soulseek: SoulseekClient):
+                 navidrome: NavidromeClient, soulseek: SlskdProvider):
         self.spotify = spotify
         self.plex = plex
         self.jellyfin = jellyfin
@@ -95,7 +96,7 @@ async def backend_main() -> None:
     plex_client = PlexClient()
     jellyfin_client = JellyfinClient()
     navidrome_client = NavidromeClient()
-    soulseek_client = SoulseekClient()
+    soulseek_client = SlskdProvider()
 
     monitor = ServiceStatusMonitor(
         spotify=spotify_client,
@@ -106,12 +107,18 @@ async def backend_main() -> None:
     )
 
     monitor_task = asyncio.create_task(monitor.run())
+
+    # Start Download Manager background task
+    download_manager = get_download_manager()
+    await download_manager.start_background_task()
+
     try:
         await monitor_task
     except asyncio.CancelledError:
         logger.info("Backend shutdown signal received")
     finally:
         await monitor.shutdown()
+        await download_manager.stop_background_task()
         await _graceful_close([soulseek_client, plex_client, jellyfin_client, navidrome_client])
         logger.info("Backend services stopped")
 
