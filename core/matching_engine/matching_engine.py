@@ -664,6 +664,87 @@ class WeightedMatchingEngine:
 
         return matched
 
+    def select_best_download_candidate(
+        self,
+        target_track: SoulSyncTrack,
+        candidates: list[SoulSyncTrack]
+    ) -> Optional[SoulSyncTrack]:
+        """
+        Select the best download candidate from a list of raw search results.
+        Uses the profile weights to score and rank candidates.
+
+        Args:
+            target_track: The track we want to find
+            candidates: List of raw results from SlskdProvider
+
+        Returns:
+            The winning SoulSyncTrack or None if no acceptable match found
+        """
+        if not candidates:
+            return None
+
+        ranked_candidates = []
+
+        for candidate in candidates:
+            # Calculate match score
+            match_result = self.calculate_match(target_track, candidate)
+
+            # Additional check: Quality/Peer Stats weighting
+            # The standard calculate_match focuses on metadata correctness (Is this the right song?)
+            # We add a secondary score component for "Is this a good file to download?"
+
+            # Base metadata confidence
+            final_score = match_result.confidence_score
+
+            # Only consider candidates that pass the minimum confidence threshold for metadata
+            if final_score < self.weights.min_confidence_to_accept:
+                continue
+
+            # --- Secondary Download Quality Scoring ---
+            # (Note: These adjust the sort order among valid metadata matches,
+            # they don't override a bad metadata match)
+
+            # 1. Bitrate/Quality Bonus
+            # If identifiers has bitrate, prefer higher (up to a point) or specific formats
+            bitrate = candidate.identifiers.get('bitrate', 0) or 0
+            if bitrate >= 320:
+                final_score += 5  # Bonus for high quality
+            elif bitrate < 192:
+                final_score -= 10 # Penalty for low quality
+
+            # 2. Peer Stats (Speed, Queue)
+            upload_speed = candidate.identifiers.get('upload_speed', 0) or 0
+            queue_length = candidate.identifiers.get('queue_length', 0) or 0
+            free_slots = candidate.identifiers.get('free_upload_slots', 0) or 0
+
+            if upload_speed > 1000000: # >1MB/s
+                final_score += 5
+            elif upload_speed < 50000: # <50KB/s
+                final_score -= 5
+
+            if free_slots > 0:
+                final_score += 5
+
+            if queue_length > 10:
+                final_score -= 10
+            elif queue_length > 50:
+                final_score -= 20
+
+            ranked_candidates.append((final_score, candidate))
+
+        # Sort by final score descending
+        ranked_candidates.sort(key=lambda x: x[0], reverse=True)
+
+        if not ranked_candidates:
+            return None
+
+        # Log top 3 for debugging
+        logger.info(f"Top 3 download candidates for '{target_track.title}':")
+        for score, cand in ranked_candidates[:3]:
+            logger.info(f"  Score: {score:.1f} | {cand.identifiers.get('provider_item_id')} | Speed: {cand.identifiers.get('upload_speed')}")
+
+        return ranked_candidates[0][1]
+
 
 def create_matcher(profile: ScoringProfile) -> WeightedMatchingEngine:
     """Convenience function to create a matcher with a profile"""
