@@ -8,7 +8,7 @@ from providers.plex.client import PlexClient
 from providers.jellyfin.client import JellyfinClient
 from providers.navidrome.client import NavidromeClient
 from providers.slskd.client import SlskdProvider
-from core.services.download_manager import get_download_manager
+from services.download_manager import get_download_manager
 from core import MatchService, MatchContext, SoulSyncTrack, MatchResult
 
 logger = get_logger("sync_service")
