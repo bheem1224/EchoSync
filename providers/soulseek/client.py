@@ -1393,58 +1393,88 @@ class SoulseekClient(DownloaderProvider):
         # Return sensible defaults matching the new list-based structure
         return [
             {
-                "format": "flac",
-                "min_size": 20,
-                "max_size": 150,
+                "type": "FLAC",
+                "min_size_mb": 20,
+                "max_size_mb": 150,
                 "priority": 1,
                 "bit_depths": [16, 24],
-                "sample_rates": [44100, 48000, 88200, 96000, 192000]
+                "sample_rates": [44.1, 48, 88.2, 96, 192]
             },
             {
-                "format": "mp3",
-                "min_size": 5,
-                "max_size": 25,
+                "type": "MP3",
+                "min_size_mb": 5,
+                "max_size_mb": 25,
                 "priority": 2,
                 "min_bitrate": 320,
                 "max_bitrate": 320
             }
         ]
 
-    def filter_results_by_quality_preference(self, results: List[SoulSyncTrack], quality_profile: Optional[List[Dict[str, Any]]] = None) -> List[SoulSyncTrack]:
+    def filter_results_by_quality_preference(self, results: List[SoulSyncTrack], quality_profile: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None) -> List[SoulSyncTrack]:
         """
         Filter candidates based on user's priority-based quality profile.
-        
-        Args:
-            results: List of SoulSyncTrack objects to filter
-            quality_profile: List of profile items, each defining format, size, and technical criteria.
+        Supports both list of formats and full profile dict.
         """
         if not results:
             return []
 
-        # Use provided profile or get default
+        # 1. Normalize input to list of format rules
         if quality_profile is None:
             quality_profile = self._get_default_quality_profile()
 
-        # Ensure we have a valid list to iterate over
-        if not isinstance(quality_profile, list):
-            logger.warning("Quality profile is not a valid list, using default")
-            quality_profile = self._get_default_quality_profile()
+        formats_list = []
+        if isinstance(quality_profile, dict):
+            # It's a profile object, extract formats
+            formats_list = quality_profile.get('formats', [])
+        elif isinstance(quality_profile, list):
+            # It's already a list of formats (or profiles? we assume formats based on context)
+            # If it's a list of profiles, we might need to pick one?
+            # But based on the code flow, we expect format rules.
+            # If the list contains items with 'formats' key, it's a list of profiles.
+            if quality_profile and 'formats' in quality_profile[0]:
+                # It's a list of profiles, default to the first one
+                formats_list = quality_profile[0].get('formats', [])
+            else:
+                formats_list = quality_profile
+        else:
+            formats_list = self._get_default_quality_profile()
 
         # Sort profile items by priority (ascending: 1 is higher than 2)
-        sorted_profile = sorted(quality_profile, key=lambda x: x.get('priority', 999))
+        sorted_profile = sorted(formats_list, key=lambda x: x.get('priority', 999))
 
         logger.debug(f"Quality Filter: Processing {len(sorted_profile)} profile priorities")
 
         # Iterate through priorities
         for profile_item in sorted_profile:
             priority = profile_item.get('priority', 999)
-            target_format = profile_item.get('format', '').lower()
-            min_size = profile_item.get('min_size', 0)
-            max_size = profile_item.get('max_size', 9999)
 
-            # Lossless specific filters
-            target_bit_depths = profile_item.get('bit_depths', []) # e.g. [16, 24]
-            target_sample_rates = profile_item.get('sample_rates', []) # e.g. [44100, 48000]
+            # Map JSON keys to internal logic
+            # JSON: "type": "FLAC", "min_size_mb": 20, "bit_depths": ["24"]
+            target_type = profile_item.get('type', profile_item.get('format', '')).lower()
+            min_size_mb = profile_item.get('min_size_mb', profile_item.get('min_size', 0))
+            max_size_mb = profile_item.get('max_size_mb', profile_item.get('max_size', 0)) # 0 means unlimited often in UI
+
+            # Technical specs (strings in JSON)
+            raw_bit_depths = profile_item.get('bit_depths', [])
+            target_bit_depths = []
+            for bd in raw_bit_depths:
+                try:
+                    target_bit_depths.append(int(bd))
+                except (ValueError, TypeError):
+                    pass
+
+            raw_sample_rates = profile_item.get('sample_rates', [])
+            target_sample_rates = []
+            for sr in raw_sample_rates:
+                try:
+                    # JSON has "44.1", "48". Client parses 44100, 48000.
+                    val = float(sr)
+                    if val < 1000:
+                        target_sample_rates.append(int(val * 1000))
+                    else:
+                        target_sample_rates.append(int(val))
+                except (ValueError, TypeError):
+                    pass
 
             # Lossy specific filters
             min_bitrate = profile_item.get('min_bitrate', 0)
@@ -1454,34 +1484,32 @@ class SoulseekClient(DownloaderProvider):
 
             for track in results:
                 # 1. Format Check
-                if not track.file_format or track.file_format.lower() != target_format:
+                if not track.file_format or track.file_format.lower() != target_type:
                     continue
 
                 # 2. Size Check (MB)
                 size_mb = (track.file_size_bytes or 0) / (1024 * 1024)
-                if not (min_size <= size_mb <= max_size):
+                if min_size_mb > 0 and size_mb < min_size_mb:
+                    continue
+                if max_size_mb > 0 and size_mb > max_size_mb:
                     continue
 
-                # 3. Technical Checks (Lossless vs Lossy)
+                # 3. Technical Checks
                 is_valid = True
 
-                if target_format in ['flac', 'wav', 'dsd', 'alac']:
-                    # Check Bit Depth if specified in profile
+                if target_type in ['flac', 'wav', 'dsd', 'alac']:
+                    # Check Bit Depth
                     if target_bit_depths:
-                        # If track has no bit depth info, we might skip or include depending on strictness
-                        # Here we skip if known metadata mismatches
                         if track.bit_depth and track.bit_depth not in target_bit_depths:
                             is_valid = False
 
-                    # Check Sample Rate if specified in profile
+                    # Check Sample Rate
                     if target_sample_rates:
-                        if track.sample_rate:
-                            # Allow some tolerance or exact match? Exact match for now
-                            if track.sample_rate not in target_sample_rates:
-                                is_valid = False
+                        if track.sample_rate and track.sample_rate not in target_sample_rates:
+                            is_valid = False
 
-                elif target_format in ['mp3', 'ogg', 'aac', 'wma']:
-                    # Check Bitrate if specified
+                elif target_type in ['mp3', 'ogg', 'aac', 'wma']:
+                    # Check Bitrate
                     if min_bitrate > 0 or max_bitrate < 9999:
                         track_bitrate = track.bitrate or 0
                         if not (min_bitrate <= track_bitrate <= max_bitrate):
@@ -1498,7 +1526,7 @@ class SoulseekClient(DownloaderProvider):
                     x.file_size_bytes or 0
                 ), reverse=True)
 
-                logger.info(f"Quality Filter: Found {len(candidates_for_priority)} matches for priority {priority} ({target_format})")
+                logger.info(f"Quality Filter: Found {len(candidates_for_priority)} matches for priority {priority} ({target_type})")
                 return candidates_for_priority
 
         logger.warning("Quality Filter: No candidates matched any profile priority")
