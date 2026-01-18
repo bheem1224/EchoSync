@@ -28,8 +28,7 @@
   let syncInProgress = false;
   let syncDownloadMissing = false;
   
-  // Sync progress modal state
-  let syncProgressModalOpen = false;
+  // Sync progress state (integrated into analysis modal)
   let syncEventStream = [];
   let syncProgressEvent = null;
   let syncEventPollingId = null;
@@ -183,7 +182,15 @@
       
       if (response.data.accepted) {
         syncConfigModalOpen = false;
-        syncProgressModalOpen = true;
+        // Set initial progress state immediately to trigger UI change
+        syncProgressEvent = { 
+          type: 'in-progress', 
+          data: { 
+            total: analysisResult.summary.found_in_library,
+            message: 'Starting sync...'
+          } 
+        };
+        // Keep analysis modal open to show progress
         // Fix the events_path - remove /api prefix if present since client already adds it
         const eventsPath = response.data.events_path?.startsWith('/api') 
           ? response.data.events_path.substring(4)
@@ -203,12 +210,21 @@
     syncEventStream = [];
     let lastEventId = -1;
     
+    console.log('[Sync Events] Starting polling for job:', jobName);
+    console.log('[Sync Events] Events path:', eventsPath);
+    
     const pollEvents = async () => {
       try {
         const separator = eventsPath.includes('?') ? '&' : '?';
         const url = `${eventsPath}${separator}since=${lastEventId}`;
+        console.log('[Sync Events] Polling URL:', url);
         const response = await apiClient.get(url);
         const newEvents = response.data.events || [];
+        
+        console.log('[Sync Events] Received', newEvents.length, 'events');
+        if (newEvents.length > 0) {
+          console.log('[Sync Events] Latest event:', newEvents[newEvents.length - 1]);
+        }
         
         syncEventStream = [...syncEventStream, ...newEvents];
         
@@ -216,26 +232,33 @@
           lastEventId = newEvents[newEvents.length - 1].id;
           syncProgressEvent = newEvents[newEvents.length - 1];
           
-          if (syncProgressEvent.type === 'sync_complete') {
-            clearInterval(syncEventPollingId);
-            syncEventPollingId = null;
+          if (syncProgressEvent.type === 'sync_complete' || syncProgressEvent.type === 'sync_error') {
+            console.log('[Sync Events] Sync finished, stopping polling');
+            if (syncEventPollingId) {
+              clearInterval(syncEventPollingId);
+              syncEventPollingId = null;
+            }
             setTimeout(() => {
               jobs.load();
-              // Auto-download if checkbox was checked
-              if (syncDownloadMissing) {
-                closeSyncProgressModal();
+              // Auto-download if checkbox was checked and sync was successful
+              if (syncProgressEvent.type === 'sync_complete' && syncDownloadMissing) {
                 downloadMissingTracks();
-              } else {
+              }
+              if (syncProgressEvent.type === 'sync_complete') {
                 success = 'Sync completed!';
+              } else {
+                analysisError = syncProgressEvent.data?.error || 'Sync failed';
               }
             }, 500);
-          } else if (syncProgressEvent.type === 'sync_error') {
-            clearInterval(syncEventPollingId);
-            syncEventPollingId = null;
           }
         }
       } catch (err) {
-        console.error('Event polling error:', err);
+        console.error('[Sync Events] Polling error:', err);
+        // Stop polling on error
+        if (syncEventPollingId) {
+          clearInterval(syncEventPollingId);
+          syncEventPollingId = null;
+        }
       }
     };
     
@@ -248,7 +271,6 @@
       clearInterval(syncEventPollingId);
       syncEventPollingId = null;
     }
-    syncProgressModalOpen = false;
     syncEventStream = [];
     syncProgressEvent = null;
   }
@@ -526,92 +548,132 @@
     <header class="modal__header">
       <div>
         <p class="eyebrow">Playlist Sync</p>
-        <h2>Analysis</h2>
-        <p class="sub">Source: {sourceProvider} → Target: {targetProvider}</p>
+        <h2>{syncProgressEvent ? 'Sync' : 'Analysis'}</h2>
+        <p class="sub">{syncProgressEvent ? 'Syncing tracks to Plex...' : `Source: ${sourceProvider} → Target: ${targetProvider}`}</p>
       </div>
       <button class="close-btn" on:click={closeAnalysisModal}>×</button>
     </header>
 
     <div class="modal__body">
-      <div class="summary-grid">
-        <div class="summary-card">
-          <div class="label">Total Tracks</div>
-          <div class="value">{analysisResult?.summary?.total_tracks ?? '–'}</div>
-        </div>
-        <div class="summary-card">
-          <div class="label">Found in Library</div>
-          <div class="value">{analysisResult?.summary?.found_in_library ?? '–'}</div>
-        </div>
-        <div class="summary-card">
-          <div class="label">Missing</div>
-          <div class="value highlight">{analysisResult?.summary?.missing_tracks ?? '–'}</div>
-        </div>
-        <div class="summary-card">
-          <div class="label">Downloaded</div>
-          <div class="value">{analysisResult?.summary?.downloaded ?? 0}</div>
-        </div>
-      </div>
-
-      <div class="controls-row">
-        <div class="control">
-          <label>Quality Profile</label>
-          <select bind:value={selectedQuality}>
-            {#if qualityProfiles.length === 0}
-              <option value="">No profiles configured</option>
-            {:else}
-              {#each qualityProfiles as profile}
-                <option value={profile.name}>{profile.name}</option>
-              {/each}
-            {/if}
-          </select>
-        </div>
-        <div class="control buttons">
-          <button class="btn" on:click={runAnalysis} disabled={analysisLoading}>
-            {analysisLoading ? 'Analyzing…' : (analysisStarted ? 'Re-run Analysis' : 'Begin Analysis')}
-          </button>
-          <button class="btn btn--accent" on:click={openSyncConfigModal}
-            disabled={!analysisResult?.summary?.can_sync}>
-            ⇄ Sync
-          </button>
-          <button class="btn btn--primary" on:click={downloadMissingTracks}
-            disabled={!analysisResult || downloadingMissing || (analysisResult?.summary?.missing_tracks ?? 0) === 0}>
-            {downloadingMissing ? 'Starting…' : 'Download Missing Tracks'}
-          </button>
-        </div>
-      </div>
-
-      {#if analysisError}
-        <p class="error-msg">{analysisError}</p>
-      {/if}
-
-      <div class="tracks-table-wrapper">
-        <div class="tracks-table">
-          <div class="table-header">
-            <span>#</span>
-            <span>Track</span>
-            <span>Artist</span>
-            <span>Duration</span>
-            <span>Match Quality</span>
-            <span>Download Status</span>
+      {#if !syncProgressEvent}
+        <!-- Analysis Section -->
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="label">Total Tracks</div>
+            <div class="value">{analysisResult?.summary?.total_tracks ?? '–'}</div>
           </div>
-          {#if analysisLoading}
-            <div class="table-row muted">Analyzing tracks…</div>
-          {:else if analysisResult?.tracks?.length}
-            {#each analysisResult.tracks as track, idx}
-              <div class="table-row">
-                <span>{idx + 1}</span>
-                <span title={track.title}>{track.title}</span>
-                <span title={track.artist}>{track.artist}</span>
-                <span>{track.duration || '–'}</span>
-                <span class="match-badge {track.library_match?.includes('score') ? 'partial' : track.library_match === 'Found' ? 'found' : track.library_match?.includes('fuzzy') ? 'fuzzy' : 'missing'}">{track.library_match ?? 'Checking…'}</span>
-                <span>{track.download_status ?? '-'}</span>
-              </div>
-            {/each}
-          {:else}
-            <div class="table-row muted">No track details available yet.</div>
-          {/if}
+          <div class="summary-card">
+            <div class="label">Found in Library</div>
+            <div class="value">{analysisResult?.summary?.found_in_library ?? '–'}</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Missing</div>
+            <div class="value highlight">{analysisResult?.summary?.missing_tracks ?? '–'}</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Downloaded</div>
+            <div class="value">{analysisResult?.summary?.downloaded ?? 0}</div>
+          </div>
         </div>
-      </div>
+
+        <div class="controls-row">
+          <div class="control">
+            <label>Quality Profile</label>
+            <select bind:value={selectedQuality}>
+              {#if qualityProfiles.length === 0}
+                <option value="">No profiles configured</option>
+              {:else}
+                {#each qualityProfiles as profile}
+                  <option value={profile.name}>{profile.name}</option>
+                {/each}
+              {/if}
+            </select>
+          </div>
+          <div class="control buttons">
+            <button class="btn" on:click={runAnalysis} disabled={analysisLoading}>
+              {analysisLoading ? 'Analyzing…' : (analysisStarted ? 'Re-run Analysis' : 'Begin Analysis')}
+            </button>
+            <button class="btn btn--accent" on:click={openSyncConfigModal}
+              disabled={!analysisResult?.summary?.can_sync}>
+              ⇄ Sync
+            </button>
+            <button class="btn btn--primary" on:click={downloadMissingTracks}
+              disabled={!analysisResult || downloadingMissing || (analysisResult?.summary?.missing_tracks ?? 0) === 0}>
+              {downloadingMissing ? 'Starting…' : 'Download Missing Tracks'}
+            </button>
+          </div>
+        </div>
+
+        {#if analysisError}
+          <p class="error-msg">{analysisError}</p>
+        {/if}
+
+        <div class="tracks-table-wrapper">
+          <div class="tracks-table">
+            <div class="table-header">
+              <span>#</span>
+              <span>Track</span>
+              <span>Artist</span>
+              <span>Duration</span>
+              <span>Match Quality</span>
+              <span>Download Status</span>
+            </div>
+            {#if analysisLoading}
+              <div class="table-row muted">Analyzing tracks…</div>
+            {:else if analysisResult?.tracks?.length}
+              {#each analysisResult.tracks as track, idx}
+                <div class="table-row">
+                  <span>{idx + 1}</span>
+                  <span title={track.title}>{track.title}</span>
+                  <span title={track.artist}>{track.artist}</span>
+                  <span>{track.duration || '–'}</span>
+                  <span class="match-badge {track.library_match?.includes('score') ? 'partial' : track.library_match === 'Found' ? 'found' : track.library_match?.includes('fuzzy') ? 'fuzzy' : 'missing'}">{track.library_match ?? 'Checking…'}</span>
+                  <span>{track.download_status ?? '-'}</span>
+                </div>
+              {/each}
+            {:else}
+              <div class="table-row muted">No track details available yet.</div>
+            {/if}
+          </div>
+        </div>
+      {:else}
+        <!-- Sync Progress Section -->
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="label">Total Tracks</div>
+            <div class="value">{syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library || 0}</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Synced</div>
+            <div class="value" style="color: #22c55e">{(syncEventStream.filter(e => e.type === 'track_synced').length) || 0}</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Failed</div>
+            <div class="value highlight" style="color: #ef4444">{(syncEventStream.filter(e => e.type === 'track_failed').length) || 0}</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Pending</div>
+            <div class="value">{Math.max(0, (syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library || 0) - (syncEventStream.filter(e => e.type === 'track_synced').length) - (syncEventStream.filter(e => e.type === 'track_failed').length)) || 0}</div>
+          </div>
+        </div>
+
+        <!-- Progress Bar - Right after summary cards -->
+        {#if (syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library) > 0}
+          <div class="progress-bar-container">
+            <div class="progress-label">
+              {#if syncProgressEvent.type === 'sync_complete'}
+                ✓ Completed
+              {:else}
+                Progress: {Math.round(((syncEventStream.filter(e => e.type === 'track_synced').length) + (syncEventStream.filter(e => e.type === 'track_failed').length)) / (syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library || 1) * 100)}% 
+                ({(syncEventStream.filter(e => e.type === 'track_synced').length) + (syncEventStream.filter(e => e.type === 'track_failed').length)}/{syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library})
+              {/if}
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill {syncProgressEvent.type === 'sync_complete' ? 'complete' : ''}" style="width: {Math.round(((syncEventStream.filter(e => e.type === 'track_synced').length) + (syncEventStream.filter(e => e.type === 'track_failed').length)) / (syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library || 1) * 100)}%"></div>
+            </div>
+          </div>
+        {/if}
+      {/if}
     </div>
   </div>
 {/if}
@@ -667,87 +729,6 @@
 {/if}
 
 <!-- Sync Progress Modal -->
-{#if syncProgressModalOpen}
-  <div class="modal-backdrop" role="presentation"></div>
-  <div class="modal sync-progress-modal">
-    <div class="modal-header">
-      <h2>Sync Progress</h2>
-      <button type="button" class="close-btn" on:click={closeSyncProgressModal}>✕</button>
-    </div>
-    
-    <div class="modal-body progress-container">
-      {#if syncProgressEvent}
-        <div class="progress-state">
-          <div class="state-badge {syncProgressEvent.type === 'sync_complete' ? 'complete' : syncProgressEvent.type === 'sync_error' ? 'error' : 'in-progress'}">
-            {syncProgressEvent.type === 'sync_complete' ? '✓ Complete' : 
-             syncProgressEvent.type === 'sync_error' ? '✗ Error' : 
-             '⟳ In Progress'}
-          </div>
-          {#if syncProgressEvent.data?.message}
-            <p class="state-message">{syncProgressEvent.data.message}</p>
-          {/if}
-        </div>
-        
-        <!-- Statistics Row -->
-        {#if syncProgressEvent.data?.analysis}
-          <div class="stats-row">
-            <div class="stat">
-              <span class="stat-label">Total</span>
-              <span class="stat-value">{syncProgressEvent.data.analysis.total_tracks || 0}</span>
-            </div>
-            <div class="stat">
-              <span class="stat-label">Found</span>
-              <span class="stat-value">{syncProgressEvent.data.analysis.found_count || 0}</span>
-            </div>
-            <div class="stat">
-              <span class="stat-label">Missing</span>
-              <span class="stat-value">{syncProgressEvent.data.analysis.missing_count || 0}</span>
-            </div>
-            <div class="stat">
-              <span class="stat-label">Downloaded</span>
-              <span class="stat-value">{syncProgressEvent.data.analysis.downloaded_count || 0}</span>
-            </div>
-          </div>
-          
-          <!-- Progress Bar -->
-          {#if syncProgressEvent.data.analysis.total_tracks > 0}
-            <div class="progress-bar-container">
-              <div class="progress-label">Progress: {Math.round((syncProgressEvent.data.analysis.downloaded_count || 0) / (syncProgressEvent.data.analysis.total_tracks || 1) * 100)}%</div>
-              <div class="progress-bar">
-                <div class="progress-fill" style="width: {Math.round((syncProgressEvent.data.analysis.downloaded_count || 0) / (syncProgressEvent.data.analysis.total_tracks || 1) * 100)}%"></div>
-              </div>
-            </div>
-          {/if}
-        {/if}
-      {/if}
-      
-      <div class="progress-timeline">
-        {#each syncEventStream as event (event.id)}
-          <div class="timeline-item event-{event.type}">
-            <div class="timeline-marker">
-              {#if event.type === 'track_synced'}
-                ✓
-              {:else if event.type === 'track_failed'}
-                ✗
-              {:else}
-                •
-              {/if}
-            </div>
-            <div class="timeline-content">
-              <div class="timeline-type">{event.type.replace(/_/g, ' ')}</div>
-              {#if event.data?.track_name}
-                <div class="timeline-detail">{event.data.track_name}</div>
-              {/if}
-              {#if event.data?.error}
-                <div class="timeline-error">{event.data.error}</div>
-              {/if}
-            </div>
-          </div>
-        {/each}
-      </div>
-    </div>
-  </div>
-{/if}
 
 <!-- Schedule Modal -->
 {#if showScheduleModal}
@@ -942,10 +923,18 @@
   .playlist-item:hover {
     background: rgba(255, 255, 255, 0.06);
     border-color: rgba(255, 255, 255, 0.1);
+    transform: translateY(-1px);
   }
 
   .playlist-item.selected {
-    background: rgba(15, 239, 136, 0.05);
+    background: rgba(15, 239, 136, 0.12);
+    border-color: var(--accent);
+    border-width: 2px;
+    box-shadow: 0 0 20px rgba(15, 239, 136, 0.2);
+  }
+
+  .playlist-item.selected:hover {
+    background: rgba(15, 239, 136, 0.18);
     border-color: var(--accent);
   }
 
@@ -1041,8 +1030,9 @@
   }
 
   .badge {
-    background: var(--accent);
-    color: #000;
+    background: rgba(15, 239, 136, 0.1);
+    color: var(--text);
+    border: 1px solid var(--accent);
     border-radius: 6px;
     padding: 2px 8px;
     font-weight: 700;
@@ -1319,205 +1309,47 @@
   .config-options input[type="checkbox"] {
     cursor: pointer;
   }
-
-  /* Sync Progress Modal */
-  .sync-progress-modal {
-    width: min(700px, 96vw);
-    max-height: 80vh;
-  }
-  
-  .progress-container {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  
-  .progress-state {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 16px;
-    background: rgba(255,255,255,0.05);
-    border-radius: 8px;
-  }
-  
-  .state-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    width: fit-content;
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-weight: 600;
-    font-size: 14px;
-  }
-  
-  .state-badge.in-progress {
-    background: rgba(59, 130, 246, 0.1);
-    color: #3b82f6;
-  }
-  
-  .state-badge.complete {
-    background: rgba(34, 197, 94, 0.1);
-    color: #22c55e;
-  }
-  
-  .state-badge.error {
-    background: rgba(239, 68, 68, 0.1);
-    color: #ef4444;
-  }
-  
-  .state-message {
-    margin: 0;
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
-  
-  .stats-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    margin: 16px 0;
-    padding: 12px;
-    background: rgba(255,255,255,0.05);
-    border-radius: 6px;
-  }
-  
-  .stat {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-  }
-  
-  .stat-label {
-    font-size: 11px;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  
-  .stat-value {
-    font-size: 18px;
-    font-weight: 700;
-    color: #3b82f6;
-  }
   
   .progress-bar-container {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin: 12px 0;
+    gap: 8px;
+    margin: 24px 0 16px 0;
+    padding: 12px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+    border: 1px solid rgba(59, 130, 246, 0.2);
   }
   
   .progress-label {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-secondary);
-    font-weight: 500;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
   }
   
   .progress-bar {
     width: 100%;
-    height: 6px;
-    background: rgba(255,255,255,0.1);
-    border-radius: 3px;
+    height: 12px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 6px;
     overflow: hidden;
+    border: 1px solid rgba(59, 130, 246, 0.3);
   }
   
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
-    border-radius: 3px;
-    transition: width 0.3s ease;
+    background: linear-gradient(90deg, #3b82f6 0%, #0ea5e9 100%);
+    border-radius: 6px;
+    transition: width 0.3s ease, background 0.3s ease;
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
   }
   
-  .progress-timeline {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    max-height: 350px;
-    overflow-y: auto;
-  }
-  
-  .timeline-item {
-    display: flex;
-    gap: 12px;
-    padding: 10px 12px;
-    border-left: 2px solid rgba(255,255,255,0.1);
-    position: relative;
-    transition: background 0.2s;
-  }
-  
-  .timeline-item:hover {
-    background: rgba(255,255,255,0.05);
-  }
-  
-  .timeline-marker {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: rgba(255,255,255,0.3);
-    margin-top: 0px;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-    font-weight: 700;
-    color: white;
-  }
-  
-  .event-sync_started .timeline-marker,
-  .event-track_started .timeline-marker {
-    background: #3b82f6;
-    color: white;
-  }
-  
-  .event-track_synced .timeline-marker {
-    background: #22c55e;
-    color: white;
-  }
-  
-  .event-track_failed .timeline-marker {
-    background: #ef4444;
-    color: white;
-  }
-  
-  .event-sync_complete .timeline-marker {
-    background: #22c55e;
-    color: white;
-  }
-  
-  .event-sync_error .timeline-marker {
-    background: #ef4444;
-    color: white;
-  }
-  
-  .timeline-content {
-    flex: 1;
-    min-width: 0;
-  }
-  
-  .timeline-type {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-    text-transform: capitalize;
-  }
-  
-  .timeline-detail {
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin-top: 2px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  
-  .timeline-error {
-    font-size: 12px;
-    color: #ef4444;
-    margin-top: 2px;
+  .progress-fill.complete {
+    background: linear-gradient(90deg, #22c55e 0%, #16a34a 100%);
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.4);
   }
 
   /* Scheduled Syncs */

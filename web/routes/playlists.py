@@ -1,5 +1,6 @@
 import logging
 import re
+from urllib.parse import quote
 from flask import Blueprint, jsonify, request
 from web.services.sync_service import SyncAdapter
 from core.personalized_playlists import get_personalized_playlists_service
@@ -468,6 +469,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
 
         marker = "⇄"
         total = len(rating_keys)
+        logger.info(f"[{job_name}] Starting Plex sync for playlist '{playlist_name}' with {total} tracks")
         event_bus.publish(job_name, "sync_started", {
             "playlist": playlist_name,
             "target": target,
@@ -483,21 +485,33 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
 
             valid_keys = []
             for idx, rk in enumerate(rating_keys):
+                logger.debug(f"[{job_name}] Processing track {idx + 1}/{total} (ratingKey: {rk}, type: {type(rk).__name__})")
                 event_bus.publish(job_name, "track_started", {
                     "index": idx,
                     "rating_key": rk,
                     "total": total,
                 })
                 try:
-                    item = client.server.fetchItem(rk) if client.server else None
+                    # Ensure ratingKey is an integer
+                    try:
+                        rk_int = int(rk) if rk else None
+                    except (ValueError, TypeError):
+                        raise RuntimeError(f"Invalid ratingKey format: {rk}")
+                    
+                    if not rk_int:
+                        raise RuntimeError("Empty or invalid ratingKey")
+                    
+                    item = client.server.fetchItem(rk_int) if client.server else None
                     if not item:
                         raise RuntimeError("Track not found on Plex")
                     valid_keys.append(rk)
+                    logger.debug(f"[{job_name}] Track {idx + 1} synced successfully")
                     event_bus.publish(job_name, "track_synced", {
                         "index": idx,
                         "rating_key": rk,
                     })
                 except Exception as fe:
+                    logger.warning(f"[{job_name}] Track {idx + 1} failed: {str(fe)}")
                     event_bus.publish(job_name, "track_failed", {
                         "index": idx,
                         "rating_key": rk,
@@ -508,6 +522,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
                 raise RuntimeError("No valid Plex items resolved for playlist sync")
 
             # Local-server sync: overwrite managed playlist
+            logger.info(f"[{job_name}] Creating/updating managed playlist with {len(valid_keys)} tracks")
             updated = client.add_tracks_to_managed_playlist(
                 playlist_name,
                 valid_keys,
@@ -521,6 +536,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
                 "updated": bool(updated),
             })
 
+            logger.info(f"[{job_name}] Sync complete: {len(valid_keys)} synced, {total - len(valid_keys)} failed")
             event_bus.publish(job_name, "sync_complete", {
                 "playlist": playlist_name,
                 "synced": len(valid_keys),
@@ -541,6 +557,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
                 job_name=job_name,
             )
         except Exception as e:
+            logger.error(f"[{job_name}] Sync error: {str(e)}")
             event_bus.publish(job_name, "sync_error", {"message": str(e)})
             raise
 
@@ -566,7 +583,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
         "playlist": playlist_name,
         "match_count": len(rating_keys),
         "sync_mode": sync_mode,
-        "events_path": f"/api/playlists/sync/events?job={job_name}",
+        "events_path": f"/api/playlists/sync/events?job={quote(job_name, safe='')}",
     }), 202
 
 
@@ -581,6 +598,7 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
     job_name = f"sync:{target}:{playlist_name}:{int(time.time())}"
 
     def _run_sync():
+        logger.info(f"[{job_name}] Starting {target} sync for playlist '{playlist_name}' with {len(track_ids)} tracks")
         event_bus.publish(job_name, "sync_started", {
             "playlist": playlist_name,
             "target": target,
@@ -601,6 +619,7 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
             failed = 0
             
             for idx, track_id in enumerate(track_ids):
+                logger.debug(f"[{job_name}] Processing track {idx + 1}/{len(track_ids)} (ID: {track_id})")
                 event_bus.publish(job_name, "track_started", {
                     "index": idx,
                     "track_id": track_id,
@@ -610,18 +629,21 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
                     # Provider-specific add-to-playlist logic
                     target_provider.add_to_playlist(playlist_name, track_id)
                     synced += 1
+                    logger.debug(f"[{job_name}] Track {idx + 1} synced successfully")
                     event_bus.publish(job_name, "track_synced", {
                         "index": idx,
                         "track_id": track_id,
                     })
                 except Exception as fe:
                     failed += 1
+                    logger.warning(f"[{job_name}] Track {idx + 1} failed: {str(fe)}")
                     event_bus.publish(job_name, "track_failed", {
                         "index": idx,
                         "track_id": track_id,
                         "error": str(fe),
                     })
 
+            logger.info(f"[{job_name}] Sync complete: {synced} synced, {failed} failed")
             event_bus.publish(job_name, "sync_complete", {
                 "playlist": playlist_name,
                 "synced": synced,
@@ -667,7 +689,7 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
         "playlist": playlist_name,
         "track_count": len(track_ids),
         "sync_mode": sync_mode,
-        "events_path": f"/api/playlists/sync/events?job={job_name}",
+        "events_path": f"/api/playlists/sync/events?job={quote(job_name, safe='')}",
     }), 202
 
 
@@ -788,7 +810,7 @@ def download_missing_tracks():
         "accepted": True,
         "job": job_name,
         "track_count": len(missing),
-        "events_path": f"/api/playlists/sync/events?job={job_name}",
+        "events_path": f"/api/playlists/sync/events?job={quote(job_name, safe='')}",
     }), 202
 
 

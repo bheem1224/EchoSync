@@ -44,6 +44,7 @@ from web.routes.library import bp as library_bp
 
 from core.plugin_loader import PluginLoader
 from core.settings import config_manager
+from core.job_queue import start_job_queue
 
 
 def create_app() -> Flask:
@@ -52,6 +53,9 @@ def create_app() -> Flask:
     # Configure sensitive logging filter for Werkzeug
     werkzeug_logger = logging.getLogger('werkzeug')
     werkzeug_logger.addFilter(SensitiveRequestFilter())
+    
+    # Suppress verbose urllib3 debug logs (from PlexAPI/requests)
+    logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
 
     # Enable CORS for frontend (if flask-cors is installed)
     if CORS_AVAILABLE:
@@ -95,6 +99,9 @@ def create_app() -> Flask:
         load_scheduled_syncs_on_startup()
     except Exception as e:
         print(f"[WARN] Failed to load scheduled syncs: {e}")
+
+    # Start the job queue for async task execution
+    start_job_queue()
 
     return app
 

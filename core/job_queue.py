@@ -211,14 +211,16 @@ class JobQueue:
             attempt = 0
             while True:
                 try:
-                    logger.info(f"Starting job: {job.name} (attempt {attempt + 1})")
+                    # Log health checks at DEBUG, other jobs at INFO
+                    log_level = logger.debug if 'health_check' in job.name else logger.info
+                    log_level(f"Starting job: {job.name} (attempt {attempt + 1})")
                     job.running = True
                     job.last_started = time.time()
                     job.func()
                     job.last_success = time.time()
                     job.last_error = None
                     job.current_retries = 0
-                    logger.info(f"Completed job: {job.name}")
+                    log_level(f"Completed job: {job.name}")
                     break
                 except Exception as e:
                     job.last_error = str(e)

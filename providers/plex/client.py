@@ -56,7 +56,7 @@ class PlexClient(ProviderBase):
                     message=f"Plex connection error: {str(e)}",
                 )
         
-        register_health_check_job("plex_health_check", plex_health_check, interval_seconds=60)
+        register_health_check_job("plex_health_check", plex_health_check, interval_seconds=300)
     
     def authenticate(self, **kwargs) -> bool:
         """Authenticate with Plex server."""
@@ -167,25 +167,51 @@ class PlexClient(ProviderBase):
             items = []
             for rk in rating_keys:
                 try:
-                    item = self.server.fetchItem(rk)
+                    # Ensure ratingKey is an integer
+                    try:
+                        rk_int = int(rk) if rk else None
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid ratingKey format: {rk}")
+                        continue
+                    
+                    if not rk_int:
+                        logger.warning("Empty or invalid ratingKey")
+                        continue
+                    
+                    item = self.server.fetchItem(rk_int)
+                    logger.debug(f"fetchItem({rk_int}) returned: {type(item).__name__} - {item}")
                     if item:
                         items.append(item)
+                        logger.debug(f"Added item to list, total items now: {len(items)}")
+                    else:
+                        logger.warning(f"fetchItem returned None or falsy value for ratingKey {rk_int}")
                 except Exception as fe:
-                    logger.debug(f"Failed to fetch Plex item for ratingKey {rk}: {fe}")
+                    logger.error(f"Exception fetching item for ratingKey {rk}: {fe}", exc_info=True)
 
+            logger.info(f"Fetched {len(items)} valid items from {len(rating_keys)} rating keys")
+            
             if not items:
-                logger.warning("No valid Plex items found for provided rating keys; skipping playlist update")
+                logger.error(f"No valid Plex items resolved for playlist sync - all {len(rating_keys)} ratingKeys failed to fetch")
                 return False
 
             if playlist is None:
+                logger.debug(f"Playlist not found, creating new one. Items list type: {type(items)}, length: {len(items)}")
+                if items:
+                    logger.debug(f"First item type: {type(items[0])}, value: {items[0]}")
+                
                 from plexapi.playlist import Playlist
-                Playlist.create(self.server, create_name, items, playlistType='audio')
                 try:
-                    created = self.server.playlist(create_name)
-                    if created and hasattr(created, 'editSummary'):
-                        created.editSummary(management_tag)
-                except Exception:
-                    pass
+                    logger.debug(f"About to call Playlist.create with {len(items)} items")
+                    created_playlist = Playlist.create(self.server, create_name, items=items)
+                    logger.info(f"Playlist.create() succeeded, returned: {created_playlist}")
+                    try:
+                        if hasattr(created_playlist, 'editSummary'):
+                            created_playlist.editSummary(management_tag)
+                    except Exception as tag_err:
+                        logger.debug(f"Failed to add management tag: {tag_err}")
+                except Exception as create_err:
+                    logger.error(f"Playlist.create() failed: {create_err}", exc_info=True)
+                    raise
                 logger.info(f"Created Plex playlist '{create_name}' with {len(items)} tracks")
                 return True
 
