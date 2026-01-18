@@ -2,7 +2,7 @@ import asyncio
 import aiohttp
 import os
 import re
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, Tuple
 from dataclasses import dataclass
 import time
 from pathlib import Path
@@ -248,6 +248,8 @@ class SoulseekClient(DownloaderProvider):
         self.capabilities = get_provider_capabilities('soulseek')
         # Initialize unbound variables
         self.active_searches = {}
+        # Track which searches resulted in which download, for cleanup
+        self.active_downloads: Dict[str, List[str]] = {}
         self.search_timestamps = []
         self.max_searches_per_window = 35
         self.rate_limit_window = 220
@@ -692,10 +694,14 @@ class SoulseekClient(DownloaderProvider):
         
         return None
     
-    async def _async_search(self, query: str, timeout: int = 60, progress_callback=None) -> tuple[List[TrackResult], List[AlbumResult]]:
+    async def _async_search(self, query: str, timeout: int = 60, progress_callback=None) -> Tuple[Optional[str], List[TrackResult], List[AlbumResult]]:
+        """
+        Execute search and return (search_id, tracks, albums).
+        search_id is returned so caller can manage its lifecycle (e.g., delete later).
+        """
         if not self.base_url:
             logger.error("Soulseek client not configured")
-            return [], []
+            return None, [], []
         
         # Apply rate limiting before search
         await self._wait_for_rate_limit()
@@ -717,7 +723,7 @@ class SoulseekClient(DownloaderProvider):
             response = await self._make_request('POST', 'searches', json=search_data)
             if not response:
                 logger.error("No response from search POST request")
-                return [], []
+                return None, [], []
 
             # Handle both dict and list responses from slskd API
             search_id = None
@@ -729,7 +735,7 @@ class SoulseekClient(DownloaderProvider):
             if not search_id:
                 logger.error("No search ID returned from POST request")
                 logger.debug(f"Full response (type: {type(response)}): {response}")
-                return [], []
+                return None, [], []
             
             logger.info(f"Search initiated with ID: {search_id}")
             
@@ -747,7 +753,7 @@ class SoulseekClient(DownloaderProvider):
                 # Check if search was cancelled
                 if search_id not in self.active_searches:
                     logger.info(f"Search {search_id} was cancelled, stopping")
-                    return [], []
+                    return search_id, [], []
                 
                 logger.debug(f"Polling for results (attempt {poll_count + 1}/{max_polls}) - elapsed: {poll_count * poll_interval:.1f}s")
                 
@@ -797,16 +803,14 @@ class SoulseekClient(DownloaderProvider):
                     await asyncio.sleep(poll_interval)
             
             logger.info(f"Search completed. Final results: {len(all_tracks)} tracks and {len(all_albums)} albums for query: {query}")
-            return all_tracks, all_albums
+            return search_id, all_tracks, all_albums
             
         except Exception as e:
             logger.error(f"Error searching: {e}")
-            return [], []
-        finally:
-            # Remove from active searches when done
-            if 'search_id' in locals() and search_id in self.active_searches:
-                del self.active_searches[search_id]
-    
+            return None, [], []
+        # Removed finally block that deleted the search_id from active_searches
+        # The search persists so we can download from it later
+
     async def _async_get_download_status(self, download_id: str) -> Optional[DownloadStatus]:
         if not self.base_url:
             return None
@@ -827,7 +831,7 @@ class SoulseekClient(DownloaderProvider):
                 logger.error(f"Invalid response format for download status (type: {type(response)})")
                 return None
 
-            return DownloadStatus(
+            status = DownloadStatus(
                 id=download_data.get('id', ''),
                 filename=download_data.get('filename', ''),
                 username=download_data.get('username', ''),
@@ -838,6 +842,12 @@ class SoulseekClient(DownloaderProvider):
                 speed=download_data.get('averageSpeed', 0),
                 time_remaining=download_data.get('timeRemaining')
             )
+
+            # Check for completion and trigger cleanup
+            if status.state and status.state.lower() in ['completed', 'succeeded', 'finished']:
+                await self._check_and_cleanup_searches(status.id)
+
+            return status
 
         except Exception as e:
             logger.error(f"Error getting download status: {e}")
@@ -886,12 +896,33 @@ class SoulseekClient(DownloaderProvider):
                         )
                         downloads.append(status)
 
+                        # Check cleanup
+                        if status.state and status.state.lower() in ['completed', 'succeeded', 'finished']:
+                            await self._check_and_cleanup_searches(status.id)
+
             logger.debug(f"Parsed {len(downloads)} downloads from API response")
             return downloads
 
         except Exception as e:
             logger.error(f"Error getting downloads: {e}")
             return []
+
+    async def _check_and_cleanup_searches(self, download_id: str):
+        """Check if we have tracked searches for this download and delete them."""
+        search_ids = self.active_downloads.get(download_id)
+        if search_ids:
+            logger.info(f"Download {download_id} completed. Cleaning up {len(search_ids)} associated searches.")
+            for search_id in search_ids:
+                try:
+                    await self.delete_search(search_id)
+                    # Also remove from local tracking
+                    if search_id in self.active_searches:
+                        del self.active_searches[search_id]
+                except Exception as e:
+                    logger.warning(f"Failed to delete search {search_id} during cleanup: {e}")
+
+            # Remove from tracking map
+            del self.active_downloads[download_id]
 
     async def _async_download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
         if not self.base_url:
@@ -1473,137 +1504,6 @@ class SoulseekClient(DownloaderProvider):
         logger.warning("Quality Filter: No candidates matched any profile priority")
         return []
     
-    async def get_session_info(self) -> Optional[Dict[str, Any]]:
-        """Get slskd session information including version"""
-        if not self.base_url:
-            return None
-        
-        try:
-            response = await self._make_request('GET', 'session')
-            if response:
-                logger.info(f"slskd session info: {response}")
-                return response
-            return None
-        except Exception as e:
-            logger.error(f"Error getting session info: {e}")
-            return None
-    
-    async def explore_api_endpoints(self) -> Dict[str, Any]:
-        """Explore available API endpoints to find the correct download endpoint"""
-        if not self.base_url:
-            return {}
-        
-        try:
-            logger.info("Exploring slskd API endpoints...")
-            
-            # Try to get Swagger/OpenAPI documentation
-            swagger_url = f"{self.base_url}/swagger/v1/swagger.json"
-            
-            session = aiohttp.ClientSession()
-            try:
-                headers = self._get_headers()
-                async with session.get(swagger_url, headers=headers) as response:
-                    if response.status == 200:
-                        swagger_data = await response.json()
-                        logger.info("✓ Found Swagger documentation")
-                        
-                        # Look for download/transfer related endpoints
-                        paths = swagger_data.get('paths', {})
-                        download_endpoints = {}
-                        
-                        for path, methods in paths.items():
-                            if any(keyword in path.lower() for keyword in ['download', 'transfer', 'enqueue']):
-                                download_endpoints[path] = methods
-                                logger.info(f"Found endpoint: {path} with methods: {list(methods.keys())}")
-                        
-                        return {
-                            'swagger_available': True,
-                            'download_endpoints': download_endpoints,
-                            'base_url': self.base_url
-                        }
-                    else:
-                        logger.debug(f"Swagger endpoint returned {response.status}")
-            except Exception as e:
-                logger.debug(f"Could not access Swagger docs: {e}")
-            finally:
-                await session.close()
-            
-            # If Swagger is not available, try common endpoints manually
-            logger.info("Swagger not available, testing common endpoints...")
-            
-            common_endpoints = [
-                'transfers',
-                'downloads', 
-                'transfers/downloads',
-                'api/transfers',
-                'api/downloads'
-            ]
-            
-            available_endpoints = {}
-            
-            for endpoint in common_endpoints:
-                try:
-                    response = await self._make_request('GET', endpoint)
-                    if response is not None:
-                        available_endpoints[endpoint] = 'GET available'
-                        logger.info(f"[OK] Endpoint available: {endpoint}")
-                    else:
-                        # Try different endpoints without /api/v0 prefix
-                        simple_url = f"{self.base_url}/{endpoint}"
-                        session = aiohttp.ClientSession()
-                        try:
-                            headers = self._get_headers()
-                            async with session.get(simple_url, headers=headers) as resp:
-                                if resp.status in [200, 405]:  # 405 means endpoint exists but wrong method
-                                    available_endpoints[f"direct_{endpoint}"] = f"Status: {resp.status}"
-                                    logger.info(f"[OK] Direct endpoint available: {simple_url} (Status: {resp.status})")
-                        except:
-                            pass
-                        finally:
-                            await session.close()
-                            
-                except Exception as e:
-                    logger.debug(f"Endpoint {endpoint} failed: {e}")
-            
-            return {
-                'swagger_available': False,
-                'available_endpoints': available_endpoints,
-                'base_url': self.base_url
-            }
-            
-        except Exception as e:
-            logger.error(f"Error exploring API endpoints: {e}")
-            return {'error': str(e)}
-    
-    def is_configured(self) -> bool:
-        """Check if slskd is configured (has base_url)"""
-        return self.base_url is not None
-    
-    async def cancel_all_searches(self):
-        """Cancel all active searches"""
-        if not self.active_searches:
-            return
-        
-        logger.info(f"Cancelling {len(self.active_searches)} active searches...")
-        for search_id in list(self.active_searches.keys()):
-            try:
-                # Delete the search via API
-                await self._make_request('DELETE', f'searches/{search_id}')
-                logger.debug(f"Cancelled search {search_id}")
-            except Exception as e:
-                logger.warning(f"Could not cancel search {search_id}: {e}")
-        
-        # Mark all searches as cancelled
-        self.active_searches.clear()
-
-    async def close(self):
-        # Cancel any active searches before closing
-        await self.cancel_all_searches()
-    
-    def __del__(self):
-        # No persistent session to clean up
-        pass
-    
     # Synchronous wrapper methods for base class compatibility
     def search(self, query: str, type: str = "track", limit: int = 10) -> List[SoulSyncTrack]:
         """Synchronous search wrapper - runs async search in new event loop"""
@@ -1613,7 +1513,8 @@ class SoulseekClient(DownloaderProvider):
             asyncio.set_event_loop(loop)
             try:
                 # Call the async search method
-                tracks, albums = loop.run_until_complete(self._async_search(query, timeout=30))
+                # unpack the new return tuple: (search_id, tracks, albums)
+                search_id, tracks, albums = loop.run_until_complete(self._async_search(query, timeout=30))
                 
                 # Convert TrackResults to SoulSyncTracks
                 results = []
@@ -1622,6 +1523,12 @@ class SoulseekClient(DownloaderProvider):
                     if soul_track:
                         results.append(soul_track)
                 
+                # Since this is a standalone search, we can probably clean it up?
+                # But typically search tabs in apps stay open.
+                # If the core app calls this, it gets the results.
+                # If we don't return search_id, we can't clean it up later.
+                # For now, let's leave it in active_searches (it will be cleaned by maintenance or restart)
+
                 return results[:limit]
             finally:
                 loop.close()
@@ -1629,10 +1536,10 @@ class SoulseekClient(DownloaderProvider):
             logger.error(f"Error in synchronous search: {e}")
             return []
     
-    def search_track(self, track: SoulSyncTrack) -> List[SoulSyncTrack]:
+    def search_track(self, track: SoulSyncTrack) -> Tuple[List[SoulSyncTrack], List[str]]:
         """
         Search for a track using fallback strategies.
-        Returns a list of candidates converted to SoulSyncTrack.
+        Returns (candidates, search_ids) so caller can manage cleanup.
         """
         queries = []
 
@@ -1645,6 +1552,7 @@ class SoulseekClient(DownloaderProvider):
             queries.append(f"{track.album_title} {track.title}")
 
         results = []
+        collected_search_ids = []
 
         # Run async searches in a new loop
         try:
@@ -1654,7 +1562,10 @@ class SoulseekClient(DownloaderProvider):
                 # Try explicit combinations first
                 for query in queries:
                     logger.info(f"Trying search strategy: {query}")
-                    tracks, _ = loop.run_until_complete(self._async_search(query, timeout=30))
+                    search_id, tracks, _ = loop.run_until_complete(self._async_search(query, timeout=30))
+
+                    if search_id:
+                        collected_search_ids.append(search_id)
 
                     if tracks:
                         logger.info(f"Found {len(tracks)} results for query: {query}")
@@ -1663,14 +1574,17 @@ class SoulseekClient(DownloaderProvider):
                             st = self._convert_to_soulsync_track(t)
                             if st:
                                 results.append(st)
-                        return results
+                        return results, collected_search_ids
 
                     logger.debug(f"No results for strategy: {query}, trying next...")
 
                 # Strategy 3: Just Title (filtered by artist)
                 if not results and track.title and len(track.title) > 4:
                     logger.info(f"Trying search strategy: {track.title} (with artist filter)")
-                    tracks, _ = loop.run_until_complete(self._async_search(track.title, timeout=30))
+                    search_id, tracks, _ = loop.run_until_complete(self._async_search(track.title, timeout=30))
+
+                    if search_id:
+                        collected_search_ids.append(search_id)
 
                     if tracks:
                         logger.info(f"Found {len(tracks)} results for title query, filtering by artist...")
@@ -1691,14 +1605,14 @@ class SoulseekClient(DownloaderProvider):
                                     results.append(st)
 
                         logger.info(f"Filtered to {len(results)} matches for artist '{track.artist_name}'")
-                        return results
+                        return results, collected_search_ids
 
             finally:
                 loop.close()
         except Exception as e:
             logger.error(f"Error in search_track: {e}")
 
-        return results
+        return results, collected_search_ids
 
     def download_track(self, track: SoulSyncTrack, quality_profile: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """
@@ -1707,15 +1621,38 @@ class SoulseekClient(DownloaderProvider):
         logger.info(f"Starting download workflow for: {track.artist_name} - {track.title}")
 
         # 1. Search for candidates
-        candidates = self.search_track(track)
+        candidates, search_ids = self.search_track(track)
+
+        # Helper to clean up searches if we fail early
+        def cleanup_immediate():
+            for sid in search_ids:
+                # We need to run this async, but we are in a sync method wrapper.
+                # We can't easily fire-and-forget an async task here without an event loop.
+                # Since we are about to return None, we can just do best-effort or skip.
+                # But actually, we can spin up a loop just to delete.
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        loop.run_until_complete(self.delete_search(sid))
+                        # Also clean from local dict
+                        if sid in self.active_searches:
+                            del self.active_searches[sid]
+                    finally:
+                        loop.close()
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup search {sid}: {e}")
+
         if not candidates:
             logger.warning("No candidates found for track")
+            cleanup_immediate()
             return None
 
         # 2. Filter using quality profile
         filtered_candidates = self.filter_results_by_quality_preference(candidates, quality_profile)
         if not filtered_candidates:
             logger.warning("No candidates matched quality profile")
+            cleanup_immediate()
             return None
 
         best_candidate = filtered_candidates[0]
@@ -1723,6 +1660,7 @@ class SoulseekClient(DownloaderProvider):
         # 3. Extract download info from identifiers
         if not best_candidate.identifiers:
             logger.error("Best candidate missing identifiers, cannot download")
+            cleanup_immediate()
             return None
 
         username = best_candidate.identifiers.get('username')
@@ -1732,12 +1670,23 @@ class SoulseekClient(DownloaderProvider):
 
         if not username or not filename:
             logger.error(f"Invalid download parameters: username={username}, filename={filename}")
+            cleanup_immediate()
             return None
 
         logger.info(f"Selected candidate: {filename} from {username}")
 
         # 4. Initiate download
-        return self.download(username, filename, size)
+        download_id = self.download(username, filename, size)
+
+        if download_id:
+            # Track searches for later cleanup when download completes
+            self.active_downloads[download_id] = search_ids
+            logger.info(f"Download {download_id} started. Tracking {len(search_ids)} searches for cleanup upon completion.")
+        else:
+            # Failed to start download
+            cleanup_immediate()
+
+        return download_id
 
     def download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
         """Synchronous download wrapper - runs async download in new event loop"""
@@ -1761,11 +1710,14 @@ class SoulseekClient(DownloaderProvider):
                 # Use the new async method name
                 status_obj = loop.run_until_complete(self._async_get_download_status(download_id))
                 if status_obj:
+                    # Convert to dictionary expected by DownloaderProvider base class
                     return {
                         'id': status_obj.id,
                         'status': status_obj.state,
                         'progress': status_obj.progress,
-                        'filename': status_obj.filename
+                        'filename': status_obj.filename,
+                        'speed': status_obj.speed,
+                        'time_remaining': status_obj.time_remaining
                     }
                 return None
             finally:
@@ -1773,6 +1725,30 @@ class SoulseekClient(DownloaderProvider):
         except Exception as e:
             logger.error(f"Error getting download status: {e}")
             return None
+
+    def get_all_downloads(self) -> List[Dict[str, Any]]:
+        """Get all downloads synchronously"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                status_objects = loop.run_until_complete(self._async_get_all_downloads())
+                results = []
+                for status_obj in status_objects:
+                    results.append({
+                        'id': status_obj.id,
+                        'status': status_obj.state,
+                        'progress': status_obj.progress,
+                        'filename': status_obj.filename,
+                        'speed': status_obj.speed,
+                        'time_remaining': status_obj.time_remaining
+                    })
+                return results
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"Error getting all downloads: {e}")
+            return []
     
     def get_track(self, track_id: str) -> Optional[Dict[str, Any]]:
         """Not supported for Soulseek"""
