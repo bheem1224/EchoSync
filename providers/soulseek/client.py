@@ -31,6 +31,8 @@ class SearchResult:
     def quality_score(self) -> float:
         quality_weights = {
             'flac': 1.0,
+            'wav': 0.9,
+            'dsd': 0.95,
             'mp3': 0.8,
             'ogg': 0.7,
             'aac': 0.6,
@@ -65,52 +67,80 @@ class TrackResult(SearchResult):
     title: Optional[str] = None
     album: Optional[str] = None
     track_number: Optional[int] = None
+    bit_depth: Optional[int] = None
+    sample_rate: Optional[int] = None
     
     def __post_init__(self):
         self.result_type = "track"
         # Try to extract metadata from filename if not provided
-        if not self.title or not self.artist:
-            self._parse_filename_metadata()
+        self._parse_filename_metadata()
     
     def _parse_filename_metadata(self):
-        """Extract artist, title, album from filename patterns"""
+        """Extract artist, title, album, bit depth, sample rate from filename patterns"""
         import re
         import os
         
         # Get just the filename without extension and path
         base_name = os.path.splitext(os.path.basename(self.filename))[0]
         
-        # Common patterns for track naming
-        patterns = [
-            r'^(\d+)\s*[-\.]\s*(.+?)\s*[-–]\s*(.+)$',  # "01 - Artist - Title" or "01. Artist - Title"
-            r'^(.+?)\s*[-–]\s*(.+)$',  # "Artist - Title"
-            r'^(\d+)\s*[-\.]\s*(.+)$',  # "01 - Title" or "01. Title"
-        ]
+        # 1. Parse Technical Metadata (Bit Depth / Sample Rate)
+        # Look for patterns like "24bit", "24-bit", "24b", "96kHz", "44.1kHz", "44100Hz"
         
-        for pattern in patterns:
-            match = re.match(pattern, base_name)
-            if match:
-                groups = match.groups()
-                if len(groups) == 3:  # Track number, artist, title
-                    try:
-                        self.track_number = int(groups[0])
-                        self.artist = self.artist or groups[1].strip()
-                        self.title = self.title or groups[2].strip()
-                    except ValueError:
-                        # First group might not be a number
-                        self.artist = self.artist or groups[0].strip()
-                        self.title = self.title or f"{groups[1]} - {groups[2]}".strip()
-                elif len(groups) == 2:
-                    if groups[0].isdigit():  # Track number and title
+        # Bit Depth
+        bit_depth_match = re.search(r'(\d+)\s*[-_]?(?:bit|b)(?![a-zA-Z])', self.filename, re.IGNORECASE)
+        if bit_depth_match:
+            try:
+                self.bit_depth = int(bit_depth_match.group(1))
+            except ValueError:
+                pass
+
+        # Sample Rate
+        sample_rate_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:k?hz)', self.filename, re.IGNORECASE)
+        if sample_rate_match:
+            try:
+                val_str = sample_rate_match.group(1)
+                unit_str = sample_rate_match.group(0).lower()
+                val = float(val_str)
+                if 'khz' in unit_str:
+                    self.sample_rate = int(val * 1000)
+                else:
+                    self.sample_rate = int(val)
+            except ValueError:
+                pass
+
+        # 2. Parse Artist/Title/Album if missing
+        if not self.title or not self.artist:
+            # Common patterns for track naming
+            patterns = [
+                r'^(\d+)\s*[-\.]\s*(.+?)\s*[-–]\s*(.+)$',  # "01 - Artist - Title" or "01. Artist - Title"
+                r'^(.+?)\s*[-–]\s*(.+)$',  # "Artist - Title"
+                r'^(\d+)\s*[-\.]\s*(.+)$',  # "01 - Title" or "01. Title"
+            ]
+
+            for pattern in patterns:
+                match = re.match(pattern, base_name)
+                if match:
+                    groups = match.groups()
+                    if len(groups) == 3:  # Track number, artist, title
                         try:
                             self.track_number = int(groups[0])
-                            self.title = self.title or groups[1].strip()
+                            self.artist = self.artist or groups[1].strip()
+                            self.title = self.title or groups[2].strip()
                         except ValueError:
-                            pass
-                    else:  # Artist and title
-                        self.artist = self.artist or groups[0].strip()
-                        self.title = self.title or groups[1].strip()
-                break
+                            # First group might not be a number
+                            self.artist = self.artist or groups[0].strip()
+                            self.title = self.title or f"{groups[1]} - {groups[2]}".strip()
+                    elif len(groups) == 2:
+                        if groups[0].isdigit():  # Track number and title
+                            try:
+                                self.track_number = int(groups[0])
+                                self.title = self.title or groups[1].strip()
+                            except ValueError:
+                                pass
+                        else:  # Artist and title
+                            self.artist = self.artist or groups[0].strip()
+                            self.title = self.title or groups[1].strip()
+                    break
         
         # Fallback: use filename as title if nothing was extracted
         if not self.title:
@@ -151,6 +181,8 @@ class AlbumResult:
         """Calculate album quality score based on dominant quality and track count"""
         quality_weights = {
             'flac': 1.0,
+            'wav': 0.9,
+            'dsd': 0.95,
             'mp3': 0.8,
             'ogg': 0.7,
             'aac': 0.6,
@@ -444,6 +476,14 @@ class SoulseekClient(DownloaderProvider):
              soul_track.identifiers['queue_length'] = result.queue_length
              soul_track.identifiers['provider_item_id'] = result.filename
 
+             # Technical metadata
+             if result.bit_depth:
+                soul_track.bit_depth = result.bit_depth
+             if result.sample_rate:
+                soul_track.sample_rate = result.sample_rate
+             if result.size:
+                soul_track.file_size_bytes = result.size
+
         return soul_track
 
     def _process_search_responses(self, responses_data: List[Dict[str, Any]]) -> tuple[List[TrackResult], List[AlbumResult]]:
@@ -455,7 +495,7 @@ class SoulseekClient(DownloaderProvider):
         albums_by_path = defaultdict(list)
         
         # Audio file extensions to filter for
-        audio_extensions = {'.mp3', '.flac', '.ogg', '.aac', '.wma', '.wav', '.m4a'}
+        audio_extensions = {'.mp3', '.flac', '.ogg', '.aac', '.wma', '.wav', '.m4a', '.dsf', '.dff'}
         
         for response_data in responses_data:
             username = response_data.get('username', '')
@@ -471,7 +511,13 @@ class SoulseekClient(DownloaderProvider):
                 if f'.{file_ext}' not in audio_extensions:
                     continue
                 
-                quality = file_ext if file_ext in ['flac', 'mp3', 'ogg', 'aac', 'wma'] else 'unknown'
+                # Normalize DSD extensions
+                if file_ext in ['dsf', 'dff']:
+                    quality = 'dsd'
+                elif file_ext in ['flac', 'mp3', 'ogg', 'aac', 'wma', 'wav']:
+                    quality = file_ext
+                else:
+                    quality = 'unknown'
                 
                 # Create TrackResult
                 track = TrackResult(
@@ -761,6 +807,92 @@ class SoulseekClient(DownloaderProvider):
             if 'search_id' in locals() and search_id in self.active_searches:
                 del self.active_searches[search_id]
     
+    async def _async_get_download_status(self, download_id: str) -> Optional[DownloadStatus]:
+        if not self.base_url:
+            return None
+
+        try:
+            response = await self._make_request('GET', f'transfers/downloads/{download_id}')
+            if not response:
+                return None
+
+            # Handle both dict and list responses (slskd API can vary)
+            download_data = None
+            if isinstance(response, dict):
+                download_data = response
+            elif isinstance(response, list) and len(response) > 0 and isinstance(response[0], dict):
+                download_data = response[0]
+
+            if not download_data:
+                logger.error(f"Invalid response format for download status (type: {type(response)})")
+                return None
+
+            return DownloadStatus(
+                id=download_data.get('id', ''),
+                filename=download_data.get('filename', ''),
+                username=download_data.get('username', ''),
+                state=download_data.get('state', ''),
+                progress=download_data.get('percentComplete', 0.0),
+                size=download_data.get('size', 0),
+                transferred=download_data.get('bytesTransferred', 0),
+                speed=download_data.get('averageSpeed', 0),
+                time_remaining=download_data.get('timeRemaining')
+            )
+
+        except Exception as e:
+            logger.error(f"Error getting download status: {e}")
+            return None
+
+    async def _async_get_all_downloads(self) -> List[DownloadStatus]:
+        if not self.base_url:
+            return []
+
+        try:
+            # FIXED: Skip the 404 endpoint and go straight to the working one
+            response = await self._make_request('GET', 'transfers/downloads')
+
+            if not response:
+                return []
+
+            downloads = []
+
+            # FIXED: Parse the nested response structure correctly
+            # Response format: [{"username": "user", "directories": [{"files": [...]}]}]
+            for user_data in response:
+                username = user_data.get('username', '')
+                directories = user_data.get('directories', [])
+
+                for directory in directories:
+                    files = directory.get('files', [])
+
+                    for file_data in files:
+                        # Parse progress from the state if available
+                        progress = 0.0
+                        if file_data.get('state', '').lower().startswith('completed'):
+                            progress = 100.0
+                        elif 'progress' in file_data:
+                            progress = float(file_data.get('progress', 0.0))
+
+                        status = DownloadStatus(
+                            id=file_data.get('id', ''),
+                            filename=file_data.get('filename', ''),
+                            username=username,
+                            state=file_data.get('state', ''),
+                            progress=progress,
+                            size=file_data.get('size', 0),
+                            transferred=file_data.get('bytesTransferred', 0),  # May not exist in API
+                            speed=file_data.get('averageSpeed', 0),  # May not exist in API
+                            time_remaining=file_data.get('timeRemaining')
+                        )
+                        downloads.append(status)
+
+            logger.debug(f"Parsed {len(downloads)} downloads from API response")
+            return downloads
+
+        except Exception as e:
+            logger.error(f"Error getting downloads: {e}")
+            return []
+
     async def _async_download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
         if not self.base_url:
             logger.error("Soulseek client not configured")
@@ -886,92 +1018,6 @@ class SoulseekClient(DownloaderProvider):
             logger.error(f"Error starting download: {e}")
             return None
     
-    async def get_download_status(self, download_id: str) -> Optional[DownloadStatus]:
-        if not self.base_url:
-            return None
-        
-        try:
-            response = await self._make_request('GET', f'transfers/downloads/{download_id}')
-            if not response:
-                return None
-
-            # Handle both dict and list responses (slskd API can vary)
-            download_data = None
-            if isinstance(response, dict):
-                download_data = response
-            elif isinstance(response, list) and len(response) > 0 and isinstance(response[0], dict):
-                download_data = response[0]
-
-            if not download_data:
-                logger.error(f"Invalid response format for download status (type: {type(response)})")
-                return None
-
-            return DownloadStatus(
-                id=download_data.get('id', ''),
-                filename=download_data.get('filename', ''),
-                username=download_data.get('username', ''),
-                state=download_data.get('state', ''),
-                progress=download_data.get('percentComplete', 0.0),
-                size=download_data.get('size', 0),
-                transferred=download_data.get('bytesTransferred', 0),
-                speed=download_data.get('averageSpeed', 0),
-                time_remaining=download_data.get('timeRemaining')
-            )
-            
-        except Exception as e:
-            logger.error(f"Error getting download status: {e}")
-            return None
-    
-    async def get_all_downloads(self) -> List[DownloadStatus]:
-        if not self.base_url:
-            return []
-        
-        try:
-            # FIXED: Skip the 404 endpoint and go straight to the working one
-            response = await self._make_request('GET', 'transfers/downloads')
-                
-            if not response:
-                return []
-            
-            downloads = []
-            
-            # FIXED: Parse the nested response structure correctly
-            # Response format: [{"username": "user", "directories": [{"files": [...]}]}]
-            for user_data in response:
-                username = user_data.get('username', '')
-                directories = user_data.get('directories', [])
-                
-                for directory in directories:
-                    files = directory.get('files', [])
-                    
-                    for file_data in files:
-                        # Parse progress from the state if available
-                        progress = 0.0
-                        if file_data.get('state', '').lower().startswith('completed'):
-                            progress = 100.0
-                        elif 'progress' in file_data:
-                            progress = float(file_data.get('progress', 0.0))
-                        
-                        status = DownloadStatus(
-                            id=file_data.get('id', ''),
-                            filename=file_data.get('filename', ''),
-                            username=username,
-                            state=file_data.get('state', ''),
-                            progress=progress,
-                            size=file_data.get('size', 0),
-                            transferred=file_data.get('bytesTransferred', 0),  # May not exist in API
-                            speed=file_data.get('averageSpeed', 0),  # May not exist in API  
-                            time_remaining=file_data.get('timeRemaining')
-                        )
-                        downloads.append(status)
-            
-            logger.debug(f"Parsed {len(downloads)} downloads from API response")
-            return downloads
-            
-        except Exception as e:
-            logger.error(f"Error getting downloads: {e}")
-            return []
-    
     async def cancel_download(self, download_id: str, username: str = None, remove: bool = False) -> bool:
         if not self.base_url:
             return False
@@ -980,7 +1026,7 @@ class SoulseekClient(DownloaderProvider):
         if not username:
             logger.debug(f"No username provided for download_id {download_id}, attempting to find it")
             try:
-                downloads = await self.get_all_downloads()
+                downloads = await self._async_get_all_downloads()
                 for download in downloads:
                     if download.id == download_id:
                         username = download.username
@@ -1302,139 +1348,130 @@ class SoulseekClient(DownloaderProvider):
             logger.debug(f"Connection check failed: {e}")
             return False
     
-    def filter_results_by_quality_preference(self, results: List[SoulSyncTrack], quality_profile: Optional[Dict[str, Any]] = None) -> List[SoulSyncTrack]:
+    def _get_default_quality_profile(self) -> List[Dict[str, Any]]:
+        """Get default quality profile from config or use safe fallback"""
+        try:
+            # Try to get from config manager
+            profile = config_manager.get('quality_profile', None)
+            # Basic validation: ensure it is a list
+            if profile and isinstance(profile, list):
+                return profile
+        except Exception as e:
+            logger.debug(f"Could not get quality profile from config: {e}")
+
+        # Return sensible defaults matching the new list-based structure
+        return [
+            {
+                "format": "flac",
+                "min_size": 20,
+                "max_size": 150,
+                "priority": 1,
+                "bit_depths": [16, 24],
+                "sample_rates": [44100, 48000, 88200, 96000, 192000]
+            },
+            {
+                "format": "mp3",
+                "min_size": 5,
+                "max_size": 25,
+                "priority": 2,
+                "min_bitrate": 320,
+                "max_bitrate": 320
+            }
+        ]
+
+    def filter_results_by_quality_preference(self, results: List[SoulSyncTrack], quality_profile: Optional[List[Dict[str, Any]]] = None) -> List[SoulSyncTrack]:
         """
-        Filter candidates based on user's quality profile with file size constraints.
-        Uses priority waterfall logic: tries highest priority quality first, falls back to lower priorities.
-        Returns candidates matching quality profile constraints, sorted by confidence and size.
+        Filter candidates based on user's priority-based quality profile.
         
         Args:
             results: List of SoulSyncTrack objects to filter
-            quality_profile: Optional quality profile dict. If not provided, uses default profile.
+            quality_profile: List of profile items, each defining format, size, and technical criteria.
         """
         if not results:
             return []
 
-        # Use provided profile or get default from config
+        # Use provided profile or get default
         if quality_profile is None:
             quality_profile = self._get_default_quality_profile()
-        
-        profile = quality_profile
 
-        logger.debug(f"Quality Filter: Using profile preset '{profile.get('preset', 'custom')}', filtering {len(results)} candidates")
+        # Ensure we have a valid list to iterate over
+        if not isinstance(quality_profile, list):
+            logger.warning("Quality profile is not a valid list, using default")
+            quality_profile = self._get_default_quality_profile()
 
-        # Categorize candidates by quality with file size constraints
-        quality_buckets = {
-            'flac': [],
-            'mp3_320': [],
-            'mp3_256': [],
-            'mp3_192': [],
-            'other': []
-        }
+        # Sort profile items by priority (ascending: 1 is higher than 2)
+        sorted_profile = sorted(quality_profile, key=lambda x: x.get('priority', 999))
 
-        # Track all candidates that pass size checks (for fallback)
-        size_filtered_all = []
+        logger.debug(f"Quality Filter: Processing {len(sorted_profile)} profile priorities")
 
-        for candidate in results:
-            if not candidate.file_format:
-                quality_buckets['other'].append(candidate)
-                continue
+        # Iterate through priorities
+        for profile_item in sorted_profile:
+            priority = profile_item.get('priority', 999)
+            target_format = profile_item.get('format', '').lower()
+            min_size = profile_item.get('min_size', 0)
+            max_size = profile_item.get('max_size', 9999)
 
-            track_format = candidate.file_format.lower()
-            track_bitrate = candidate.bitrate or 0
+            # Lossless specific filters
+            target_bit_depths = profile_item.get('bit_depths', []) # e.g. [16, 24]
+            target_sample_rates = profile_item.get('sample_rates', []) # e.g. [44100, 48000]
 
-            # Get size from identifiers if possible
-            size_bytes = candidate.identifiers.get('size', 0) if candidate.identifiers else 0
-            file_size_mb = size_bytes / (1024 * 1024)  # Convert bytes to MB
+            # Lossy specific filters
+            min_bitrate = profile_item.get('min_bitrate', 0)
+            max_bitrate = profile_item.get('max_bitrate', 9999)
 
-            # Categorize and apply file size constraints
-            if track_format == 'flac':
-                quality_config = profile['qualities'].get('flac', {})
-                min_mb = quality_config.get('min_mb', 0)
-                max_mb = quality_config.get('max_mb', 999)
+            candidates_for_priority = []
 
-                # Check if within size range
-                if min_mb <= file_size_mb <= max_mb:
-                    # Add to bucket if enabled
-                    if quality_config.get('enabled', False):
-                        quality_buckets['flac'].append(candidate)
-                    # Always track for fallback
-                    size_filtered_all.append(candidate)
-                else:
-                    logger.debug(f"Quality Filter: FLAC file rejected - {file_size_mb:.1f}MB outside range {min_mb}-{max_mb}MB")
-
-            elif track_format == 'mp3':
-                # Determine MP3 quality tier based on bitrate
-                if track_bitrate >= 320:
-                    quality_key = 'mp3_320'
-                elif track_bitrate >= 256:
-                    quality_key = 'mp3_256'
-                elif track_bitrate >= 192:
-                    quality_key = 'mp3_192'
-                else:
-                    quality_buckets['other'].append(candidate)
+            for track in results:
+                # 1. Format Check
+                if not track.file_format or track.file_format.lower() != target_format:
                     continue
 
-                quality_config = profile['qualities'].get(quality_key, {})
-                min_mb = quality_config.get('min_mb', 0)
-                max_mb = quality_config.get('max_mb', 999)
+                # 2. Size Check (MB)
+                size_mb = (track.file_size_bytes or 0) / (1024 * 1024)
+                if not (min_size <= size_mb <= max_size):
+                    continue
 
-                # Check if within size range
-                if min_mb <= file_size_mb <= max_mb:
-                    # Add to bucket if enabled
-                    if quality_config.get('enabled', False):
-                        quality_buckets[quality_key].append(candidate)
-                    # Always track for fallback
-                    size_filtered_all.append(candidate)
-                else:
-                    logger.debug(f"Quality Filter: {quality_key.upper()} file rejected - {file_size_mb:.1f}MB outside range {min_mb}-{max_mb}MB")
-            else:
-                quality_buckets['other'].append(candidate)
+                # 3. Technical Checks (Lossless vs Lossy)
+                is_valid = True
 
-        # Sort each bucket by quality score and size
-        # We stored quality_score in identifiers for this purpose
-        for bucket in quality_buckets.values():
-            bucket.sort(key=lambda x: (x.identifiers.get('quality_score', 0) if x.identifiers else 0, x.identifiers.get('size', 0) if x.identifiers else 0), reverse=True)
+                if target_format in ['flac', 'wav', 'dsd', 'alac']:
+                    # Check Bit Depth if specified in profile
+                    if target_bit_depths:
+                        # If track has no bit depth info, we might skip or include depending on strictness
+                        # Here we skip if known metadata mismatches
+                        if track.bit_depth and track.bit_depth not in target_bit_depths:
+                            is_valid = False
 
-        # Debug logging
-        for quality, bucket in quality_buckets.items():
-            if bucket:
-                logger.debug(f"Quality Filter: Found {len(bucket)} '{quality}' candidates (after size filtering)")
+                    # Check Sample Rate if specified in profile
+                    if target_sample_rates:
+                        if track.sample_rate:
+                            # Allow some tolerance or exact match? Exact match for now
+                            if track.sample_rate not in target_sample_rates:
+                                is_valid = False
 
-        # Waterfall priority logic: try qualities in priority order
-        # Build priority list from enabled qualities
-        quality_priorities = []
-        for quality_name, quality_config in profile['qualities'].items():
-            if quality_config.get('enabled', False):
-                priority = quality_config.get('priority', 999)
-                quality_priorities.append((priority, quality_name))
+                elif target_format in ['mp3', 'ogg', 'aac', 'wma']:
+                    # Check Bitrate if specified
+                    if min_bitrate > 0 or max_bitrate < 9999:
+                        track_bitrate = track.bitrate or 0
+                        if not (min_bitrate <= track_bitrate <= max_bitrate):
+                            is_valid = False
 
-        # Sort by priority (lower number = higher priority)
-        quality_priorities.sort()
+                if is_valid:
+                    candidates_for_priority.append(track)
 
-        # Try each quality in priority order
-        for priority, quality_name in quality_priorities:
-            candidates_for_quality = quality_buckets.get(quality_name, [])
-            if candidates_for_quality:
-                logger.info(f"Quality Filter: Returning {len(candidates_for_quality)} '{quality_name}' candidates (priority {priority})")
-                return candidates_for_quality
+            # If we found candidates for this priority, return them sorted
+            if candidates_for_priority:
+                # Sort by quality score (if available) and then size
+                candidates_for_priority.sort(key=lambda x: (
+                    x.identifiers.get('quality_score', 0) if x.identifiers else 0,
+                    x.file_size_bytes or 0
+                ), reverse=True)
 
-        # If no enabled qualities matched, check if fallback is enabled
-        if profile.get('fallback_enabled', True):
-            logger.warning(f"Quality Filter: No enabled qualities matched, falling back to size-filtered candidates")
-            # Return candidates that passed size checks (even if quality disabled)
-            # This respects file size constraints while allowing any quality
-            if size_filtered_all:
-                size_filtered_all.sort(key=lambda x: (x.identifiers.get('quality_score', 0) if x.identifiers else 0, x.identifiers.get('size', 0) if x.identifiers else 0), reverse=True)
-                logger.info(f"Quality Filter: Returning {len(size_filtered_all)} fallback candidates (size-filtered, any quality)")
-                return size_filtered_all
-            else:
-                # All candidates failed size checks - respect user's constraints and fail
-                logger.warning(f"Quality Filter: All candidates failed size checks, returning empty (respecting size constraints)")
-                return []
-        else:
-            logger.warning(f"Quality Filter: No enabled qualities matched and fallback is disabled, returning empty")
-            return []
+                logger.info(f"Quality Filter: Found {len(candidates_for_priority)} matches for priority {priority} ({target_format})")
+                return candidates_for_priority
+
+        logger.warning("Quality Filter: No candidates matched any profile priority")
+        return []
     
     async def get_session_info(self) -> Optional[Dict[str, Any]]:
         """Get slskd session information including version"""
@@ -1567,28 +1604,6 @@ class SoulseekClient(DownloaderProvider):
         # No persistent session to clean up
         pass
     
-    def _get_default_quality_profile(self) -> Dict[str, Any]:
-        """Get default quality profile from config"""
-        try:
-            # Try to get from config manager
-            profile = config_manager.get('quality_profile', None)
-            if profile:
-                return profile
-        except Exception as e:
-            logger.debug(f"Could not get quality profile from config: {e}")
-        
-        # Return sensible defaults
-        return {
-            'preset': 'balanced',
-            'qualities': {
-                'flac': {'enabled': True, 'priority': 1, 'min_mb': 20, 'max_mb': 150},
-                'mp3_320': {'enabled': True, 'priority': 2, 'min_mb': 5, 'max_mb': 20},
-                'mp3_256': {'enabled': True, 'priority': 3, 'min_mb': 4, 'max_mb': 15},
-                'mp3_192': {'enabled': False, 'priority': 4, 'min_mb': 3, 'max_mb': 12}
-            },
-            'fallback_enabled': True
-        }
-    
     # Synchronous wrapper methods for base class compatibility
     def search(self, query: str, type: str = "track", limit: int = 10) -> List[SoulSyncTrack]:
         """Synchronous search wrapper - runs async search in new event loop"""
@@ -1685,7 +1700,7 @@ class SoulseekClient(DownloaderProvider):
 
         return results
 
-    def download_track(self, track: SoulSyncTrack, quality_profile: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    def download_track(self, track: SoulSyncTrack, quality_profile: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """
         Full download workflow: Search -> Filter -> Download
         """
@@ -1743,8 +1758,16 @@ class SoulseekClient(DownloaderProvider):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                # For now, return basic status info - would need full implementation
-                return {'id': download_id, 'status': 'unknown'}
+                # Use the new async method name
+                status_obj = loop.run_until_complete(self._async_get_download_status(download_id))
+                if status_obj:
+                    return {
+                        'id': status_obj.id,
+                        'status': status_obj.state,
+                        'progress': status_obj.progress,
+                        'filename': status_obj.filename
+                    }
+                return None
             finally:
                 loop.close()
         except Exception as e:
