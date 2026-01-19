@@ -30,8 +30,15 @@
   let hasMatchingProvider = false;
   const unsubProviders = providers.subscribe((v) => {
     providerList = Object.values(v?.items ?? {});
-    hasMetadataProvider = providerList.some((p) => p.capabilities?.metadata || p.capabilities?.provides_release_id);
-    hasMatchingProvider = providerList.some((p) => p.capabilities?.matching || p.capabilities?.supports_sync || p.capabilities?.metadata);
+    // Check for high-quality metadata providers (Spotify, Tidal, etc)
+    hasMetadataProvider = providerList.some((p) => p.capabilities?.metadata_richness === 'HIGH' || p.capabilities?.metadata_richness === 'MEDIUM');
+    // Check for matching capability (implies we have good metadata to match against duration)
+    // Check both 'search' and 'search_capabilities' for robustness
+    hasMatchingProvider = providerList.some((p) =>
+      p.capabilities?.metadata_richness === 'HIGH' ||
+      p.capabilities?.search?.tracks ||
+      p.capabilities?.search_capabilities?.tracks
+    );
   });
 
   onMount(() => {
@@ -216,32 +223,35 @@
     <section class="advanced">
       <h3>Advanced Filters</h3>
       {#if hasMatchingProvider}
-        <label>
-          <input type="checkbox" bind:checked={p.enforce_duration_match} />
-          Enforce Duration Match
-        </label>
-
-        {#if p.enforce_duration_match}
-          <label>Tolerance (seconds)
-            <input
-              type="number"
-              min="0"
-              value={(p.duration_tolerance_ms || 3000) / 1000}
-              on:input={(e) => p.duration_tolerance_ms = e.currentTarget.value * 1000}
-              class="input"
-            />
+        <div class="advanced-options">
+          <label class="checkbox-label">
+            <input type="checkbox" bind:checked={p.enforce_duration_match} />
+            Enforce Duration Match
           </label>
-        {/if}
 
-        <label style="margin-top:8px">
-          <input type="checkbox" bind:checked={p.prefer_max_quality} />
-          Prefer Larger Files (Max Quality)
-        </label>
+          {#if p.enforce_duration_match}
+            <label class="sub-label">Tolerance (seconds)
+              <input
+                type="number"
+                min="0"
+                value={(p.duration_tolerance_ms || 3000) / 1000}
+                on:input={(e) => p.duration_tolerance_ms = e.currentTarget.value * 1000}
+                class="input small-input"
+              />
+            </label>
+          {/if}
+
+          <label class="checkbox-label" style="margin-top:8px">
+            <input type="checkbox" bind:checked={p.prefer_max_quality} />
+            Prefer Larger Files (Max Quality)
+          </label>
+        </div>
       {/if}
 
       {#if hasMetadataProvider}
-        <label><input type="checkbox" bind:checked={p.metadataRequired} /> Require MusicBrainz Release ID</label>
+        <label class="checkbox-label"><input type="checkbox" bind:checked={p.metadataRequired} /> Require MusicBrainz Release ID</label>
       {/if}
+
       {#if !hasMetadataProvider && !hasMatchingProvider}
         <p class="muted">Advanced filters available when capable providers are installed.</p>
       {/if}
@@ -263,4 +273,8 @@
   .size-row { display:flex; gap:8px; align-items:center }
   .chips { display:flex; gap:8px; flex-wrap:wrap }
   .editor-footer { display:flex; gap:8px; justify-content:flex-end }
+  .advanced-options { display:flex; flex-direction:column; gap:8px }
+  .checkbox-label { display:flex; align-items:center; gap:8px; cursor:pointer }
+  .sub-label { display:flex; align-items:center; gap:8px; margin-left: 28px; font-size: 0.9em }
+  .small-input { width: 80px }
 </style>
