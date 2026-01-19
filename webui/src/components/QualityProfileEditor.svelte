@@ -10,7 +10,11 @@
     id: '',
     name: '',
     formats: [],
+    // Legacy support for durationMatch object structure if present, otherwise flat fields
     durationMatch: { enabled: false, tolerance_seconds: 3 },
+    enforce_duration_match: false,
+    duration_tolerance_ms: 3000,
+    prefer_max_quality: false,
     metadataRequired: false
   };
   let selectedFormat: string = '';
@@ -34,6 +38,11 @@
     if (profile) {
       // shallow clone
       p = JSON.parse(JSON.stringify(profile));
+
+      // Initialize new fields if missing
+      if (p.enforce_duration_match === undefined) p.enforce_duration_match = false;
+      if (p.prefer_max_quality === undefined) p.prefer_max_quality = false;
+      if (p.duration_tolerance_ms === undefined) p.duration_tolerance_ms = 3000;
     }
   });
 
@@ -207,12 +216,27 @@
     <section class="advanced">
       <h3>Advanced Filters</h3>
       {#if hasMatchingProvider}
-        <label><input type="checkbox" bind:checked={p.durationMatch.enabled} /> Duration Match</label>
-        {#if p.durationMatch.enabled}
+        <label>
+          <input type="checkbox" bind:checked={p.enforce_duration_match} />
+          Enforce Duration Match
+        </label>
+
+        {#if p.enforce_duration_match}
           <label>Tolerance (seconds)
-            <input type="number" min="0" bind:value={p.durationMatch.tolerance_seconds} class="input" />
+            <input
+              type="number"
+              min="0"
+              value={(p.duration_tolerance_ms || 3000) / 1000}
+              on:input={(e) => p.duration_tolerance_ms = e.currentTarget.value * 1000}
+              class="input"
+            />
           </label>
         {/if}
+
+        <label style="margin-top:8px">
+          <input type="checkbox" bind:checked={p.prefer_max_quality} />
+          Prefer Larger Files (Max Quality)
+        </label>
       {/if}
 
       {#if hasMetadataProvider}

@@ -13,7 +13,7 @@
         throw new Error(`Failed to fetch download clients: ${response.statusText}`);
       }
       const downloadClients = await response.json();
-      hasSlskd = downloadClients.some(c => c.name === 'soulseek');
+      hasSlskd = downloadClients.some(c => c.name === 'slskd' || c.name === 'soulseek');
       loading = false;
     } catch (err) {
       console.error('Failed to fetch download clients:', err);
