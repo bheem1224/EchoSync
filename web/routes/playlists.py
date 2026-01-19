@@ -740,14 +740,15 @@ def download_missing_tracks():
     job_name = f"download:missing:{int(time.time())}"
     
     def _run_downloads():
-        from core.download_service import DownloadService
+        from services.download_manager import get_download_manager
+        from core.matching_engine.soul_sync_track import SoulSyncTrack
         
         event_bus.publish(job_name, "download_started", {
             "total": len(missing),
         })
         
         try:
-            service = DownloadService()
+            download_manager = get_download_manager()
             success_count = 0
             
             for idx, track_info in enumerate(missing):
@@ -758,23 +759,28 @@ def download_missing_tracks():
                 })
                 
                 try:
-                    # Use track title/artist to search for download
-                    success = service.download_track(
-                        title=track_info.get("title"),
-                        artist=track_info.get("artist"),
-                        album=track_info.get("album"),
+                    # Create SoulSyncTrack from metadata
+                    track = SoulSyncTrack(
+                        raw_title=track_info.get("title"),
+                        artist_name=track_info.get("artist"),
+                        album_title=track_info.get("album") or ""
                     )
-                    if success:
+
+                    # Queue the download
+                    download_id = download_manager.queue_download(track)
+
+                    if download_id:
                         success_count += 1
-                        event_bus.publish(job_name, "download_complete_track", {
+                        event_bus.publish(job_name, "download_queued_track", {
                             "index": idx,
                             "title": track_info.get("title"),
+                            "download_id": download_id
                         })
                     else:
                         event_bus.publish(job_name, "download_failed_track", {
                             "index": idx,
                             "title": track_info.get("title"),
-                            "reason": "Not found or already exists",
+                            "reason": "Failed to queue",
                         })
                 except Exception as e:
                     event_bus.publish(job_name, "download_failed_track", {
