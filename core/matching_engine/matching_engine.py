@@ -686,6 +686,12 @@ class WeightedMatchingEngine:
         ranked_candidates = []
 
         for candidate in candidates:
+            # --- Duration Gating (if enabled) ---
+            if self.weights.enforce_duration_match and target_track.duration and candidate.duration:
+                diff_ms = abs(target_track.duration - candidate.duration)
+                if diff_ms > self.weights.duration_tolerance_ms:
+                    continue  # Skip strictly
+
             # Calculate match score
             match_result = self.calculate_match(target_track, candidate)
 
@@ -732,16 +738,37 @@ class WeightedMatchingEngine:
 
             ranked_candidates.append((final_score, candidate))
 
-        # Sort by final score descending
-        ranked_candidates.sort(key=lambda x: x[0], reverse=True)
-
         if not ranked_candidates:
             return None
+
+        # --- Size Sorting ---
+        # Logic:
+        # 1. Primary Sort: Final Score (Descending) - Metadata correctness & Quality score is king.
+        # 2. Secondary Sort: File Size
+        #    - If prefer_max_quality=True: Larger size is better (Desc)
+        #    - If prefer_max_quality=False: Smaller (but valid) size is better (Asc)
+
+        def sort_key(item):
+            score, cand = item
+            size = cand.file_size_bytes or cand.identifiers.get('size', 0) or 0
+
+            if self.weights.prefer_max_quality:
+                # Descending score, Descending size
+                return (score, size)
+            else:
+                # Descending score, Ascending size (negate size to sort Ascending in a Descending sort?)
+                # No, Python sort is stable and we can use a key.
+                # If we sort by key descending: (High Score, High Size) works.
+                # If we want (High Score, Low Size): We return (score, -size).
+                return (score, -size)
+
+        ranked_candidates.sort(key=sort_key, reverse=True)
 
         # Log top 3 for debugging
         logger.info(f"Top 3 download candidates for '{target_track.title}':")
         for score, cand in ranked_candidates[:3]:
-            logger.info(f"  Score: {score:.1f} | {cand.identifiers.get('provider_item_id')} | Speed: {cand.identifiers.get('upload_speed')}")
+            size_mb = (cand.identifiers.get('size', 0) / 1024 / 1024)
+            logger.info(f"  Score: {score:.1f} | {cand.identifiers.get('provider_item_id')} | Speed: {cand.identifiers.get('upload_speed')} | Size: {size_mb:.1f}MB")
 
         return ranked_candidates[0][1]
 

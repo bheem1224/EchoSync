@@ -58,6 +58,10 @@ class ScoringWeights:
     min_confidence_to_accept: float = 70.0  # Minimum score to consider a match valid
     text_match_fallback: float = 0.80  # Fallback text fuzzy match if no fingerprints available
 
+    # Advanced Scoring Flags
+    prefer_max_quality: bool = False  # If True, prefer larger file size. If False, prefer smaller (but valid) size.
+    enforce_duration_match: bool = False  # If True, reject files outside duration tolerance before scoring.
+
     # Weights validation
     def validate(self) -> bool:
         """Validate that weights sum properly"""
@@ -90,6 +94,8 @@ class ScoringWeights:
             'fuzzy_match_threshold': self.fuzzy_match_threshold,
             'min_confidence_to_accept': self.min_confidence_to_accept,
             'text_match_fallback': self.text_match_fallback,
+            'prefer_max_quality': self.prefer_max_quality,
+            'enforce_duration_match': self.enforce_duration_match,
         }
 
     @classmethod
