@@ -51,20 +51,26 @@ class DownloadManager:
         return cls._instance
 
     def _get_provider(self) -> Optional[ProviderBase]:
-        """Lazy load the Slskd provider"""
+        """Lazy load the active download provider"""
         if self._provider:
             return self._provider
 
         try:
-            # Check if Slskd is enabled and registered
-            if ProviderRegistry.is_provider_disabled('slskd'):
-                logger.warning("Slskd provider is disabled")
+            # Get active client from config
+            active_client = config_manager.get_active_download_client()
+            if not active_client:
+                logger.warning("No active download client configured")
                 return None
 
-            self._provider = ProviderRegistry.create_instance('slskd')
+            # Check if provider is enabled and registered
+            if ProviderRegistry.is_provider_disabled(active_client):
+                logger.warning(f"Active download provider '{active_client}' is disabled")
+                return None
+
+            self._provider = ProviderRegistry.create_instance(active_client)
             return self._provider
         except Exception as e:
-            logger.error(f"Failed to load Slskd provider: {e}")
+            logger.error(f"Failed to load download provider: {e}")
             return None
 
     def queue_download(self, track: SoulSyncTrack) -> int:

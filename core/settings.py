@@ -413,6 +413,7 @@ class ConfigManager:
             "jellyfin": {"base_url": "", "api_key": "", "auto_detect": True},
             "navidrome": {"base_url": "", "username": "", "password": "", "auto_detect": True},
             "soulseek": {"slskd_url": "", "api_key": ""},
+            "active_download_client": None,
             "listenbrainz": {"token": ""},
             "logging": {"path": str(self.logs_path / 'app.log'), "level": "INFO"},
             "database": {"path": str(self.media_db_path), "max_workers": 2},
@@ -973,6 +974,14 @@ class ConfigManager:
         else:
             return {}
 
+    def get_active_download_client(self) -> Optional[str]:
+        """Get the currently active download client."""
+        return self.get('active_download_client')
+
+    def set_active_download_client(self, client_name: str):
+        """Set the active download client."""
+        self.set('active_download_client', client_name)
+
     def is_configured(self) -> bool:
         # Check Spotify credentials (global or active account overrides)
         spotify_creds = self.get_spotify_active_credentials()
@@ -1043,6 +1052,7 @@ class ConfigManager:
         validation['navidrome'] = bool(self.get('navidrome.base_url')) and bool(self.get('navidrome.username')) and bool(self.get('navidrome.password'))
         # Set to True if the active media server is configured, False otherwise
         validation['active_media_server'] = bool(active_server)
+        validation['active_download_client'] = bool(self.get('active_download_client'))
 
         return validation
 

@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from core.tiered_logger import get_logger
 from core.settings import config_manager
-from core.provider import get_provider_capabilities, DownloaderProvider
+from core.provider import get_provider_capabilities, DownloaderProvider, ProviderRegistry
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 logger = get_logger("slskd_provider")
@@ -580,3 +580,7 @@ class SlskdProvider(DownloaderProvider):
     def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]: return None
     def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]: return []
     def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]: return []
+
+
+# Register the provider
+ProviderRegistry.register(SlskdProvider)

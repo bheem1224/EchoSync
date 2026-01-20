@@ -14,11 +14,33 @@
   let showApiKey = false;
   let hasApiKeyInDb = false;
   let dbApiKeyRevealed = false;
+  let isActive = false;
 
   onMount(async () => {
     await loadSettings();
+    await checkActiveStatus();
     loading = false;
   });
+
+  async function checkActiveStatus() {
+    try {
+      const response = await apiClient.get('/providers/download-clients/active');
+      isActive = response.data.active_client === 'slskd';
+    } catch (error) {
+      console.error('Failed to check active status:', error);
+    }
+  }
+
+  async function activateClient() {
+    try {
+      await apiClient.post('/providers/download-clients/activate', { client: 'slskd' });
+      isActive = true;
+      feedback.addToast('Slskd activated as download client', 'success');
+    } catch (error) {
+      console.error('Failed to activate client:', error);
+      feedback.addToast('Failed to activate client', 'error');
+    }
+  }
 
   async function loadSettings() {
     try {
@@ -138,10 +160,18 @@
       {:else if slskdUrl}
         <span class="status-badge disconnected">⚠ Disconnected</span>
       {/if}
+      {#if isActive}
+        <span class="status-badge active-client">● Active</span>
+      {/if}
     </div>
-    <button class="btn-link" on:click={() => collapsed = !collapsed}>
-      {collapsed ? 'Expand' : 'Collapse'}
-    </button>
+    <div class="header-right">
+      {#if !isActive && connected}
+        <button class="btn-sm btn-secondary" on:click={activateClient}>Activate</button>
+      {/if}
+      <button class="btn-link" on:click={() => collapsed = !collapsed}>
+        {collapsed ? 'Expand' : 'Collapse'}
+      </button>
+    </div>
   </div>
 
   {#if loading}
@@ -242,6 +272,12 @@
     gap: 12px;
   }
 
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
   .card-header h2 {
     margin: 0;
     font-size: 20px;
@@ -271,6 +307,12 @@
   .status-badge.disconnected {
     background: rgba(255, 82, 82, 0.2);
     color: #ff5252;
+  }
+
+  .status-badge.active-client {
+    background: rgba(0, 230, 118, 0.2);
+    color: #00e676;
+    border: 1px solid rgba(0, 230, 118, 0.3);
   }
 
   .loading {

@@ -24,11 +24,14 @@ def list_all_providers():
 def list_download_clients():
     """List all providers flagged as download clients.
     
-    Returns providers with supports_downloads=True capability.
+    Returns providers with supports_downloads=True capability,
+    annotated with 'active' status.
     """
     try:
         from core.provider import ProviderRegistry, CAPABILITY_REGISTRY
+        from core.settings import config_manager
         
+        active_client = config_manager.get_active_download_client()
         download_clients = []
         
         # Get all registered providers
@@ -46,13 +49,57 @@ def list_download_clients():
                             'name': provider_name,
                             'display_name': provider_name.title(),
                             'supports_downloads': True,
-                            'description': f'Download music via {provider_name.title()}'
+                            'description': f'Download music via {provider_name.title()}',
+                            'active': provider_name == active_client
                         })
         
         return jsonify(download_clients), 200
         
     except Exception as e:
         logger.error(f"Error listing download clients: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@bp.get("/download-clients/active")
+def get_active_download_client():
+    """Get the currently active download client."""
+    try:
+        from core.settings import config_manager
+        active = config_manager.get_active_download_client()
+        return jsonify({'active_client': active}), 200
+    except Exception as e:
+        logger.error(f"Error getting active download client: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@bp.post("/download-clients/activate")
+def set_active_download_client():
+    """Set the active download client."""
+    try:
+        from core.settings import config_manager
+        from core.provider import ProviderRegistry
+
+        data = request.get_json(silent=True) or {}
+        client_name = data.get('client')
+
+        if not client_name:
+            return jsonify({'error': 'Client name is required'}), 400
+
+        # Validate client exists and is a download provider
+        provider_class = ProviderRegistry.get_provider_class(client_name)
+        if not provider_class:
+            return jsonify({'error': f'Provider {client_name} not found'}), 404
+
+        if not getattr(provider_class, 'supports_downloads', False):
+             return jsonify({'error': f'Provider {client_name} does not support downloads'}), 400
+
+        config_manager.set_active_download_client(client_name)
+        logger.info(f"Active download client set to: {client_name}")
+
+        return jsonify({
+            'success': True,
+            'active_client': client_name
+        })
+    except Exception as e:
+        logger.error(f"Error setting active download client: {e}")
         return jsonify({'error': str(e)}), 500
 
 @bp.get("/<provider_name>/playlists")
