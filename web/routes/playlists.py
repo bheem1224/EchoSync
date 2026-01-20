@@ -346,6 +346,7 @@ def analyze_playlists():
                         "artist": track_artist,
                         "album": track_album,
                         "duration": duration_str,
+                        "duration_ms": track_duration,
                         "library_match": library_match,
                         "download_status": "-",
                         "matched_track_id": best_match_track_id,
@@ -384,6 +385,7 @@ def analyze_playlists():
                     "title": track["title"],
                     "artist": track["artist"],
                     "album": track["album"],
+                    "duration": track.get("duration_ms"),
                 })
         
         return jsonify({
@@ -763,7 +765,8 @@ def download_missing_tracks():
                     track = SoulSyncTrack(
                         raw_title=track_info.get("title"),
                         artist_name=track_info.get("artist"),
-                        album_title=track_info.get("album") or ""
+                        album_title=track_info.get("album") or "",
+                        duration=track_info.get("duration_ms")
                     )
 
                     # Queue the download

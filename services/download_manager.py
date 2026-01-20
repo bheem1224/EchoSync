@@ -127,6 +127,7 @@ class DownloadManager:
         """Main control loop: Process Queue -> Check Active"""
         # 0. Recover stuck items on startup
         await self._recover_stuck_items()
+        logger.info("DownloadManager processing loop started.")
 
         while not self._shutdown:
             try:
@@ -147,6 +148,7 @@ class DownloadManager:
         """Pick up queued items and attempt to find/start them"""
         provider = self._get_provider()
         if not provider:
+            logger.debug("Skipping queue processing: No active provider.")
             return
 
         # Fetch queued items from DB
@@ -160,6 +162,9 @@ class DownloadManager:
         with self.db.session_scope() as session:
             # Get up to 5 queued items
             items = session.query(Download).filter(Download.status == "queued").limit(5).all()
+            if items:
+                logger.info(f"Found {len(items)} queued items for processing.")
+
             for item in items:
                 # Mark as processing so other workers (if any) don't grab it
                 item.status = "searching"
@@ -170,6 +175,7 @@ class DownloadManager:
             return
 
         for download_id in queued_ids:
+            logger.debug(f"Processing queued download ID: {download_id}")
             await self._execute_search_and_download(download_id, provider)
 
     async def _execute_search_and_download(self, download_id: int, provider: ProviderBase):
@@ -180,6 +186,7 @@ class DownloadManager:
         with self.db.session_scope() as session:
             download = session.query(Download).get(download_id)
             if not download:
+                logger.error(f"Download ID {download_id} not found in DB.")
                 return
             target_track = SoulSyncTrack.from_dict(download.soul_sync_track)
 
@@ -189,7 +196,7 @@ class DownloadManager:
             return
 
         try:
-            logger.info(f"Searching for: {target_track.artist_name} - {target_track.title}")
+            logger.info(f"Searching for: {target_track.artist_name} - {target_track.title} via {provider.name}")
 
             # 1. Search (Atomic)
             # Use basic filters for coarse rejection
@@ -209,11 +216,15 @@ class DownloadManager:
 
             candidates = []
             if hasattr(provider, '_async_search'):
+                logger.debug(f"Invoking _async_search on {provider.name} with query: '{query}'")
                 candidates = await provider._async_search(query, basic_filters)
             else:
+                logger.debug(f"Invoking sync search on {provider.name} with query: '{query}'")
                 # Fallback to sync call in executor
                 loop = asyncio.get_running_loop()
                 candidates = await loop.run_in_executor(None, provider.search, query, basic_filters)
+
+            logger.info(f"Search returned {len(candidates)} candidates.")
 
             if not candidates:
                 logger.warning(f"No results found for {query}")
@@ -221,10 +232,11 @@ class DownloadManager:
                 return
 
             # 2. Match (Selection)
+            logger.debug("Running matching engine selection...")
             best_candidate = self.matcher.select_best_download_candidate(target_track, candidates)
 
             if not best_candidate:
-                logger.warning(f"No suitable candidate matched for {query}")
+                logger.warning(f"No suitable candidate matched for {query} (out of {len(candidates)} candidates)")
                 self._update_status(download_id, "failed_no_match")
                 return
 
@@ -268,6 +280,8 @@ class DownloadManager:
         if not active_downloads:
             return
 
+        logger.debug(f"Checking status for {len(active_downloads)} active downloads...")
+
         for db_id, provider_id in active_downloads:
             if not provider_id:
                 continue
@@ -298,7 +312,9 @@ class DownloadManager:
                         logger.info(f"Download {db_id} (Provider {provider_id}) finished with status: {new_status}")
                         self._update_status(db_id, new_status)
 
-                        # Trigger Post-Processor if complete? (Future Scope)
+                        if new_status == "completed":
+                            # Future Scope: Trigger Post-Processor
+                            logger.info(f"Download {db_id} completed. TODO: Trigger Auto Import/Post-Processing.")
 
             except Exception as e:
                 logger.error(f"Error checking status for {db_id}: {e}")

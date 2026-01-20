@@ -197,13 +197,11 @@ class SlskdProvider(DownloaderProvider):
         url = f"{self.base_url}/api/v0/{endpoint}"
 
         try:
-            # Using internal RequestManager logic would be ideal if it supports custom base URLs easily,
-            # but ProviderBase.http is tied to rate limiting.
-            # However, for Slskd (local service), we might want to bypass strict rate limits or handle them differently.
-            # But the requirement says "Use self.core.http for ALL requests (Global Rate Limiting)".
-            # self.http IS a RequestManager instance initialized in ProviderBase.
-
             headers = self._get_headers()
+
+            logger.debug(f"Slskd API Request: {method} {url}")
+            if kwargs.get('json'):
+                logger.debug(f"Payload: {kwargs.get('json')}")
 
             # RequestManager.request signature: method, url, **kwargs
             response = await self.http.request(
@@ -411,6 +409,7 @@ class SlskdProvider(DownloaderProvider):
             return None
 
         try:
+            logger.info(f"Initiating download: '{filename}' from user '{username}' (size: {file_size})")
             download_data = [
                 {
                     "filename": filename,
