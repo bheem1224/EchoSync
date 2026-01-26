@@ -203,12 +203,16 @@ class SlskdProvider(DownloaderProvider):
             if kwargs.get('json'):
                 logger.debug(f"Payload: {kwargs.get('json')}")
 
-            # RequestManager.request signature: method, url, **kwargs
-            response = await self.http.request(
-                method,
-                url,
-                headers=headers,
-                **kwargs
+            # RequestManager.request is synchronous, so we must run it in an executor to avoid blocking the loop
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None, 
+                lambda: self.http.request(
+                    method,
+                    url,
+                    headers=headers,
+                    **kwargs
+                )
             )
 
             if response.status_code in [200, 201, 204]:
@@ -310,6 +314,23 @@ class SlskdProvider(DownloaderProvider):
 
         return all_tracks
 
+    def _apply_filters(self, track: TrackResult, filters: Dict[str, Any]) -> bool:
+        """Apply additional filters like duration and bitrate to a track."""
+        duration_tolerance = filters.get("duration_tolerance", 3000)  # Default to 3 seconds
+        min_bitrate = filters.get("min_bitrate", 128)
+
+        # Check duration
+        if "expected_duration" in filters:
+            expected_duration = filters["expected_duration"]
+            if not (expected_duration - duration_tolerance <= track.duration <= expected_duration + duration_tolerance):
+                return False
+
+        # Check bitrate
+        if track.bitrate and track.bitrate < min_bitrate:
+            return False
+
+        return True
+
     async def _async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 15) -> List[SoulSyncTrack]:
         """
         Atomic Search: Post -> Poll -> Parse -> Delete.
@@ -346,63 +367,35 @@ class SlskdProvider(DownloaderProvider):
                 return []
 
             # 2. Poll for results (Wait fixed window)
-            # We poll a few times within the timeout window
             poll_interval = 2.0
-            max_polls = int(timeout / poll_interval)
+            elapsed_time = 0.0
+            results = []
 
-            all_responses = []
-
-            # We wait for at least some results or timeout
-            for poll_count in range(max_polls):
+            while elapsed_time < timeout:
                 await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
 
-                responses_data = await self._make_request('GET', f'searches/{search_id}/responses')
-                if responses_data and isinstance(responses_data, list):
-                    all_responses = responses_data
-                    # If we have a good number of responses, we can stop early?
-                    # "We prioritize 'fast & clean' over 'waiting for every last peer.'"
-                    if len(all_responses) > 50:
-                        break
+                poll_response = await self._make_request('GET', f'searches/{search_id}/results')
+                if poll_response:
+                    results.extend(self._process_search_responses(poll_response))
 
-            # 3. Parse Results
-            track_results = self._process_search_responses(all_responses)
-            logger.info(f"Search yielded {len(track_results)} raw candidates")
+            # 3. Apply additional filters
+            if basic_filters:
+                results = [
+                    self._convert_to_soulsync_track(track)
+                    for track in results
+                    if self._apply_filters(track, basic_filters)
+                ]
 
-            # 4. Apply Coarse Filters (Extensions, Min Bitrate)
-            valid_tracks = []
-            allowed_extensions = basic_filters.get('allowed_extensions') if basic_filters else None
-            min_bitrate = basic_filters.get('min_bitrate', 0) if basic_filters else 0
-
-            for tr in track_results:
-                # Extension Check
-                if allowed_extensions:
-                    ext = Path(tr.filename).suffix.lower().lstrip('.')
-                    if ext not in allowed_extensions:
-                        continue
-
-                # Bitrate Check (skip if None, assume okay or let MatchingEngine decide)
-                if min_bitrate > 0 and tr.bitrate and tr.bitrate < min_bitrate:
-                    continue
-
-                # Convert to SoulSyncTrack
-                soul_track = self._convert_to_soulsync_track(tr)
-                if soul_track:
-                    valid_tracks.append(soul_track)
-
-            logger.info(f"After coarse filtering: {len(valid_tracks)} candidates")
-            return valid_tracks
+            return results
 
         except Exception as e:
-            logger.error(f"Error in atomic search: {e}")
+            logger.error(f"Error during search: {e}")
             return []
         finally:
-            # 5. DELETE Search (Atomic cleanup)
+            # 4. Cleanup search
             if search_id:
-                try:
-                    await self._make_request('DELETE', f'searches/{search_id}')
-                    logger.debug(f"Atomic cleanup: Deleted search {search_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete search {search_id}: {e}")
+                await self._make_request('DELETE', f'searches/{search_id}')
 
     async def _async_download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
         if not self.base_url:
