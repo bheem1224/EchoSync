@@ -85,11 +85,8 @@ async def _graceful_close(clients: Iterable[Any]) -> None:
                 logger.error("Error closing %s: %s", client.__class__.__name__, exc)
 
 
-async def backend_main() -> None:
-    logging_config = config_manager.get_logging_config()
-    log_file = logging_config.get("path", "logs/backend.log")
-    setup_logging(level=logging_config.get("level", "INFO"), log_file=log_file)
-
+async def start_services() -> None:
+    """Start the backend services without configuring logging (assumes external logging setup)."""
     logger.info("Starting backend services...")
 
     spotify_client = SpotifyClient()
@@ -121,6 +118,14 @@ async def backend_main() -> None:
         await download_manager.stop_background_task()
         await _graceful_close([soulseek_client, plex_client, jellyfin_client, navidrome_client])
         logger.info("Backend services stopped")
+
+
+async def backend_main() -> None:
+    logging_config = config_manager.get_logging_config()
+    log_file = logging_config.get("path", "logs/backend.log")
+    setup_logging(level=logging_config.get("level", "INFO"), log_file=log_file)
+
+    await start_services()
 
 
 if __name__ == "__main__":
