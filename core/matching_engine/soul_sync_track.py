@@ -146,23 +146,49 @@ class SoulSyncTrack:
             self.acoustid_id = self.identifiers['acoustid_id']
 
         # 2. Regex Extraction for Edition
-        edition_pattern = re.compile(
-            r"(?:[\(\[]| - )\s*(.*?(?:Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original).*?)(?:[\)\]]|$)",
-            re.IGNORECASE
-        )
-
-        match = edition_pattern.search(self.raw_title)
+        # Extract edition/version info from title (e.g., "2005 Remaster", "Live at X", etc.)
+        # Strategy: Find the LAST occurrence of version keywords, then work backwards to find delimiter
+        # This handles: "Sweet Dreams (Are Made of This) - 2005 Remaster" → edition="2005 Remaster"
+        version_keywords = r"(?:Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)"
+        
+        # Find all matches of version keywords
+        all_matches = list(re.finditer(rf"\b{version_keywords}\b", self.raw_title, re.IGNORECASE))
         clean_title = self.raw_title
-
-        if match:
-            extracted_edition = match.group(1).strip()
-            # Only set edition if not explicitly provided
-            if self.edition is None:
-                self.edition = extracted_edition
-
-            # Remove the match from title
-            start, end = match.span()
-            clean_title = (self.raw_title[:start] + self.raw_title[end:]).strip()
+        
+        if all_matches:
+            # Use the LAST match (rightmost)
+            last_match = all_matches[-1]
+            keyword_pos = last_match.start()
+            
+            # Look backwards from keyword to find the delimiter (dash, bracket, paren)
+            prefix = self.raw_title[:keyword_pos]
+            
+            # Find the LAST delimiter before the keyword
+            last_dash = prefix.rfind(' - ')
+            last_paren = prefix.rfind('(')
+            last_bracket = prefix.rfind('[')
+            
+            # Use the rightmost delimiter
+            delimiter_pos = max(last_dash, last_paren, last_bracket)
+            
+            if delimiter_pos >= 0:
+                # Extract from delimiter to end
+                if last_dash == delimiter_pos:
+                    edition_start = delimiter_pos + 3  # Skip " - "
+                else:
+                    edition_start = delimiter_pos + 1  # Skip '(' or '['
+                
+                edition_text = self.raw_title[edition_start:].strip()
+                
+                # Remove trailing closing brackets/parens if present
+                edition_text = re.sub(r'[\)\]]\s*$', '', edition_text).strip()
+                
+                # Only set edition if not explicitly provided
+                if self.edition is None and edition_text:
+                    self.edition = edition_text
+                
+                # Clean title is everything before the delimiter
+                clean_title = self.raw_title[:delimiter_pos].strip()
 
         # 3. Strip Featured Artist Attribution
         # Remove (feat. ...), [feat. ...], or trailing "feat. ..." after all other info is extracted

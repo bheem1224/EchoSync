@@ -140,7 +140,59 @@ class SlskdProvider(DownloaderProvider):
         self.download_path: Path = Path("./downloads")
         # Capability flags
         self.capabilities = get_provider_capabilities('slskd')
+        # Concurrency limiter: Slskd can only handle 5 concurrent searches (IP ban protection)
+        self._search_semaphore = asyncio.Semaphore(5)
         self._setup_client()
+        self._register_health_check()
+    
+    def _register_health_check(self):
+        """Register periodic health check for Slskd API."""
+        from core.health_check import register_health_check_job, HealthCheckResult
+        
+        def slskd_health_check() -> HealthCheckResult:
+            try:
+                configured = self.is_configured()
+                if not configured:
+                    return HealthCheckResult(
+                        service_name="slskd",
+                        status="unhealthy",
+                        message="Slskd not configured"
+                    )
+                
+                # Try a lightweight API call to check connectivity
+                try:
+                    import requests
+                    response = requests.get(
+                        f"{self.base_url}/api/v0/session",
+                        headers={"X-API-Key": self.api_key},
+                        timeout=5
+                    )
+                    if response.status_code == 200:
+                        return HealthCheckResult(
+                            service_name="slskd",
+                            status="healthy",
+                            message="Slskd API is reachable"
+                        )
+                    else:
+                        return HealthCheckResult(
+                            service_name="slskd",
+                            status="degraded",
+                            message=f"Slskd API returned status {response.status_code}"
+                        )
+                except Exception as api_err:
+                    return HealthCheckResult(
+                        service_name="slskd",
+                        status="unhealthy",
+                        message=f"Slskd API error: {str(api_err)}"
+                    )
+            except Exception as e:
+                return HealthCheckResult(
+                    service_name="slskd",
+                    status="unhealthy",
+                    message=f"Slskd health check error: {str(e)}"
+                )
+        
+        register_health_check_job("slskd_health_check", slskd_health_check, interval_seconds=300)
 
     def _setup_client(self):
         config = config_manager.get_soulseek_config()
@@ -203,12 +255,11 @@ class SlskdProvider(DownloaderProvider):
             if kwargs.get('json'):
                 logger.debug(f"Payload: {kwargs.get('json')}")
 
-            # RequestManager.request signature: method, url, **kwargs
-            response = await self.http.request(
-                method,
-                url,
-                headers=headers,
-                **kwargs
+            # RequestManager.request is synchronous, so run in executor to avoid blocking
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.http.request(method, url, headers=headers, **kwargs)
             )
 
             if response.status_code in [200, 201, 204]:
@@ -310,11 +361,26 @@ class SlskdProvider(DownloaderProvider):
 
         return all_tracks
 
-    async def _async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 15) -> List[SoulSyncTrack]:
+    async def _async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 180) -> List[SoulSyncTrack]:
         """
         Atomic Search: Post -> Poll -> Parse -> Delete.
         Applies coarse filtering (basic_filters) before returning.
+        
+        Concurrency: Limited to 5 concurrent searches (Slskd/Soulseek IP ban protection).
+        
+        Smart polling:
+        - Phase 1 (0-45s): Poll every 5s for quick responsiveness
+        - Phase 2 (45s+): Poll every 30s to minimize API calls
+        - Exit immediately upon terminal state (completed, timedout, failed, etc.)
+        
+        Default timeout: 180 seconds (3 minutes) to allow extended waiting for slskd responses.
         """
+        # Acquire semaphore slot (max 5 concurrent searches for IP ban protection)
+        async with self._search_semaphore:
+            return await self._do_async_search(query, basic_filters, timeout)
+
+    async def _do_async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 180) -> List[SoulSyncTrack]:
+        """Internal async search implementation (called under semaphore lock)."""
         if not self.base_url:
             logger.error("Slskd client not configured")
             return []
@@ -345,25 +411,71 @@ class SlskdProvider(DownloaderProvider):
                 logger.error("No search ID returned")
                 return []
 
-            # 2. Poll for results (Wait fixed window)
-            # We poll a few times within the timeout window
-            poll_interval = 2.0
-            max_polls = int(timeout / poll_interval)
-
+            # 2. Poll for search completion and results
+            # Smart polling strategy:
+            # - Phase 1 (0-45s): Poll every 5s for quick responsiveness
+            # - Phase 2 (45s+): Poll every 30s to minimize API calls
+            initial_phase_duration = 45.0  # First 45 seconds
+            initial_phase_interval = 5.0   # Poll every 5s during initial phase
+            main_phase_interval = 30.0     # Poll every 30s after initial phase
+            
             all_responses = []
+            terminal_state = False
+            elapsed_time = 0.0
 
-            # We wait for at least some results or timeout
-            for poll_count in range(max_polls):
-                await asyncio.sleep(poll_interval)
+            logger.info(f"Polling for search completion (5s intervals for 45s, then 30s intervals, timeout: {timeout}s)...")
+            
+            for poll_count in range(int(timeout / main_phase_interval) + 10):  # Safety upper bound
+                # Determine polling interval based on elapsed time
+                if elapsed_time < initial_phase_duration:
+                    poll_interval = initial_phase_interval
+                    phase_name = "initial"
+                else:
+                    poll_interval = main_phase_interval
+                    phase_name = "main"
+                
+                # Check search state to see if it's complete
+                search_state = await self._make_request('GET', f'searches/{search_id}')
+                if search_state:
+                    state = search_state.get('state', '').lower()
+                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): Search state = '{state}'")
+                    
+                    # Check for terminal states (exit immediately)
+                    if state in ['completed', 'complete', 'done', 'finished', 'timedout', 'cancelled', 'errored', 'failed']:
+                        terminal_state = True
+                        logger.info(f"Search reached terminal state: {state} (after {elapsed_time:.0f}s)")
 
+                # Get current responses
                 responses_data = await self._make_request('GET', f'searches/{search_id}/responses')
                 if responses_data and isinstance(responses_data, list):
                     all_responses = responses_data
-                    # If we have a good number of responses, we can stop early?
-                    # "We prioritize 'fast & clean' over 'waiting for every last peer.'"
-                    if len(all_responses) > 50:
+                    response_count = len(all_responses)
+                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): Got {response_count} responses")
+                    
+                    # Exit early if we have a LOT of responses (prevent excessive waiting)
+                    if response_count >= 150:
+                        logger.info(f"Got {response_count} responses (threshold reached), stopping")
                         break
+                else:
+                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): No responses yet")
+                
+                # Exit immediately on terminal state (don't continue polling)
+                if terminal_state:
+                    logger.info(f"Exiting polling loop due to terminal state")
+                    break
+                
+                # Exit if overall timeout exceeded
+                if elapsed_time >= timeout:
+                    logger.warning(f"Polling timeout exceeded ({elapsed_time:.0f}s >= {timeout}s)")
+                    break
+                
+                # Wait before next poll
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
 
+            if not all_responses:
+                logger.info(f"Search complete but no responses received")
+                
             # 3. Parse Results
             track_results = self._process_search_responses(all_responses)
             logger.info(f"Search yielded {len(track_results)} raw candidates")

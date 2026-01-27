@@ -1,17 +1,19 @@
 <script>
-  // Placeholder page for Jobs
+  import JobsSettings from '../../../components/JobsSettings.svelte';
 </script>
 
+<svelte:head>
+  <title>Jobs • SoulSync</title>
+</svelte:head>
+
 <section class="page">
-  <header class="page__header">
-    <h1>Jobs</h1>
-  </header>
-  <div class="card">
-    <p class="muted">This settings page is not implemented yet.</p>
-  </div>
+  <JobsSettings />
 </section>
 
 <style>
-  .muted { color: var(--muted); }
-  .card { padding:16px; border-radius:8px; background:var(--card-bg); }
+  .page {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
 </style>

@@ -105,9 +105,16 @@ async def start_services() -> None:
 
     monitor_task = asyncio.create_task(monitor.run())
 
-    # Start Download Manager background task
+    # Start Download Manager only if explicitly enabled (default: off)
+    downloads_cfg = config_manager.get_all().get("downloads", {}) if hasattr(config_manager, "get_all") else {}
+    auto_start_downloads = downloads_cfg.get("auto_start", False)
+
     download_manager = get_download_manager()
-    await download_manager.start_background_task()
+    if auto_start_downloads:
+        await download_manager.start_background_task()
+        logger.info("Download Manager auto-start enabled")
+    else:
+        logger.info("Download Manager auto-start is disabled (downloads will not run on startup)")
 
     try:
         await monitor_task

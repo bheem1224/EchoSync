@@ -269,11 +269,28 @@ def get_database_update_status():
                     "server": active_server
                 }), 200
             
-            # Check if thread is alive (handle both Qt and headless modes)
+            # Check if worker is running (support both threading.Thread and PyQt6 QThread)
             is_running = False
-            thread_obj = getattr(_db_update_worker, 'thread', None)
-            if thread_obj is not None and callable(getattr(thread_obj, 'is_alive', None)):
-                is_running = thread_obj.is_alive()
+            # threading.Thread-style
+            if callable(getattr(_db_update_worker, 'is_alive', None)):
+                try:
+                    is_running = _db_update_worker.is_alive()
+                except Exception:
+                    is_running = False
+            # QThread-style
+            elif callable(getattr(_db_update_worker, 'isRunning', None)):
+                try:
+                    is_running = _db_update_worker.isRunning()
+                except Exception:
+                    is_running = False
+            else:
+                # Fallback: infer running from progress vs total if available
+                try:
+                    total = getattr(_db_update_worker, 'total_tracks', 0)
+                    processed = getattr(_db_update_worker, 'processed_tracks', 0)
+                    is_running = total > 0 and processed < total
+                except Exception:
+                    is_running = False
             
             return jsonify({
                 "running": is_running,
@@ -281,6 +298,7 @@ def get_database_update_status():
                     "artists": _db_update_worker.processed_artists,
                     "albums": _db_update_worker.processed_albums,
                     "tracks": _db_update_worker.processed_tracks,
+                    "total": getattr(_db_update_worker, 'total_tracks', 0),
                     "successful": _db_update_worker.successful_operations,
                     "failed": _db_update_worker.failed_operations
                 },

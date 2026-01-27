@@ -217,7 +217,32 @@ class NavidromeClient(MediaServerProvider):
         # Capability flags
         self.capabilities = get_provider_capabilities('navidrome')
         
+        self._register_health_check()
+        
         # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration
+    
+    def _register_health_check(self):
+        """Register periodic health check for Navidrome server."""
+        from core.health_check import register_health_check_job, HealthCheckResult
+        
+        def navidrome_health_check() -> HealthCheckResult:
+            try:
+                connected = self.ensure_connection()
+                status = "healthy" if connected else "unhealthy"
+                message = "Navidrome server is reachable" if connected else "Navidrome server connection failed"
+                return HealthCheckResult(
+                    service_name="navidrome",
+                    status=status,
+                    message=message,
+                )
+            except Exception as e:
+                return HealthCheckResult(
+                    service_name="navidrome",
+                    status="unhealthy",
+                    message=f"Navidrome connection error: {str(e)}",
+                )
+        
+        register_health_check_job("navidrome_health_check", navidrome_health_check, interval_seconds=300)
 
     def set_progress_callback(self, callback):
         """Set callback function for progress updates"""

@@ -3,7 +3,7 @@ Bulk import operations using SQLAlchemy 2.0 and LibraryManager.
 Efficiently ingests SoulSyncTrack objects into the database with caching.
 """
 from collections import defaultdict
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Callable
 from datetime import date, datetime
 
 from sqlalchemy import select, func, delete
@@ -256,8 +256,28 @@ class LibraryManager:
             Tuple of (Track object, is_new: bool)
             is_new is True if track was newly created, False if updated
         """
-        # Try to find existing track
-        track = self._find_track_by_identifiers(session, track_data.identifiers)
+        # FIRST: Check for existing external identifiers (provider-agnostic deduplication)
+        # This prevents duplicates across ALL providers (Plex ratingKey, Jellyfin ID, Navidrome ID, etc.)
+        # If same external ID exists, it must be the same track - update it instead of creating new
+        track = None
+        if track_data.identifiers:
+            for provider_source, provider_item_id in track_data.identifiers.items():
+                if provider_source and provider_item_id:
+                    stmt = select(ExternalIdentifier).where(
+                        ExternalIdentifier.provider_source == provider_source,
+                        ExternalIdentifier.provider_item_id == str(provider_item_id)
+                    )
+                    ext_id = session.execute(stmt).scalar_one_or_none()
+                    if ext_id and ext_id.track:
+                        track = ext_id.track
+                        # Found match - no logging needed here, will log in update section if needed
+                        break  # Use first match
+        
+        # SECOND: Try to find by other methods if external ID didn't match
+        if track is None:
+            track = self._find_track_by_identifiers(session, track_data.identifiers)
+        
+        # THIRD: Try to find by metadata
         if track is None:
             track = self._find_track_by_metadata(
                 session,
@@ -293,6 +313,7 @@ class LibraryManager:
         else:
             # Update existing track (Sparse Updates)
             # Identity fields - always update
+            old_title = track.title
             track.title = track_data.title
             if album and track.album_id != album.id:
                 track.album = album
@@ -304,6 +325,28 @@ class LibraryManager:
                 track.sort_title = track_data.sort_title
             if track_data.edition is not None:
                 track.edition = track_data.edition
+            else:
+                # Special case: If title changed significantly and edition looks corrupted, clear it
+                # Corruption patterns: dangling parenthesis, typos like "titile", very short strings
+                # Also check if edition content is actually part of the new title (split corruption)
+                if track.edition and old_title != track_data.title:
+                    edition_lower = track.edition.lower()
+                    new_title_lower = track_data.title.lower()
+                    
+                    is_corrupted = (
+                        'titile' in edition_lower or  # Common typo
+                        track.edition.startswith(') -') or  # Dangling parenthesis
+                        track.edition.startswith('(') and ')' not in track.edition or  # Unmatched paren
+                        len(track.edition.strip()) < 3 or  # Too short
+                        track.edition.count('(') != track.edition.count(')') or  # Mismatched parens
+                        edition_lower in new_title_lower  # Edition content is now part of title (split fix)
+                    )
+                    if is_corrupted:
+                        logger.info(
+                            f"Corruption fix: Clearing corrupted edition '{track.edition}' "
+                            f"for track '{track_data.title}'"
+                        )
+                        track.edition = None
             if track_data.duration is not None:
                 track.duration = track_data.duration
             if track_data.track_number is not None:
@@ -326,6 +369,8 @@ class LibraryManager:
                 track.musicbrainz_id = track_data.musicbrainz_id
 
             # NOTE: Explicitly NOT updating added_at to preserve original import time
+            
+            # Only log at DEBUG level for routine updates (reduces log spam)
             logger.debug(f"Updated existing track: {track.title} by {artist.name}")
             is_new = False
 
@@ -414,7 +459,11 @@ class LibraryManager:
         session.execute(delete(Track).where(Track.id.in_(list(deleted_track_ids))))
         return len(deleted_track_ids)
 
-    def bulk_import(self, tracks: List[SoulSyncTrack]) -> int:
+    def bulk_import(
+        self,
+        tracks: List[SoulSyncTrack],
+        progress_callback: Optional[Callable[[Dict[str, int]], None]] = None
+    ) -> int:
         """
         Bulk import SoulSyncTrack objects into database.
         Uses local caching and batched commits for efficiency.
@@ -436,6 +485,9 @@ class LibraryManager:
         updated_count = 0
         failed_count = 0
         observed_identifiers: Dict[str, set[str]] = defaultdict(set)
+        # Progress tracking (unique artists/albums encountered)
+        seen_artist_ids: set[int] = set()
+        seen_album_ids: set[int] = set()
 
         try:
             for idx, track_data in enumerate(tracks):
@@ -462,14 +514,16 @@ class LibraryManager:
                         )
                         continue
                     
-                    logger.debug(
-                        "Processing track %s/%s: title='%s' artist='%s' album='%s'",
-                        idx + 1,
-                        len(tracks),
-                        track_data.title,
-                        track_data.artist_name,
-                        track_data.album_title,
-                    )
+                    # Only log every 100 tracks to reduce spam (batch commits log at that interval)
+                    if (idx + 1) % 100 == 0 or idx == 0:
+                        logger.debug(
+                            "Processing track %s/%s: title='%s' artist='%s' album='%s'",
+                            idx + 1,
+                            len(tracks),
+                            track_data.title,
+                            track_data.artist_name,
+                            track_data.album_title,
+                        )
 
                     # Get or create artist
                     artist = self._get_or_create_artist(
@@ -477,6 +531,8 @@ class LibraryManager:
                         track_data.artist_name,
                         sort_name=track_data.artist_sort_name
                     )
+                    if artist and artist.id:
+                        seen_artist_ids.add(artist.id)
 
                     # Get or create album
                     album = self._get_or_create_album(
@@ -489,6 +545,8 @@ class LibraryManager:
                         mb_release_id=track_data.mb_release_id,
                         original_release_date=track_data.original_release_date
                     )
+                    if album and album.id:
+                        seen_album_ids.add(album.id)
 
                     # Upsert track
                     track, is_new = self._upsert_track(session, track_data, artist, album)
@@ -521,6 +579,22 @@ class LibraryManager:
                         f"Batch committed: {idx + 1}/{len(tracks)} tracks processed"
                     )
 
+                # Emit progress updates periodically (every 25 items and on each batch commit)
+                if progress_callback and (((idx + 1) % 25 == 0) or ((idx + 1) % BATCH_SIZE == 0)):
+                    try:
+                        progress_callback({
+                            "processed": idx + 1,
+                            "total": len(tracks),
+                            "imported": imported_count,
+                            "updated": updated_count,
+                            "failed": failed_count,
+                            "artists": len(seen_artist_ids),
+                            "albums": len(seen_album_ids),
+                        })
+                    except Exception:
+                        # Progress should never break import; ignore callback errors
+                        pass
+
             # Final commit for inserts/updates
             session.commit()
 
@@ -533,6 +607,21 @@ class LibraryManager:
             logger.info(
                 f"Bulk import complete: {imported_count} new, {updated_count} updated, {deleted_count} deleted, {failed_count} failed (total processed: {total_processed})"
             )
+
+            # Final progress callback
+            if progress_callback:
+                try:
+                    progress_callback({
+                        "processed": len(tracks),
+                        "total": len(tracks),
+                        "imported": imported_count,
+                        "updated": updated_count,
+                        "failed": failed_count,
+                        "artists": len(seen_artist_ids),
+                        "albums": len(seen_album_ids),
+                    })
+                except Exception:
+                    pass
 
         except Exception as e:
             session.rollback()

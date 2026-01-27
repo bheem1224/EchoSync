@@ -141,6 +141,43 @@ class SpotifyClient(SyncServiceProvider):
 
         self._setup_client()
         ProviderRegistry.register(SpotifyClient)
+        self._register_health_check()
+    
+    def _register_health_check(self):
+        """Register periodic health check for Spotify API."""
+        from core.health_check import register_health_check_job, HealthCheckResult
+        
+        def spotify_health_check() -> HealthCheckResult:
+            try:
+                if not self.sp:
+                    return HealthCheckResult(
+                        service_name="spotify",
+                        status="unhealthy",
+                        message="Spotify client not initialized"
+                    )
+                
+                # Try a lightweight API call
+                try:
+                    self.sp.current_user()
+                    return HealthCheckResult(
+                        service_name="spotify",
+                        status="healthy",
+                        message="Spotify API is reachable"
+                    )
+                except Exception as api_err:
+                    return HealthCheckResult(
+                        service_name="spotify",
+                        status="unhealthy",
+                        message=f"Spotify API error: {str(api_err)}"
+                    )
+            except Exception as e:
+                return HealthCheckResult(
+                    service_name="spotify",
+                    status="unhealthy",
+                    message=f"Spotify health check error: {str(e)}"
+                )
+        
+        register_health_check_job("spotify_health_check", spotify_health_check, interval_seconds=300)
 
     def _setup_client(self):
         try:

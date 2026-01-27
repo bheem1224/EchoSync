@@ -300,6 +300,21 @@ class WeightedMatchingEngine:
         if not version_match:
             version_penalty = self.weights.version_mismatch_penalty
             reasoning_parts.append(f"Version mismatch: {version_reasoning} (-{version_penalty})")
+            
+            # Version mismatch is a critical failure for EXACT_SYNC - return immediately with low score
+            # This prevents Live/Remix versions from matching when original is wanted
+            logger.debug(f"REJECTING candidate due to version mismatch: {version_reasoning}")
+            return MatchResult(
+                confidence_score=0.0,  # Hard fail on version mismatch
+                passed_version_check=False,
+                passed_edition_check=True,
+                fuzzy_text_score=1.0,
+                duration_match_score=0.0,
+                quality_bonus_applied=0.0,
+                version_penalty_applied=version_penalty,
+                edition_penalty_applied=0.0,
+                reasoning=" | ".join(reasoning_parts) + " | REJECTED: Version mismatch is critical failure"
+            )
         else:
             reasoning_parts.append(f"Version match: {version_reasoning}")
 
@@ -408,15 +423,25 @@ class WeightedMatchingEngine:
             (matches: bool, reasoning: str)
         """
 
-        # If either has no edition, consider it a match (no strong signal)
+        # If both have no edition, perfect match
         if not source.edition and not candidate.edition:
-            return True, "Both tracks have no version info"
+            return True, "Both tracks have no version info (prefer originals)"
 
-        if not source.edition:
-            return True, "Source has no version, accepting candidate version"
+        # If source has no version but candidate does, this is a MISMATCH
+        # When user wants original, don't give them remix/live
+        if not source.edition and candidate.edition:
+            candidate_lower = candidate.edition.lower()
+            # Check if candidate is a remix/live/etc (not just remaster which is usually okay)
+            unwanted_versions = {'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club'}
+            if any(unwanted in candidate_lower for unwanted in unwanted_versions):
+                return False, f"Source wants original but candidate is '{candidate.edition}' (version mismatch)"
+            # Remaster/deluxe/etc are usually acceptable if source has no version preference
+            return True, f"Candidate is '{candidate.edition}' (remaster/edition okay)"
 
-        if not candidate.edition:
-            return True, "Candidate has no version, accepting source version"
+        # If candidate has no version but source specifies one, usually okay
+        # (candidate might be original or just missing metadata)
+        if source.edition and not candidate.edition:
+            return True, "Candidate has no version info (might be original)"
 
         # Both have editions - check if they're the same or related
         source_version_lower = source.edition.lower()

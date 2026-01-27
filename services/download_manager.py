@@ -17,12 +17,14 @@ Design Principle: "Central Control"
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+import threading
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
+from core.matching_engine.text_utils import normalize_artist, normalize_title
 from core.settings import config_manager
 from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
@@ -42,6 +44,8 @@ class DownloadManager:
         self.matcher = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
         self._shutdown = False
         self._loop_task = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread: Optional[threading.Thread] = None
         self._provider: Optional[ProviderBase] = None
 
     @classmethod
@@ -84,6 +88,15 @@ class DownloadManager:
             # Serialize track to JSON for storage
             track_json = track.to_dict()
 
+            # Prevent duplicate queue entries for the same track while it is in-flight
+            existing = self._find_existing_download(track_json)
+            if existing:
+                existing_id, existing_status = existing
+                logger.info(
+                    f"Duplicate download detected (ID {existing_id}, status {existing_status}); skipping enqueue"
+                )
+                return existing_id
+
             download = Download(
                 soul_sync_track=track_json,
                 status="queued",
@@ -100,18 +113,62 @@ class DownloadManager:
         """Start the background processing loop"""
         if self._loop_task:
             return
-
         self._shutdown = False
-        self._loop_task = asyncio.create_task(self._process_loop())
-        logger.info("Download Manager background task started")
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop:
+            self._loop = loop
+            self._loop_task = loop.create_task(self._process_loop())
+            logger.info("Download Manager background task started (shared loop)")
+            return
+
+        # No running event loop (common for Flask/WSGI). Start a dedicated loop thread.
+        self._start_dedicated_loop()
 
     async def stop_background_task(self):
         """Stop the background processing loop"""
         self._shutdown = True
         if self._loop_task:
-            await self._loop_task
+            if self._loop and self._loop.is_running() and self._loop is not asyncio.get_running_loop():
+                # Wake the loop so it can notice shutdown
+                self._loop.call_soon_threadsafe(lambda: None)
+                if self._loop_thread:
+                    self._loop_thread.join(timeout=5)
+            else:
+                await self._loop_task
             self._loop_task = None
+        self._loop = None
         logger.info("Download Manager background task stopped")
+
+    def ensure_background_task(self):
+        """Start background processing when called from sync contexts."""
+        if self._loop_task:
+            return
+        self._shutdown = False
+        self._start_dedicated_loop()
+
+    def _start_dedicated_loop(self):
+        """Spin up a dedicated asyncio loop in a daemon thread for download processing."""
+        if self._loop_task or (self._loop_thread and self._loop_thread.is_alive()):
+            return
+
+        def _runner():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._loop = loop
+            self._loop_task = loop.create_task(self._process_loop())
+            try:
+                loop.run_until_complete(self._loop_task)
+            finally:
+                loop.close()
+
+        self._loop_thread = threading.Thread(target=_runner, daemon=True)
+        self._loop_thread.start()
+        logger.info("Download Manager background task started (dedicated loop)")
 
     async def _recover_stuck_items(self):
         """Reset items stuck in 'searching' state back to 'queued' on startup."""
@@ -160,8 +217,10 @@ class DownloadManager:
 
         queued_ids = []
         with self.db.session_scope() as session:
-            # Get up to 5 queued items
-            items = session.query(Download).filter(Download.status == "queued").limit(5).all()
+            # Get up to 30 queued items to enable 10 concurrent searches
+            # Note: SlskdProvider internally limits to 5 concurrent searches (Soulseek IP ban protection)
+            # Download manager can scale to 10 if other clients (e.g., non-Soulseek) are added later
+            items = session.query(Download).filter(Download.status == "queued").limit(30).all()
             if items:
                 logger.info(f"Found {len(items)} queued items for processing.")
 
@@ -174,9 +233,21 @@ class DownloadManager:
         if not queued_ids:
             return
 
+        # Create all search tasks concurrently (don't await sequentially)
+        # Slskd will throttle to 5 concurrent via semaphore
+        tasks = []
         for download_id in queued_ids:
-            logger.debug(f"Processing queued download ID: {download_id}")
-            await self._execute_search_and_download(download_id, provider)
+            logger.debug(f"Queuing download for processing: {download_id}")
+            task = asyncio.create_task(self._execute_search_and_download(download_id, provider))
+            tasks.append(task)
+        
+        # Wait for all searches to complete (with semaphore limiting concurrent execution)
+        if tasks:
+            logger.info(f"Started {len(tasks)} search tasks (Slskd will limit to 5 concurrent)")
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            failed = sum(1 for r in results if isinstance(r, Exception))
+            if failed > 0:
+                logger.warning(f"Completed {len(tasks)} searches with {failed} errors")
 
     async def _execute_search_and_download(self, download_id: int, provider: ProviderBase):
         """Perform Search -> Match -> Download for a single item"""
@@ -198,45 +269,68 @@ class DownloadManager:
         try:
             logger.info(f"Searching for: {target_track.artist_name} - {target_track.title} via {provider.name}")
 
-            # 1. Search (Atomic)
-            # Use basic filters for coarse rejection
+            # 1. Get quality profile from config to determine allowed formats
+            quality_profile = self._get_quality_profile()
+            allowed_formats = self._extract_allowed_formats(quality_profile)
+            
+            # Use basic filters for coarse rejection based on quality profile
             basic_filters = {
-                "allowed_extensions": ['mp3', 'flac', 'ogg', 'wav', 'm4a'],
-                "min_bitrate": 128
+                "allowed_extensions": allowed_formats,
+                "min_bitrate": self._get_min_bitrate(quality_profile)
             }
+            
+            logger.info(f"Quality profile allows: {allowed_formats}")
 
-            # Construct query
-            query = f"{target_track.artist_name} {target_track.title}"
-
-            # Call provider search (synchronous wrapper usually, but we are in async)
-            # SlskdProvider.search is the wrapper. We should use _async_search if possible
-            # or run the wrapper in executor to avoid blocking loop.
-            # But the SlskdProvider.search wrapper creates its own loop which is bad inside a loop.
-            # We should call the async method directly if we cast the type.
+            # Generate multiple query variations (fallback strategies)
+            queries = self._generate_search_queries(target_track)
+            logger.info(f"Generated {len(queries)} search query variations")
 
             candidates = []
-            if hasattr(provider, '_async_search'):
-                logger.debug(f"Invoking _async_search on {provider.name} with query: '{query}'")
-                candidates = await provider._async_search(query, basic_filters)
-            else:
-                logger.debug(f"Invoking sync search on {provider.name} with query: '{query}'")
-                # Fallback to sync call in executor
-                loop = asyncio.get_running_loop()
-                candidates = await loop.run_in_executor(None, provider.search, query, basic_filters)
+            for idx, query in enumerate(queries, 1):
+                logger.info(f"Trying search strategy {idx}/{len(queries)}: '{query}'")
+                
+                # Call provider search
+                search_results = []
+                if hasattr(provider, '_async_search'):
+                    logger.debug(f"Invoking _async_search on {provider.name}")
+                    search_results = await provider._async_search(query, basic_filters)
+                else:
+                    logger.debug(f"Invoking sync search on {provider.name}")
+                    # Fallback to sync call in executor
+                    loop = asyncio.get_running_loop()
+                    search_results = await loop.run_in_executor(None, provider.search, query, basic_filters)
 
-            logger.info(f"Search returned {len(candidates)} candidates.")
+                logger.info(f"Strategy {idx} returned {len(search_results)} candidates")
+                
+                if search_results:
+                    candidates.extend(search_results)
+                    # If we got good results, we can stop trying more strategies
+                    if len(candidates) >= 20:
+                        logger.info(f"Found sufficient candidates ({len(candidates)}), stopping search strategies")
+                        break
+
+            logger.info(f"Total candidates from all strategies: {len(candidates)}")
 
             if not candidates:
-                logger.warning(f"No results found for {query}")
+                logger.warning("No results found for any search strategy")
                 self._update_status(download_id, "failed_no_results")
+                return
+
+            # 1.5. Apply quality profile filtering to candidates
+            filtered_candidates = self._filter_by_quality_profile(candidates, quality_profile)
+            logger.info(f"After quality profile filtering: {len(filtered_candidates)} candidates remain")
+            
+            if not filtered_candidates:
+                logger.warning(f"No candidates matched quality profile (had {len(candidates)} before filtering)")
+                self._update_status(download_id, "failed_quality_filter")
                 return
 
             # 2. Match (Selection)
             logger.debug("Running matching engine selection...")
-            best_candidate = self.matcher.select_best_download_candidate(target_track, candidates)
+            best_candidate = self.matcher.select_best_download_candidate(target_track, filtered_candidates)
 
             if not best_candidate:
-                logger.warning(f"No suitable candidate matched for {query} (out of {len(candidates)} candidates)")
+                logger.warning(f"No suitable candidate matched (tried {len(queries)} strategies, got {len(candidates)} candidates)")
                 self._update_status(download_id, "failed_no_match")
                 return
 
@@ -319,7 +413,152 @@ class DownloadManager:
             except Exception as e:
                 logger.error(f"Error checking status for {db_id}: {e}")
 
-    def _update_status(self, download_id: int, status: str, provider_id: str = None):
+    def _generate_search_queries(self, track: SoulSyncTrack) -> List[str]:
+        """
+        Generate multiple search query variations for fallback strategies.
+        Returns queries in priority order (most specific to most generic).
+        """
+        from core.matching_engine.text_utils import extract_version_info
+        
+        queries = []
+        
+        # Strip version/remix info from title to search for original version
+        clean_title, version_info = extract_version_info(track.title) if track.title else (track.title, None)
+        
+        if version_info:
+            logger.info(f"Stripped version info from title: '{track.title}' -> '{clean_title}' (removed: '{version_info}')")
+        
+        # Use clean title without version info for searches
+        search_title = clean_title if clean_title else track.title
+        
+        # Strategy 1: Artist + Title (most specific)
+        if track.artist_name and search_title:
+            queries.append(f"{track.artist_name} {search_title}")
+        
+        # Strategy 2: Album + Title (useful when artist has multiple versions)
+        if track.album_title and search_title and track.album_title != search_title:
+            queries.append(f"{track.album_title} {search_title}")
+        
+        # Strategy 3: Title only (broadest search)
+        if search_title:
+            queries.append(search_title)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_queries = []
+        for q in queries:
+            q_lower = q.lower().strip()
+            if q_lower and q_lower not in seen:
+                unique_queries.append(q)
+                seen.add(q_lower)
+        
+        return unique_queries
+
+    def _get_quality_profile(self) -> Optional[Dict[str, Any]]:
+        """Get the active quality profile from config."""
+        try:
+            profiles = config_manager.get_quality_profiles()
+            if profiles and len(profiles) > 0:
+                # Use first profile (could be enhanced to support multiple/selection)
+                return profiles[0]
+        except Exception as e:
+            logger.warning(f"Failed to load quality profile: {e}")
+        return None
+
+    def _extract_allowed_formats(self, quality_profile: Optional[Dict[str, Any]]) -> List[str]:
+        """Extract allowed file formats from quality profile."""
+        if not quality_profile:
+            # Default fallback if no profile configured
+            return ['mp3', 'flac', 'ogg', 'wav', 'm4a', 'aac']
+        
+        formats = quality_profile.get('formats', [])
+        allowed = []
+        
+        for fmt in formats:
+            format_type = fmt.get('type', '').lower()
+            if format_type:
+                allowed.append(format_type)
+        
+        if not allowed:
+            # Fallback if profile exists but has no formats
+            logger.warning("Quality profile has no formats defined, using defaults")
+            return ['flac', 'wav', 'dsd']  # Conservative default
+        
+        return allowed
+
+    def _get_min_bitrate(self, quality_profile: Optional[Dict[str, Any]]) -> int:
+        """Get minimum bitrate from quality profile."""
+        if not quality_profile:
+            return 128
+        
+        # Find the minimum bitrate across all format rules
+        formats = quality_profile.get('formats', [])
+        min_bitrate = 9999
+        
+        for fmt in formats:
+            fmt_min = fmt.get('min_bitrate', 0)
+            if fmt_min > 0 and fmt_min < min_bitrate:
+                min_bitrate = fmt_min
+        
+        return min_bitrate if min_bitrate < 9999 else 128
+
+    def _filter_by_quality_profile(self, candidates: List[SoulSyncTrack], quality_profile: Optional[Dict[str, Any]]) -> List[SoulSyncTrack]:
+        """Filter candidates using the quality profile rules."""
+        if not quality_profile or not candidates:
+            return candidates
+        
+        formats = quality_profile.get('formats', [])
+        if not formats:
+            return candidates
+        
+        # Sort formats by priority (lower number = higher priority)
+        sorted_formats = sorted(formats, key=lambda x: x.get('priority', 999))
+        
+        # Try each format priority in order
+        for fmt in sorted_formats:
+            format_type = fmt.get('type', '').lower()
+            min_size_mb = fmt.get('min_size_mb', 0)
+            max_size_mb = fmt.get('max_size_mb', 0)
+            
+            matching = []
+            for track in candidates:
+                # Check format match
+                if track.file_format and track.file_format.lower() != format_type:
+                    continue
+                
+                # Check size constraints
+                if track.file_size_bytes:
+                    size_mb = track.file_size_bytes / (1024 * 1024)
+                    if min_size_mb > 0 and size_mb < min_size_mb:
+                        continue
+                    if max_size_mb > 0 and size_mb > max_size_mb:
+                        continue
+                
+                # Check additional constraints based on format type
+                if format_type == 'flac' or format_type == 'wav':
+                    bit_depths = fmt.get('bit_depths', [])
+                    sample_rates = fmt.get('sample_rates', [])
+                    
+                    if bit_depths and track.bit_depth:
+                        if str(track.bit_depth) not in bit_depths:
+                            continue
+                    
+                    if sample_rates and track.sample_rate:
+                        # Convert to kHz string for comparison
+                        sample_rate_khz = str(int(track.sample_rate / 1000))
+                        if sample_rate_khz not in sample_rates:
+                            continue
+                
+                matching.append(track)
+            
+            if matching:
+                logger.info(f"Found {len(matching)} candidates matching format priority {fmt.get('priority')}: {format_type}")
+                return matching
+        
+        logger.debug("No candidates matched any quality profile format")
+        return []
+
+    def _update_status(self, download_id: int, status: str, provider_id: Optional[str] = None):
         """Helper to update DB status"""
         with self.db.session_scope() as session:
             download = session.query(Download).get(download_id)
@@ -328,6 +567,34 @@ class DownloadManager:
                 download.updated_at = datetime.utcnow()
                 if provider_id:
                     download.provider_id = provider_id
+
+    def _find_existing_download(self, track_json: Dict[str, Any]) -> Optional[Tuple[int, str]]:
+        """Return an existing active download (id, status) matching the normalized track signature."""
+        signature = self._normalize_track_signature(track_json)
+        if not any(signature):
+            return None
+
+        active_states = {"queued", "searching", "downloading"}
+        with self.db.session_scope() as session:
+            items = session.query(Download).filter(Download.status.in_(active_states)).all()
+            for item in items:
+                other_sig = self._normalize_track_signature(item.soul_sync_track or {})
+                if signature == other_sig:
+                    return item.id, item.status
+        return None
+
+    def _normalize_track_signature(self, track_json: Dict[str, Any]) -> Tuple[str, str, Optional[int]]:
+        """Build a normalized signature for duplicate detection."""
+        artist = normalize_artist(track_json.get("artist_name") or track_json.get("artist") or "")
+        title = normalize_title(track_json.get("title") or track_json.get("raw_title") or "")
+
+        duration = track_json.get("duration")
+        if duration is None:
+            duration = track_json.get("duration_ms")
+        if isinstance(duration, float):
+            duration = int(duration)
+
+        return artist or "", title or "", duration
 
     def get_status(self, download_id: int) -> Optional[Dict]:
         """Get status for UI"""
@@ -346,3 +613,30 @@ class DownloadManager:
 # Global Accessor
 def get_download_manager():
     return DownloadManager.get_instance()
+
+
+def register_download_manager_job(interval_seconds: int = 300):
+    """
+    Register download manager processing as a periodic job with the global job_queue.
+    Note: The download manager already runs a continuous processing loop when started.
+    This job is mainly for visibility in the jobs UI.
+    
+    Args:
+        interval_seconds: Interval placeholder (default 5 minutes = 300s)
+    """
+    from core.job_queue import job_queue
+    
+    def process_downloads():
+        """Status check placeholder for job visibility"""
+        logger.debug("Download manager status check (continuous processing active)")
+    
+    job_queue.register_job(
+        name="download_manager_status",
+        func=process_downloads,
+        interval_seconds=interval_seconds,
+        enabled=False,  # Disabled by default since _process_loop runs continuously
+        tags=["soulsync", "downloads"],
+        max_retries=3
+    )
+    
+    logger.info(f"Download manager status job registered (interval: {interval_seconds}s, disabled by default)")

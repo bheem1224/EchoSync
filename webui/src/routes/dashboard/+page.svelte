@@ -71,7 +71,7 @@
             scanningStatus = true;
             
             // Calculate progress percentage based on tracks processed
-            const total = dbStats.tracks || 1000;
+            const total = (progress.total ?? dbStats.tracks) || 1000;
             const processed = progress.tracks || 0;
             updateProgress = Math.min(100, Math.round((processed / total) * 100));
             
