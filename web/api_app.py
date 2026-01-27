@@ -45,7 +45,11 @@ from web.routes.library import bp as library_bp
 from core.plugin_loader import PluginLoader
 from core.settings import config_manager
 from core.job_queue import start_job_queue
+from backend_entry import start_services
+import threading
+import asyncio
 
+_backend_started = False
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -102,6 +106,27 @@ def create_app() -> Flask:
 
     # Start the job queue for async task execution
     start_job_queue()
+
+    # Start Backend Services (Download Manager, Monitors) in a separate thread
+    # We use WERKZEUG_RUN_MAIN to ensure we only run in the reloader child process
+    # to avoid double execution (one in watcher, one in worker).
+    # Since run_api.py defaults to debug=True (reloader enabled), this is the safest check.
+    global _backend_started
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true" and not _backend_started:
+        def run_backend_services():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(start_services())
+            except Exception as e:
+                print(f"[ERROR] Backend services failed: {e}")
+            finally:
+                loop.close()
+
+        backend_thread = threading.Thread(target=run_backend_services, daemon=True, name="BackendServices")
+        backend_thread.start()
+        _backend_started = True
+        print("[INFO] Backend services thread started")
 
     return app
 
