@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from typing import Optional
+from typing import Optional, Dict
 from database import MusicDatabase, LibraryManager
 from core.tiered_logger import get_logger
 from core.settings import config_manager
@@ -50,6 +50,10 @@ class DatabaseUpdateWorker(QThread if HAS_QTHREAD else threading.Thread):
         self.processed_tracks = 0
         self.successful_operations = 0
         self.failed_operations = 0
+        self.total_tracks = 0
+
+        # For routes expecting 'thread' attribute
+        self.thread = self
 
         logger.info(f"DatabaseUpdateWorker initialized for {server_type} ({('full' if full_refresh else 'incremental')} mode)")
 
@@ -71,11 +75,24 @@ class DatabaseUpdateWorker(QThread if HAS_QTHREAD else threading.Thread):
                 logger.warning(f"No tracks found in {self.server_type} library")
                 return
             
-            logger.info(f"Found {len(all_tracks)} tracks in {self.server_type} library")
+            self.total_tracks = len(all_tracks)
+            logger.info(f"Found {self.total_tracks} tracks in {self.server_type} library")
             logger.debug("Beginning bulk import via LibraryManager")
             
             # Use LibraryManager to bulk import tracks
-            imported_count = library_manager.bulk_import(all_tracks)
+            def _on_progress(progress: Dict[str, int]):
+                try:
+                    # Update worker stats live
+                    self.processed_tracks = progress.get("processed", self.processed_tracks)
+                    self.successful_operations = progress.get("imported", 0) + progress.get("updated", 0)
+                    self.failed_operations = progress.get("failed", 0)
+                    # Optional: track artists/albums if provided
+                    self.processed_artists = progress.get("artists", self.processed_artists)
+                    self.processed_albums = progress.get("albums", self.processed_albums)
+                except Exception:
+                    pass
+
+            imported_count = library_manager.bulk_import(all_tracks, progress_callback=_on_progress)
             
             logger.info(f"Successfully imported {imported_count} tracks from {self.server_type}")
             logger.debug(

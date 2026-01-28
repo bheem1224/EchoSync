@@ -198,6 +198,22 @@ class WatchlistArtist(Base):
     )
 
 
+class Download(Base):
+    """Model for tracking download state (Central Control)."""
+    __tablename__ = "downloads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    soul_sync_track: Mapped[dict] = mapped_column(JSON, nullable=False)  # Serialized SoulSyncTrack
+    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
@@ -386,6 +402,7 @@ __all__ = [
     "AudioFingerprint",
     "Wishlist",
     "WatchlistArtist",
+    "Download",
     "MusicDatabase",
     "get_database",
     "close_database",

@@ -24,7 +24,7 @@
     { label: 'Metadata', href: '/settings#metadata' },
     { label: 'Search', href: '/settings#search' },
     { label: 'Misc', href: '/settings#misc' },
-    { label: 'Jobs', href: '/settings#jobs' },
+    { label: 'Jobs', href: '/settings/jobs' },
     { label: 'System', href: '/settings#system' }
   ];
 

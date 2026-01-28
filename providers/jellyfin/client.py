@@ -277,7 +277,32 @@ class JellyfinClient(MediaServerProvider):
         self._all_tracks_cache = None
         self._cache_populated = False
         
+        self._register_health_check()
+        
         # Progress callback for UI updates during caching
+    
+    def _register_health_check(self):
+        """Register periodic health check for Jellyfin server."""
+        from core.health_check import register_health_check_job, HealthCheckResult
+        
+        def jellyfin_health_check() -> HealthCheckResult:
+            try:
+                connected = self.ensure_connection()
+                status = "healthy" if connected else "unhealthy"
+                message = "Jellyfin server is reachable" if connected else "Jellyfin server connection failed"
+                return HealthCheckResult(
+                    service_name="jellyfin",
+                    status=status,
+                    message=message,
+                )
+            except Exception as e:
+                return HealthCheckResult(
+                    service_name="jellyfin",
+                    status="unhealthy",
+                    message=f"Jellyfin connection error: {str(e)}",
+                )
+        
+        register_health_check_job("jellyfin_health_check", jellyfin_health_check, interval_seconds=300)
         self._progress_callback = None
         
         # Initialize centralized HTTP client for Jellyfin (10 requests/second)

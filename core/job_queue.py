@@ -30,6 +30,9 @@ class ScheduledJob:
     backoff_factor: float = field(default=2.0, compare=False)
     current_retries: int = field(default=0, compare=False)
     last_error: Optional[str] = field(default=None, compare=False)
+    last_error_time: Optional[float] = field(default=None, compare=False)
+    total_failures: int = field(default=0, compare=False)
+    total_successes: int = field(default=0, compare=False)
     last_started: Optional[float] = field(default=None, compare=False)
     last_finished: Optional[float] = field(default=None, compare=False)
     last_success: Optional[float] = field(default=None, compare=False)
@@ -113,10 +116,11 @@ class JobQueue:
                 job.enabled = True
                 job.current_retries = 0
                 job.last_error = None
+                job.last_error_time = None
                 self._remove_from_heap(name)
                 job.next_run = time.time()
                 heapq.heappush(self._heap, job)
-                logger.info(f"Enabled job '{name}'")
+                logger.info(f"Enabled job '{name}' (cleared error state)")
 
     def disable_job(self, name: str):
         with self._lock:
@@ -157,6 +161,9 @@ class JobQueue:
                     "running": job.running,
                     "current_retries": job.current_retries,
                     "last_error": job.last_error,
+                    "last_error_time": job.last_error_time,
+                    "total_failures": job.total_failures,
+                    "total_successes": job.total_successes,
                     "last_started": job.last_started,
                     "last_finished": job.last_finished,
                     "last_success": job.last_success,
@@ -219,18 +226,24 @@ class JobQueue:
                     job.func()
                     job.last_success = time.time()
                     job.last_error = None
+                    job.last_error_time = None
                     job.current_retries = 0
+                    job.total_successes += 1
                     log_level(f"Completed job: {job.name}")
                     break
                 except Exception as e:
-                    job.last_error = str(e)
+                    error_msg = str(e)
+                    job.last_error = error_msg
+                    job.last_error_time = time.time()
                     job.current_retries += 1
+                    job.total_failures += 1
                     attempt += 1
-                    logger.error(f"Job failed: {job.name}, attempt {attempt}, error: {e}")
+                    logger.error(f"Job failed: {job.name}, attempt {attempt}, error: {e}", exc_info=True)
 
                     if job.current_retries >= job.max_retries:
                         logger.error(
-                            f"Job '{job.name}' exceeded max retries ({job.max_retries}); giving up"
+                            f"Job '{job.name}' exceeded max retries ({job.max_retries}); giving up. "
+                            f"Total failures: {job.total_failures}"
                         )
                         break
 

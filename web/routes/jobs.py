@@ -1,7 +1,7 @@
-from flask import Blueprint, Response
+from flask import Blueprint, Response, request
 import json
 from core.tiered_logger import get_logger
-from core.job_queue import list_jobs as jq_list_jobs
+from core.job_queue import list_jobs as jq_list_jobs, job_queue, run_job_now
 
 logger = get_logger("jobs_route")
 bp = Blueprint("jobs", __name__, url_prefix="/api/jobs")
@@ -61,3 +61,49 @@ def jobs_summary():
             "last_run": None,
         }
         return Response(json.dumps(payload), status=500, mimetype="application/json")
+
+
+@bp.post("/run")
+def run_job():
+    """Trigger immediate execution of a job."""
+    payload = request.get_json(silent=True) or {}
+    job_name = payload.get("name")
+    
+    if not job_name:
+        return Response(json.dumps({"error": "job name required"}), status=400, mimetype="application/json")
+    
+    try:
+        run_job_now(job_name)
+        logger.info(f"Job triggered: {job_name}")
+        return Response(json.dumps({"accepted": True, "job": job_name}), status=200, mimetype="application/json")
+    except Exception as e:
+        logger.error(f"Error triggering job {job_name}: {e}")
+        return Response(json.dumps({"error": str(e)}), status=500, mimetype="application/json")
+
+
+@bp.post("/<job_name>/interval")
+def update_job_interval(job_name):
+    """Update interval for a user-configurable job."""
+    payload = request.get_json(silent=True) or {}
+    new_interval = payload.get("interval_seconds")
+    
+    if new_interval is None or new_interval < 60:
+        return Response(json.dumps({"error": "interval_seconds required and must be >= 60"}), status=400, mimetype="application/json")
+    
+    try:
+        with job_queue._lock:
+            job = job_queue._jobs.get(job_name)
+            if not job:
+                return Response(json.dumps({"error": "job not found"}), status=404, mimetype="application/json")
+            
+            # Only allow updating user-configurable jobs (not system/SoulSync)
+            if job.tags and any(t in ["system", "soulsync"] for t in job.tags):
+                return Response(json.dumps({"error": "cannot modify system or SoulSync jobs"}), status=403, mimetype="application/json")
+            
+            job.interval_seconds = new_interval
+        
+        logger.info(f"Updated job {job_name} interval to {new_interval}s")
+        return Response(json.dumps({"accepted": True, "job": job_name, "interval": new_interval}), status=200, mimetype="application/json")
+    except Exception as e:
+        logger.error(f"Error updating job {job_name} interval: {e}")
+        return Response(json.dumps({"error": str(e)}), status=500, mimetype="application/json")

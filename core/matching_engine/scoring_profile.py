@@ -58,6 +58,10 @@ class ScoringWeights:
     min_confidence_to_accept: float = 70.0  # Minimum score to consider a match valid
     text_match_fallback: float = 0.80  # Fallback text fuzzy match if no fingerprints available
 
+    # Advanced Scoring Flags
+    prefer_max_quality: bool = False  # If True, prefer larger file size. If False, prefer smaller (but valid) size.
+    enforce_duration_match: bool = False  # If True, reject files outside duration tolerance before scoring.
+
     # Weights validation
     def validate(self) -> bool:
         """Validate that weights sum properly"""
@@ -90,6 +94,8 @@ class ScoringWeights:
             'fuzzy_match_threshold': self.fuzzy_match_threshold,
             'min_confidence_to_accept': self.min_confidence_to_accept,
             'text_match_fallback': self.text_match_fallback,
+            'prefer_max_quality': self.prefer_max_quality,
+            'enforce_duration_match': self.enforce_duration_match,
         }
 
     @classmethod
@@ -150,7 +156,7 @@ class ExactSyncProfile(ScoringProfile):
             duration_weight=0.20,  # 20% - allow ~3s variance
             fingerprint_weight=0.0,  # NO fingerprint for metadata matching
             quality_bonus=0.05,  # 5% bonus for quality
-            version_mismatch_penalty=50.0,  # -50 for version mismatch (Remix vs Original)
+            version_mismatch_penalty=70.0,  # INCREASED -70 for version mismatch (Live/Remix vs Original)
             edition_mismatch_penalty=15.0,  # -15 for edition mismatch
             duration_tolerance_ms=3000,  # Allow 3 second difference
             fuzzy_match_threshold=0.90,  # High fuzzy threshold for text
@@ -198,15 +204,16 @@ class DownloadSearchProfile(ScoringProfile):
             title_weight=0.50,  # 40/80
             artist_weight=0.375, # 30/80
             album_weight=0.125,  # 10/80
-            duration_weight=0.20,  # 20% - BS detector (>5s = likely wrong)
+            duration_weight=0.20,  # 20% - BS detector (>3s = likely wrong)
             fingerprint_weight=0.0,  # No fingerprint for search
             quality_bonus=0.10,  # 5-10% bonus if format matches request
-            version_mismatch_penalty=50.0,  # -50 for version mismatch (kill score)
+            version_mismatch_penalty=100.0,  # Make remix/live a hard fail for downloads
             edition_mismatch_penalty=10.0,  # -10 for edition issues
-            duration_tolerance_ms=5000,  # Allow 5 second difference (BS threshold)
+            duration_tolerance_ms=3000,  # Allow 3 second difference (BS threshold)
             fuzzy_match_threshold=0.80,  # More lenient for messy filenames
             min_confidence_to_accept=70.0,  # Accept decent matches
             text_match_fallback=0.75,
+            enforce_duration_match=True,  # Enforce duration tolerance before scoring
         )
 
     def get_weights(self) -> ScoringWeights:

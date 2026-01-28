@@ -280,8 +280,8 @@ CAPABILITY_REGISTRY: Dict[str, ProviderCapabilities] = {
         supports_streaming=False,
         supports_downloads=False,
     ),
-    'soulseek': ProviderCapabilities(
-        name='soulseek',
+    'slskd': ProviderCapabilities(
+        name='slskd',
         supports_playlists=PlaylistSupport.NONE,
         search=SearchCapabilities(tracks=True, artists=False, albums=False, playlists=False),
         metadata=MetadataRichness.LOW,

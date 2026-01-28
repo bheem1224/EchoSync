@@ -8,11 +8,12 @@ load_dotenv()
 
 from core.settings import config_manager
 from core.tiered_logger import setup_logging, get_logger
+from services.download_manager import get_download_manager
 from providers.spotify.client import SpotifyClient
 from providers.plex.client import PlexClient
 from providers.jellyfin.client import JellyfinClient
 from providers.navidrome.client import NavidromeClient
-from providers.soulseek.client import SoulseekClient
+from providers.slskd.client import SlskdProvider
 
 logger = get_logger("backend")
 
@@ -21,7 +22,7 @@ class ServiceStatusMonitor:
     """Background service monitor that periodically checks provider connectivity."""
 
     def __init__(self, spotify: SpotifyClient, plex: PlexClient, jellyfin: JellyfinClient,
-                 navidrome: NavidromeClient, soulseek: SoulseekClient):
+                 navidrome: NavidromeClient, soulseek: SlskdProvider):
         self.spotify = spotify
         self.plex = plex
         self.jellyfin = jellyfin
@@ -84,18 +85,15 @@ async def _graceful_close(clients: Iterable[Any]) -> None:
                 logger.error("Error closing %s: %s", client.__class__.__name__, exc)
 
 
-async def backend_main() -> None:
-    logging_config = config_manager.get_logging_config()
-    log_file = logging_config.get("path", "logs/backend.log")
-    setup_logging(level=logging_config.get("level", "INFO"), log_file=log_file)
-
+async def start_services() -> None:
+    """Start the backend services without configuring logging (assumes external logging setup)."""
     logger.info("Starting backend services...")
 
     spotify_client = SpotifyClient()
     plex_client = PlexClient()
     jellyfin_client = JellyfinClient()
     navidrome_client = NavidromeClient()
-    soulseek_client = SoulseekClient()
+    soulseek_client = SlskdProvider()
 
     monitor = ServiceStatusMonitor(
         spotify=spotify_client,
@@ -106,14 +104,35 @@ async def backend_main() -> None:
     )
 
     monitor_task = asyncio.create_task(monitor.run())
+
+    # Start Download Manager only if explicitly enabled (default: off)
+    downloads_cfg = config_manager.get_all().get("downloads", {}) if hasattr(config_manager, "get_all") else {}
+    auto_start_downloads = downloads_cfg.get("auto_start", False)
+
+    download_manager = get_download_manager()
+    if auto_start_downloads:
+        await download_manager.start_background_task()
+        logger.info("Download Manager auto-start enabled")
+    else:
+        logger.info("Download Manager auto-start is disabled (downloads will not run on startup)")
+
     try:
         await monitor_task
     except asyncio.CancelledError:
         logger.info("Backend shutdown signal received")
     finally:
         await monitor.shutdown()
+        await download_manager.stop_background_task()
         await _graceful_close([soulseek_client, plex_client, jellyfin_client, navidrome_client])
         logger.info("Backend services stopped")
+
+
+async def backend_main() -> None:
+    logging_config = config_manager.get_logging_config()
+    log_file = logging_config.get("path", "logs/backend.log")
+    setup_logging(level=logging_config.get("level", "INFO"), log_file=log_file)
+
+    await start_services()
 
 
 if __name__ == "__main__":

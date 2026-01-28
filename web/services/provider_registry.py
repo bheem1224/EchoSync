@@ -31,6 +31,12 @@ def list_providers() -> List[Dict]:
             }
             try:
                 caps = fetch_capabilities(name)
+                search_caps = {
+                    'tracks': caps.search.tracks,
+                    'artists': caps.search.artists,
+                    'albums': caps.search.albums,
+                    'playlists': caps.search.playlists,
+                }
                 provider_dict['capabilities'] = {
                     'metadata_richness': caps.metadata.name,
                     'supports_streaming': caps.supports_streaming,
@@ -38,15 +44,12 @@ def list_providers() -> List[Dict]:
                     'supports_cover_art': caps.supports_cover_art,
                     'supports_library_scan': caps.supports_library_scan,
                     'supports_playlists': caps.supports_playlists.name if caps.supports_playlists else 'NONE',
-                    'search': {
-                        'tracks': caps.search.tracks,
-                        'artists': caps.search.artists,
-                        'albums': caps.search.albums,
-                        'playlists': caps.search.playlists,
-                    }
+                    'search': search_caps,
+                    'search_capabilities': search_caps  # Alias for compatibility
                 }
             except KeyError:
                 # Provider not in capability registry, use defaults
+                default_search = {'tracks': False, 'artists': False, 'albums': False, 'playlists': False}
                 provider_dict['capabilities'] = {
                     'metadata_richness': 'MEDIUM',
                     'supports_streaming': False,
@@ -54,7 +57,8 @@ def list_providers() -> List[Dict]:
                     'supports_cover_art': False,
                     'supports_library_scan': False,
                     'supports_playlists': 'NONE',
-                    'search': {'tracks': False, 'artists': False, 'albums': False, 'playlists': False}
+                    'search': default_search,
+                    'search_capabilities': default_search
                 }
             providers.append(provider_dict)
     return providers

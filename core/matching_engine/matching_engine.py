@@ -300,6 +300,21 @@ class WeightedMatchingEngine:
         if not version_match:
             version_penalty = self.weights.version_mismatch_penalty
             reasoning_parts.append(f"Version mismatch: {version_reasoning} (-{version_penalty})")
+            
+            # Version mismatch is a critical failure for EXACT_SYNC - return immediately with low score
+            # This prevents Live/Remix versions from matching when original is wanted
+            logger.debug(f"REJECTING candidate due to version mismatch: {version_reasoning}")
+            return MatchResult(
+                confidence_score=0.0,  # Hard fail on version mismatch
+                passed_version_check=False,
+                passed_edition_check=True,
+                fuzzy_text_score=1.0,
+                duration_match_score=0.0,
+                quality_bonus_applied=0.0,
+                version_penalty_applied=version_penalty,
+                edition_penalty_applied=0.0,
+                reasoning=" | ".join(reasoning_parts) + " | REJECTED: Version mismatch is critical failure"
+            )
         else:
             reasoning_parts.append(f"Version match: {version_reasoning}")
 
@@ -408,15 +423,25 @@ class WeightedMatchingEngine:
             (matches: bool, reasoning: str)
         """
 
-        # If either has no edition, consider it a match (no strong signal)
+        # If both have no edition, perfect match
         if not source.edition and not candidate.edition:
-            return True, "Both tracks have no version info"
+            return True, "Both tracks have no version info (prefer originals)"
 
-        if not source.edition:
-            return True, "Source has no version, accepting candidate version"
+        # If source has no version but candidate does, this is a MISMATCH
+        # When user wants original, don't give them remix/live
+        if not source.edition and candidate.edition:
+            candidate_lower = candidate.edition.lower()
+            # Check if candidate is a remix/live/etc (not just remaster which is usually okay)
+            unwanted_versions = {'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club'}
+            if any(unwanted in candidate_lower for unwanted in unwanted_versions):
+                return False, f"Source wants original but candidate is '{candidate.edition}' (version mismatch)"
+            # Remaster/deluxe/etc are usually acceptable if source has no version preference
+            return True, f"Candidate is '{candidate.edition}' (remaster/edition okay)"
 
-        if not candidate.edition:
-            return True, "Candidate has no version, accepting source version"
+        # If candidate has no version but source specifies one, usually okay
+        # (candidate might be original or just missing metadata)
+        if source.edition and not candidate.edition:
+            return True, "Candidate has no version info (might be original)"
 
         # Both have editions - check if they're the same or related
         source_version_lower = source.edition.lower()
@@ -663,6 +688,114 @@ class WeightedMatchingEngine:
                 matched.add(keyword)
 
         return matched
+
+    def select_best_download_candidate(
+        self,
+        target_track: SoulSyncTrack,
+        candidates: list[SoulSyncTrack]
+    ) -> Optional[SoulSyncTrack]:
+        """
+        Select the best download candidate from a list of raw search results.
+        Uses the profile weights to score and rank candidates.
+
+        Args:
+            target_track: The track we want to find
+            candidates: List of raw results from SlskdProvider
+
+        Returns:
+            The winning SoulSyncTrack or None if no acceptable match found
+        """
+        if not candidates:
+            return None
+
+        ranked_candidates = []
+
+        for candidate in candidates:
+            # --- Duration Gating (if enabled) ---
+            if self.weights.enforce_duration_match and target_track.duration and candidate.duration:
+                diff_ms = abs(target_track.duration - candidate.duration)
+                if diff_ms > self.weights.duration_tolerance_ms:
+                    continue  # Skip strictly
+
+            # Calculate match score
+            match_result = self.calculate_match(target_track, candidate)
+
+            # Additional check: Quality/Peer Stats weighting
+            # The standard calculate_match focuses on metadata correctness (Is this the right song?)
+            # We add a secondary score component for "Is this a good file to download?"
+
+            # Base metadata confidence
+            final_score = match_result.confidence_score
+
+            # Only consider candidates that pass the minimum confidence threshold for metadata
+            if final_score < self.weights.min_confidence_to_accept:
+                continue
+
+            # --- Secondary Download Quality Scoring ---
+            # (Note: These adjust the sort order among valid metadata matches,
+            # they don't override a bad metadata match)
+
+            # 1. Bitrate/Quality Bonus
+            # If identifiers has bitrate, prefer higher (up to a point) or specific formats
+            bitrate = candidate.identifiers.get('bitrate', 0) or 0
+            if bitrate >= 320:
+                final_score += 5  # Bonus for high quality
+            elif bitrate < 192:
+                final_score -= 10 # Penalty for low quality
+
+            # 2. Peer Stats (Speed, Queue)
+            upload_speed = candidate.identifiers.get('upload_speed', 0) or 0
+            queue_length = candidate.identifiers.get('queue_length', 0) or 0
+            free_slots = candidate.identifiers.get('free_upload_slots', 0) or 0
+
+            if upload_speed > 1000000: # >1MB/s
+                final_score += 5
+            elif upload_speed < 50000: # <50KB/s
+                final_score -= 5
+
+            if free_slots > 0:
+                final_score += 5
+
+            if queue_length > 10:
+                final_score -= 10
+            elif queue_length > 50:
+                final_score -= 20
+
+            ranked_candidates.append((final_score, candidate))
+
+        if not ranked_candidates:
+            return None
+
+        # --- Size Sorting ---
+        # Logic:
+        # 1. Primary Sort: Final Score (Descending) - Metadata correctness & Quality score is king.
+        # 2. Secondary Sort: File Size
+        #    - If prefer_max_quality=True: Larger size is better (Desc)
+        #    - If prefer_max_quality=False: Smaller (but valid) size is better (Asc)
+
+        def sort_key(item):
+            score, cand = item
+            size = cand.file_size_bytes or cand.identifiers.get('size', 0) or 0
+
+            if self.weights.prefer_max_quality:
+                # Descending score, Descending size
+                return (score, size)
+            else:
+                # Descending score, Ascending size (negate size to sort Ascending in a Descending sort?)
+                # No, Python sort is stable and we can use a key.
+                # If we sort by key descending: (High Score, High Size) works.
+                # If we want (High Score, Low Size): We return (score, -size).
+                return (score, -size)
+
+        ranked_candidates.sort(key=sort_key, reverse=True)
+
+        # Log top 3 for debugging
+        logger.info(f"Top 3 download candidates for '{target_track.title}':")
+        for score, cand in ranked_candidates[:3]:
+            size_mb = (cand.identifiers.get('size', 0) / 1024 / 1024)
+            logger.info(f"  Score: {score:.1f} | {cand.identifiers.get('provider_item_id')} | Speed: {cand.identifiers.get('upload_speed')} | Size: {size_mb:.1f}MB")
+
+        return ranked_candidates[0][1]
 
 
 def create_matcher(profile: ScoringProfile) -> WeightedMatchingEngine:

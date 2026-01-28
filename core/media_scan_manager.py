@@ -6,7 +6,7 @@ import os
 from retrying import retry
 from contextlib import contextmanager
 from core.tiered_logger import get_logger
-from core.job_queue import JobQueue
+from core.job_queue import job_queue  # Use global singleton
 
 logger = get_logger("media_scan_manager")
 
@@ -44,17 +44,10 @@ class MediaScanManager:
         self._periodic_update_interval = 300  # 5 minutes in seconds
         self._is_doing_periodic_updates = False  # Track if we're in periodic update mode
         
-        # Register with JobQueue
-        self.job_queue = JobQueue()
-        self.job_queue.register_job(
-            name="media_scan_update",
-            func=self._execute_scan,
-            interval_seconds=self._periodic_update_interval,
-            enabled=True
-        )
+        # Note: media_scan_update job is registered at app startup via register_all_system_jobs()
+        # to ensure it's always visible in the jobs UI even if MediaScanManager is never instantiated
         
         logger.info(f"MediaScanManager initialized with {delay_seconds}s debounce delay")
-        logger.info("MediaScanManager periodic update job registered with JobQueue.")
     
     def _get_active_media_client(self):
         """Get the active media client based on the flags/tags system."""
