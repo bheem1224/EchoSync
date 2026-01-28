@@ -63,6 +63,7 @@ class DownloadManager:
             # Get active client from config
             active_client = config_manager.get_active_download_client()
             if not active_client:
+                logger.info("No active download client configured")
                 logger.warning("No active download client configured")
                 return None
 
@@ -208,19 +209,10 @@ class DownloadManager:
             logger.debug("Skipping queue processing: No active provider.")
             return
 
-        # Fetch queued items from DB
-        # We need to do this carefully to avoid holding the DB lock too long
-        # or sharing SA objects across threads if async is involved (though we are in async loop)
-        # Note: SQLAlchemy async support is not used here, so we use sync calls wrapped or directly.
-        # Since this loop effectively blocks, we should be careful.
-        # But given Python's GIL and standard threading, simple sync DB access is usually fine for low throughput.
-
         queued_ids = []
         with self.db.session_scope() as session:
-            # Get up to 30 queued items to enable 10 concurrent searches
-            # Note: SlskdProvider internally limits to 5 concurrent searches (Soulseek IP ban protection)
-            # Download manager can scale to 10 if other clients (e.g., non-Soulseek) are added later
-            items = session.query(Download).filter(Download.status == "queued").limit(30).all()
+            # Get up to 3 queued items
+            items = session.query(Download).filter(Download.status == "queued").limit(3).all()
             if items:
                 logger.info(f"Found {len(items)} queued items for processing.")
 
@@ -609,6 +601,18 @@ class DownloadManager:
                     "updated_at": download.updated_at.isoformat()
                 }
         return None
+
+    def _trigger_auto_import(self, download_id: int):
+        """Trigger auto-import if enabled in config."""
+        auto_import_enabled = config_manager.get("auto_import.enabled", False)
+        if not auto_import_enabled:
+            logger.info("Auto-import is disabled in config. Skipping.")
+            return
+
+        logger.info(f"Triggering auto-import for download ID: {download_id}")
+        # Placeholder for actual auto-import logic
+        # This could involve calling another service or running a script
+        pass
 
 # Global Accessor
 def get_download_manager():

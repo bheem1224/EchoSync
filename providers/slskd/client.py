@@ -255,11 +255,16 @@ class SlskdProvider(DownloaderProvider):
             if kwargs.get('json'):
                 logger.debug(f"Payload: {kwargs.get('json')}")
 
-            # RequestManager.request is synchronous, so run in executor to avoid blocking
+            # RequestManager.request is synchronous, so we must run it in an executor to avoid blocking the loop
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
-                None,
-                lambda: self.http.request(method, url, headers=headers, **kwargs)
+                None, 
+                lambda: self.http.request(
+                    method,
+                    url,
+                    headers=headers,
+                    **kwargs
+                )
             )
 
             if response.status_code in [200, 201, 204]:
@@ -361,7 +366,24 @@ class SlskdProvider(DownloaderProvider):
 
         return all_tracks
 
-    async def _async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 180) -> List[SoulSyncTrack]:
+    def _apply_filters(self, track: TrackResult, filters: Dict[str, Any]) -> bool:
+        """Apply additional filters like duration and bitrate to a track."""
+        duration_tolerance = filters.get("duration_tolerance", 3000)  # Default to 3 seconds
+        min_bitrate = filters.get("min_bitrate", 128)
+
+        # Check duration
+        if "expected_duration" in filters:
+            expected_duration = filters["expected_duration"]
+            if not (expected_duration - duration_tolerance <= track.duration <= expected_duration + duration_tolerance):
+                return False
+
+        # Check bitrate
+        if track.bitrate and track.bitrate < min_bitrate:
+            return False
+
+        return True
+
+    async def _async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 15) -> List[SoulSyncTrack]:
         """
         Atomic Search: Post -> Poll -> Parse -> Delete.
         Applies coarse filtering (basic_filters) before returning.
@@ -411,110 +433,36 @@ class SlskdProvider(DownloaderProvider):
                 logger.error("No search ID returned")
                 return []
 
-            # 2. Poll for search completion and results
-            # Smart polling strategy:
-            # - Phase 1 (0-45s): Poll every 5s for quick responsiveness
-            # - Phase 2 (45s+): Poll every 30s to minimize API calls
-            initial_phase_duration = 45.0  # First 45 seconds
-            initial_phase_interval = 5.0   # Poll every 5s during initial phase
-            main_phase_interval = 30.0     # Poll every 30s after initial phase
-            
-            all_responses = []
-            terminal_state = False
+            # 2. Poll for results (Wait fixed window)
+            poll_interval = 2.0
             elapsed_time = 0.0
+            results = []
 
-            logger.info(f"Polling for search completion (5s intervals for 45s, then 30s intervals, timeout: {timeout}s)...")
-            
-            for poll_count in range(int(timeout / main_phase_interval) + 10):  # Safety upper bound
-                # Determine polling interval based on elapsed time
-                if elapsed_time < initial_phase_duration:
-                    poll_interval = initial_phase_interval
-                    phase_name = "initial"
-                else:
-                    poll_interval = main_phase_interval
-                    phase_name = "main"
-                
-                # Check search state to see if it's complete
-                search_state = await self._make_request('GET', f'searches/{search_id}')
-                if search_state:
-                    state = search_state.get('state', '').lower()
-                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): Search state = '{state}'")
-                    
-                    # Check for terminal states (exit immediately)
-                    if state in ['completed', 'complete', 'done', 'finished', 'timedout', 'cancelled', 'errored', 'failed']:
-                        terminal_state = True
-                        logger.info(f"Search reached terminal state: {state} (after {elapsed_time:.0f}s)")
-
-                # Get current responses
-                responses_data = await self._make_request('GET', f'searches/{search_id}/responses')
-                if responses_data and isinstance(responses_data, list):
-                    all_responses = responses_data
-                    response_count = len(all_responses)
-                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): Got {response_count} responses")
-                    
-                    # Exit early if we have a LOT of responses (prevent excessive waiting)
-                    if response_count >= 150:
-                        logger.info(f"Got {response_count} responses (threshold reached), stopping")
-                        break
-                else:
-                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): No responses yet")
-                
-                # Exit immediately on terminal state (don't continue polling)
-                if terminal_state:
-                    logger.info(f"Exiting polling loop due to terminal state")
-                    break
-                
-                # Exit if overall timeout exceeded
-                if elapsed_time >= timeout:
-                    logger.warning(f"Polling timeout exceeded ({elapsed_time:.0f}s >= {timeout}s)")
-                    break
-                
-                # Wait before next poll
+            while elapsed_time < timeout:
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
 
-            if not all_responses:
-                logger.info(f"Search complete but no responses received")
-                
-            # 3. Parse Results
-            track_results = self._process_search_responses(all_responses)
-            logger.info(f"Search yielded {len(track_results)} raw candidates")
+                poll_response = await self._make_request('GET', f'searches/{search_id}/results')
+                if poll_response:
+                    results.extend(self._process_search_responses(poll_response))
 
-            # 4. Apply Coarse Filters (Extensions, Min Bitrate)
-            valid_tracks = []
-            allowed_extensions = basic_filters.get('allowed_extensions') if basic_filters else None
-            min_bitrate = basic_filters.get('min_bitrate', 0) if basic_filters else 0
+            # 3. Apply additional filters
+            if basic_filters:
+                results = [
+                    self._convert_to_soulsync_track(track)
+                    for track in results
+                    if self._apply_filters(track, basic_filters)
+                ]
 
-            for tr in track_results:
-                # Extension Check
-                if allowed_extensions:
-                    ext = Path(tr.filename).suffix.lower().lstrip('.')
-                    if ext not in allowed_extensions:
-                        continue
-
-                # Bitrate Check (skip if None, assume okay or let MatchingEngine decide)
-                if min_bitrate > 0 and tr.bitrate and tr.bitrate < min_bitrate:
-                    continue
-
-                # Convert to SoulSyncTrack
-                soul_track = self._convert_to_soulsync_track(tr)
-                if soul_track:
-                    valid_tracks.append(soul_track)
-
-            logger.info(f"After coarse filtering: {len(valid_tracks)} candidates")
-            return valid_tracks
+            return results
 
         except Exception as e:
-            logger.error(f"Error in atomic search: {e}")
+            logger.error(f"Error during search: {e}")
             return []
         finally:
-            # 5. DELETE Search (Atomic cleanup)
+            # 4. Cleanup search
             if search_id:
-                try:
-                    await self._make_request('DELETE', f'searches/{search_id}')
-                    logger.debug(f"Atomic cleanup: Deleted search {search_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete search {search_id}: {e}")
+                await self._make_request('DELETE', f'searches/{search_id}')
 
     async def _async_download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
         if not self.base_url:
