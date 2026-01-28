@@ -26,12 +26,9 @@ Configuration in config.json:
 """
 
 import json
-import time
 from pathlib import Path
 from typing import List, Optional, Dict
-from threading import Thread, Event
 from datetime import datetime
-import threading
 import logging  # Add this import for logging levels
 
 from .matching_engine import parse_file, MatchService, MatchContext, SoulSyncTrack
@@ -40,7 +37,7 @@ from core.tiered_logger import tiered_logger
 from core.error_handler import error_handler
 from core.tiered_logger import get_logger
 from core.media_scan_manager import MediaScanManager
-from core.job_queue import JobQueue
+from core.job_queue import job_queue  # Use global singleton
 
 logger = get_logger("auto_importer")
 
@@ -80,21 +77,21 @@ class AutoImporter:
 
         self.match_service = MatchService()
         self.post_processor = PostProcessor()
-        self.is_running = False
-        self.worker_thread: Optional[Thread] = None
-        self._stop_event: Event = Event()
 
         self._import_log: List[Dict] = []
 
-        # Initialize JobQueue and register the scan job
-        self.job_queue = JobQueue()
-        self.job_queue.register_job(
+        # Always register job with global job_queue (enabled state from config)
+        job_queue.register_job(
             name="auto_import_scan",
             func=self._scan_and_move_files,
             interval_seconds=self.check_interval,
-            enabled=True
+            enabled=self.enabled,  # Respect config enabled state
+            tags=["soulsync", "auto_import"]
         )
-        tiered_logger.log("normal", logging.INFO, "AutoImporter job registered with JobQueue.")
+        tiered_logger.log(
+            "normal", logging.INFO,
+            f"AutoImporter job registered with global JobQueue (enabled={self.enabled})"
+        )
 
         tiered_logger.log(
             "normal", logging.INFO,
@@ -112,56 +109,12 @@ class AutoImporter:
         return {}
 
     def start(self):
-        """Start the auto-import worker thread"""
-        if not self.enabled:
-            logger.info("AutoImporter is disabled in config")
-            return
-
-        if self.is_running:
-            logger.warning("AutoImporter already running")
-            return
-
-        self.is_running = True
-        self.worker_thread = Thread(target=self._worker_loop, daemon=True)
-        self.worker_thread.start()
-        logger.info(f"AutoImporter started (check every {self.check_interval}s)")
-
-        # Start the periodic scanning job
-        def _run():
-            while not self._stop_event.is_set():
-                self.scan_and_import()
-                time.sleep(self.check_interval)
-
-        self._timer = threading.Thread(target=_run, daemon=True)
-        self._timer.start()
-        logger.info("AutoImporter periodic job started.")
+        """Legacy start method - AutoImporter now managed by job_queue"""
+        logger.info("AutoImporter is now managed by job_queue. Use /settings/jobs to enable/disable.")
 
     def stop(self):
-        """Stop the auto-import worker thread"""
-        if not self.is_running:
-            return
-
-        self.is_running = False
-        if self.worker_thread:
-            self.worker_thread.join(timeout=5)
-        logger.info("AutoImporter stopped")
-
-        # Stop the periodic scanning job
-        self._stop_event.set()
-        if self._timer:
-            self._timer.join()
-        logger.info("AutoImporter periodic job stopped.")
-
-    def _worker_loop(self):
-        """Main worker loop - runs continuously"""
-        while self.is_running:
-            try:
-                self.scan_and_import()
-            except Exception as e:
-                logger.error(f"Error in AutoImporter worker loop: {e}", exc_info=True)
-
-            # Sleep until next check
-            time.sleep(self.check_interval)
+        """Legacy stop method - AutoImporter now managed by job_queue"""
+        logger.info("AutoImporter is now managed by job_queue. Use /settings/jobs to enable/disable.")
 
     def scan_and_import(self):
         """

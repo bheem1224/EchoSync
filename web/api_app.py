@@ -106,6 +106,19 @@ def create_app() -> Flask:
 
     # Start the job queue for async task execution
     start_job_queue()
+    
+    # Register system jobs with job_queue
+    try:
+        from core.system_jobs import register_all_system_jobs
+        register_all_system_jobs()
+    except Exception as e:
+        print(f"[WARN] Failed to register system jobs: {e}")
+    
+    try:
+        from services.download_manager import register_download_manager_job
+        register_download_manager_job()
+    except Exception as e:
+        print(f"[WARN] Failed to register download manager job: {e}")
 
     # Start Backend Services (Download Manager, Monitors) in a separate thread
     # We use WERKZEUG_RUN_MAIN to ensure we only run in the reloader child process

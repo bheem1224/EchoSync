@@ -140,7 +140,59 @@ class SlskdProvider(DownloaderProvider):
         self.download_path: Path = Path("./downloads")
         # Capability flags
         self.capabilities = get_provider_capabilities('slskd')
+        # Concurrency limiter: Slskd can only handle 5 concurrent searches (IP ban protection)
+        self._search_semaphore = asyncio.Semaphore(5)
         self._setup_client()
+        self._register_health_check()
+    
+    def _register_health_check(self):
+        """Register periodic health check for Slskd API."""
+        from core.health_check import register_health_check_job, HealthCheckResult
+        
+        def slskd_health_check() -> HealthCheckResult:
+            try:
+                configured = self.is_configured()
+                if not configured:
+                    return HealthCheckResult(
+                        service_name="slskd",
+                        status="unhealthy",
+                        message="Slskd not configured"
+                    )
+                
+                # Try a lightweight API call to check connectivity
+                try:
+                    import requests
+                    response = requests.get(
+                        f"{self.base_url}/api/v0/session",
+                        headers={"X-API-Key": self.api_key},
+                        timeout=5
+                    )
+                    if response.status_code == 200:
+                        return HealthCheckResult(
+                            service_name="slskd",
+                            status="healthy",
+                            message="Slskd API is reachable"
+                        )
+                    else:
+                        return HealthCheckResult(
+                            service_name="slskd",
+                            status="degraded",
+                            message=f"Slskd API returned status {response.status_code}"
+                        )
+                except Exception as api_err:
+                    return HealthCheckResult(
+                        service_name="slskd",
+                        status="unhealthy",
+                        message=f"Slskd API error: {str(api_err)}"
+                    )
+            except Exception as e:
+                return HealthCheckResult(
+                    service_name="slskd",
+                    status="unhealthy",
+                    message=f"Slskd health check error: {str(e)}"
+                )
+        
+        register_health_check_job("slskd_health_check", slskd_health_check, interval_seconds=300)
 
     def _setup_client(self):
         config = config_manager.get_soulseek_config()
@@ -335,7 +387,22 @@ class SlskdProvider(DownloaderProvider):
         """
         Atomic Search: Post -> Poll -> Parse -> Delete.
         Applies coarse filtering (basic_filters) before returning.
+        
+        Concurrency: Limited to 5 concurrent searches (Slskd/Soulseek IP ban protection).
+        
+        Smart polling:
+        - Phase 1 (0-45s): Poll every 5s for quick responsiveness
+        - Phase 2 (45s+): Poll every 30s to minimize API calls
+        - Exit immediately upon terminal state (completed, timedout, failed, etc.)
+        
+        Default timeout: 180 seconds (3 minutes) to allow extended waiting for slskd responses.
         """
+        # Acquire semaphore slot (max 5 concurrent searches for IP ban protection)
+        async with self._search_semaphore:
+            return await self._do_async_search(query, basic_filters, timeout)
+
+    async def _do_async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 180) -> List[SoulSyncTrack]:
+        """Internal async search implementation (called under semaphore lock)."""
         if not self.base_url:
             logger.error("Slskd client not configured")
             return []

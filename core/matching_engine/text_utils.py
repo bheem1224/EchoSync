@@ -147,6 +147,8 @@ def extract_version_info(title: Optional[str]) -> Tuple[str, Optional[str]]:
         "Song (Remix)" -> ("Song", "Remix")
         "Song - Live Version" -> ("Song", "Live")
         "Song [Radio Edit]" -> ("Song", "Radio Edit")
+        "Song - Live at SiriusXM" -> ("Song", "Live at SiriusXM")
+        "Song - Gabry Ponte Ice Pop Radio" -> ("Song", "Gabry Ponte Ice Pop Radio")
         
     Args:
         title: Track title potentially containing version info
@@ -158,9 +160,14 @@ def extract_version_info(title: Optional[str]) -> Tuple[str, Optional[str]]:
         return "", None
     
     VERSION_PATTERNS = [
-        (r'\s*\(([^)]*(?:remix|version|edit|live|acoustic|instrumental|remaster)[^)]*)\)', 1),
-        (r'\s*\[([^\]]*(?:remix|version|edit|live|acoustic|instrumental|remaster)[^\]]*)\]', 1),
-        (r'\s*-\s*([^-]*(?:remix|version|edit|live|acoustic|instrumental|remaster)[^-]*)$', 1),
+        # Parentheses with version keywords
+        (r'\s*\(([^)]*(?:remix|version|edit|live|acoustic|instrumental|remaster|radio|mix|club)[^)]*)\)', 1),
+        # Square brackets with version keywords  
+        (r'\s*\[([^\]]*(?:remix|version|edit|live|acoustic|instrumental|remaster|radio|mix|club)[^\]]*)\]', 1),
+        # Dash followed by version keywords (including "Live at X", "Radio", remixer names)
+        (r'\s*-\s*([^-]*(?:remix|version|edit|live at|live|acoustic|instrumental|remaster|radio|mix|club)[^-]*)$', 1),
+        # Dash followed by remixer/producer name + "Radio/Edit/Mix/Remix" pattern (e.g., "- Gabry Ponte Ice Pop Radio")
+        (r'\s*-\s*((?:[A-Z][a-z]+\s+)*(?:Radio|Edit|Mix|Remix|Version)[^-]*)$', 1),
     ]
     
     for pattern, group in VERSION_PATTERNS:
