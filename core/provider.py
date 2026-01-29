@@ -18,6 +18,7 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from datetime import datetime
 
+from core.enums import Capability
 from core.provider_base import ProviderBase
 from core.content_models import ContentChanges
 from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -324,6 +325,25 @@ class ProviderRegistry:
     _providers: Dict[str, Type[ProviderBase]] = {}
     _provider_sources: Dict[str, str] = {}  # metadata: provider_name -> source_type
     _disabled_providers: set = set()
+
+    @classmethod
+    def get_providers_with_capability(cls, capability: Capability, exclude_disabled: bool = True) -> List[ProviderBase]:
+        """
+        Return a list of instantiated providers that support the given capability.
+        """
+        providers = []
+        for name, provider_cls in cls._providers.items():
+            if exclude_disabled and name.lower() in cls._disabled_providers:
+                continue
+
+            # Check if class has capabilities attribute and if it contains the capability
+            caps = getattr(provider_cls, 'capabilities', [])
+            if capability in caps:
+                try:
+                    providers.append(cls.create_instance(name))
+                except Exception as e:
+                    logger.error(f"Failed to instantiate provider '{name}': {e}")
+        return providers
 
     @classmethod
     def get_providers_by_type(cls, provider_type: str, exclude_disabled: bool = True) -> List[str]:

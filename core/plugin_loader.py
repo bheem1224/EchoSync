@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 
 from flask import Blueprint
 
+from core.enums import Capability
 from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
 from core.tiered_logger import get_logger
@@ -136,3 +137,21 @@ class PluginLoader:
 
     def get_all_blueprints(self) -> List[Blueprint]:
         return self.loaded_blueprints
+
+    def get_provider(self, capability: Capability) -> Optional[ProviderBase]:
+        """
+        Get the first available provider with the given capability.
+        Delegates to ProviderRegistry.
+        """
+        return get_provider(capability)
+
+
+def get_provider(capability: Capability) -> Optional[ProviderBase]:
+    """
+    Get the first available provider with the given capability.
+    Delegates to ProviderRegistry.
+    """
+    providers = ProviderRegistry.get_providers_with_capability(capability)
+    if providers:
+        return providers[0]
+    return None
