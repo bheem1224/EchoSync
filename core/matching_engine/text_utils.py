@@ -50,6 +50,7 @@ def normalize_title(title: Optional[str]) -> str:
     - Lowercase
     - Remove accents
     - Remove extra spaces
+    - Strip OST/Soundtrack/Movie metadata
     - Strip trailing/parenthetical featured-artist markers (feat./featuring/with)
     - Keep alphanumeric + common punctuation
     """
@@ -57,6 +58,22 @@ def normalize_title(title: Optional[str]) -> str:
         return ""
     
     normalized = normalize_text(title)
+    
+    # Remove OST/Soundtrack/Movie metadata (must be done before other cleanup)
+    # Patterns cover: (From "Movie"), [From Movie], - from "X", (OST), (Original Motion Picture Soundtrack), etc.
+    ost_patterns = [
+        r'\s*-\s*from\s+"[^"]*"',  # - from "Movie Name" (dash-based suffix)
+        r'\s*-\s*from\s+[\w\s]+$',  # - from Movie Name (dash-based suffix without quotes)
+        r'\s*[\(\[]\s*original\s+motion\s+picture\s+soundtrack\s*[\)\]]',  # (Original Motion Picture Soundtrack)
+        r'\s*[\(\[]\s*motion\s+picture\s+soundtrack\s*[\)\]]',  # (Motion Picture Soundtrack)
+        r'\s*[\(\[]\s*from\s+"[^"]*"\s*[\)\]]',  # (From "Movie Name")
+        r'\s*[\(\[]\s*from\s+[^\)\]]+[\)\]]',  # [From Movie Name] or (From Movie)
+        r'\s*[\(\[]\s*ost\s+[^\)\]]*[\)\]]',  # (OST ...) or [OST ...]
+        r'\s*[\(\[]\s*ost\s*[\)\]]',  # (OST) or [OST]
+        r'\s*[\(\[]\s*soundtrack\s*[\)\]]',  # [Soundtrack] or (Soundtrack)
+    ]
+    for pattern in ost_patterns:
+        normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
     
     # Remove parenthetical/bracketed featured artist clauses
     normalized = re.sub(r"\s*[\(\[\{]\s*(feat\.?|featuring|with)\b[^\)\]\}]*[\)\]\}]", "", normalized, flags=re.IGNORECASE)
@@ -96,6 +113,7 @@ def normalize_album(album: Optional[str]) -> str:
     
     - Lowercase
     - Remove accents
+    - Remove OST/Soundtrack metadata
     - Remove "deluxe", "remaster", edition markers
     - Remove extra spaces
     """
@@ -104,8 +122,20 @@ def normalize_album(album: Optional[str]) -> str:
     
     normalized = normalize_text(album)
     
+    # Remove OST/Soundtrack metadata (same patterns as normalize_title)
+    ost_patterns = [
+        r'\s*[\(\[]\s*original\s+motion\s+picture\s+soundtrack\s*[\)\]]',
+        r'\s*[\(\[]\s*motion\s+picture\s+soundtrack\s*[\)\]]',
+        r'\s*[\(\[]\s*from\s+"[^"]*"\s*[\)\]]',
+        r'\s*[\(\[]\s*from\s+[^\)\]]+[\)\]]',
+        r'\s*[\(\[]\s*ost\s+[^\)\]]*[\)\]]',
+        r'\s*[\(\[]\s*ost\s*[\)\]]',
+        r'\s*[\(\[]\s*soundtrack\s*[\)\]]',
+    ]
+    for pattern in ost_patterns:
+        normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
+    
     # Remove edition markers like "Deluxe Edition", "(Remastered)", etc.
-    # But keep them for matching purposes - just normalize the format
     normalized = re.sub(r'\s*\(?(?:deluxe|standard|explicit|clean|remaster|remastered|edition|ed\.)\)?', '', normalized, flags=re.IGNORECASE)
     
     return normalized.strip()

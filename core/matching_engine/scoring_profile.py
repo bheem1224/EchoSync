@@ -204,12 +204,12 @@ class DownloadSearchProfile(ScoringProfile):
             title_weight=0.50,  # 40/80
             artist_weight=0.375, # 30/80
             album_weight=0.125,  # 10/80
-            duration_weight=0.20,  # 20% - BS detector (>3s = likely wrong)
+            duration_weight=0.20,  # 20% - BS detector (>5s = likely wrong)
             fingerprint_weight=0.0,  # No fingerprint for search
             quality_bonus=0.10,  # 5-10% bonus if format matches request
             version_mismatch_penalty=100.0,  # Make remix/live a hard fail for downloads
             edition_mismatch_penalty=10.0,  # -10 for edition issues
-            duration_tolerance_ms=3000,  # Allow 3 second difference (BS threshold)
+            duration_tolerance_ms=5000,  # Allow 5 second difference (BS threshold)
             fuzzy_match_threshold=0.80,  # More lenient for messy filenames
             min_confidence_to_accept=70.0,  # Accept decent matches
             text_match_fallback=0.75,

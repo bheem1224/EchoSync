@@ -18,61 +18,6 @@ from providers.slskd.client import SlskdProvider
 logger = get_logger("backend")
 
 
-class ServiceStatusMonitor:
-    """Background service monitor that periodically checks provider connectivity."""
-
-    def __init__(self, spotify: SpotifyClient, plex: PlexClient, jellyfin: JellyfinClient,
-                 navidrome: NavidromeClient, soulseek: SlskdProvider):
-        self.spotify = spotify
-        self.plex = plex
-        self.jellyfin = jellyfin
-        self.navidrome = navidrome
-        self.soulseek = soulseek
-        self._stop_event = asyncio.Event()
-
-    async def check_once(self) -> None:
-        try:
-            spotify_status = self.spotify.sp is not None
-            logger.debug("Spotify status: %s", spotify_status)
-
-            active_server = config_manager.get_active_media_server()
-            if active_server == "plex":
-                server_status = self.plex.is_connected()
-                logger.debug("Plex status: %s", server_status)
-            elif active_server == "jellyfin":
-                server_status = self.jellyfin.is_connected()
-                logger.debug("Jellyfin status: %s", server_status)
-            elif active_server == "navidrome":
-                server_status = self.navidrome.is_connected()
-                logger.debug("Navidrome status: %s", server_status)
-            else:
-                server_status = False
-
-            soulseek_status = self.soulseek.is_configured()
-            logger.debug("Soulseek status: %s", soulseek_status)
-
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Service status check failed: %s", exc)
-
-    async def run(self, interval_seconds: int = 10) -> None:
-        logger.info("ServiceStatusMonitor started (interval=%ss)", interval_seconds)
-        try:
-            while not self._stop_event.is_set():
-                await self.check_once()
-                try:
-                    await asyncio.wait_for(self._stop_event.wait(), timeout=interval_seconds)
-                except asyncio.TimeoutError:
-                    continue
-        finally:
-            logger.info("ServiceStatusMonitor stopped")
-
-    def stop(self) -> None:
-        self._stop_event.set()
-
-    async def shutdown(self) -> None:
-        self.stop()
-
-
 async def _graceful_close(clients: Iterable[Any]) -> None:
     for client in clients:
         close_fn = getattr(client, "close", None)
@@ -86,24 +31,21 @@ async def _graceful_close(clients: Iterable[Any]) -> None:
 
 
 async def start_services() -> None:
-    """Start the backend services without configuring logging (assumes external logging setup)."""
+    """Start the backend services without configuring logging (assumes external logging setup).
+    
+    Note: Provider health checks are registered automatically by each client's __init__ method
+    and managed by the global health check system (see core/health_check.py).
+    """
     logger.info("Starting backend services...")
 
+    # Initialize provider clients (each registers its own health check)
     spotify_client = SpotifyClient()
     plex_client = PlexClient()
     jellyfin_client = JellyfinClient()
     navidrome_client = NavidromeClient()
     soulseek_client = SlskdProvider()
-
-    monitor = ServiceStatusMonitor(
-        spotify=spotify_client,
-        plex=plex_client,
-        jellyfin=jellyfin_client,
-        navidrome=navidrome_client,
-        soulseek=soulseek_client,
-    )
-
-    monitor_task = asyncio.create_task(monitor.run())
+    
+    logger.info("Provider clients initialized - health checks registered with global system")
 
     # Start Download Manager only if explicitly enabled (default: off)
     downloads_cfg = config_manager.get_all().get("downloads", {}) if hasattr(config_manager, "get_all") else {}
@@ -116,12 +58,14 @@ async def start_services() -> None:
     else:
         logger.info("Download Manager auto-start is disabled (downloads will not run on startup)")
 
+    # Keep services alive indefinitely
     try:
-        await monitor_task
+        # Create an event that will never be set - keeps the service running
+        shutdown_event = asyncio.Event()
+        await shutdown_event.wait()
     except asyncio.CancelledError:
         logger.info("Backend shutdown signal received")
     finally:
-        await monitor.shutdown()
         await download_manager.stop_background_task()
         await _graceful_close([soulseek_client, plex_client, jellyfin_client, navidrome_client])
         logger.info("Backend services stopped")

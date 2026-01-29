@@ -47,6 +47,7 @@ class DownloadManager:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
         self._provider: Optional[ProviderBase] = None
+        self._quality_profile_cache = None
 
     @classmethod
     def get_instance(cls):
@@ -63,7 +64,6 @@ class DownloadManager:
             # Get active client from config
             active_client = config_manager.get_active_download_client()
             if not active_client:
-                logger.info("No active download client configured")
                 logger.warning("No active download client configured")
                 return None
 
@@ -180,6 +180,25 @@ class DownloadManager:
                 for item in stuck_items:
                     item.status = "queued"
                     item.updated_at = datetime.utcnow()
+            
+            # Also clean up legacy downloads with invalid provider_id format
+            # These are from before the compound ID (username|filename) format was implemented
+            legacy_items = session.query(Download).filter(
+                Download.status == "downloading",
+                Download.provider_id.isnot(None)
+            ).all()
+            
+            cleaned = 0
+            for item in legacy_items:
+                if item.provider_id and '|' not in item.provider_id:
+                    # Legacy format without username prefix - mark as failed
+                    logger.debug(f"Cleaning up legacy download entry: {item.id}")
+                    item.status = "failed_legacy_format"
+                    item.updated_at = datetime.utcnow()
+                    cleaned += 1
+            
+            if cleaned > 0:
+                logger.info(f"Cleaned up {cleaned} legacy download entries with invalid provider_id format")
 
     async def _process_loop(self):
         """Main control loop: Process Queue -> Check Active"""
@@ -209,10 +228,19 @@ class DownloadManager:
             logger.debug("Skipping queue processing: No active provider.")
             return
 
+        # Fetch queued items from DB
+        # We need to do this carefully to avoid holding the DB lock too long
+        # or sharing SA objects across threads if async is involved (though we are in async loop)
+        # Note: SQLAlchemy async support is not used here, so we use sync calls wrapped or directly.
+        # Since this loop effectively blocks, we should be careful.
+        # But given Python's GIL and standard threading, simple sync DB access is usually fine for low throughput.
+
         queued_ids = []
         with self.db.session_scope() as session:
-            # Get up to 3 queued items
-            items = session.query(Download).filter(Download.status == "queued").limit(3).all()
+            # Get up to 30 queued items to enable 10 concurrent searches
+            # Note: SlskdProvider internally limits to 5 concurrent searches (Soulseek IP ban protection)
+            # Download manager can scale to 10 if other clients (e.g., non-Soulseek) are added later
+            items = session.query(Download).filter(Download.status == "queued").limit(30).all()
             if items:
                 logger.info(f"Found {len(items)} queued items for processing.")
 
@@ -265,10 +293,20 @@ class DownloadManager:
             quality_profile = self._get_quality_profile()
             allowed_formats = self._extract_allowed_formats(quality_profile)
             
+            # Get duration tolerance from quality profile (default 5 seconds)
+            duration_tolerance_ms = 5000
+            if quality_profile and 'advanced_filters' in quality_profile:
+                filters = quality_profile['advanced_filters']
+                if 'duration_tolerance_seconds' in filters:
+                    duration_tolerance_ms = int(filters['duration_tolerance_seconds'] * 1000)
+            
             # Use basic filters for coarse rejection based on quality profile
+            # Include duration filtering to weed out remixes/live versions
             basic_filters = {
                 "allowed_extensions": allowed_formats,
-                "min_bitrate": self._get_min_bitrate(quality_profile)
+                "min_bitrate": self._get_min_bitrate(quality_profile),
+                "target_duration_ms": target_track.duration if target_track.duration else None,
+                "duration_tolerance_ms": duration_tolerance_ms  # Read from quality profile
             }
             
             logger.info(f"Quality profile allows: {allowed_formats}")
@@ -308,31 +346,55 @@ class DownloadManager:
                 self._update_status(download_id, "failed_no_results")
                 return
 
-            # 1.5. Apply quality profile filtering to candidates
-            filtered_candidates = self._filter_by_quality_profile(candidates, quality_profile)
-            logger.info(f"After quality profile filtering: {len(filtered_candidates)} candidates remain")
+            # 1.5. Quality Profile Cascading - Try each priority tier until one succeeds
+            best_candidate = None
             
-            if not filtered_candidates:
-                logger.warning(f"No candidates matched quality profile (had {len(candidates)} before filtering)")
-                self._update_status(download_id, "failed_quality_filter")
-                return
-
-            # 2. Match (Selection)
-            logger.debug("Running matching engine selection...")
-            best_candidate = self.matcher.select_best_download_candidate(target_track, filtered_candidates)
-
+            # Get priority tiers from quality profile (sorted by priority)
+            priority_tiers = self._get_priority_tiers(quality_profile)
+            
+            for priority_num, priority_formats in priority_tiers:
+                logger.info(f"Trying quality profile priority {priority_num}: {priority_formats}")
+                
+                # Filter candidates by this priority tier
+                tier_candidates = self._filter_by_formats(candidates, priority_formats)
+                logger.info(f"Found {len(tier_candidates)} candidates matching priority {priority_num}")
+                
+                if not tier_candidates:
+                    continue
+                
+                # Try to match with this tier
+                logger.debug(f"Running matching engine on priority {priority_num} candidates...")
+                matcher = self._get_matching_engine()
+                best_candidate = matcher.select_best_download_candidate(target_track, tier_candidates)
+                
+                if best_candidate:
+                    logger.info(f"Successfully matched with priority {priority_num} format")
+                    break
+                else:
+                    logger.warning(f"Priority {priority_num} yielded {len(tier_candidates)} candidates but all failed matching")
+            
             if not best_candidate:
-                logger.warning(f"No suitable candidate matched (tried {len(queries)} strategies, got {len(candidates)} candidates)")
+                logger.warning(f"No suitable candidate matched across all quality priorities (tried {len(queries)} strategies, got {len(candidates)} candidates)")
                 self._update_status(download_id, "failed_no_match")
                 return
 
             # 3. Download
             logger.info(f"Starting download for {best_candidate.identifiers.get('provider_item_id')}")
 
-            # Extract params
+            # Extract params - username is the peer who has the file
             username = best_candidate.identifiers.get('username')
             filename = best_candidate.identifiers.get('provider_item_id')
             size = best_candidate.identifiers.get('size')
+            
+            if not username:
+                logger.error("Cannot download: no username in candidate identifiers")
+                self._update_status(download_id, "failed_no_username")
+                return
+            
+            if not filename:
+                logger.error("Cannot download: no filename in candidate identifiers")
+                self._update_status(download_id, "failed_no_filename")
+                return
 
             provider_id = None
             if hasattr(provider, '_async_download'):
@@ -399,7 +461,9 @@ class DownloadManager:
                         self._update_status(db_id, new_status)
 
                         if new_status == "completed":
-                            # Future Scope: Trigger Post-Processor
+                            # CLEANUP TASK 1: Remove from queue after download completes
+                            logger.info(f"Download completed, removing {db_id} from queue")
+                            self._remove_from_queue(db_id)
                             logger.info(f"Download {db_id} completed. TODO: Trigger Auto Import/Post-Processing.")
 
             except Exception as e:
@@ -409,27 +473,35 @@ class DownloadManager:
         """
         Generate multiple search query variations for fallback strategies.
         Returns queries in priority order (most specific to most generic).
-        """
-        from core.matching_engine.text_utils import extract_version_info
         
+        Uses matching engine's normalize_title() which handles:
+        - OST/Soundtrack/Movie metadata removal
+        - Featured artist cleanup
+        - Text normalization
+        """
         queries = []
         
-        # Strip version/remix info from title to search for original version
-        clean_title, version_info = extract_version_info(track.title) if track.title else (track.title, None)
+        # Use matching engine's normalize_title which strips OST/featured artists/etc.
+        # This ensures consistency with how the matching engine will compare results
+        search_title = normalize_title(track.title) if track.title else track.title
         
-        if version_info:
-            logger.info(f"Stripped version info from title: '{track.title}' -> '{clean_title}' (removed: '{version_info}')")
-        
-        # Use clean title without version info for searches
-        search_title = clean_title if clean_title else track.title
+        if search_title != track.title:
+            logger.info(f"Normalized title for search: '{track.title}' -> '{search_title}'")
         
         # Strategy 1: Artist + Title (most specific)
+        # Also normalize artist name for consistency
         if track.artist_name and search_title:
-            queries.append(f"{track.artist_name} {search_title}")
+            normalized_artist = normalize_artist(track.artist_name)
+            queries.append(f"{normalized_artist} {search_title}")
         
         # Strategy 2: Album + Title (useful when artist has multiple versions)
-        if track.album_title and search_title and track.album_title != search_title:
-            queries.append(f"{track.album_title} {search_title}")
+        # Normalize album title to remove OST metadata
+        if track.album_title and search_title:
+            from core.matching_engine.text_utils import normalize_album
+            normalized_album = normalize_album(track.album_title)
+            # Only add if album name is different from title (avoid duplicates)
+            if normalized_album and normalized_album != search_title:
+                queries.append(f"{normalized_album} {search_title}")
         
         # Strategy 3: Title only (broadest search)
         if search_title:
@@ -456,6 +528,46 @@ class DownloadManager:
         except Exception as e:
             logger.warning(f"Failed to load quality profile: {e}")
         return None
+    
+    def _get_matching_engine(self) -> WeightedMatchingEngine:
+        """
+        Get or create the matching engine with settings from quality profile.
+        If quality profile has custom settings, create a custom profile.
+        Otherwise use the default PROFILE_DOWNLOAD_SEARCH.
+        """
+        quality_profile = self._get_quality_profile()
+        if not quality_profile:
+            return WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
+        
+        # Check for custom matching settings in quality profile
+        has_custom_settings = False
+        custom_weights = dict(vars(PROFILE_DOWNLOAD_SEARCH.get_weights()))
+        
+        # Read custom duration tolerance if specified
+        if 'advanced_filters' in quality_profile:
+            filters = quality_profile['advanced_filters']
+            if 'enforce_duration_match' in filters:
+                custom_weights['enforce_duration_match'] = filters['enforce_duration_match']
+                has_custom_settings = True
+            if 'duration_tolerance_seconds' in filters:
+                tolerance_s = filters['duration_tolerance_seconds']
+                custom_weights['duration_tolerance_ms'] = int(tolerance_s * 1000)
+                has_custom_settings = True
+        
+        # Read prefer larger files if specified
+        if 'prefer_larger_files' in quality_profile:
+            custom_weights['prefer_max_quality'] = quality_profile['prefer_larger_files']
+            has_custom_settings = True
+        
+        if has_custom_settings:
+            # Create custom profile with updated weights
+            from core.matching_engine.scoring_profile import ScoringProfile, ScoringWeights
+            custom_profile = ScoringProfile()
+            custom_profile.weights = ScoringWeights(**custom_weights)
+            logger.info(f"Using custom matching profile: duration_tolerance={custom_weights.get('duration_tolerance_ms')}ms, prefer_max_quality={custom_weights.get('prefer_max_quality')}")
+            return WeightedMatchingEngine(custom_profile)
+        
+        return WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
 
     def _extract_allowed_formats(self, quality_profile: Optional[Dict[str, Any]]) -> List[str]:
         """Extract allowed file formats from quality profile."""
@@ -550,6 +662,173 @@ class DownloadManager:
         logger.debug("No candidates matched any quality profile format")
         return []
 
+    def _get_priority_tiers(self, quality_profile: Dict[str, Any]) -> List[Tuple[int, List[str]]]:
+        """
+        Extract priority tiers from quality profile.
+        Returns list of (priority_number, [format_list]) sorted by priority.
+        """
+        formats = quality_profile.get('formats', [])
+        if not formats:
+            return []
+        
+        # Group formats by priority
+        priority_map = {}
+        for fmt in formats:
+            priority = fmt.get('priority', 999)
+            format_type = fmt.get('type', '').lower()
+            
+            if priority not in priority_map:
+                priority_map[priority] = []
+            priority_map[priority].append(format_type)
+        
+        # Sort by priority (lower number = higher priority)
+        sorted_tiers = sorted(priority_map.items(), key=lambda x: x[0])
+        return sorted_tiers
+    
+    def _filter_by_formats(self, candidates: List[SoulSyncTrack], formats: List[str]) -> List[SoulSyncTrack]:
+        """Filter candidates by format and apply quality profile constraints."""
+        quality_profile = self._get_quality_profile()
+        if not quality_profile:
+            # Fallback: just filter by format
+            filtered = []
+            for track in candidates:
+                if track.file_format and track.file_format.lower() in formats:
+                    filtered.append(track)
+            return filtered
+        
+        # Get format configs for the requested formats
+        format_configs = {}
+        for fmt in quality_profile.get('formats', []):
+            format_type = fmt.get('type', '').lower()
+            if format_type in formats:
+                format_configs[format_type] = fmt
+        
+        filtered = []
+        for track in candidates:
+            if not track.file_format:
+                continue
+            
+            format_type = track.file_format.lower()
+            if format_type not in formats:
+                continue
+            
+            # Get format config
+            fmt_config = format_configs.get(format_type)
+            if not fmt_config:
+                filtered.append(track)
+                continue
+            
+            # Apply size constraints
+            min_size_mb = fmt_config.get('min_size_mb', 0)
+            max_size_mb = fmt_config.get('max_size_mb', 0)
+            
+            if track.file_size_bytes:
+                size_mb = track.file_size_bytes / (1024 * 1024)
+                if min_size_mb > 0 and size_mb < min_size_mb:
+                    continue
+                if max_size_mb > 0 and size_mb > max_size_mb:
+                    continue
+            
+            # For lossless formats (FLAC, WAV, DSD), check bit depth and sample rate
+            if format_type in ['flac', 'wav', 'dsd']:
+                bit_depths = fmt_config.get('bit_depths', [])
+                sample_rates = fmt_config.get('sample_rates', [])
+                
+                if bit_depths and track.bit_depth:
+                    if str(track.bit_depth) not in bit_depths:
+                        continue
+                
+                if sample_rates and track.sample_rate:
+                    sample_rate_khz = str(int(track.sample_rate / 1000))
+                    if sample_rate_khz not in sample_rates:
+                        continue
+            
+            # For lossy formats (MP3, AAC, OGG, etc.), check bitrate
+            elif format_type in ['mp3', 'aac', 'ogg', 'm4a', 'opus', 'vorbis']:
+                min_bitrate_kbps = fmt_config.get('min_bitrate', 0)
+                max_bitrate_kbps = fmt_config.get('max_bitrate', 999999)
+                
+                # Extract bitrate from identifiers or track metadata
+                bitrate_kbps = 0
+                if track.identifiers and 'bitrate' in track.identifiers:
+                    bitrate_kbps = track.identifiers.get('bitrate', 0) or 0
+                    # Convert to kbps if in different unit
+                    if bitrate_kbps > 10000:  # Likely in bps
+                        bitrate_kbps = bitrate_kbps // 1000
+                
+                if min_bitrate_kbps > 0 and bitrate_kbps > 0 and bitrate_kbps < min_bitrate_kbps:
+                    logger.debug(f"Rejecting {format_type} ({bitrate_kbps}kbps) - below minimum {min_bitrate_kbps}kbps")
+                    continue
+                
+                if max_bitrate_kbps > 0 and bitrate_kbps > 0 and bitrate_kbps > max_bitrate_kbps:
+                    logger.debug(f"Rejecting {format_type} ({bitrate_kbps}kbps) - above maximum {max_bitrate_kbps}kbps")
+                    continue
+            
+            filtered.append(track)
+        
+        # Sort by size (prefer larger files for better quality)
+        filtered.sort(key=lambda t: t.file_size_bytes or 0, reverse=True)
+        
+        return filtered
+
+    def _remove_from_queue(self, download_id: int):
+        """CLEANUP TASK 1: Remove a download from the queue after successful completion."""
+        try:
+            with self.db.session_scope() as session:
+                download = session.query(Download).get(download_id)
+                if download:
+                    session.delete(download)
+                    logger.info(f"Removed completed download {download_id} from queue")
+        except Exception as e:
+            logger.warning(f"Failed to remove download {download_id} from queue: {e}")
+    
+    def _cleanup_queue_against_library(self):
+        """
+        CLEANUP TASK 2: Periodic job to remove items from download queue that are already in the library.
+        Detects if items were added via other means (auto-import, manual import, etc.)
+        """
+        try:
+            with self.db.session_scope() as session:
+                # Get all queued items
+                queued_items = session.query(Download).filter(
+                    Download.status.in_(['queued', 'searching', 'downloading', 'failed_no_match'])
+                ).all()
+                
+                if not queued_items:
+                    return
+                
+                logger.info(f"Running library cleanup: checking {len(queued_items)} queued items against library")
+                removed_count = 0
+                
+                for item in queued_items:
+                    try:
+                        track_data = item.soul_sync_track
+                        if not track_data:
+                            continue
+                        
+                        # Get track info
+                        artist = track_data.get('artist_name', '')
+                        title = track_data.get('title', '')
+                        
+                        # Check if track exists in library
+                        from database.music_database import Track
+                        existing = session.query(Track).filter(
+                            Track.artist.ilike(f'%{artist}%'),
+                            Track.title.ilike(f'%{title}%')
+                        ).first()
+                        
+                        if existing:
+                            logger.info(f"Track '{artist} - {title}' already in library, removing from queue")
+                            session.delete(item)
+                            removed_count += 1
+                    except Exception as e:
+                        logger.debug(f"Error checking library for queued item: {e}")
+                
+                if removed_count > 0:
+                    logger.info(f"Library cleanup removed {removed_count} items from download queue")
+        except Exception as e:
+            logger.warning(f"Library cleanup job failed: {e}")
+
     def _update_status(self, download_id: int, status: str, provider_id: Optional[str] = None):
         """Helper to update DB status"""
         with self.db.session_scope() as session:
@@ -601,18 +880,6 @@ class DownloadManager:
                     "updated_at": download.updated_at.isoformat()
                 }
         return None
-
-    def _trigger_auto_import(self, download_id: int):
-        """Trigger auto-import if enabled in config."""
-        auto_import_enabled = config_manager.get("auto_import.enabled", False)
-        if not auto_import_enabled:
-            logger.info("Auto-import is disabled in config. Skipping.")
-            return
-
-        logger.info(f"Triggering auto-import for download ID: {download_id}")
-        # Placeholder for actual auto-import logic
-        # This could involve calling another service or running a script
-        pass
 
 # Global Accessor
 def get_download_manager():

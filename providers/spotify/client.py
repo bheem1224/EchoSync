@@ -156,20 +156,20 @@ class SpotifyClient(SyncServiceProvider):
                         message="Spotify client not initialized"
                     )
                 
-                # Try a lightweight API call
-                try:
-                    self.sp.current_user()
-                    return HealthCheckResult(
-                        service_name="spotify",
-                        status="healthy",
-                        message="Spotify API is reachable"
-                    )
-                except Exception as api_err:
+                # Check authentication status WITHOUT triggering browser popup
+                # Use token cache check instead of API call
+                if not self.is_authenticated():
                     return HealthCheckResult(
                         service_name="spotify",
                         status="unhealthy",
-                        message=f"Spotify API error: {str(api_err)}"
+                        message="Spotify token expired or missing - re-authentication required"
                     )
+                    
+                return HealthCheckResult(
+                    service_name="spotify",
+                    status="healthy",
+                    message="Spotify token is valid"
+                )
             except Exception as e:
                 return HealthCheckResult(
                     service_name="spotify",
@@ -252,14 +252,30 @@ class SpotifyClient(SyncServiceProvider):
             logger.debug("Spotify client not initialized")
             return False
         try:
-            self.sp.current_user()
+            # Check if we have a valid cached token WITHOUT calling the API
+            # This avoids triggering browser-based authentication
+            auth_manager = self.sp.auth_manager
+            if not auth_manager:
+                return False
+                
+            cached_token = auth_manager.get_cached_token()
+            if not cached_token:
+                return False
+                
+            # Check if token exists and is not expired
+            access_token = cached_token.get('access_token')
+            expires_at = cached_token.get('expires_at', 0)
+            
+            if not access_token:
+                return False
+                
+            # Check if token is expired (with 60 second buffer)
+            import time
+            if time.time() > (expires_at - 60):
+                logger.debug(f"Spotify token expired for account {self.account_id}")
+                return False
+                
             return True
-        except spotipy.exceptions.SpotifyException as e:
-            if e.http_status == 401:
-                logger.warning(f"Spotify authentication failed (401 Unauthorized) for account {self.account_id}. User needs to re-authenticate.")
-            else:
-                logger.error(f"Spotify API error: {e}")
-            return False
         except Exception as e:
             logger.debug(f"Error checking Spotify authentication: {e}")
             return False

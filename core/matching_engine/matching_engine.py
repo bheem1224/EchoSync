@@ -20,7 +20,7 @@ from difflib import SequenceMatcher
 import logging
 
 from .soul_sync_track import SoulSyncTrack
-from .scoring_profile import ScoringProfile, ScoringWeights
+from .scoring_profile import ScoringProfile, ScoringWeights, ProfileType
 from .fingerprinting import FingerprintMatcher
 
 logger = logging.getLogger(__name__)
@@ -301,8 +301,8 @@ class WeightedMatchingEngine:
             version_penalty = self.weights.version_mismatch_penalty
             reasoning_parts.append(f"Version mismatch: {version_reasoning} (-{version_penalty})")
             
-            # Version mismatch is a critical failure for EXACT_SYNC - return immediately with low score
-            # This prevents Live/Remix versions from matching when original is wanted
+            # Version mismatch is ALWAYS a critical failure - reject immediately
+            # Duration filtering at search time should prevent remix/live versions from appearing
             logger.debug(f"REJECTING candidate due to version mismatch: {version_reasoning}")
             return MatchResult(
                 confidence_score=0.0,  # Hard fail on version mismatch

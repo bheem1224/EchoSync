@@ -255,16 +255,11 @@ class SlskdProvider(DownloaderProvider):
             if kwargs.get('json'):
                 logger.debug(f"Payload: {kwargs.get('json')}")
 
-            # RequestManager.request is synchronous, so we must run it in an executor to avoid blocking the loop
+            # RequestManager.request is synchronous, so run in executor to avoid blocking
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
-                None, 
-                lambda: self.http.request(
-                    method,
-                    url,
-                    headers=headers,
-                    **kwargs
-                )
+                None,
+                lambda: self.http.request(method, url, headers=headers, **kwargs)
             )
 
             if response.status_code in [200, 201, 204]:
@@ -366,24 +361,7 @@ class SlskdProvider(DownloaderProvider):
 
         return all_tracks
 
-    def _apply_filters(self, track: TrackResult, filters: Dict[str, Any]) -> bool:
-        """Apply additional filters like duration and bitrate to a track."""
-        duration_tolerance = filters.get("duration_tolerance", 3000)  # Default to 3 seconds
-        min_bitrate = filters.get("min_bitrate", 128)
-
-        # Check duration
-        if "expected_duration" in filters:
-            expected_duration = filters["expected_duration"]
-            if not (expected_duration - duration_tolerance <= track.duration <= expected_duration + duration_tolerance):
-                return False
-
-        # Check bitrate
-        if track.bitrate and track.bitrate < min_bitrate:
-            return False
-
-        return True
-
-    async def _async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 15) -> List[SoulSyncTrack]:
+    async def _async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 180) -> List[SoulSyncTrack]:
         """
         Atomic Search: Post -> Poll -> Parse -> Delete.
         Applies coarse filtering (basic_filters) before returning.
@@ -433,36 +411,121 @@ class SlskdProvider(DownloaderProvider):
                 logger.error("No search ID returned")
                 return []
 
-            # 2. Poll for results (Wait fixed window)
-            poll_interval = 2.0
+            # 2. Poll for search completion and results
+            # Smart polling strategy:
+            # - Phase 1 (0-45s): Poll every 5s for quick responsiveness
+            # - Phase 2 (45s+): Poll every 30s to minimize API calls
+            initial_phase_duration = 45.0  # First 45 seconds
+            initial_phase_interval = 5.0   # Poll every 5s during initial phase
+            main_phase_interval = 30.0     # Poll every 30s after initial phase
+            
+            all_responses = []
+            terminal_state = False
             elapsed_time = 0.0
-            results = []
 
-            while elapsed_time < timeout:
+            logger.info(f"Polling for search completion (5s intervals for 45s, then 30s intervals, timeout: {timeout}s)...")
+            
+            for poll_count in range(int(timeout / main_phase_interval) + 10):  # Safety upper bound
+                # Determine polling interval based on elapsed time
+                if elapsed_time < initial_phase_duration:
+                    poll_interval = initial_phase_interval
+                    phase_name = "initial"
+                else:
+                    poll_interval = main_phase_interval
+                    phase_name = "main"
+                
+                # Check search state to see if it's complete
+                search_state = await self._make_request('GET', f'searches/{search_id}')
+                if search_state:
+                    state = search_state.get('state', '').lower()
+                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): Search state = '{state}'")
+                    
+                    # Check for terminal states (handle comma-separated states like "completed, timedout")
+                    terminal_states = {'completed', 'complete', 'done', 'finished', 'timedout', 'cancelled', 'errored', 'failed'}
+                    # Check if any terminal state appears in the state string
+                    if any(ts in state for ts in terminal_states):
+                        terminal_state = True
+                        logger.info(f"Search reached terminal state: {state} (after {elapsed_time:.0f}s)")
+
+                # Get current responses
+                responses_data = await self._make_request('GET', f'searches/{search_id}/responses')
+                if responses_data and isinstance(responses_data, list):
+                    all_responses = responses_data
+                    response_count = len(all_responses)
+                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): Got {response_count} responses")
+                    
+                    # Exit early if we have a LOT of responses (prevent excessive waiting)
+                    if response_count >= 150:
+                        logger.info(f"Got {response_count} responses (threshold reached), stopping")
+                        break
+                else:
+                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): No responses yet")
+                
+                # Exit immediately on terminal state (don't continue polling)
+                if terminal_state:
+                    logger.info(f"Exiting polling loop due to terminal state")
+                    break
+                
+                # Exit if overall timeout exceeded
+                if elapsed_time >= timeout:
+                    logger.warning(f"Polling timeout exceeded ({elapsed_time:.0f}s >= {timeout}s)")
+                    break
+                
+                # Wait before next poll
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
 
-                poll_response = await self._make_request('GET', f'searches/{search_id}/results')
-                if poll_response:
-                    results.extend(self._process_search_responses(poll_response))
+            if not all_responses:
+                logger.info(f"Search complete but no responses received")
+                
+            # 3. Parse Results
+            track_results = self._process_search_responses(all_responses)
+            logger.info(f"Search yielded {len(track_results)} raw candidates")
 
-            # 3. Apply additional filters
-            if basic_filters:
-                results = [
-                    self._convert_to_soulsync_track(track)
-                    for track in results
-                    if self._apply_filters(track, basic_filters)
-                ]
+            # 4. Apply Coarse Filters (Extensions, Min Bitrate, Duration)
+            valid_tracks = []
+            allowed_extensions = basic_filters.get('allowed_extensions') if basic_filters else None
+            min_bitrate = basic_filters.get('min_bitrate', 0) if basic_filters else 0
+            target_duration_ms = basic_filters.get('target_duration_ms') if basic_filters else None
+            duration_tolerance_ms = basic_filters.get('duration_tolerance_ms', 5000) if basic_filters else 5000
 
-            return results
+            for tr in track_results:
+                # Extension Check
+                if allowed_extensions:
+                    ext = Path(tr.filename).suffix.lower().lstrip('.')
+                    if ext not in allowed_extensions:
+                        continue
+
+                # Bitrate Check (skip if None, assume okay or let MatchingEngine decide)
+                if min_bitrate > 0 and tr.bitrate and tr.bitrate < min_bitrate:
+                    continue
+                
+                # Duration Check - Filter out remixes/live versions by duration
+                if target_duration_ms and tr.duration:
+                    candidate_duration_ms = tr.duration * 1000
+                    duration_diff = abs(candidate_duration_ms - target_duration_ms)
+                    if duration_diff > duration_tolerance_ms:
+                        continue  # Likely remix/live/extended version
+
+                # Convert to SoulSyncTrack
+                soul_track = self._convert_to_soulsync_track(tr)
+                if soul_track:
+                    valid_tracks.append(soul_track)
+
+            logger.info(f"After coarse filtering: {len(valid_tracks)} candidates")
+            return valid_tracks
 
         except Exception as e:
-            logger.error(f"Error during search: {e}")
+            logger.error(f"Error in atomic search: {e}")
             return []
         finally:
-            # 4. Cleanup search
+            # 5. DELETE Search (Atomic cleanup)
             if search_id:
-                await self._make_request('DELETE', f'searches/{search_id}')
+                try:
+                    await self._make_request('DELETE', f'searches/{search_id}')
+                    logger.debug(f"Atomic cleanup: Deleted search {search_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete search {search_id}: {e}")
 
     async def _async_download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
         if not self.base_url:
@@ -470,26 +533,28 @@ class SlskdProvider(DownloaderProvider):
 
         try:
             logger.info(f"Initiating download: '{filename}' from user '{username}' (size: {file_size})")
+            
+            # Slskd API format: POST /transfers/downloads/{username}
+            # Body: Array of file objects with filename and size
             download_data = [
                 {
-                    "filename": filename,
-                    "size": file_size,
-                    "path": str(self.download_path)
+                    "filename": filename,  # Remote file path on peer's system
+                    "size": file_size
                 }
             ]
 
-            # Try main endpoint
+            # Username goes in the URL path, not the payload
             endpoint = f'transfers/downloads/{username}'
             response = await self._make_request('POST', endpoint, json=download_data)
 
             if response is not None:
-                # Try to extract download ID
-                if isinstance(response, dict) and 'id' in response:
-                    return response['id']
-                elif isinstance(response, list) and len(response) > 0 and 'id' in response[0]:
-                    return response[0]['id']
-                # Fallback to filename if API doesn't return ID (some versions don't)
-                return filename
+                # Slskd returns the download information
+                # The download "ID" for tracking is typically the filename
+                # But we need to return something that can be used to check status later
+                logger.info(f"Download initiated successfully for {filename}")
+                # Return the username and filename as a compound ID
+                # Format: username|filename
+                return f"{username}|{filename}"
 
             logger.error(f"Download request failed for {filename} from {username}")
             return None
@@ -500,61 +565,62 @@ class SlskdProvider(DownloaderProvider):
 
     async def _async_get_download_status(self, download_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get status for a specific download ID.
-        Note: Slskd API makes it hard to get status by ID directly if it's not active.
-        We might need to fetch all and filter, or use specific endpoints.
+        Get status for a specific download.
+        download_id format: \"username|filename\"
         """
         if not self.base_url:
             return None
 
         try:
-            # Try direct ID endpoint
-            response = await self._make_request('GET', f'transfers/downloads/{download_id}')
-
-            data = None
-            if response:
-                if isinstance(response, dict):
-                    data = response
-                elif isinstance(response, list) and len(response) > 0:
-                    data = response[0]
-
-            # If direct lookup failed, try finding in all downloads (fallback)
-            if not data:
-                all_downloads = await self._make_request('GET', 'transfers/downloads')
-                if all_downloads:
-                    for user_data in all_downloads:
-                        for directory in user_data.get('directories', []):
-                            for file_data in directory.get('files', []):
-                                if file_data.get('id') == download_id or file_data.get('filename') == download_id:
-                                    data = file_data
-                                    data['username'] = user_data.get('username') # inject username
-                                    break
-                            if data: break
-                        if data: break
-
-            if data:
-                # Normalize status
-                state = data.get('state', '').lower()
-                status = "unknown"
-                if state in ['completed', 'succeeded', 'finished']:
-                    status = "complete"
-                elif state in ['queued', 'initializing']:
-                    status = "queued"
-                elif state in ['downloading', 'transferring']:
-                    status = "downloading"
-                elif state in ['failed', 'error', 'aborted', 'cancelled']:
-                    status = "failed"
-
-                return {
-                    'id': data.get('id', download_id),
-                    'status': status,
-                    'progress': data.get('percentComplete', 0.0),
-                    'speed': data.get('averageSpeed', 0),
-                    'filename': data.get('filename'),
-                    'size': data.get('size', 0),
-                    'time_remaining': data.get('timeRemaining')
-                }
-
+            # Parse compound ID
+            if '|' not in download_id:
+                # Legacy download entry from before compound ID format was implemented
+                # Skip silently - these will eventually be cleaned up by periodic cleanup task
+                logger.debug(f"Skipping legacy download_id without username prefix: {download_id[:80]}")
+                return None
+            
+            username, filename = download_id.split('|', 1)
+            
+            # Query the transfers endpoint to find this download
+            # GET /api/v0/transfers/downloads returns all downloads grouped by username
+            all_downloads = await self._make_request('GET', 'transfers/downloads')
+            
+            if all_downloads and isinstance(all_downloads, dict):
+                # Response format: {\"username\": {\"directories\": [{\"directory\": \"...\", \"files\": [...]}]}}
+                user_data = all_downloads.get(username, {})
+                if isinstance(user_data, dict):
+                    directories = user_data.get('directories', [])
+                    for directory in directories:
+                        if isinstance(directory, dict):
+                            files = directory.get('files', [])
+                            for file_data in files:
+                                if isinstance(file_data, dict):
+                                    file_filename = file_data.get('filename', '')
+                                    # Match by filename
+                                    if file_filename == filename:
+                                        # Map slskd status to our status
+                                        state = file_data.get('state', '').lower()
+                                        status = "unknown"
+                                        if state in ['completed', 'succeeded', 'finished']:
+                                            status = "complete"
+                                        elif state in ['queued', 'initializing']:
+                                            status = "queued"
+                                        elif state in ['downloading', 'transferring']:
+                                            status = "downloading"
+                                        elif state in ['failed', 'error', 'aborted', 'cancelled']:
+                                            status = "failed"
+                                        
+                                        return {
+                                            'id': download_id,
+                                            'status': status,
+                                            'filename': filename,
+                                            'username': username,
+                                            'progress': file_data.get('percentComplete', 0),
+                                            'size': file_data.get('size', 0)
+                                        }
+            
+            # Not found - might be completed and removed
+            logger.debug(f"Download not found in active transfers: {download_id}")
             return None
 
         except Exception as e:
