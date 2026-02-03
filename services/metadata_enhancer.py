@@ -373,15 +373,14 @@ class MetadataEnhancerService:
             dest_path = self.library_root / rel_path
 
             if dest_path.exists() and dest_path != file_path:
-                # Conflict resolution
-                resolution = meta_config.get('conflict_resolution', 'replace')
-                if resolution == 'skip':
-                    logger.info(f"File exists, skipping: {dest_path}")
-                    return
-                elif resolution == 'keep_both':
-                     stem = dest_path.stem
-                     dest_path = dest_path.with_name(f"{stem}_{file_path.stat().st_size}.{ext}")
-                # else 'replace' -> overwrite (default behavior of shutil.move typically, but safer to check)
+                # Keep Both logic: Append counter if destination exists
+                counter = 1
+                stem = dest_path.stem
+                parent = dest_path.parent
+
+                while dest_path.exists() and dest_path != file_path:
+                    dest_path = parent / f"{stem} ({counter}).{ext}"
+                    counter += 1
 
             dest_path.parent.mkdir(parents=True, exist_ok=True)
 
