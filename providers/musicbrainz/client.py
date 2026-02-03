@@ -41,73 +41,68 @@ class MusicBrainzProvider(ProviderBase):
 
             data = response.json()
 
-            # Extract relevant metadata
+            # Base metadata
             metadata = {
                 'title': data.get('title'),
-                'recording_id': data.get('id'),
+                'recording_id': data.get('id'),  # TXXX: MusicBrainz Track Id
                 'artist': '',
-                'artist_id': '',
+                'artist_id': '',  # TXXX: MusicBrainz Artist Id
                 'album': '',
-                'release_id': '',
+                'release_id': '',  # TXXX: MusicBrainz Release Id
                 'date': '',
                 'track_number': None,
                 'disc_number': None,
-                'cover_art_url': None
+                'cover_art_url': None,
+                'isrc': None
             }
 
+            # ISRCs
+            if data.get('isrcs'):
+                metadata['isrc'] = data['isrcs'][0]
+
+            # Artist Credit
             if data.get('artist-credit'):
-                # Build artist string from credit
                 parts = []
                 for credit in data['artist-credit']:
                     if isinstance(credit, dict):
-                         parts.append(credit.get('name', ''))
-                         # Join phrase might be needed but usually simple join is enough for tagging
-                         # parts.append(credit.get('joinphrase', ''))
-                metadata['artist'] = " & ".join([p for p in parts if p])
+                        parts.append(credit.get('name', ''))
+                        if credit.get('joinphrase'):
+                            parts.append(credit.get('joinphrase', ''))
+                metadata['artist'] = "".join(parts)
 
                 # Use first artist ID
                 if len(data['artist-credit']) > 0 and 'artist' in data['artist-credit'][0]:
                     metadata['artist_id'] = data['artist-credit'][0]['artist']['id']
 
+            # Release Info (Album, Track, Disc)
             releases = data.get('releases', [])
-            if releases:
-                # Prefer official releases, then first available
-                release = releases[0]
-                for r in releases:
-                    if r.get('status') == 'Official':
-                        release = r
-                        break
+            selected_release = None
 
-                metadata['album'] = release.get('title')
-                metadata['release_id'] = release.get('id')
-                metadata['date'] = release.get('date')  # YYYY-MM-DD
+            # Prioritize Official releases
+            official_releases = [r for r in releases if r.get('status') == 'Official']
+            if official_releases:
+                selected_release = official_releases[0]
+            elif releases:
+                selected_release = releases[0]
+
+            if selected_release:
+                metadata['album'] = selected_release.get('title')
+                metadata['release_id'] = selected_release.get('id')
+                metadata['date'] = selected_release.get('date')  # YYYY-MM-DD
 
                 # Extract Track & Disc Number
                 # Loop through media to find the track associated with this recording
-                found_track = False
-                for media in release.get('media', []):
+                for media in selected_release.get('media', []):
                     for track in media.get('tracks', []):
-                        # The track object usually has 'recording' field with id, or we might assume if it's returned it's ours?
-                        # But for safety, check ID if present.
-                        # Note: recording lookups with inc=media often include ONLY the relevant track(s).
-                        rec = track.get('recording')
-                        if rec and rec.get('id') == mbid:
+                        if track.get('id') == mbid or (track.get('recording') and track.get('recording').get('id') == mbid):
                             metadata['track_number'] = track.get('number')
                             metadata['disc_number'] = media.get('position')
-                            found_track = True
                             break
-                        # Fallback: if 'recording' id is not there but track title matches?
-                        # Or if we trust the API to return only matching tracks for the recording lookup.
-                        if not rec:
-                             # If no recording object, check if 'id' matches (sometimes track ID != recording ID)
-                             # Unreliable. Let's hope recording ID is present.
-                             pass
-                    if found_track:
+                    if metadata['track_number']:
                         break
 
                 # Fetch cover art if we have a release ID
                 if metadata['release_id']:
-                    # Use method to fetch cover art
                     metadata['cover_art_url'] = self._get_cover_art(metadata['release_id'])
 
             return metadata

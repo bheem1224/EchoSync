@@ -85,9 +85,14 @@ class TestMetadataPipeline(unittest.TestCase):
     @patch('services.metadata_enhancer.MetadataEnhancerService._get_audio_duration')
     @patch('services.metadata_enhancer.MetadataEnhancerService._tag_file')
     @patch('services.metadata_enhancer.MetadataEnhancerService._move_file')
-    def test_enhancer_workflow(self, mock_move, mock_tag, mock_duration, mock_fp, mock_get_provider):
-        """Test the full enhancer workflow"""
+    @patch('services.metadata_enhancer.MetadataEnhancerService._create_review_task')
+    @patch('core.settings.config_manager.get')
+    def test_enhancer_workflow(self, mock_config, mock_review, mock_move, mock_tag, mock_duration, mock_fp, mock_get_provider):
+        """Test the full enhancer workflow (High Confidence + Auto Import)"""
         service = MetadataEnhancerService()
+
+        # Mock config: Auto Import ON
+        mock_config.return_value = {"auto_import": True, "enabled": True}
 
         # Mock providers
         mock_fp_provider = MagicMock()
@@ -121,8 +126,45 @@ class TestMetadataPipeline(unittest.TestCase):
         mock_fp.assert_called_with("/tmp/test.mp3")
         mock_fp_provider.resolve_fingerprint.assert_called_with("fingerprint-data", 120)
         mock_mb_provider.get_metadata.assert_called_with("mbid-123")
+
+        # Should execute move/tag because confidence is high (AcoustID match) and auto_import is ON
         mock_tag.assert_called()
         mock_move.assert_called()
+        mock_review.assert_not_called()
+
+    @patch('services.metadata_enhancer.MetadataEnhancerService._get_provider')
+    @patch('services.metadata_enhancer.FingerprintGenerator.generate')
+    @patch('services.metadata_enhancer.MetadataEnhancerService._get_audio_duration')
+    @patch('services.metadata_enhancer.MetadataEnhancerService._tag_file')
+    @patch('services.metadata_enhancer.MetadataEnhancerService._move_file')
+    @patch('services.metadata_enhancer.MetadataEnhancerService._create_review_task')
+    @patch('core.settings.config_manager.get')
+    def test_enhancer_workflow_low_confidence(self, mock_config, mock_review, mock_move, mock_tag, mock_duration, mock_fp, mock_get_provider):
+        """Test workflow with Auto-Import OFF (should review)"""
+        service = MetadataEnhancerService()
+
+        # Mock config: Auto import OFF
+        mock_config.return_value = {"auto_import": False, "enabled": True}
+
+        # Mock providers (Same setup, high confidence match found)
+        mock_fp_provider = MagicMock()
+        mock_fp_provider.resolve_fingerprint.return_value = ["mbid-123"]
+        mock_mb_provider = MagicMock()
+        mock_mb_provider.get_metadata.return_value = {"title": "Test"}
+
+        mock_get_provider.side_effect = lambda cap: mock_fp_provider if cap == Capability.RESOLVE_FINGERPRINT else mock_mb_provider
+
+        mock_fp.return_value = "fp"
+        mock_duration.return_value = 120
+
+        test_file = Path("/tmp/test.mp3")
+        with patch.object(Path, 'exists', return_value=True):
+            service.process_batch([test_file])
+
+        # Verify: Should NOT move/tag, should create review task
+        mock_tag.assert_not_called()
+        mock_move.assert_not_called()
+        mock_review.assert_called()
 
 if __name__ == '__main__':
     unittest.main()
