@@ -1,334 +1,180 @@
 <script>
-  import { writable } from 'svelte/store';
-  import { getConfig, setConfig } from '../../../stores/config';
-  import apiClient from '../../../api/client';
-  import { feedback } from '../../../stores/feedback';
   import { onMount } from 'svelte';
+  import { providers } from '../../../stores/providers';
+  import { settings } from '../../../stores/settings';
+  import { settingsPanel } from '../../../stores/settingsPanel';
+  import QualityProfiles from '../../../components/QualityProfiles.svelte';
+  import StorageSettings from '../../../components/StorageSettings.svelte';
+  import LibraryImportSettings from '../../../components/LibraryImportSettings.svelte';
+  import { preferences } from '../../../stores/preferences';
 
-  // --- Original Stores ---
-  const downloadSettings = writable({
-    slskdDir: '/app/downloads',
-    libraryDir: '/app/Transfer',
-    logLevel: 'INFO'
-  });
+  let loadError = '';
+  let storageRef;
+  let libImportRef;
 
-  const appearanceSettings = writable({
-    theme: 'dark'
-  });
+  import { feedback } from '../../../stores/feedback';
 
-  const qualityProfiles = writable([]);
-
-  const playlistAlgorithm = writable('DefaultPlaylistAlgorithm');
-  const availableAlgorithms = writable([]);
-
-  // --- New Logic for Library Import ---
-  let autoImport = false;
-  let conflictResolution = 'replace';
-  let renamingTemplate = '{Artist}/{Album}/{Track} - {Title}.{ext}';
-  let previewPath = '';
-  let previewLoading = false;
-  const tokens = ['{Artist}', '{Album}', '{Title}', '{Year}', '{Track}', '{Format}'];
-
-  let debounceTimer;
-
-  // --- Functions ---
-
-  function addProfile() {
-    qualityProfiles.update((profiles) => {
-      profiles.push({ name: 'New Profile', formats: [] });
-      return profiles;
-    });
-  }
-
-  function removeProfile(index) {
-    qualityProfiles.update((profiles) => {
-      profiles.splice(index, 1);
-      return profiles;
-    });
-  }
-
-  async function fetchAlgorithms() {
+  async function saveAll() {
     try {
-      const config = await getConfig();
-      availableAlgorithms.set(config.available_algorithms || []);
-      playlistAlgorithm.set(config.playlist_algorithm || 'DefaultPlaylistAlgorithm');
-
-      // Load Metadata Config
-      const meta = config.metadata_enhancement || {};
-      autoImport = meta.auto_import ?? false;
-      conflictResolution = meta.conflict_resolution ?? 'replace';
-      renamingTemplate = meta.naming_template || '{Artist}/{Album}/{Track} - {Title}.{ext}';
-      updatePreview();
-
-      // Load Download Config (attempting to sync with original store if possible)
-      // The original code didn't load this, but we should probably try to reflect reality if we can.
-      // But to be safe and "restore" strict behavior, I'll leave the store defaults unless explicitly asked.
-      // However, for the NEW feature, I must load/save.
-
-    } catch (e) {
-      console.error("Failed to load config", e);
-    }
-  }
-
-  async function saveAlgorithm() {
-    await setConfig({ playlist_algorithm: $playlistAlgorithm });
-  }
-
-  // New Save for Library Import
-  async function saveLibraryImport() {
-      try {
-          feedback.setLoading(true);
-          const config = await getConfig();
-          const updates = {
-              metadata_enhancement: {
-                  ...config.metadata_enhancement,
-                  auto_import: autoImport,
-                  conflict_resolution: conflictResolution,
-                  naming_template: renamingTemplate
-              }
-          };
-          await setConfig(updates);
-          feedback.addToast('Library settings saved', 'success');
-      } catch (e) {
-          feedback.addToast('Failed to save library settings', 'error');
-      } finally {
-          feedback.setLoading(false);
+      feedback.setLoading(true);
+      // if storage component exposes save, call it
+      if (storageRef && typeof storageRef.save === 'function') {
+        await storageRef.save();
       }
-  }
-
-  function addToken(token) {
-    renamingTemplate += token;
-    updatePreview();
-  }
-
-  async function updatePreview() {
-    if (!renamingTemplate) return;
-    previewLoading = true;
-    try {
-      const resp = await apiClient.post('/settings/preview-rename', { template: renamingTemplate });
-      previewPath = resp.data.preview;
+      // if library import component exposes save, call it
+      if (libImportRef && typeof libImportRef.save === 'function') {
+        await libImportRef.save();
+      }
+      // persist quality profiles as part of Save All
+      try {
+        await preferences.saveProfiles($preferences?.profiles || []);
+        feedback.addToast('Preferences saved', 'success');
+      } catch (e) {
+        console.error('Failed to save preferences during Save All', e);
+        feedback.addToast('Failed saving preferences', 'error');
+      }
+      // persist full settings state to backend
+      await settings.save($settings?.data || {});
+      feedback.addToast('Settings saved', 'success');
     } catch (e) {
-      console.error(e);
+      console.error('Failed to save all settings', e);
+      feedback.addToast('Failed to save settings', 'error');
     } finally {
-      previewLoading = false;
+      feedback.setLoading(false);
     }
   }
 
-  function onTemplateInput() {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(updatePreview, 500);
-  }
-
-  onMount(() => {
-      fetchAlgorithms();
+  onMount(async () => {
+    try {
+      await Promise.all([providers.load(), settings.load()]);
+    } catch (err) {
+      loadError = 'Failed to load settings. Check backend /api/settings.';
+      console.error(err);
+    }
   });
+
+  $: providerList = Object.values($providers?.items ?? []);
+  $: userSettings = $settings?.data ?? {};
+  $: streamingProviders = providerList.filter((p) => (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE' || p.capabilities?.supports_sync);
+  $: serverProviders = providerList.filter((p) => p.capabilities?.server);
+  $: metadataProviders = providerList.filter((p) => p.capabilities?.metadata);
+  $: searchProviders = providerList.filter((p) => p.capabilities?.search?.tracks);
+  $: miscProviders = providerList.filter((p) => !streamingProviders.includes(p) && !serverProviders.includes(p) && !metadataProviders.includes(p) && !searchProviders.includes(p));
+
+  function updateSetting(key, value) {
+    settings.save({ [key]: value });
+  }
 </script>
 
-<div class="preferences">
-  <h1>Preferences</h1>
+<svelte:head>
+  <title>Settings • SoulSync</title>
+</svelte:head>
 
-  <!-- New Card: Library Import & Renaming -->
-  <section class="card">
-    <h2>Library Import & Renaming</h2>
+<section class="page">
+  <header class="page__header">
+    <div>
+      <h1 class="prefs-title">{({ preferences: 'Preferences' }[$settingsPanel?.active] ?? ($settingsPanel?.active?.replace(/-/g, ' ') || 'Settings'))}</h1>
+    </div>
+    <div class="header-actions">
+      <button class="btn-primary save-all" on:click={saveAll} title="Save All">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+          <polyline points="17 21 17 13 7 13 7 21"></polyline>
+          <polyline points="7 3 7 8 15 8"></polyline>
+        </svg>
+        Save All
+      </button>
+    </div>
+  </header>
 
-    <label class="switch-label">
-        <input type="checkbox" bind:checked={autoImport} />
-        <span class="label-text">Auto-Import High Confidence Matches</span>
-    </label>
-    <p class="help-text">Automatically rename and move files with high match confidence (&gt;90%).</p>
+  <div class="grid-2">
+    <div class="section-card" id="preferences">
+      {#if loadError}
+        <p class="error">{loadError}</p>
+      {:else}
+        <div class="settings-list">
+          <QualityProfiles />
 
-    <label>
-        Conflict Resolution:
-        <select bind:value={conflictResolution}>
-            <option value="replace">Replace Existing</option>
-            <option value="skip">Skip</option>
-            <option value="keep_both">Keep Both</option>
-        </select>
-    </label>
-
-    <label>
-        Renaming Pattern:
-        <div class="renaming-builder">
-            <input type="text" bind:value={renamingTemplate} on:input={onTemplateInput} class="code-input" />
-            <div class="tokens">
-                {#each tokens as token}
-                    <button class="token-btn" on:click={() => addToken(token)}>{token}</button>
-                {/each}
+          <section class="appearance card">
+            <div class="section-heading">
+              <h2>Appearance</h2>
             </div>
+            <div class="appearance-content">
+              <label>
+                <span class="label-text">Theme</span>
+                <select class="theme-select">
+                  <option value="dark" selected>Dark</option>
+                </select>
+              </label>
+            </div>
+          </section>
         </div>
-    </label>
-
-    <div class="preview-box">
-        <span class="preview-label">Preview:</span>
-        {#if previewLoading}
-            <span class="muted">Generating...</span>
-        {:else}
-            <code class="preview-code">{previewPath}</code>
-        {/if}
+      {/if}
     </div>
 
-    <div class="actions">
-        <button on:click={saveLibraryImport}>Save Library Settings</button>
+    <div class="section-card" id="storage">
+      {#if loadError}
+        <p class="error">{loadError}</p>
+      {:else}
+        <div class="settings-list">
+          <StorageSettings bind:this={storageRef} />
+          <LibraryImportSettings bind:this={libImportRef} />
+        </div>
+      {/if}
     </div>
-  </section>
-
-  <!-- Restored Original Cards -->
-  <section class="card">
-    <h2>Download Settings</h2>
-    <label>
-      Slskd Download Dir:
-      <input type="text" bind:value={$downloadSettings.slskdDir} />
-      <button>Browse</button>
-    </label>
-    <label>
-      Library Dir:
-      <input type="text" bind:value={$downloadSettings.libraryDir} />
-      <button>Browse</button>
-    </label>
-    <label>
-      Log Level:
-      <select bind:value={$downloadSettings.logLevel}>
-        <option value="DEBUG">DEBUG</option>
-        <option value="INFO">INFO</option>
-        <option value="WARNING">WARNING</option>
-        <option value="ERROR">ERROR</option>
-      </select>
-    </label>
-  </section>
-
-  <section class="card">
-    <h2>Appearance</h2>
-    <label>
-      Theme:
-      <select bind:value={$appearanceSettings.theme}>
-        <option value="dark">Dark</option>
-        <option value="light">Light</option>
-      </select>
-    </label>
-  </section>
-
-  <section class="card">
-    <h2>Quality Profiles</h2>
-    <button on:click={addProfile}>Add</button>
-    {#each $qualityProfiles as profile, index}
-      <div>
-        <input type="text" bind:value={profile.name} />
-        <button on:click={() => removeProfile(index)}>Remove</button>
-      </div>
-    {/each}
-  </section>
-
-  <section class="card">
-    <h2>Playlist Algorithm</h2>
-    <label>
-      Select Algorithm:
-      <select bind:value={$playlistAlgorithm}>
-        {#each $availableAlgorithms as algorithm}
-          <option value={algorithm}>{algorithm}</option>
-        {/each}
-      </select>
-    </label>
-    <button on:click={saveAlgorithm}>Save</button>
-  </section>
-</div>
+  </div>
+</section>
 
 <style>
-  .preferences {
+  .page {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .section-card {
     padding: 16px;
   }
 
-  .card {
-    margin-bottom: 24px;
-    padding: 16px;
-    border: 1px solid #ccc;
-    border-radius: 8px;
+  .header-actions { display:flex; align-items:center }
+
+  .settings-list {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
   }
 
-  .profiles {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    align-items: start;
   }
 
-  .profile {
-    border: 1px solid #ccc;
-    padding: 8px;
+  @media (max-width: 900px) {
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+
+  .error {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.1);
+    border: 1px solid rgba(248, 113, 113, 0.4);
+    padding: 10px 12px;
     border-radius: 8px;
   }
 
-  /* Additional Styles for New Components */
-  label {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      font-weight: 500;
-      color: var(--text);
+  .appearance { padding: 12px; margin-top: 0; } /* Reset margin top as gap handles it */
+  .appearance .section-heading { margin-bottom: 12px; }
+  .appearance .section-heading h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  .appearance-content { display: flex; flex-direction: column; gap: 12px; }
+  .appearance-content label { display: flex; flex-direction: column; gap: 6px; }
+  .appearance-content .label-text { font-size: 14px; color: var(--text); }
+  .appearance-content .theme-select {
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color, rgba(255,255,255,0.1));
+    color: var(--text);
+    font-size: 14px;
   }
-
-  .switch-label {
-      flex-direction: row;
-      align-items: center;
-      cursor: pointer;
-  }
-
-  .help-text {
-      margin: -8px 0 0 24px;
-      font-size: 12px;
-      color: #888;
-  }
-
-  input[type="text"], select {
-      padding: 8px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      background: var(--input-bg, #fff);
-      color: var(--text, #000);
-  }
-
-  button {
-      padding: 8px 16px;
-      cursor: pointer;
-      background: #eee;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      color: #333;
-  }
-
-  button:hover {
-      background: #ddd;
-  }
-
-  .code-input {
-      font-family: monospace;
-  }
-
-  .tokens {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 8px;
-  }
-
-  .token-btn {
-      font-size: 12px;
-      padding: 4px 8px;
-      background: #f5f5f5;
-  }
-
-  .preview-box {
-      background: rgba(0,0,0,0.1);
-      padding: 12px;
-      border-radius: 4px;
-      font-family: monospace;
-      font-size: 13px;
-      display: flex;
-      gap: 8px;
-      align-items: center;
-  }
-
-  .preview-code { color: #22c55e; }
-  .muted { color: #888; }
 </style>

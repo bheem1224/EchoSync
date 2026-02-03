@@ -354,6 +354,8 @@ class MetadataEnhancerService:
             track_num = metadata.get('track_number')
             track_padded = f"{int(track_num):02d}" if track_num and str(track_num).isdigit() else "00"
 
+            year = str(metadata.get('date', '0000'))[:4]
+
             ext = file_path.suffix.lower().lstrip('.') # 'mp3'
 
             # Replace tokens
@@ -362,6 +364,8 @@ class MetadataEnhancerService:
                                .replace("{Album}", album)\
                                .replace("{Track}", track_padded)\
                                .replace("{Title}", title)\
+                               .replace("{Year}", year)\
+                               .replace("{Format}", ext)\
                                .replace("{ext}", ext)
 
             # Destination Path
