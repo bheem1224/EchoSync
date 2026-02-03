@@ -9,6 +9,7 @@ logger = get_logger("provider.acoustid")
 
 class AcoustIDProvider(ProviderBase):
     name = "acoustid"
+    service_type = "metadata"
     capabilities = [Capability.RESOLVE_FINGERPRINT]
 
     def __init__(self):

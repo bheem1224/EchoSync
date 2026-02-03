@@ -119,6 +119,13 @@ def create_app() -> Flask:
         register_download_manager_job()
     except Exception as e:
         print(f"[WARN] Failed to register download manager job: {e}")
+    
+    # Register metadata enhancer service
+    try:
+        from services.metadata_enhancer import register_metadata_enhancer_service
+        register_metadata_enhancer_service()
+    except Exception as e:
+        print(f"[WARN] Failed to register metadata enhancer service: {e}")
 
     # Start Backend Services (Download Manager, Monitors) in a separate thread
     # We use WERKZEUG_RUN_MAIN to ensure we only run in the reloader child process

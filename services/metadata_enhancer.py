@@ -331,3 +331,12 @@ class MetadataEnhancerService:
 # Global Accessor
 def get_metadata_enhancer():
     return MetadataEnhancerService.get_instance()
+
+def register_metadata_enhancer_service():
+    """
+    Initialize the metadata enhancer service and register its background jobs.
+    This should be called during application startup to ensure the service
+    and its scheduled jobs are available.
+    """
+    service = MetadataEnhancerService.get_instance()
+    logger.info("Metadata Enhancer Service initialized and jobs registered")

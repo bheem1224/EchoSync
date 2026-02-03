@@ -216,6 +216,8 @@ class ProviderCapabilities:
     supports_streaming: bool = False
     supports_downloads: bool = False
     playlist_algorithms: list = None  # List of algorithm IDs (e.g., ['spotify_mood'])
+    supports_fingerprinting: bool = False  # Audio fingerprinting (AcoustID)
+    supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
 
 
 # Central registry of known provider capabilities
@@ -304,6 +306,32 @@ CAPABILITY_REGISTRY: Dict[str, ProviderCapabilities] = {
         supports_library_scan=False,
         supports_streaming=False,
         supports_downloads=False,
+    ),
+    'acoustid': ProviderCapabilities(
+        name='acoustid',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
+        metadata=MetadataRichness.LOW,
+        supports_cover_art=False,
+        supports_lyrics=False,
+        supports_user_auth=False,
+        supports_library_scan=False,
+        supports_streaming=False,
+        supports_downloads=False,
+        supports_fingerprinting=True,  # Special capability for fingerprinting
+    ),
+    'musicbrainz': ProviderCapabilities(
+        name='musicbrainz',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
+        metadata=MetadataRichness.HIGH,
+        supports_cover_art=True,
+        supports_lyrics=False,
+        supports_user_auth=False,
+        supports_library_scan=False,
+        supports_streaming=False,
+        supports_downloads=False,
+        supports_metadata_fetch=True,  # Special capability for metadata fetching
     ),
 }
 

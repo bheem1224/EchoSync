@@ -9,6 +9,7 @@ logger = get_logger("provider.musicbrainz")
 
 class MusicBrainzProvider(ProviderBase):
     name = "musicbrainz"
+    service_type = "metadata"
     capabilities = [Capability.FETCH_METADATA]
 
     def __init__(self):
