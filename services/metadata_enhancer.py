@@ -175,12 +175,17 @@ class MetadataEnhancerService:
                             metadata = metadata_provider.get_metadata(mbid)
 
                 # Decision Logic
-                if metadata and auto_import and confidence >= 0.90:
+                threshold = meta_config.get('confidence_threshold', 90) / 100.0
+                if metadata and auto_import and confidence >= threshold:
                     logger.info(f"Auto-importing {file_path.name} (Confidence: {confidence:.2f})")
                     # Step D: Tag
                     self._tag_file(file_path, metadata)
                     # Step E: Rename and Move
                     self._move_file(file_path, metadata)
+
+                    # Create a completed review task for history
+                    self._create_review_task(file_path, metadata, confidence)
+                    self._finalize_review_task(file_path)
                 else:
                     if metadata:
                         logger.info(f"Low confidence ({confidence:.2f}) or Auto-Import OFF. Sending to Review Queue.")
@@ -392,7 +397,8 @@ class MetadataEnhancerService:
             with db.session_scope() as session:
                 task = session.query(ReviewTask).filter(ReviewTask.file_path == str(file_path)).first()
                 if task:
-                    session.delete(task) # Remove from queue once processed
+                    task.status = 'approved'
+                    task.created_at = datetime.datetime.utcnow()
         except Exception:
             pass
 

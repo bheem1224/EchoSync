@@ -39,6 +39,29 @@ def get_queue():
         logger.error(f"Error getting queue: {e}")
         return jsonify({"error": "Failed to get queue"}), 500
 
+@bp.get("/history")
+def get_history():
+    """Get history of processed items (approved/ignored)."""
+    try:
+        db = get_database()
+        history = []
+        with db.session_scope() as session:
+            tasks = session.query(ReviewTask).filter(ReviewTask.status.in_(['approved', 'ignored'])).order_by(ReviewTask.created_at.desc()).limit(100).all()
+            for task in tasks:
+                history.append({
+                    "id": task.id,
+                    "file_path": task.file_path,
+                    "filename": Path(task.file_path).name,
+                    "detected_metadata": task.detected_metadata,
+                    "confidence_score": task.confidence_score,
+                    "status": task.status,
+                    "created_at": task.created_at.isoformat() if task.created_at else None
+                })
+        return jsonify({"history": history}), 200
+    except Exception as e:
+        logger.error(f"Error getting history: {e}")
+        return jsonify({"error": "Failed to get history"}), 500
+
 @bp.post("/queue/approve")
 def approve_match():
     """Approve a match and process the file."""

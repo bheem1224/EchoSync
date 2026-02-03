@@ -422,7 +422,9 @@ class ConfigManager:
                 "embed_album_art": True,
                 "auto_import": False,
                 "naming_template": "{Artist}/{Album}/{Track} - {Title}.{ext}",
-                "conflict_resolution": "replace"
+                "conflict_resolution": "replace",
+                "confidence_threshold": 90,
+                "overwrite_tags": True
             },
             "playlist_sync": {"create_backup": True},
             "file_organization": {

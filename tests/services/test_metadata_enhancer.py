@@ -130,7 +130,8 @@ class TestMetadataPipeline(unittest.TestCase):
         # Should execute move/tag because confidence is high (AcoustID match) and auto_import is ON
         mock_tag.assert_called()
         mock_move.assert_called()
-        mock_review.assert_not_called()
+        # mock_review IS called now to create history entry
+        mock_review.assert_called()
 
     @patch('services.metadata_enhancer.MetadataEnhancerService._get_provider')
     @patch('services.metadata_enhancer.FingerprintGenerator.generate')
