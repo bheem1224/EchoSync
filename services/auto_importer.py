@@ -51,26 +51,15 @@ class AutoImportService:
 
     def scan_and_process(self):
         """Scan download directory for audio files and process them."""
-        # Check global enabled setting (re-using metadata_enhancement config for now as requested)
         meta_config = config_manager.get('metadata_enhancement') or {}
-        # The prompt implies "Auto-Import Switch" controls this.
-        # But if the switch is OFF, should we still scan and populate the review queue?
-        # The prompt says: "Auto-Import Switch: Toggle for auto_import_enabled."
-        # Usually, if auto-import is off, we might still want to Identify and Queue, just not Move.
-        # But for now, let's assume we scan if the feature "metadata_enhancement" is generally enabled,
-        # and "auto_import" specifically controls the automatic move.
-
-        # However, there isn't a separate "Metadata Service Enabled" toggle in the new UI plan,
-        # just "Auto Import".
-        # If I look at `scan_and_process` in original code:
-        # `if not meta_config.get('enabled', True): return`
-        # I'll stick to that.
 
         if not meta_config.get('enabled', True):
+            logger.info("Auto-import scan skipped: Feature disabled in settings.")
             return
 
         download_dir = config_manager.get_download_dir()
         if not download_dir.exists():
+            logger.warning(f"Auto-import scan skipped: Download directory does not exist ({download_dir})")
             return
 
         supported_exts = {'.mp3', '.flac', '.ogg', '.m4a', '.wav'}
@@ -89,6 +78,8 @@ class AutoImportService:
         if files_to_process:
             logger.info(f"Found {len(files_to_process)} new files to process")
             self.process_batch(files_to_process)
+        else:
+            logger.info("Auto-import scan completed: No new files found.")
 
     def _get_pending_review_files(self) -> set:
         """Get set of file paths currently in pending or ignored review tasks."""
@@ -114,8 +105,6 @@ class AutoImportService:
 
             try:
                 # Delegate identification to MetadataEnhancerService
-                # We need a new method in MetadataEnhancer that returns (metadata, confidence)
-                # For now, I will assume I'll add `identify_file` to MetadataEnhancer.
                 metadata, confidence = self.enhancer.identify_file(file_path)
 
                 # Decision Logic
@@ -124,7 +113,6 @@ class AutoImportService:
                     self.finalize_import(file_path, metadata)
 
                     # Create/Update task as approved for history/audit
-                    # Note: Original code did this. I'll keep it for consistency.
                     self.enhancer.create_or_update_review_task(file_path, metadata, confidence, status='approved')
                 else:
                     if metadata:
