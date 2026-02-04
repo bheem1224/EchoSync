@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 :root {
+  color-scheme: dark;
   /* Brand / Palette from rulebook */
   --color-primary: #00fa9a; /* Neon Mint */
   --color-primary-hover: #00e08a;

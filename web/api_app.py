@@ -129,6 +129,13 @@ def create_app() -> Flask:
     except Exception as e:
         print(f"[WARN] Failed to register metadata enhancer service: {e}")
 
+    # Register Auto Import Service
+    try:
+        from services.auto_importer import register_auto_import_service
+        register_auto_import_service()
+    except Exception as e:
+        print(f"[WARN] Failed to register auto import service: {e}")
+
     # Start Backend Services (Download Manager, Monitors) in a separate thread
     # We use WERKZEUG_RUN_MAIN to ensure we only run in the reloader child process
     # to avoid double execution (one in watcher, one in worker).
