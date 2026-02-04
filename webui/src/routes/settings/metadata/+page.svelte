@@ -7,7 +7,7 @@
   import { metadataQueue } from '../../../stores/metadataQueue';
 
   // Tabs
-  let activeTab = 'providers'; // providers, settings, queue, history
+  let activeTab = 'providers'; // providers, settings, queue
 
   // Providers Logic
   let metadataProviders = [];
@@ -30,10 +30,6 @@
   let manualSearchQuery = '';
   let manualSearchResults = [];
   let manualSearchLoading = false;
-
-  // History Logic
-  let historyItems = [];
-  let historyLoading = false;
 
   onMount(async () => {
     // Initial Load
@@ -180,7 +176,12 @@
           queueItems = resp.data.queue || [];
       } catch (e) {
           console.error(e);
-          feedback.addToast('Failed to load queue', 'error');
+          // Don't toast for empty queue or minor errors, just log
+          if (e.response && e.response.data && e.response.data.error) {
+              feedback.addToast(e.response.data.error, 'error');
+          } else {
+              feedback.addToast('Failed to load queue', 'error');
+          }
       } finally {
           queueLoading = false;
       }
@@ -244,22 +245,8 @@
       selectedTask = null;
   }
 
-  // --- History ---
-  async function loadHistory() {
-      historyLoading = true;
-      try {
-          const resp = await apiClient.get('/api/metadata/history');
-          historyItems = resp.data.history || [];
-      } catch (e) {
-          feedback.addToast('Failed to load history', 'error');
-      } finally {
-          historyLoading = false;
-      }
-  }
-
   // Reactivity
   $: if (activeTab === 'queue') loadQueue();
-  $: if (activeTab === 'history') loadHistory();
 
 </script>
 
@@ -270,7 +257,7 @@
 <section class="page">
   <header class="page__header">
     <h1>Metadata Manager</h1>
-    <p class="subtitle">Manage metadata providers, review queue, and history.</p>
+    <p class="subtitle">Manage metadata providers and review queue.</p>
   </header>
 
   <div class="tabs">
@@ -282,7 +269,6 @@
             <span class="tab-badge">{$metadataQueue.count}</span>
         {/if}
       </button>
-      <button class="tab-btn" class:active={activeTab === 'history'} on:click={() => activeTab = 'history'}>History</button>
   </div>
 
   <div class="tab-content">
@@ -418,42 +404,6 @@
               </div>
           {/if}
 
-      {:else if activeTab === 'history'}
-          <!-- History Tab -->
-          {#if historyLoading}
-              <div class="loading">Loading history...</div>
-          {:else if historyItems.length === 0}
-              <div class="empty-state">No history available.</div>
-          {:else}
-              <table class="history-table">
-                  <thead>
-                      <tr>
-                          <th>Date</th>
-                          <th>Filename</th>
-                          <th>Status</th>
-                          <th>Match</th>
-                      </tr>
-                  </thead>
-                  <tbody>
-                      {#each historyItems as item}
-                          <tr>
-                              <td>{new Date(item.created_at).toLocaleString()}</td>
-                              <td title={item.file_path}>{item.filename}</td>
-                              <td>
-                                  <span class="status-pill {item.status}">{item.status}</span>
-                              </td>
-                              <td>
-                                  {#if item.detected_metadata}
-                                      {item.detected_metadata.artist} - {item.detected_metadata.title}
-                                  {:else}
-                                      -
-                                  {/if}
-                              </td>
-                          </tr>
-                      {/each}
-                  </tbody>
-              </table>
-          {/if}
       {/if}
   </div>
 </section>
@@ -543,14 +493,6 @@
   .btn-manual { background: var(--accent); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
   .btn-ignore { background: transparent; border: 1px solid #ef4444; color: #ef4444; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
   .btn-ignore:hover { background: #ef4444; color: white; }
-
-  /* History Styles */
-  .history-table { width: 100%; border-collapse: collapse; }
-  .history-table th { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 500; }
-  .history-table td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 14px; }
-  .status-pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; text-transform: uppercase; font-weight: 600; }
-  .status-pill.approved { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
-  .status-pill.ignored { background: rgba(107, 114, 128, 0.1); color: #6b7280; }
 
   /* Modal */
   .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 100; }

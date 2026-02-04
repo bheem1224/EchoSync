@@ -28,6 +28,7 @@ from .music_database import (
     UserRating,
     AudioFingerprint,
     Wishlist,
+    ReviewTask,
     get_database,
     close_database
 )
@@ -50,6 +51,7 @@ __all__ = [
     'UserRating',
     'AudioFingerprint',
     'Wishlist',
+    'ReviewTask',
     'LibraryManager',
     'get_database',
     'close_database',
