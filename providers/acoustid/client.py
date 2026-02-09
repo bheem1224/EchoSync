@@ -15,14 +15,24 @@ class AcoustIDProvider(ProviderBase):
     def __init__(self):
         super().__init__()
         self.api_base = "https://api.acoustid.org/v2"
+        
+        # Configure rate limit: 1 request/second per AcoustID API guidelines
+        from core.request_manager import RateLimitConfig
+        self.http.rate = RateLimitConfig(requests_per_second=1.0)
 
     def _get_api_key(self) -> Optional[str]:
         # Try service credentials first
         creds = config_manager.get_service_credentials(self.name)
         if creds and creds.get('api_key'):
-            return creds.get('api_key')
+            api_key = str(creds.get('api_key')).strip()
+            logger.debug(f"AcoustID API key loaded from config DB (length={len(api_key)})")
+            return api_key or None
         # Fallback to direct config get
-        return config_manager.get('acoustid.api_key')
+        api_key = config_manager.get('acoustid.api_key')
+        if api_key:
+            api_key = str(api_key).strip()
+            logger.debug(f"AcoustID API key loaded from config.json (length={len(api_key)})")
+        return api_key or None
 
     def resolve_fingerprint(self, fingerprint: str, duration: int) -> List[str]:
         """
@@ -40,20 +50,35 @@ class AcoustIDProvider(ProviderBase):
             logger.warning("AcoustID API key not configured")
             return []
 
-        params = {
+        # Validate fingerprint
+        if not fingerprint or not fingerprint.strip():
+            logger.warning("Empty fingerprint provided")
+            return []
+
+        # Force integer duration (API rejects floats)
+        duration = int(duration)
+
+        payload = {
             'client': api_key,
             'meta': 'recordingids',
-            'fingerprint': fingerprint,
+            'fingerprint': fingerprint.strip(),
             'duration': duration
         }
 
         try:
-            # Using self.http (RequestManager)
-            # RequestManager handles rate limiting and retries
-            response = self.http.get(f"{self.api_base}/lookup", params=params)
+            # Debug: Log exact payload before sending
+            logger.debug(f"AcoustID payload: fingerprint_len={len(fingerprint)}, duration={duration}, api_key_len={len(api_key)}")
+            
+            # Use POST with data (not params) per AcoustID API docs
+            response = self.http.post(f"{self.api_base}/lookup", data=payload)
 
             if response.status_code != 200:
-                logger.error(f"AcoustID API error: {response.status_code} - {response.text}")
+                if response.status_code == 400:
+                    logger.warning(
+                        f"AcoustID lookup rejected (400). Response: {response.text[:200]}"
+                    )
+                else:
+                    logger.error(f"AcoustID API error: {response.status_code} - {response.text[:200]}")
                 return []
 
             data = response.json()

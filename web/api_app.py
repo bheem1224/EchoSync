@@ -11,6 +11,7 @@ import subprocess
 import logging
 from pathlib import Path
 from flask import Flask
+from core.settings import config_manager
 
 try:
     from flask_cors import CORS

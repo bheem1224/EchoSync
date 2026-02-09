@@ -11,6 +11,7 @@ This service is responsible for:
 import os
 import shutil
 import logging
+import threading
 from pathlib import Path
 from typing import List, Dict, Any
 import datetime
@@ -30,6 +31,10 @@ class AutoImportService:
     def __init__(self):
         self.library_root = config_manager.get_library_dir()
         self.enhancer = get_metadata_enhancer()
+        self._scan_lock = threading.Lock()
+        self._processing_lock = threading.Lock()
+        self._processing_files = set()
+        self._recently_completed = {}  # Track completed files to avoid duplicate processing
         self._register_jobs()
 
     @classmethod
@@ -44,6 +49,7 @@ class AutoImportService:
             name="auto_import_scan",
             func=self.scan_and_process,
             interval_seconds=300,  # 5 minutes
+            start_after=300,  # Wait 5 minutes before first run
             enabled=True,
             tags=["soulsync", "import"],
             max_retries=3
@@ -51,54 +57,111 @@ class AutoImportService:
 
     def scan_and_process(self):
         """Scan download directory for audio files and process them."""
+        if not self._scan_lock.acquire(blocking=False):
+            logger.info("Auto-import scan skipped: Another scan/process is already running.")
+            return
         meta_config = config_manager.get('metadata_enhancement') or {}
 
-        if not meta_config.get('enabled', True):
-            logger.info("Auto-import scan skipped: Feature disabled in settings.")
-            return
+        try:
+            if not meta_config.get('enabled', True):
+                logger.info("Auto-import scan skipped: Feature disabled in settings.")
+                return
 
-        download_dir = config_manager.get_download_dir()
-        if not download_dir.exists():
-            logger.warning(f"Auto-import scan skipped: Download directory does not exist ({download_dir})")
-            return
+            download_dir = config_manager.get_download_dir()
+            logger.debug(f"Download directory from config: {download_dir}")
+            logger.debug(f"Download directory type: {type(download_dir)}")
+            logger.debug(f"Download directory exists: {download_dir.exists() if download_dir else 'None'}")
+            
+            if not download_dir:
+                logger.error("Download directory is None!")
+                return
+                
+            if not download_dir.exists():
+                logger.warning(f"Auto-import scan skipped: Download directory does not exist ({download_dir})")
+                logger.debug(f"Attempted to access: {download_dir.resolve()}")
+                return
 
-        supported_exts = {'.mp3', '.flac', '.ogg', '.m4a', '.wav'}
-        files_to_process = []
+            logger.debug(f"Starting scan of download directory: {download_dir}")
+            supported_exts = {'.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape', '.wav', '.dsd', '.dsf', '.dff'}
+            files_to_process = []
 
-        # We also need to skip files that are already in the review queue
-        pending_files = self._get_pending_review_files()
+            # We also need to skip files that are already ignored
+            pending_files = self._get_pending_review_files()
 
-        for root, dirs, files in os.walk(download_dir):
-            for file in files:
-                path = Path(root) / file
-                if path.suffix.lower() in supported_exts:
-                    if str(path) not in pending_files:
-                         files_to_process.append(path)
+            for root, dirs, files in os.walk(download_dir):
+                logger.debug(f"Scanning directory: {root}")
+                logger.debug(f"Found {len(files)} files in {root}")
+                for file in files:
+                    path = Path(root) / file
+                    logger.debug(f"Checking file: {path}")
+                    if path.suffix.lower() in supported_exts:
+                        logger.debug(f"File matches audio extension: {path.suffix}")
+                        if str(path) in pending_files:
+                            logger.debug(f"File is ignored in review queue, skipping: {path}")
+                            continue
+                        with self._processing_lock:
+                            if str(path) in self._processing_files:
+                                logger.debug(f"File already being processed, skipping: {path}")
+                                continue
+                        logger.debug(f"File not in ignored queue, adding: {path}")
+                        files_to_process.append(path)
 
-        if files_to_process:
-            logger.info(f"Found {len(files_to_process)} new files to process")
-            self.process_batch(files_to_process)
-        else:
-            logger.info("Auto-import scan completed: No new files found.")
+            if files_to_process:
+                logger.info(f"Found {len(files_to_process)} new files to process")
+                self.process_batch(files_to_process)
+            else:
+                logger.info(f"Auto-import scan completed: No new files found in {download_dir}")
+        finally:
+            self._scan_lock.release()
 
     def _get_pending_review_files(self) -> set:
-        """Get set of file paths currently in pending or ignored review tasks."""
-        # This duplicates logic from MetadataEnhancer, but that's okay for decoupling.
+        """Get set of file paths currently ignored (NOT reprocessing pending items).
+        
+        Only skip files that are explicitly 'ignored' by the user.
+        Files in 'pending' status should be reprocessed (they're waiting for manual review).
+        """
         db = get_database()
         with db.session_scope() as session:
-            rows = session.query(ReviewTask.file_path).filter(ReviewTask.status.in_(['pending', 'ignored'])).all()
+            rows = session.query(ReviewTask.file_path).filter(ReviewTask.status == 'ignored').all()
             return {row[0] for row in rows}
 
     def process_batch(self, files: List[Path]):
         """
         Process a batch of files: Identify -> Decide -> (Tag & Move) OR Queue.
+        
+        Decision Logic:
+        - If metadata identification FAILS (returns None) -> Queue for manual review (no file movement)
+        - If metadata found AND auto_import enabled AND confidence >= threshold -> Auto-import
+        - Otherwise -> Queue for manual review
         """
+        import time
+        
         meta_config = config_manager.get('metadata_enhancement') or {}
         auto_import = meta_config.get('auto_import', False)
         confidence_threshold = meta_config.get('confidence_threshold', 90) / 100.0
 
         for file_path in files:
+            file_key = str(file_path)
+            
+            # Check if file was recently completed (within last 10 seconds)
+            if file_key in self._recently_completed:
+                if time.time() - self._recently_completed[file_key] < 10:
+                    logger.debug(f"File recently processed, skipping: {file_path}")
+                    continue
+                else:
+                    # Cleanup old entries
+                    del self._recently_completed[file_key]
+            
+            with self._processing_lock:
+                if file_key in self._processing_files:
+                    logger.debug(f"File already being processed, skipping: {file_path}")
+                    continue
+                self._processing_files.add(file_key)
+
             if not file_path.exists():
+                logger.warning(f"File disappeared before processing: {file_path}")
+                with self._processing_lock:
+                    self._processing_files.discard(file_key)
                 continue
 
             logger.info(f"Processing file: {file_path}")
@@ -107,23 +170,38 @@ class AutoImportService:
                 # Delegate identification to MetadataEnhancerService
                 metadata, confidence = self.enhancer.identify_file(file_path)
 
-                # Decision Logic
-                if metadata and auto_import and confidence >= confidence_threshold:
+                # CRITICAL: If metadata is None, identification FAILED
+                if metadata is None:
+                    logger.warning(f"Metadata identification FAILED for {file_path.name}. Marking for manual review.")
+                    self.enhancer.create_or_update_review_task(file_path, None, 0.0, status='pending')
+                    self._recently_completed[file_key] = time.time()
+                    continue
+
+                # Decision Logic: Auto-import vs. Review Queue
+                if auto_import and confidence >= confidence_threshold:
                     logger.info(f"Auto-importing {file_path.name} (Confidence: {confidence:.2f})")
+                    if not file_path.exists():
+                        logger.warning(f"File missing before finalize_import, skipping: {file_path}")
+                        self.enhancer.create_or_update_review_task(file_path, metadata, confidence, status='pending')
+                        self._recently_completed[file_key] = time.time()
+                        continue
                     self.finalize_import(file_path, metadata)
-
-                    # Create/Update task as approved for history/audit
-                    self.enhancer.create_or_update_review_task(file_path, metadata, confidence, status='approved')
+                    self._recently_completed[file_key] = time.time()
                 else:
-                    if metadata:
-                        logger.info(f"Low confidence ({confidence:.2f}) or Auto-Import OFF. Sending to Review Queue.")
-                    else:
-                        logger.info(f"No metadata found. Sending to Review Queue.")
-
+                    logger.info(f"Low confidence ({confidence:.2f}) or Auto-Import OFF. Sending to Review Queue.")
                     self.enhancer.create_or_update_review_task(file_path, metadata, confidence, status='pending')
+                    self._recently_completed[file_key] = time.time()
 
             except Exception as e:
                 logger.error(f"Error processing {file_path}: {e}", exc_info=True)
+                # Even on exceptions, ensure file is queued for review
+                try:
+                    self.enhancer.create_or_update_review_task(file_path, None, 0.0, status='pending')
+                except Exception as e2:
+                    logger.error(f"Failed to create review task for {file_path}: {e2}")
+            finally:
+                with self._processing_lock:
+                    self._processing_files.discard(file_key)
 
         # Cleanup
         for f in files:
@@ -133,7 +211,19 @@ class AutoImportService:
         """
         Public method to Tag and Move a file.
         Used by Auto-Import logic and 'Approve' button in UI.
+        
+        SAFETY: Validates metadata before moving file to library.
         """
+        # SAFETY CHECK: Ensure we have valid metadata before moving
+        if not metadata or not isinstance(metadata, dict):
+            raise ValueError(f"Cannot finalize import: invalid metadata for {file_path.name}")
+        
+        # Ensure critical fields exist
+        required_fields = ['title', 'artist']
+        missing = [field for field in required_fields if not metadata.get(field)]
+        if missing:
+            raise ValueError(f"Cannot finalize import: missing required metadata fields {missing} for {file_path.name}")
+
         # 1. Tag
         self.enhancer.tag_file(file_path, metadata)
 

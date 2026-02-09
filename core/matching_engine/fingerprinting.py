@@ -44,6 +44,7 @@ class FingerprintGenerator:
         """
         try:
             import acoustid
+            import os
         except ImportError:
             logger.warning(
                 "pyacoustid not installed. Fingerprinting unavailable. "
@@ -56,11 +57,26 @@ class FingerprintGenerator:
             return None
 
         try:
+            # Check if fpcalc is available
+            fpcalc_path = os.environ.get('FPCALC', 'fpcalc')
+            
             # Generate fingerprint using Chromaprint
-            # acoustid.fingerprint() returns (MBID, fingerprint)
-            # We only need the fingerprint
-            _, fingerprint = acoustid.fingerprint_file(file_path)
+            # acoustid.fingerprint_file() returns (duration, fingerprint)
+            duration, fingerprint = acoustid.fingerprint_file(file_path)
+            
+            if not fingerprint:
+                logger.warning(f"Empty fingerprint generated for {file_path}")
+                return None
+            
+            logger.debug(f"Generated fingerprint for {file_path}: length={len(fingerprint)}, duration={duration}s")
             return fingerprint
+            
+        except FileNotFoundError as e:
+            logger.error(
+                f"fpcalc command not found. Install Chromaprint and add fpcalc to PATH, "
+                f"or set FPCALC environment variable. Error: {e}"
+            )
+            return None
         except Exception as e:
             logger.warning(f"Failed to fingerprint {file_path}: {e}")
             return None

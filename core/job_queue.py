@@ -210,6 +210,17 @@ class JobQueue:
             time.sleep(self._poll_interval)
 
     def _execute_job(self, job: ScheduledJob):
+        # Check for duplicate jobs (prevent same job from running twice simultaneously)
+        # Exception: sync jobs can have multiple instances (individually registered) and run concurrently
+        if 'sync_job' not in job.name:
+            for other_job in self._jobs.values():
+                if other_job.name == job.name and other_job.running:
+                    logger.warning(
+                        f"Job '{job.name}' is already running. Skipping duplicate execution. "
+                        f"If this happens frequently, check for long-running processes or scheduling conflicts."
+                    )
+                    return
+        
         if not self._workers.acquire(blocking=False):
             logger.warning(f"No available workers for job: {job.name}")
             return
