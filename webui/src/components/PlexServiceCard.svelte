@@ -2,9 +2,11 @@
   import { onMount } from 'svelte';
   import apiClient from '../api/client';
   import { feedback } from '../stores/feedback';
+  import PathMappingEditor from '../lib/components/PathMappingEditor.svelte';
 
   let baseUrl = '';
   let serverName = '';
+  let pathMappings = [];
   let hasToken = false;
   let connected = false;
   let loading = true;
@@ -42,6 +44,7 @@
       if (response.data?.settings) {
         baseUrl = response.data.settings.base_url || '';
         serverName = response.data.settings.server_name || '';
+        pathMappings = response.data.settings.path_mappings || [];
         hasToken = response.data.settings.has_token || false;
         connected = response.data.settings.connected || false;
         isActive = response.data.settings.is_active || false;
@@ -62,7 +65,8 @@
       saving = true;
       await apiClient.post('/plex/settings', {
         base_url: baseUrl,
-        server_name: serverName
+        server_name: serverName,
+        path_mappings: pathMappings
       });
       feedback.addToast('Plex settings saved', 'success');
       await loadSettings();
@@ -211,6 +215,10 @@
           />
           <span class="help-text">Preferred server if you have multiple</span>
         </label>
+
+        <div class="border-t border-gray-700 my-4 pt-4">
+            <PathMappingEditor bind:mappings={pathMappings} />
+        </div>
 
         <div class="button-group">
           <button

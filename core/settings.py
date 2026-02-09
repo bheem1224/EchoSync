@@ -409,7 +409,7 @@ class ConfigManager:
             # Multi-account Tidal support
             "tidal_accounts": [],
             "active_tidal_account_id": None,
-            "plex": {"base_url": "", "token": "", "auto_detect": True},
+            "plex": {"base_url": "", "token": "", "auto_detect": True, "path_mappings": []},
             "jellyfin": {"base_url": "", "api_key": "", "auto_detect": True},
             "navidrome": {"base_url": "", "username": "", "password": "", "auto_detect": True},
             "soulseek": {"slskd_url": "", "api_key": ""},
@@ -466,10 +466,7 @@ class ConfigManager:
                 "plugins_dir": str(self.plugins_path)
             },
             # Provider/Plugin management
-            "disabled_providers": [],  # List of provider/plugin names to disable (e.g., ["spotify", "tidal"])
-
-            # Path Mapping (Remote to Local)
-            "path_mappings": []  # List of dicts: [{"remote": "/remote/path", "local": "/local/path"}]
+            "disabled_providers": []  # List of provider/plugin names to disable (e.g., ["spotify", "tidal"])
         }
         return cfg
 
@@ -1020,16 +1017,6 @@ class ConfigManager:
             disabled.remove(name)
             self.set_disabled_providers(disabled)
 
-    def get_path_mappings(self) -> list:
-        """Get the list of path mappings."""
-        return self.get('path_mappings', []) or []
-
-    def set_path_mappings(self, mappings: list) -> None:
-        """Set the list of path mappings."""
-        if not isinstance(mappings, list):
-            raise ValueError("path_mappings must be a list")
-        self.set('path_mappings', mappings)
-        
     def is_configured(self) -> bool:
         # Check Spotify credentials (global or active account overrides)
         spotify_creds = self.get_spotify_active_credentials()
