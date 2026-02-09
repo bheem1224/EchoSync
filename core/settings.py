@@ -409,7 +409,7 @@ class ConfigManager:
             # Multi-account Tidal support
             "tidal_accounts": [],
             "active_tidal_account_id": None,
-            "plex": {"base_url": "", "token": "", "auto_detect": True},
+            "plex": {"base_url": "", "token": "", "auto_detect": True, "path_mappings": []},
             "jellyfin": {"base_url": "", "api_key": "", "auto_detect": True},
             "navidrome": {"base_url": "", "username": "", "password": "", "auto_detect": True},
             "soulseek": {"slskd_url": "", "api_key": ""},
@@ -1016,7 +1016,7 @@ class ConfigManager:
         if name in disabled:
             disabled.remove(name)
             self.set_disabled_providers(disabled)
-        
+
     def is_configured(self) -> bool:
         # Check Spotify credentials (global or active account overrides)
         spotify_creds = self.get_spotify_active_credentials()

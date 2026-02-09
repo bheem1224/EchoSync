@@ -2,10 +2,12 @@
   import { onMount } from 'svelte';
   import apiClient from '../api/client';
   import { feedback } from '../stores/feedback';
+  import PathMappingEditor from '../lib/components/PathMappingEditor.svelte';
 
   let baseUrl = '';
   let username = '';
   let password = '';
+  let pathMappings = [];
   let hasPassword = false;
   let connected = false;
   let loading = true;
@@ -41,6 +43,7 @@
       if (response.data?.settings) {
         baseUrl = response.data.settings.base_url || '';
         username = response.data.settings.username || '';
+        pathMappings = response.data.settings.path_mappings || [];
         hasPassword = response.data.settings.has_password || false;
         connected = response.data.settings.connected || false;
         isActive = response.data.settings.is_active || false;
@@ -68,7 +71,8 @@
       await apiClient.post('/navidrome/settings', {
         base_url: baseUrl,
         username: username,
-        password: password
+        password: password,
+        path_mappings: pathMappings
       });
       feedback.addToast('Navidrome settings saved', 'success');
       await loadSettings();
@@ -167,6 +171,10 @@
             </button>
           </div>
         </label>
+
+        <div class="border-t border-gray-700 my-4 pt-4">
+            <PathMappingEditor bind:mappings={pathMappings} />
+        </div>
 
         <div class="button-group">
           <button

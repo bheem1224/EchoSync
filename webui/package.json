@@ -18,7 +18,8 @@
   "dependencies": {
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
-    "axios": "1.6.8"
+    "axios": "1.6.8",
+    "lucide-svelte": "^0.343.0"
   },
   "type": "module"
 }
