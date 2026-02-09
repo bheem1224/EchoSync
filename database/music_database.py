@@ -382,6 +382,63 @@ class MusicDatabase:
 
         return None, 0.0
 
+    def get_library_hierarchy(self) -> List[Dict]:
+        """Fetch the entire library hierarchy (Artist -> Album -> Track)."""
+        with self.session_scope() as session:
+            # Query all artists with their albums and tracks
+            # We use joinedload to avoid N+1 query problems
+            from sqlalchemy.orm import joinedload
+            artists = session.query(Artist).options(
+                joinedload(Artist.albums).joinedload(Album.tracks)
+            ).order_by(Artist.name).all()
+
+            hierarchy = []
+            for artist in artists:
+                artist_data = {
+                    "id": artist.id,
+                    "name": artist.name,
+                    "image_url": artist.image_url,
+                    "albums": []
+                }
+
+                # Sort albums by release date or title
+                sorted_albums = sorted(artist.albums, key=lambda a: a.release_date or date.min, reverse=True)
+
+                for album in sorted_albums:
+                    album_data = {
+                        "id": album.id,
+                        "title": album.title,
+                        "cover_image_url": album.cover_image_url,
+                        "year": album.release_date.year if album.release_date else None,
+                        "tracks": []
+                    }
+
+                    # Sort tracks by track number
+                    sorted_tracks = sorted(album.tracks, key=lambda t: (t.disc_number or 1, t.track_number or 0))
+
+                    for track in sorted_tracks:
+                        album_data["tracks"].append({
+                            "id": track.id,
+                            "title": track.title,
+                            "duration": track.duration,
+                            "track_number": track.track_number,
+                            "disc_number": track.disc_number
+                        })
+
+                    artist_data["albums"].append(album_data)
+
+                hierarchy.append(artist_data)
+
+            return hierarchy
+
+    def get_track_path(self, track_id: int) -> Optional[str]:
+        """Fetch the local file path for a track ID."""
+        with self.session_scope() as session:
+            track = session.query(Track).filter(Track.id == track_id).first()
+            if track:
+                return track.file_path
+            return None
+
     def dispose(self) -> None:
         self.engine.dispose()
 

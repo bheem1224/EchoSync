@@ -1,5 +1,6 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from web.services.library_service import LibraryAdapter
+from services.media_manager import MediaManagerService
 from core.settings import config_manager
 from core.provider import ProviderRegistry
 from core.tiered_logger import get_logger
@@ -338,4 +339,47 @@ def cancel_database_update():
             
     except Exception as e:
         logger.error(f"Database update cancel error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# New Media Manager Routes
+
+media_manager = MediaManagerService()
+
+@bp.get("/index")
+def get_library_index():
+    """Get the full library hierarchy."""
+    try:
+        index = media_manager.get_library_index()
+        return jsonify(index)
+    except Exception as e:
+        logger.error(f"Error fetching library index: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.get("/stream/<int:track_id>")
+def stream_track(track_id):
+    """Stream a track file."""
+    try:
+        file_path = media_manager.get_track_stream(track_id)
+        if not file_path:
+            return jsonify({"error": "Track not found or file missing"}), 404
+
+        return send_file(file_path)
+    except Exception as e:
+        logger.error(f"Error streaming track {track_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.delete("/<int:track_id>")
+def delete_track_endpoint(track_id):
+    """Delete a track."""
+    try:
+        success = media_manager.delete_track(track_id)
+        if success:
+            return jsonify({"success": True, "message": f"Track {track_id} deleted"}), 200
+        else:
+            return jsonify({"error": "Failed to delete track"}), 500
+    except Exception as e:
+        logger.error(f"Error deleting track {track_id}: {e}")
         return jsonify({"error": str(e)}), 500
