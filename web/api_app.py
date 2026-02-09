@@ -11,6 +11,7 @@ import subprocess
 import logging
 from pathlib import Path
 from flask import Flask
+from core.settings import config_manager
 
 try:
     from flask_cors import CORS
@@ -41,6 +42,7 @@ from web.routes.playlists import bp as playlists_bp
 from web.routes.accounts import bp as accounts_bp
 from web.routes.media_server import bp as media_server_bp
 from web.routes.library import bp as library_bp
+from web.routes.metadata import bp as metadata_bp
 
 from core.plugin_loader import PluginLoader
 from core.settings import config_manager
@@ -76,6 +78,7 @@ def create_app() -> Flask:
     app.register_blueprint(accounts_bp)
     app.register_blueprint(media_server_bp)
     app.register_blueprint(library_bp)
+    app.register_blueprint(metadata_bp)
     
     # Initialize Plugin Loader
     # Determine app root (parent of 'web/')
@@ -119,6 +122,20 @@ def create_app() -> Flask:
         register_download_manager_job()
     except Exception as e:
         print(f"[WARN] Failed to register download manager job: {e}")
+    
+    # Register metadata enhancer service
+    try:
+        from services.metadata_enhancer import register_metadata_enhancer_service
+        register_metadata_enhancer_service()
+    except Exception as e:
+        print(f"[WARN] Failed to register metadata enhancer service: {e}")
+
+    # Register Auto Import Service
+    try:
+        from services.auto_importer import register_auto_import_service
+        register_auto_import_service()
+    except Exception as e:
+        print(f"[WARN] Failed to register auto import service: {e}")
 
     # Start Backend Services (Download Manager, Monitors) in a separate thread
     # We use WERKZEUG_RUN_MAIN to ensure we only run in the reloader child process

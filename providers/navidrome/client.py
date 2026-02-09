@@ -223,6 +223,9 @@ class NavidromeClient(MediaServerProvider):
     
     def _register_health_check(self):
         """Register periodic health check for Navidrome server."""
+        if not self.is_configured():
+            return
+        
         from core.health_check import register_health_check_job, HealthCheckResult
         
         def navidrome_health_check() -> HealthCheckResult:

@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 :root {
+  color-scheme: dark;
   /* Brand / Palette from rulebook */
   --color-primary: #00fa9a; /* Neon Mint */
   --color-primary-hover: #00e08a;
@@ -147,6 +148,22 @@ a:hover {
   box-shadow: 0 0 0 4px rgba(0,250,154,0.08);
   border-color: var(--color-primary-hover);
 }
+
+/* Global Select/Option Dark Mode Fixes */
+select {
+  background-color: var(--bg-input);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+
+/* Force dark background on options for browsers that support it */
+select option {
+  background-color: var(--bg-card);
+  color: var(--text-main);
+}
+
 .grid-2 {
   display: grid;
   gap: 16px;

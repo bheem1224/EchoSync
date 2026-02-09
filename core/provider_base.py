@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from core.enums import Capability
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.matching_engine import text_utils
 from core.request_manager import RequestManager
@@ -23,6 +24,7 @@ class ProviderBase(ABC):
     category: str = 'provider'  # 'provider' (bundled, stable) or 'plugin' (community, unstable)
     supports_downloads: bool = False  # Indicates if provider supports downloads
     enabled: bool = True  # Flag to enable/disable provider without deleting files
+    capabilities: List[Capability] = []  # List of capabilities this provider supports
 
     def __init__(self):
         """Initialize provider with HTTP client."""

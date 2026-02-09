@@ -18,6 +18,7 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from datetime import datetime
 
+from core.enums import Capability
 from core.provider_base import ProviderBase
 from core.content_models import ContentChanges
 from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -215,6 +216,8 @@ class ProviderCapabilities:
     supports_streaming: bool = False
     supports_downloads: bool = False
     playlist_algorithms: list = None  # List of algorithm IDs (e.g., ['spotify_mood'])
+    supports_fingerprinting: bool = False  # Audio fingerprinting (AcoustID)
+    supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
 
 
 # Central registry of known provider capabilities
@@ -304,6 +307,32 @@ CAPABILITY_REGISTRY: Dict[str, ProviderCapabilities] = {
         supports_streaming=False,
         supports_downloads=False,
     ),
+    'acoustid': ProviderCapabilities(
+        name='acoustid',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
+        metadata=MetadataRichness.LOW,
+        supports_cover_art=False,
+        supports_lyrics=False,
+        supports_user_auth=False,
+        supports_library_scan=False,
+        supports_streaming=False,
+        supports_downloads=False,
+        supports_fingerprinting=True,  # Special capability for fingerprinting
+    ),
+    'musicbrainz': ProviderCapabilities(
+        name='musicbrainz',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
+        metadata=MetadataRichness.HIGH,
+        supports_cover_art=True,
+        supports_lyrics=False,
+        supports_user_auth=False,
+        supports_library_scan=False,
+        supports_streaming=False,
+        supports_downloads=False,
+        supports_metadata_fetch=True,  # Special capability for metadata fetching
+    ),
 }
 
 
@@ -324,6 +353,25 @@ class ProviderRegistry:
     _providers: Dict[str, Type[ProviderBase]] = {}
     _provider_sources: Dict[str, str] = {}  # metadata: provider_name -> source_type
     _disabled_providers: set = set()
+
+    @classmethod
+    def get_providers_with_capability(cls, capability: Capability, exclude_disabled: bool = True) -> List[ProviderBase]:
+        """
+        Return a list of instantiated providers that support the given capability.
+        """
+        providers = []
+        for name, provider_cls in cls._providers.items():
+            if exclude_disabled and name.lower() in cls._disabled_providers:
+                continue
+
+            # Check if class has capabilities attribute and if it contains the capability
+            caps = getattr(provider_cls, 'capabilities', [])
+            if capability in caps:
+                try:
+                    providers.append(cls.create_instance(name))
+                except Exception as e:
+                    logger.error(f"Failed to instantiate provider '{name}': {e}")
+        return providers
 
     @classmethod
     def get_providers_by_type(cls, provider_type: str, exclude_disabled: bool = True) -> List[str]:

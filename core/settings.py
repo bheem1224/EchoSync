@@ -417,7 +417,15 @@ class ConfigManager:
             "listenbrainz": {"token": ""},
             "logging": {"path": str(self.logs_path / 'app.log'), "level": "INFO"},
             "database": {"path": str(self.media_db_path), "max_workers": 2},
-            "metadata_enhancement": {"enabled": True, "embed_album_art": True},
+            "metadata_enhancement": {
+                "enabled": True,
+                "embed_album_art": True,
+                "auto_import": False,
+                "naming_template": "{Artist}/{Album}/{Track} - {Title}.{ext}",
+                "conflict_resolution": "replace",
+                "confidence_threshold": 90,
+                "overwrite_tags": True
+            },
             "playlist_sync": {"create_backup": True},
             "file_organization": {
                 "enabled": True,

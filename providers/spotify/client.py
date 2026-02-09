@@ -145,6 +145,9 @@ class SpotifyClient(SyncServiceProvider):
     
     def _register_health_check(self):
         """Register periodic health check for Spotify API."""
+        if not self.is_configured():
+            return
+        
         from core.health_check import register_health_check_job, HealthCheckResult
         
         def spotify_health_check() -> HealthCheckResult:

@@ -283,6 +283,9 @@ class JellyfinClient(MediaServerProvider):
     
     def _register_health_check(self):
         """Register periodic health check for Jellyfin server."""
+        if not self.is_configured():
+            return
+        
         from core.health_check import register_health_check_job, HealthCheckResult
         
         def jellyfin_health_check() -> HealthCheckResult:

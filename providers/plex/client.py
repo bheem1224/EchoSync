@@ -39,6 +39,9 @@ class PlexClient(ProviderBase):
     
     def _register_health_check(self):
         """Register periodic health check for Plex server."""
+        if not self.is_configured():
+            return
+        
         def plex_health_check() -> HealthCheckResult:
             try:
                 connected = self.ensure_connection()

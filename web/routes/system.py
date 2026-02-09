@@ -82,6 +82,8 @@ def system_stats():
         return jsonify({"error": "Failed to get stats"}), 500
 
 
+from services.metadata_enhancer import get_metadata_enhancer
+
 @bp.get("/settings")
 def get_settings():
     """Get current application settings (Svelte expects settings/schema/version)."""
@@ -323,3 +325,56 @@ def browse_filesystem():
     except Exception as e:
         logger.error(f"Error browsing filesystem: {e}")
         return jsonify({'error': 'Failed to browse path'}), 500
+
+
+@bp.get("/settings/preferences")
+def get_preferences():
+    """Get metadata enhancement preferences."""
+    try:
+        prefs = config_manager.get('metadata_enhancement') or {}
+        return jsonify(prefs), 200
+    except Exception as e:
+        logger.error(f"Error getting preferences: {e}")
+        return jsonify({"error": "Failed to get preferences"}), 500
+
+
+@bp.post("/settings/preferences")
+def update_preferences():
+    """Update metadata enhancement preferences."""
+    try:
+        payload = request.get_json()
+        if not payload:
+            return jsonify({"error": "Missing payload"}), 400
+
+        # Validate/Sanitize if needed
+        current = config_manager.get('metadata_enhancement') or {}
+        updated = {**current, **payload}
+
+        config_manager.set('metadata_enhancement', updated)
+        return jsonify({"success": True, "preferences": updated}), 200
+    except Exception as e:
+        logger.error(f"Error updating preferences: {e}")
+        return jsonify({"error": "Failed to update preferences"}), 500
+
+
+@bp.post("/settings/preview-rename")
+def preview_rename():
+    """Preview file renaming based on template."""
+    try:
+        payload = request.get_json()
+        if not payload:
+             return jsonify({"error": "Missing payload"}), 400
+
+        template = payload.get('template')
+        sample_data = payload.get('sample_data') # Optional
+
+        if not template:
+             return jsonify({"error": "Missing template"}), 400
+
+        enhancer = get_metadata_enhancer()
+        preview = enhancer.generate_preview_path(template, sample_data)
+
+        return jsonify({"preview": preview}), 200
+    except Exception as e:
+        logger.error(f"Error generating preview: {e}")
+        return jsonify({"error": "Failed to generate preview"}), 500

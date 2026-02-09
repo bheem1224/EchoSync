@@ -382,3 +382,54 @@ def get_provider_details(provider_name):
     except Exception as e:
         logger.error(f"Error getting provider details for {provider_name}: {e}")
         return jsonify({'error': str(e)}), 500
+
+@bp.get("/<provider_name>/credentials")
+def get_provider_credentials(provider_name):
+    """Get credentials/configuration for a specific provider."""
+    try:
+        from core.settings import config_manager
+        
+        # Get service credentials from config database
+        credentials = config_manager.get_service_credentials(provider_name)
+        
+        return jsonify({
+            'provider': provider_name,
+            'credentials': credentials
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting credentials for {provider_name}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@bp.post("/<provider_name>/credentials")
+def set_provider_credentials(provider_name):
+    """Set credentials/configuration for a specific provider."""
+    try:
+        from core.settings import config_manager
+        from database.config_database import get_config_database
+        
+        data = request.get_json(silent=True) or {}
+        credentials = data.get('credentials', {})
+        
+        if not credentials:
+            return jsonify({'error': 'No credentials provided'}), 400
+        
+        # Get or create service in config database
+        config_db = get_config_database()
+        service_id = config_db.get_or_create_service_id(provider_name)
+        
+        # Store each credential
+        for key, value in credentials.items():
+            # Mark sensitive keys (like api_key, token, password, secret) as sensitive
+            is_sensitive = any(sensitive_word in key.lower() for sensitive_word in ['key', 'token', 'password', 'secret'])
+            config_db.set_service_config(service_id, key, value, is_sensitive=is_sensitive)
+        
+        logger.info(f"Credentials saved for {provider_name}")
+        
+        return jsonify({
+            'success': True,
+            'provider': provider_name,
+            'message': 'Credentials saved successfully'
+        }), 200
+    except Exception as e:
+        logger.error(f"Error setting credentials for {provider_name}: {e}")
+        return jsonify({'error': str(e)}), 500

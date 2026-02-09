@@ -198,6 +198,18 @@ class WatchlistArtist(Base):
     )
 
 
+class ReviewTask(Base):
+    """Model for items in the Metadata Review Queue."""
+    __tablename__ = "review_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    file_path: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    status: Mapped[str] = mapped_column(String, default="pending", nullable=False)  # pending, approved, ignored
+    detected_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Download(Base):
     """Model for tracking download state (Central Control)."""
     __tablename__ = "downloads"
@@ -402,6 +414,7 @@ __all__ = [
     "AudioFingerprint",
     "Wishlist",
     "WatchlistArtist",
+    "ReviewTask",
     "Download",
     "MusicDatabase",
     "get_database",

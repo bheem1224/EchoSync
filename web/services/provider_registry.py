@@ -25,10 +25,23 @@ def list_providers() -> List[Dict]:
             provider_dict = {
                 'id': name,  # Add id field for frontend
                 'name': name,
+                'display_name': name.title(),  # Add display name
                 'category': getattr(cls, 'category', 'provider'),
+                'service_type': getattr(cls, 'service_type', None),  # Add service_type
                 'disabled': CoreProviderRegistry.is_provider_disabled(name),
                 'supports_downloads': getattr(cls, 'supports_downloads', False)
             }
+            
+            # Check if provider is configured by instantiating and calling is_configured
+            try:
+                instance = CoreProviderRegistry.create_instance(name)
+                if instance and hasattr(instance, 'is_configured'):
+                    provider_dict['is_configured'] = instance.is_configured()
+                else:
+                    provider_dict['is_configured'] = True  # Assume configured if method not available
+            except Exception:
+                provider_dict['is_configured'] = False
+            
             try:
                 caps = fetch_capabilities(name)
                 search_caps = {
@@ -45,10 +58,16 @@ def list_providers() -> List[Dict]:
                     'supports_library_scan': caps.supports_library_scan,
                     'supports_playlists': caps.supports_playlists.name if caps.supports_playlists else 'NONE',
                     'search': search_caps,
-                    'search_capabilities': search_caps  # Alias for compatibility
+                    'search_capabilities': search_caps,  # Alias for compatibility
+                    # Add metadata-specific capabilities
+                    'fetch_metadata': caps.supports_metadata_fetch if hasattr(caps, 'supports_metadata_fetch') else False,
+                    'resolve_fingerprint': caps.supports_fingerprinting if hasattr(caps, 'supports_fingerprinting') else False,
                 }
             except KeyError:
-                # Provider not in capability registry, use defaults
+                # Provider not in capability registry, check class-level capabilities
+                from core.enums import Capability
+                class_caps = getattr(cls, 'capabilities', [])
+                
                 default_search = {'tracks': False, 'artists': False, 'albums': False, 'playlists': False}
                 provider_dict['capabilities'] = {
                     'metadata_richness': 'MEDIUM',
@@ -58,7 +77,9 @@ def list_providers() -> List[Dict]:
                     'supports_library_scan': False,
                     'supports_playlists': 'NONE',
                     'search': default_search,
-                    'search_capabilities': default_search
+                    'search_capabilities': default_search,
+                    'fetch_metadata': Capability.FETCH_METADATA in class_caps,
+                    'resolve_fingerprint': Capability.RESOLVE_FINGERPRINT in class_caps,
                 }
             providers.append(provider_dict)
     return providers

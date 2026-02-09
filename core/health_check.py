@@ -145,6 +145,7 @@ class HealthCheckRegistry:
             name=f"health_check_{service_name}",
             func=health_check_job,
             interval_seconds=interval_seconds,
+            start_after=interval_seconds,  # Wait for interval before first run
             max_retries=max_retries,
             tags=["health_check"]
         )
