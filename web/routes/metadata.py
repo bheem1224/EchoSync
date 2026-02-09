@@ -3,8 +3,7 @@
 from flask import Blueprint, jsonify, request
 from pathlib import Path
 from services.metadata_enhancer import get_metadata_enhancer
-from database import get_database
-from database.music_database import ReviewTask
+from database import get_database, ReviewTask
 from core.enums import Capability
 from core.plugin_loader import get_provider
 from core.tiered_logger import get_logger
@@ -24,7 +23,16 @@ def get_queue():
         db = get_database()
         queue = []
         with db.session_scope() as session:
-            tasks = session.query(ReviewTask).filter(ReviewTask.status == 'pending').all()
+            # Query pending tasks
+            try:
+                tasks = session.query(ReviewTask).filter(ReviewTask.status == 'pending').all()
+            except Exception as e:
+                # If table doesn't exist yet, return empty list instead of 500
+                if "no such table" in str(e).lower():
+                    logger.info("Review tasks table not found, returning empty queue.")
+                    return jsonify({"queue": []}), 200
+                raise e
+
             for task in tasks:
                 queue.append({
                     "id": task.id,
@@ -37,7 +45,7 @@ def get_queue():
         return jsonify({"queue": queue}), 200
     except Exception as e:
         logger.error(f"Error getting queue: {e}")
-        return jsonify({"error": "Failed to get queue"}), 500
+        return jsonify({"error": f"Failed to get queue: {str(e)}"}), 500
 
 @bp.post("/queue/approve")
 def approve_match():

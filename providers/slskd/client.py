@@ -147,18 +147,13 @@ class SlskdProvider(DownloaderProvider):
     
     def _register_health_check(self):
         """Register periodic health check for Slskd API."""
+        if not self.is_configured():
+            return
+        
         from core.health_check import register_health_check_job, HealthCheckResult
         
         def slskd_health_check() -> HealthCheckResult:
             try:
-                configured = self.is_configured()
-                if not configured:
-                    return HealthCheckResult(
-                        service_name="slskd",
-                        status="unhealthy",
-                        message="Slskd not configured"
-                    )
-                
                 # Try a lightweight API call to check connectivity
                 try:
                     import requests

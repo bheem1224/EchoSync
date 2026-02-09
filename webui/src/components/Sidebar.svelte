@@ -1,11 +1,17 @@
 <script>
   import { page } from '$app/stores';
   import { providers } from '../stores/providers';
+  import { metadataQueue } from '../stores/metadataQueue';
   import { openSettings } from '../stores/settingsPanel';
   import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
 
   let providerCapabilities = [];
   let settingsOpen = false; // Default to collapsed
+
+  onMount(() => {
+    metadataQueue.fetchCount();
+  });
 
   $: {
     if ($providers.loaded) {
@@ -15,13 +21,13 @@
     }
   }
 
-  const settingsLinks = [
-    { label: 'Preferences', href: '/settings#preferences' },
+  $: settingsLinks = [
+    { label: 'Preferences', href: '/settings/preferences' },
     // Use the dedicated route for Music Services
     { label: 'Music Services', href: '/settings/music-services' },
     { label: 'Servers', href: '/settings/servers' },
     { label: 'Download Clients', href: '/settings/download-clients' },
-    { label: 'Metadata', href: '/settings/metadata' },
+    { label: 'Metadata', href: '/settings/metadata', badge: $metadataQueue.count },
     { label: 'Search', href: '/settings/search' },
     { label: 'Misc', href: '/settings/misc' },
     { label: 'Jobs', href: '/settings/jobs' },
@@ -68,7 +74,7 @@
     <a
       role="button"
       class="nav-item settings-item"
-      href="/settings#preferences"
+      href="/settings/preferences"
       on:click={toggleSettings}
       class:active={isActive('/settings') || settingsOpen}
     >
@@ -87,6 +93,9 @@
               class:active={$page.url.pathname.startsWith('/settings') && $page.url.hash === ('#' + link.href.split('#')[1])}
             >
               {link.label}
+              {#if link.badge > 0}
+                <span class="badge">{link.badge}</span>
+              {/if}
             </a>
           {:else}
             <a
@@ -95,6 +104,9 @@
               class:active={$page.url.pathname === link.href}
             >
               {link.label}
+              {#if link.badge > 0}
+                <span class="badge">{link.badge}</span>
+              {/if}
             </a>
           {/if}
         {/each}
@@ -183,5 +195,17 @@
   .nav-sub.active {
     background: var(--accent);
     color: var(--background);
+  }
+
+  .badge {
+    margin-left: auto;
+    background: #ef4444;
+    color: white;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 10px;
+    min-width: 16px;
+    text-align: center;
   }
 </style>
