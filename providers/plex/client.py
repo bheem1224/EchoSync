@@ -6,6 +6,7 @@ Simplified implementation using SoulSyncTrack and new core features.
 from core.provider_base import ProviderBase
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.settings import config_manager
+from core.path_mapper import PathMapper
 from core.health_check import register_health_check_job, HealthCheckResult
 from plexapi.server import PlexServer
 from plexapi.library import MusicSection
@@ -31,6 +32,7 @@ class PlexClient(ProviderBase):
         super().__init__()
         self.server: Optional[PlexServer] = None
         self.music_library: Optional[MusicSection] = None
+        self.path_mapper: Optional[PathMapper] = None
         self._connection_attempted = False
         self._is_connecting = False
         self._last_connection_attempt = 0
@@ -113,6 +115,45 @@ class PlexClient(ProviderBase):
             return True
         except Exception as e:
             logger.error(f"Error updating Plex playlist '{name}': {e}")
+            return False
+
+    def delete_track(self, rating_key: str) -> bool:
+        """Delete a track from Plex server by ratingKey."""
+        config = config_manager.get_plex_config()
+        base_url = config.get('base_url')
+        token = config.get('token')
+
+        if not base_url or not token:
+            logger.error("Plex not configured, cannot delete track")
+            return False
+
+        # Construct URL
+        url = f"{base_url.rstrip('/')}/library/metadata/{rating_key}"
+
+        # Headers
+        headers = {
+            'X-Plex-Token': token,
+            'Accept': 'application/json'
+        }
+
+        try:
+            # Use self.http as mandated by ProviderBase
+            response = self.http.delete(url, headers=headers)
+
+            if response.status_code == 200:
+                logger.info(f"Successfully deleted track {rating_key} from Plex")
+                return True
+            elif response.status_code == 403:
+                logger.warning(f"Plex server does not allow file deletion (403 Forbidden) for track {rating_key}")
+                return False
+            elif response.status_code == 404:
+                logger.warning(f"Track {rating_key} not found on Plex (404)")
+                return False
+            else:
+                logger.error(f"Failed to delete track {rating_key}: {response.status_code} {response.reason}")
+                return False
+        except Exception as e:
+            logger.error(f"Exception deleting track {rating_key}: {e}")
             return False
 
     # ===== SYNC HELPERS =====
@@ -584,6 +625,9 @@ class PlexClient(ProviderBase):
                 
                 if hasattr(media, 'parts') and media.parts:
                     file_path = getattr(media.parts[0], 'file', None)
+                    # Map remote path to local path
+                    if file_path and self.path_mapper:
+                        file_path = self.path_mapper.map_to_local(file_path)
             
             # Extract Plex track ID (ratingKey)
             plex_track_id = str(getattr(plex_track, 'ratingKey', None))
@@ -709,6 +753,9 @@ class PlexClient(ProviderBase):
         """Establish connection to Plex server."""
         config = config_manager.get_plex_config()
         
+        # Initialize PathMapper
+        self.path_mapper = PathMapper(config.get('path_mappings', []))
+
         if not config.get('base_url'):
             logger.warning("Plex server URL not configured")
             return
