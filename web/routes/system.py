@@ -49,6 +49,39 @@ def health_check():
         return jsonify({"status": "error", "results": {}}), 500
 
 
+@bp.get("/backend-info")
+def backend_info():
+    """Return backend information including protocol (HTTP/HTTPS).
+    
+    Frontend uses this to detect backend protocol and configure API calls accordingly.
+    """
+    try:
+        # Detect if running with HTTPS
+        # Check environment variables and config
+        is_https = False
+        
+        # If DISABLE_INTERNAL_HTTPS is explicitly set to 'true', we're HTTP
+        if os.getenv('DISABLE_INTERNAL_HTTPS', 'false').lower() == 'true':
+            is_https = False
+        # If DEV_MODE is explicitly 'true', we're HTTP
+        elif os.getenv('DEV_MODE', 'false').lower() == 'true':
+            is_https = False
+        # Otherwise, we're HTTPS (default with ephemeral cert)
+        else:
+            is_https = True
+        
+        protocol = 'https' if is_https else 'http'
+        
+        return jsonify({
+            'protocol': protocol,
+            'is_https': is_https,
+            'host': request.host,
+            'scheme': request.scheme,
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting backend info: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @bp.get("/status")
 def system_status():
     """System health check and service status."""

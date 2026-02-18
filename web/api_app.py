@@ -161,6 +161,31 @@ def create_app() -> Flask:
     return app
 
 
+def find_openssl():
+    """Find the OpenSSL executable on the system. Works on Windows, Linux, macOS."""
+    import shutil
+    import platform
+    
+    # Try using shutil.which (best option - searches PATH)
+    openssl_path = shutil.which('openssl')
+    if openssl_path:
+        return openssl_path
+    
+    # On Windows, try common installation paths
+    if platform.system() == 'Windows':
+        common_paths = [
+            r'C:\Program Files\OpenSSL-Win64\bin\openssl.exe',
+            r'C:\Program Files\OpenSSL-Win32\bin\openssl.exe',
+            r'C:\Program Files (x86)\OpenSSL-Win32\bin\openssl.exe',
+            r'C:\OpenSSL-Win64\bin\openssl.exe',
+        ]
+        for path in common_paths:
+            if Path(path).exists():
+                return path
+    
+    return None
+
+
 def generate_ephemeral_cert():
     """Generate a temporary self-signed certificate for internal backend↔frontend encryption.
     
@@ -173,21 +198,33 @@ def generate_ephemeral_cert():
     - Eliminate user confusion about cert purpose
     - Simplify deployment (no cert mounting needed)
     
+    Stored in SOULSYNC_CONFIG_DIR (Container Storage) for Docker compatibility.
+    Always regenerated on startup (no persistence).
+    
     Returns:
         tuple: (cert_path, key_path) - Paths to temporary cert/key files
     """
     print("[SECURITY] Generating ephemeral self-signed certificate for internal API encryption...")
     print("[INFO] This cert is for backend↔frontend traffic only. Use reverse proxy for public HTTPS.")
     
-    # Use temp directory - cert auto-cleaned on process exit
-    temp_dir = tempfile.mkdtemp(prefix='soulsync_ssl_')
-    cert_file = Path(temp_dir) / 'backend.crt'
-    key_file = Path(temp_dir) / 'backend.key'
+    # Use config directory from .env (SOULSYNC_CONFIG_DIR) for Docker compatibility
+    config_dir = os.getenv('SOULSYNC_CONFIG_DIR', 'config')
+    ssl_dir = Path(config_dir) / '.ssl'
+    ssl_dir.mkdir(parents=True, exist_ok=True)
+    
+    cert_file = ssl_dir / 'backend.crt'
+    key_file = ssl_dir / 'backend.key'
     
     try:
+        # Always regenerate (ephemeral - fresh cert on each restart)
+        # Find openssl executable (handles Windows PATH issues)
+        openssl_exe = find_openssl()
+        if not openssl_exe:
+            raise FileNotFoundError("OpenSSL not found in PATH or common installation directories")
+        
         # Generate self-signed cert (valid 1 day - regenerates on restart)
         subprocess.run([
-            'openssl', 'req', '-x509', '-newkey', 'rsa:2048',
+            openssl_exe, 'req', '-x509', '-newkey', 'rsa:2048',
             '-keyout', str(key_file),
             '-out', str(cert_file),
             '-days', '1',  # Short-lived, regenerates on restart
@@ -197,12 +234,14 @@ def generate_ephemeral_cert():
         
         print(f"[SECURITY] Ephemeral cert generated (valid 24h, auto-regenerates)")
         print(f"[INFO] Frontend must accept self-signed certs for internal API calls")
+        print(f"[DEBUG] Cert stored in: {cert_file}")
         
         return str(cert_file), str(key_file)
         
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"[ERROR] Failed to generate certificate: {e}")
-        print("[ERROR] OpenSSL not found or failed. Install OpenSSL to enable internal HTTPS.")
+        print("[ERROR] OpenSSL not found in PATH or common directories.")
+        print("[TIP] Add OpenSSL to your PATH or install from: https://slproweb.com/products/Win32OpenSSL.html")
         raise
 
 
