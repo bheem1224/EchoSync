@@ -135,7 +135,7 @@ class ConfigManager:
         
         # Initialize with data_dir defaults
         self.downloads_path = self.data_dir / 'downloads'
-        self.library_path = self.data_dir / 'transfer'  # Will be updated to 'library' in config
+        self.library_path = self.data_dir / 'library'  # Default to 'library'
         self.logs_path = self.data_dir / 'logs'
         
         # Override with ENV variables if set
@@ -540,7 +540,7 @@ class ConfigManager:
                 if not storage_config.get('download_dir'):
                     self.downloads_path = self.data_dir / 'downloads'
                 if not storage_config.get('library_dir'):
-                    self.library_path = self.data_dir / 'transfer'
+                    self.library_path = self.data_dir / 'library'
                 if not storage_config.get('log_dir'):
                     self.logs_path = self.data_dir / 'logs'
                 if not storage_config.get('plugins_dir'):

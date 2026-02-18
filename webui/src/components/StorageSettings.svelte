@@ -17,7 +17,7 @@
     const storage = current?.data?.storage || {};
     data = {
       download_dir: storage.download_dir || '',
-      transfer_dir: storage.transfer_dir || '',
+      library_dir: storage.library_dir || '',
       log_dir: storage.log_dir || '',
       config_dir: storage.config_dir || ''
     };
@@ -27,7 +27,7 @@
     const patch = {
       storage: {
         download_dir: data.download_dir,
-        transfer_dir: data.transfer_dir,
+        library_dir: data.library_dir,
         log_dir: data.log_dir,
         config_dir: data.config_dir
       }
@@ -49,9 +49,9 @@
         </label>
 
     <label class="field">
-      <span class="field-label">Matched Transfer</span>
-      <input class="dark-input input" type="text" bind:value={data.transfer_dir} placeholder="/app/Transfer" />
-      <button class="dark-btn" aria-label="Browse transfer directory" on:click={() => { browserField='transfer_dir'; browserStart = data.transfer_dir || 'data'; showBrowser = true; }}>Browse</button>
+      <span class="field-label">Library</span>
+      <input class="dark-input input" type="text" bind:value={data.library_dir} placeholder="/app/library" />
+      <button class="dark-btn" aria-label="Browse library directory" on:click={() => { browserField='library_dir'; browserStart = data.library_dir || 'data'; showBrowser = true; }}>Browse</button>
     </label>
 
     <label class="field">
