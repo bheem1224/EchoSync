@@ -2,6 +2,7 @@ import os
 from typing import Dict, Optional, List, Any
 from core.settings import config_manager
 from core.provider import ProviderRegistry
+from core.path_mapper import PathMapper
 from database.music_database import get_database, Track
 from core.tiered_logger import get_logger
 
@@ -20,12 +21,37 @@ class MediaManagerService:
         Get the local file path for a track.
         Returns None if track not found or file missing.
         """
+        # 1. Get raw path from database
         file_path = self.db.get_track_path(track_id)
-        if file_path and os.path.exists(file_path):
+        if not file_path:
+            return None
+
+        # 2. Check if file exists as-is (already local/mapped)
+        if os.path.exists(file_path):
             return file_path
 
-        if file_path:
-            logger.warning(f"File path for track {track_id} does not exist: {file_path}")
+        # 3. If not found, try to apply path mappings from the active media server
+        try:
+            active_server = config_manager.get_active_media_server()
+            server_config = config_manager.get_active_media_server_config()
+
+            # Check for mappings (Plex stores them in 'path_mappings', others might vary)
+            mappings = server_config.get('path_mappings', [])
+
+            if mappings:
+                mapper = PathMapper(mappings)
+                mapped_path = mapper.map_to_local(file_path)
+
+                if mapped_path != file_path and os.path.exists(mapped_path):
+                    logger.debug(f"Mapped remote path '{file_path}' to '{mapped_path}'")
+                    return mapped_path
+                elif mapped_path != file_path:
+                    logger.warning(f"Mapped path does not exist: {mapped_path} (original: {file_path})")
+
+        except Exception as e:
+            logger.error(f"Error applying path mappings for track {track_id}: {e}")
+
+        logger.warning(f"File path for track {track_id} does not exist: {file_path}")
         return None
 
     def delete_track(self, track_id: int) -> bool:

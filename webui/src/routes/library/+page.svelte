@@ -1,308 +1,460 @@
 <script>
   import { onMount } from 'svelte';
   import apiClient from '../../api/client';
+  import { player } from '../../stores/player';
 
-  let tracks = [];
+  let libraryIndex = [];
   let loading = true;
   let error = '';
-  let query = '';
-  let limit = 50;
-  let offset = 0;
-  let totalCount = 0;
+  let searchQuery = '';
 
-  async function loadTracks() {
+  let viewMode = 'grid'; // 'grid' | 'detail'
+  let selectedArtist = null;
+
+  // Lazy loading state
+  let visibleCount = 50;
+  const PAGE_SIZE = 50;
+
+  async function loadLibrary() {
     loading = true;
-    error = '';
     try {
-      const endpoint = query 
-        ? `/tracks/search?title=${encodeURIComponent(query)}&limit=${limit}`
-        : `/tracks?limit=${limit}&offset=${offset}`;
-      
-      const response = await apiClient.get(endpoint);
-      tracks = response.data.items || [];
-      totalCount = response.data.count || 0;
+      const res = await apiClient.get('/library/index');
+      libraryIndex = res.data || [];
     } catch (err) {
-      error = `Failed to load library: ${err.response?.data?.error || err.message}`;
+      error = err.message;
     } finally {
       loading = false;
     }
   }
 
-  function handleSearch() {
-    offset = 0;
-    loadTracks();
+  // Filtered artists
+  $: filteredArtists = libraryIndex.filter(artist =>
+      !searchQuery || artist.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // Visible subset
+  $: visibleArtists = filteredArtists.slice(0, visibleCount);
+
+  function loadMore() {
+      if (visibleCount < filteredArtists.length) {
+          visibleCount += PAGE_SIZE;
+      }
   }
 
-  async function deleteTrack(id) {
-    if (!confirm('Are you sure you want to remove this track from your library?')) return;
-    
-    try {
-      await apiClient.delete(`/tracks/${id}`);
-      tracks = tracks.filter(t => t.track_id !== id);
-    } catch (err) {
-      alert(`Delete failed: ${err.response?.data?.error || err.message}`);
-    }
+  // Reset pagination on search
+  $: if (searchQuery) visibleCount = PAGE_SIZE;
+
+  function selectArtist(artist) {
+      selectedArtist = artist;
+      viewMode = 'detail';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  function getStatusColor(status) {
-    switch (status?.toLowerCase()) {
-      case 'complete':
-      case 'verified':
-        return 'var(--accent)';
-      case 'downloading':
-      case 'queued':
-        return '#0ea5e9';
-      case 'missing':
-        return '#ef4444';
-      default:
-        return '#94a3b8';
-    }
+  function backToGrid() {
+      selectedArtist = null;
+      viewMode = 'grid';
   }
 
-  onMount(loadTracks);
+  function playTrack(track, artist, album) {
+      player.play({
+          ...track,
+          artist: artist.name,
+          album: album.title,
+          cover: album.cover_image_url || artist.image_url
+      });
+  }
+
+  async function deleteTrack(trackId, album) {
+      if (!confirm("Are you sure you want to delete this track? This action cannot be undone.")) return;
+
+      try {
+          await apiClient.delete(`/library/${trackId}`);
+
+          // Update local state
+          // Remove track from album
+          album.tracks = album.tracks.filter(t => t.id !== trackId);
+
+          // If album empty, remove album? (Optional, let's keep it simple)
+          if (album.tracks.length === 0) {
+               selectedArtist.albums = selectedArtist.albums.filter(a => a.id !== album.id);
+          }
+
+          // Force reactivity
+          libraryIndex = [...libraryIndex];
+          if (selectedArtist) selectedArtist = {...selectedArtist}; // trigger update
+
+      } catch (err) {
+          alert(`Failed to delete: ${err.message}`);
+      }
+  }
+
+  function formatDuration(ms) {
+      if (!ms) return '-:--';
+      const seconds = Math.floor(ms / 1000);
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  onMount(loadLibrary);
 </script>
 
 <svelte:head>
   <title>Library • SoulSync</title>
 </svelte:head>
 
-<section class="page">
-  <header class="page__header">
+<div class="library-page">
+  <header class="header">
     <div>
-      <p class="eyebrow">Collection</p>
-      <h1>Music Library</h1>
-      <p class="sub">Manage your canonical track collection and download status.</p>
+        <h1>Library</h1>
+        <p class="subtitle">Your Collection</p>
+    </div>
+
+    <div class="search-container">
+        <input
+            type="text"
+            placeholder="Filter artists..."
+            bind:value={searchQuery}
+            class="search-input"
+        />
     </div>
   </header>
 
-  <div class="library-controls card">
-    <div class="search-box">
-      <span class="search-icon">🔍</span>
-      <input type="text" 
-             bind:value={query} 
-             placeholder="Search library by title or artist..." 
-             on:keydown={(e) => e.key === 'Enter' && handleSearch()} />
-    </div>
-    <div class="stats">
-      <span class="muted">Total Tracks:</span>
-      <strong>{totalCount}</strong>
-    </div>
-  </div>
+  {#if loading}
+      <div class="loading">Loading library index...</div>
+  {:else if error}
+      <div class="error">Error: {error}</div>
+  {:else}
 
-  <div class="tracks-container card">
-    {#if loading}
-      <div class="loading-state">
-        <div class="spinner"></div>
-        <p>Loading your library...</p>
-      </div>
-    {:else if error}
-      <div class="error-state">
-        <p>{error}</p>
-        <button class="btn btn--small" on:click={loadTracks}>Retry</button>
-      </div>
-    {:else if tracks.length === 0}
-      <div class="empty-state">
-        <p class="muted">Your library is empty.</p>
-        <a href="/sync" class="btn btn--small">Sync some playlists</a>
-      </div>
-    {:else}
-      <div class="table-wrapper">
-        <table class="tracks-table">
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Artist</th>
-              <th>Album</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each tracks as track}
-              <tr>
-                <td>
-                  <div class="track-title">
-                    <strong>{track.title}</strong>
-                    {#if track.isrc}
-                      <span class="isrc">{track.isrc}</span>
-                    {/if}
+      <!-- GRID VIEW -->
+      {#if viewMode === 'grid'}
+          <div class="artist-grid">
+              {#each visibleArtists as artist (artist.id)}
+                  <div class="artist-card" on:click={() => selectArtist(artist)} on:keydown={(e) => e.key === 'Enter' && selectArtist(artist)} role="button" tabindex="0">
+                      <div class="card-image">
+                          {#if artist.image_url}
+                              <img src={artist.image_url} alt={artist.name} loading="lazy" />
+                          {:else}
+                              <div class="placeholder">👤</div>
+                          {/if}
+                      </div>
+                      <div class="card-info">
+                          <h3>{artist.name}</h3>
+                          <span class="count">{artist.albums.length} Albums</span>
+                      </div>
                   </div>
-                </td>
-                <td>{Array.isArray(track.artists) ? track.artists.join(', ') : track.artists}</td>
-                <td>{track.album || '-'}</td>
-                <td>
-                  <span class="status-pill" style="--status-color: {getStatusColor(track.download_status)}">
-                    {track.download_status || 'Unknown'}
-                  </span>
-                </td>
-                <td>
-                  <div class="actions">
-                    <button class="icon-btn" title="Delete" on:click={() => deleteTrack(track.track_id)}>
-                      🗑️
-                    </button>
+              {/each}
+          </div>
+
+          {#if visibleCount < filteredArtists.length}
+              <div class="load-more">
+                  <button class="btn-ghost" on:click={loadMore}>Load More</button>
+              </div>
+          {/if}
+
+          {#if filteredArtists.length === 0}
+              <div class="empty-state">No artists found.</div>
+          {/if}
+
+      <!-- DETAIL VIEW -->
+      {:else if viewMode === 'detail' && selectedArtist}
+          <div class="detail-view">
+              <button class="back-btn" on:click={backToGrid}>← Back to Artists</button>
+
+              <div class="artist-header">
+                  {#if selectedArtist.image_url}
+                      <img src={selectedArtist.image_url} alt={selectedArtist.name} class="artist-hero-img"/>
+                  {/if}
+                  <div class="artist-hero-info">
+                      <h2>{selectedArtist.name}</h2>
+                      <p>{selectedArtist.albums.reduce((acc, a) => acc + a.tracks.length, 0)} Tracks</p>
                   </div>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
-  </div>
-</section>
+              </div>
+
+              <div class="albums-list">
+                  {#each selectedArtist.albums as album (album.id)}
+                      <div class="album-section">
+                          <div class="album-header">
+                              {#if album.cover_image_url}
+                                  <img src={album.cover_image_url} alt={album.title} class="album-cover"/>
+                              {:else}
+                                  <div class="album-placeholder">💿</div>
+                              {/if}
+                              <div class="album-info">
+                                  <h3>{album.title}</h3>
+                                  <span class="year">{album.year || 'Unknown Year'}</span>
+                              </div>
+                          </div>
+
+                          <div class="tracks-list">
+                              {#each album.tracks as track}
+                                  <div class="track-row">
+                                      <span class="track-num">{track.track_number || '-'}</span>
+                                      <span class="track-title">{track.title}</span>
+                                      <span class="track-duration">{formatDuration(track.duration)}</span>
+                                      <div class="track-actions">
+                                          <button class="icon-btn play-btn" on:click={() => playTrack(track, selectedArtist, album)} title="Play">▶</button>
+                                          <button class="icon-btn del-btn" on:click={() => deleteTrack(track.id, album)} title="Delete">🗑</button>
+                                      </div>
+                                  </div>
+                              {/each}
+                          </div>
+                      </div>
+                  {/each}
+              </div>
+          </div>
+      {/if}
+
+  {/if}
+</div>
 
 <style>
-  .page {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
+  .library-page {
+      padding-bottom: 40px;
   }
 
-  .library-controls {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 20px;
-    background: var(--glass);
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--glass-border);
-    border-radius: 14px;
+  .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      gap: 16px;
   }
 
-  .search-box {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex: 1;
-    max-width: 400px;
+  .subtitle {
+      color: var(--text-muted);
+      margin: 0;
   }
 
-  .search-icon { font-size: 16px; opacity: 0.5; }
-
-  .search-box input {
-    background: transparent;
-    border: none;
-    color: #fff;
-    font-size: 14px;
-    width: 100%;
-    outline: none;
+  .search-input {
+      padding: 10px 16px;
+      border-radius: 99px;
+      border: 1px solid var(--border-subtle);
+      background: rgba(255,255,255,0.05);
+      color: #fff;
+      min-width: 250px;
   }
 
-  .stats {
-    font-size: 14px;
-    display: flex;
-    gap: 8px;
+  .artist-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 20px;
   }
 
-  .tracks-container {
-    background: var(--glass);
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--glass-border);
-    border-radius: 14px;
-    padding: 0;
-    overflow: hidden;
+  .artist-card {
+      background: var(--bg-card);
+      border-radius: 12px;
+      padding: 12px;
+      border: 1px solid var(--border-subtle);
+      cursor: pointer;
+      transition: transform 0.2s, background 0.2s;
   }
 
-  .table-wrapper {
-    overflow-x: auto;
+  .artist-card:hover {
+      transform: translateY(-4px);
+      background: rgba(255,255,255,0.05);
   }
 
-  .tracks-table {
-    width: 100%;
-    border-collapse: collapse;
-    text-align: left;
-    font-size: 14px;
+  .card-image {
+      width: 100%;
+      aspect-ratio: 1;
+      background: #000;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
   }
 
-  .tracks-table th {
-    padding: 16px 20px;
-    background: rgba(255, 255, 255, 0.03);
-    color: #94a3b8;
-    font-weight: 600;
-    text-transform: uppercase;
-    font-size: 11px;
-    letter-spacing: 0.05em;
+  .card-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
   }
 
-  .tracks-table td {
-    padding: 14px 20px;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    vertical-align: middle;
+  .placeholder {
+      font-size: 40px;
+      opacity: 0.5;
   }
 
-  .tracks-table tr:hover td {
-    background: rgba(255, 255, 255, 0.02);
+  .card-info h3 {
+      font-size: 14px;
+      margin: 0 0 4px 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
   }
 
-  .track-title {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+  .count {
+      font-size: 12px;
+      color: var(--text-muted);
   }
 
-  .isrc {
-    font-size: 10px;
-    color: #64748b;
-    font-family: monospace;
+  .load-more {
+      text-align: center;
+      margin-top: 40px;
   }
 
-  .status-pill {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    background: color-mix(in srgb, var(--status-color) 15%, transparent);
-    color: var(--status-color);
-    border: 1px solid color-mix(in srgb, var(--status-color) 30%, transparent);
+  .btn-ghost {
+      padding: 10px 20px;
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      border-radius: 99px;
+      cursor: pointer;
+  }
+
+  .btn-ghost:hover {
+      color: #fff;
+      border-color: #fff;
+  }
+
+  /* Detail View */
+  .back-btn {
+      background: none;
+      border: none;
+      color: var(--color-primary);
+      cursor: pointer;
+      font-weight: 600;
+      margin-bottom: 20px;
+      padding: 0;
+  }
+
+  .artist-header {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 40px;
+      background: linear-gradient(to right, rgba(255,255,255,0.02), transparent);
+      padding: 24px;
+      border-radius: 16px;
+  }
+
+  .artist-hero-img {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      object-fit: cover;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+
+  .artist-hero-info h2 {
+      margin: 0;
+      font-size: 32px;
+  }
+
+  .album-section {
+      margin-bottom: 40px;
+      background: var(--bg-card);
+      border-radius: 16px;
+      padding: 20px;
+      border: 1px solid var(--border-subtle);
+  }
+
+  .album-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 20px;
+  }
+
+  .album-cover, .album-placeholder {
+      width: 60px;
+      height: 60px;
+      border-radius: 4px;
+      object-fit: cover;
+  }
+
+  .album-placeholder {
+      background: rgba(255,255,255,0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+  }
+
+  .album-info h3 {
+      margin: 0;
+      font-size: 18px;
+  }
+
+  .year {
+      color: var(--text-muted);
+      font-size: 14px;
+  }
+
+  .track-row {
+      display: grid;
+      grid-template-columns: 40px 1fr 60px 80px;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 6px;
+  }
+
+  .track-row:hover {
+      background: rgba(255,255,255,0.03);
+  }
+
+  .track-num {
+      color: var(--text-muted);
+      font-size: 13px;
+  }
+
+  .track-duration {
+      font-family: monospace;
+      color: var(--text-muted);
+      font-size: 13px;
+  }
+
+  .track-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      opacity: 0;
+      transition: opacity 0.2s;
+  }
+
+  .track-row:hover .track-actions {
+      opacity: 1;
   }
 
   .icon-btn {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    font-size: 16px;
-    opacity: 0.6;
-    transition: opacity 0.2s, transform 0.2s;
+      background: none;
+      border: none;
+      cursor: pointer;
+      opacity: 0.7;
+      padding: 4px;
   }
 
   .icon-btn:hover {
-    opacity: 1;
-    transform: scale(1.2);
+      opacity: 1;
+      transform: scale(1.1);
   }
 
-  .loading-state, .empty-state, .error-state {
-    padding: 80px 20px;
-    text-align: center;
-    color: #94a3b8;
+  .play-btn { color: var(--color-primary); }
+  .del-btn { color: var(--error); }
+
+  .loading, .error, .empty-state {
+      text-align: center;
+      padding: 60px;
+      color: var(--text-muted);
   }
 
-  .spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid rgba(255, 255, 255, 0.1);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 16px;
-  }
+  @media (max-width: 600px) {
+      .artist-grid {
+          grid-template-columns: repeat(2, 1fr);
+      }
 
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
+      .track-row {
+          grid-template-columns: 30px 1fr 50px 70px;
+          gap: 4px;
+      }
 
-  .btn--small {
-    padding: 6px 12px;
-    font-size: 12px;
-    background: var(--accent);
-    color: #000;
-    border-radius: 6px;
-    text-decoration: none;
-    font-weight: 600;
-    margin-top: 12px;
-    display: inline-block;
+      .track-actions {
+          display: flex;
+          opacity: 1;
+      }
   }
-
-  .muted { color: #94a3b8; }
 </style>
