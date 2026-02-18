@@ -66,10 +66,10 @@ class AutoImporter:
 
         # Get source and destination from storage config
         source_key = self.auto_import_config.get("source_folder", "download_dir")
-        dest_key = self.auto_import_config.get("destination_folder", "transfer_dir")
+        dest_key = self.auto_import_config.get("destination_folder", "library_dir")
 
         self.source_folder = Path(self.storage_config.get(source_key, "./downloads")).expanduser().resolve()
-        self.destination_folder = Path(self.storage_config.get(dest_key, "./Transfer")).expanduser().resolve()
+        self.destination_folder = Path(self.storage_config.get(dest_key, "./library")).expanduser().resolve()
 
         self.file_pattern = self.auto_import_config.get("file_organization_pattern", "{Artist}/{Album}/{Title}")
         self.skip_if_tagged = self.auto_import_config.get("skip_if_already_tagged", True)
