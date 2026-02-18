@@ -37,6 +37,17 @@ class Base(DeclarativeBase):
     """Base metadata class for SQLAlchemy models."""
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    plex_id: Mapped[Optional[str]] = mapped_column(String, unique=True)
+    provider: Mapped[Optional[str]] = mapped_column(String)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Artist(Base):
     __tablename__ = "artists"
 
@@ -150,7 +161,7 @@ class UserRating(Base):
     track_id: Mapped[int] = mapped_column(
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    rating: Mapped[int] = mapped_column()  # 1-5
+    rating: Mapped[float] = mapped_column(Float)  # 1-5, or system flags 0.1, 2.1, 3.1
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     track: Mapped[Track] = relationship(back_populates="user_ratings")
@@ -276,6 +287,78 @@ class MusicDatabase:
             raise
         finally:
             session.close()
+
+    def get_system_user_id(self) -> int:
+        """Get or create the system user ID for automated flags."""
+        with self.session_scope() as session:
+            user = session.query(User).filter(User.username == "SoulSync System").first()
+            if user:
+                return user.id
+
+            # Create system user
+            system_user = User(
+                username="SoulSync System",
+                plex_id="system_local_admin",
+                provider="local"
+            )
+            session.add(system_user)
+            session.commit()
+            return system_user.id
+
+    def search_library(self, query: str) -> Dict[str, List[Dict]]:
+        """Search across Artists, Albums, and Tracks."""
+        results = {
+            "artists": [],
+            "albums": [],
+            "tracks": []
+        }
+
+        if not query:
+            return results
+
+        search_term = f"%{query}%"
+
+        with self.session_scope() as session:
+            # Search Artists
+            artists = session.query(Artist).filter(Artist.name.ilike(search_term)).limit(20).all()
+            for artist in artists:
+                results["artists"].append({
+                    "id": artist.id,
+                    "name": artist.name,
+                    "image_url": artist.image_url
+                })
+
+            # Search Albums
+            albums = session.query(Album).join(Artist).filter(
+                (Album.title.ilike(search_term)) |
+                (Artist.name.ilike(search_term))
+            ).limit(20).all()
+            for album in albums:
+                results["albums"].append({
+                    "id": album.id,
+                    "title": album.title,
+                    "artist_name": album.artist.name,
+                    "cover_image_url": album.cover_image_url,
+                    "year": album.release_date.year if album.release_date else None
+                })
+
+            # Search Tracks
+            tracks = session.query(Track).join(Artist).join(Album, isouter=True).filter(
+                (Track.title.ilike(search_term)) |
+                (Artist.name.ilike(search_term)) |
+                (Album.title.ilike(search_term))
+            ).limit(50).all()
+
+            for track in tracks:
+                results["tracks"].append({
+                    "id": track.id,
+                    "title": track.title,
+                    "artist_name": track.artist.name,
+                    "album_title": track.album.title if track.album else "Unknown Album",
+                    "duration": track.duration
+                })
+
+        return results
 
     def get_external_identifier_map(self, provider_source: str, track_ids: List[int]) -> Dict[int, str]:
         """Return a map of track_id -> provider_item_id for a provider.
@@ -463,6 +546,7 @@ def close_database() -> None:
 
 __all__ = [
     "Base",
+    "User",
     "Artist",
     "Album",
     "Track",
