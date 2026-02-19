@@ -23,6 +23,53 @@ def run_prune_job():
         logger.error(f"Error running prune job: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+@bp.route("/duplicates", methods=["GET"])
+def get_duplicates():
+    """Get manual review duplicates."""
+    try:
+        service = DuplicateHygieneService()
+        # find_duplicates returns {'auto_resolve': [...], 'manual_review': [...]}
+        result = service.find_duplicates()
+        return jsonify({"success": True, "duplicates": result.get('manual_review', [])}), 200
+    except Exception as e:
+        logger.error(f"Error getting duplicates: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/queue/actions", methods=["GET"])
+def get_action_queue():
+    """Get items pending action (delete/upgrade)."""
+    db = get_database()
+    try:
+        with db.session_scope() as session:
+            # Query tracks with ratings 1 (Delete) or 2 (Upgrade)
+            # Exclude system flags? Or include them?
+            # "Fetch and display tracks pending deletion (1-star) or upgrade (2-star)."
+            # This implies USER ratings.
+
+            query = (
+                session.query(Track, UserRating.rating)
+                .join(UserRating)
+                .filter(UserRating.rating.in_([1, 2]))
+                .all()
+            )
+
+            results = []
+            for track, rating in query:
+                action_type = "delete" if rating == 1 else "upgrade"
+                results.append({
+                    "id": track.id,
+                    "title": track.title,
+                    "artist": track.artist.name,
+                    "album": track.album.title if track.album else "",
+                    "current_rating": rating,
+                    "action_needed": action_type
+                })
+
+            return jsonify({"success": True, "queue": results}), 200
+    except Exception as e:
+        logger.error(f"Error getting action queue: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 @bp.route("/track/<int:track_id>/fetch_metadata", methods=["POST"])
 def fetch_metadata(track_id):
     """Manually triggers the MetadataEnhancer for a specific track ID."""
@@ -151,4 +198,19 @@ def get_trends():
             }), 200
     except Exception as e:
         logger.error(f"Error getting trends: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/search", methods=["GET"])
+def search_library():
+    """Unified search endpoint."""
+    query = request.args.get("q")
+    if not query:
+        return jsonify({"artists": [], "albums": [], "tracks": []}), 200
+
+    db = get_database()
+    try:
+        results = db.search_library(query)
+        return jsonify(results), 200
+    except Exception as e:
+        logger.error(f"Error searching library: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500

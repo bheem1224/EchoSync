@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import apiClient from '../../api/client';
   import { player } from '../../stores/player';
+  import TrackRow from '$lib/components/TrackRow.svelte';
 
   let libraryIndex = [];
   let loading = true;
@@ -66,34 +67,64 @@
 
   async function deleteTrack(trackId, album) {
       if (!confirm("Are you sure you want to delete this track? This action cannot be undone.")) return;
+      await performDelete(trackId, album);
+  }
 
+  async function performDelete(trackId, album) {
       try {
           await apiClient.delete(`/library/${trackId}`);
-
-          // Update local state
-          // Remove track from album
-          album.tracks = album.tracks.filter(t => t.id !== trackId);
-
-          // If album empty, remove album? (Optional, let's keep it simple)
-          if (album.tracks.length === 0) {
-               selectedArtist.albums = selectedArtist.albums.filter(a => a.id !== album.id);
-          }
-
-          // Force reactivity
-          libraryIndex = [...libraryIndex];
-          if (selectedArtist) selectedArtist = {...selectedArtist}; // trigger update
-
+          updateLocalStateAfterDelete(trackId, album);
       } catch (err) {
           alert(`Failed to delete: ${err.message}`);
       }
   }
 
-  function formatDuration(ms) {
-      if (!ms) return '-:--';
-      const seconds = Math.floor(ms / 1000);
-      const m = Math.floor(seconds / 60);
-      const s = seconds % 60;
-      return `${m}:${s.toString().padStart(2, '0')}`;
+  async function forceDeleteTrack(trackId, album) {
+      if (!confirm("⚠️ FORCE DELETE: This will set the system flag to DELETE (0.1). Continue?")) return;
+      try {
+          await apiClient.post(`/manager/track/${trackId}/override`, { action: 'delete' });
+          updateLocalStateAfterDelete(trackId, album); // Optimistic remove
+      } catch (err) {
+          alert(`Failed to force delete: ${err.message}`);
+      }
+  }
+
+  function updateLocalStateAfterDelete(trackId, album) {
+       // Update local state
+      // Remove track from album
+      album.tracks = album.tracks.filter(t => t.id !== trackId);
+
+      // If album empty, remove album? (Optional, let's keep it simple)
+      if (album.tracks.length === 0) {
+           selectedArtist.albums = selectedArtist.albums.filter(a => a.id !== album.id);
+      }
+
+      // Force reactivity
+      libraryIndex = [...libraryIndex];
+      if (selectedArtist) selectedArtist = {...selectedArtist}; // trigger update
+  }
+
+  async function forceUpgradeTrack(trackId) {
+      if (!confirm("Force Upgrade? This will mark the track as needing an upgrade.")) return;
+      try {
+          await apiClient.post(`/manager/track/${trackId}/override`, { action: 'upgrade' });
+          alert("Marked for upgrade.");
+      } catch (err) {
+          alert(`Failed: ${err.message}`);
+      }
+  }
+
+  async function fetchMetadata(trackId) {
+       try {
+          const res = await apiClient.post(`/manager/track/${trackId}/fetch_metadata`);
+          if (res.data.success) {
+              alert(`Metadata Fetched:\nTitle: ${res.data.metadata.title}\nArtist: ${res.data.metadata.artist}\nConfidence: ${res.data.confidence}`);
+          } else {
+              alert('Metadata fetch returned no match.');
+          }
+      } catch (err) {
+          alert(`Failed to fetch metadata: ${err.message}`);
+      }
   }
 
   onMount(loadLibrary);
@@ -188,15 +219,16 @@
 
                           <div class="tracks-list">
                               {#each album.tracks as track}
-                                  <div class="track-row">
-                                      <span class="track-num">{track.track_number || '-'}</span>
-                                      <span class="track-title">{track.title}</span>
-                                      <span class="track-duration">{formatDuration(track.duration)}</span>
-                                      <div class="track-actions">
-                                          <button class="icon-btn play-btn" on:click={() => playTrack(track, selectedArtist, album)} title="Play">▶</button>
-                                          <button class="icon-btn del-btn" on:click={() => deleteTrack(track.id, album)} title="Delete">🗑</button>
-                                      </div>
-                                  </div>
+                                  <TrackRow
+                                      {track}
+                                      artist={selectedArtist}
+                                      {album}
+                                      onPlay={playTrack}
+                                      onDelete={deleteTrack}
+                                      onFetchMetadata={fetchMetadata}
+                                      onForceUpgrade={forceUpgradeTrack}
+                                      onForceDelete={forceDeleteTrack}
+                                  />
                               {/each}
                           </div>
                       </div>
