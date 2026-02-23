@@ -337,6 +337,7 @@ class MusicDatabase:
                 results["albums"].append({
                     "id": album.id,
                     "title": album.title,
+                    "artist_id": album.artist_id,
                     "artist_name": album.artist.name,
                     "cover_image_url": album.cover_image_url,
                     "year": album.release_date.year if album.release_date else None
@@ -353,7 +354,9 @@ class MusicDatabase:
                 results["tracks"].append({
                     "id": track.id,
                     "title": track.title,
+                    "artist_id": track.artist_id,
                     "artist_name": track.artist.name,
+                    "album_id": track.album_id,
                     "album_title": track.album.title if track.album else "Unknown Album",
                     "duration": track.duration
                 })

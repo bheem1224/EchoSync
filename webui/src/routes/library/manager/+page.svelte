@@ -43,7 +43,7 @@
             });
             if (res.ok) {
                 alert('Settings Saved');
-                await fetchActionQueue(); // Refresh queue as thresholds changed
+                await fetchActionQueue();
             }
         } catch (e) { console.error(e); }
     }
@@ -98,12 +98,8 @@
     }
 
     async function handleAction(id, type) {
-        // type: 'lock' (Pardon), 'delete' (Approve Delete), 'upgrade' (Approve Upgrade)
-        // Map to backend override action
         let action = type;
         if (type === 'lock') action = 'lock';
-        // If type is 'delete' or 'upgrade' passed from UI, it matches backend.
-
         try {
             const res = await fetch(`/api/manager/track/${id}/override`, {
                 method: 'POST',
@@ -117,84 +113,75 @@
     }
 </script>
 
-<div class="space-y-8 animate-fade-in">
+<div class="animate-fade-in grid-layout">
 
     <!-- Settings Panel -->
-    <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
+    <div class="card p-6">
         <div class="flex flex-col md:flex-row justify-between items-end gap-4">
             <div class="space-y-4 flex-1">
-                <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                    <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                <h2 class="flex items-center gap-2">
+                    <span class="icon">⚙️</span>
                     Manager Settings
                 </h2>
 
-                <div class="flex items-center gap-6">
+                <div class="flex items-center gap-6 flex-wrap">
                     <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" bind:checked={settings.enabled} class="form-checkbox h-5 w-5 text-blue-600 rounded bg-gray-700 border-gray-600">
-                        <span class="text-gray-300">Enable Media Manager</span>
+                        <input type="checkbox" bind:checked={settings.enabled} class="checkbox">
+                        <span class="text-sm">Enable Media Manager</span>
                     </label>
 
                     <div class="flex items-center gap-2">
-                        <span class="text-sm text-gray-400">Delete Threshold:</span>
-                        <input type="number" bind:value={settings.delete_threshold} min="1" max="5" class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-center">
+                        <span class="text-sm muted">Delete Threshold:</span>
+                        <input type="number" bind:value={settings.delete_threshold} min="1" max="5" class="input-num">
                     </div>
 
                     <div class="flex items-center gap-2">
-                        <span class="text-sm text-gray-400">Upgrade Threshold:</span>
-                        <input type="number" bind:value={settings.upgrade_threshold} min="1" max="5" class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-center">
+                        <span class="text-sm muted">Upgrade Threshold:</span>
+                        <input type="number" bind:value={settings.upgrade_threshold} min="1" max="5" class="input-num">
                     </div>
                 </div>
             </div>
 
             <div class="flex gap-4">
-                <button
-                    on:click={saveSettings}
-                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-                >
-                    Save Settings
-                </button>
-                <button
-                    on:click={runPruneJob}
-                    disabled={pruneLoading}
-                    class="bg-red-900/50 border border-red-700 hover:bg-red-800 text-red-200 px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
-                >
-                    {#if pruneLoading}Loading...{:else}Run Prune Job{/if}
+                <button on:click={saveSettings} class="btn btn--primary">Save Settings</button>
+                <button on:click={runPruneJob} disabled={pruneLoading} class="btn btn--danger">
+                    {#if pruneLoading}Running...{:else}Run Prune Job{/if}
                 </button>
             </div>
         </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <div class="queues-grid">
 
         <!-- Duplicate Resolution -->
-        <div class="space-y-4">
-            <h2 class="text-xl font-semibold flex items-center gap-2 text-orange-400">
-                <span class="w-2 h-2 rounded-full bg-orange-500"></span>
+        <div class="queue-col">
+            <h2 class="queue-header">
+                <span class="dot orange"></span>
                 Duplicate Resolution
-                <span class="text-sm font-normal text-gray-500 ml-2">({duplicates.length})</span>
+                <span class="count">({duplicates.length})</span>
             </h2>
 
-            <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden min-h-[400px]">
+            <div class="card queue-list">
                 {#if duplicates.length === 0}
-                    <div class="p-8 text-center text-gray-500">No conflicts found.</div>
+                    <div class="empty">No conflicts found.</div>
                 {:else}
-                    <div class="divide-y divide-gray-700">
+                    <div class="list-content">
                         {#each duplicates as group}
-                            <div class="p-4 hover:bg-white/5">
-                                <div class="flex items-center justify-between mb-2">
-                                    <span class="text-xs font-mono text-gray-500">FP: {group.fingerprint_hash.substring(0, 8)}...</span>
+                            <div class="group-item">
+                                <div class="group-meta">
+                                    <span class="fp">FP: {group.fingerprint_hash.substring(0, 8)}...</span>
                                 </div>
-                                <div class="space-y-2">
+                                <div class="tracks-stack">
                                     {#each group.tracks as track}
-                                        <div class="flex items-center justify-between bg-black/20 p-2 rounded border border-white/5">
-                                            <div class="flex-1 min-w-0 mr-2">
-                                                <div class="font-bold text-sm text-white truncate">{track.title}</div>
-                                                <div class="text-xs text-gray-400 truncate">{track.artist}</div>
-                                                <div class="text-[10px] text-gray-500">{track.bitrate ? Math.round(track.bitrate/1000) + 'k' : '?'} • {track.sample_rate}Hz • {(track.file_size/1024/1024).toFixed(1)}MB</div>
+                                        <div class="track-option">
+                                            <div class="info">
+                                                <div class="title">{track.title}</div>
+                                                <div class="artist">{track.artist}</div>
+                                                <div class="meta">{track.bitrate ? Math.round(track.bitrate/1000) + 'k' : '?'} • {track.sample_rate}Hz • {(track.file_size/1024/1024).toFixed(1)}MB</div>
                                             </div>
                                             <button
                                                 on:click={() => resolveConflict(track.id, group.tracks)}
-                                                class="bg-green-600/20 hover:bg-green-600/40 text-green-400 text-xs px-3 py-1 rounded border border-green-600/50"
+                                                class="btn btn--small btn--success"
                                             >
                                                 Keep This
                                             </button>
@@ -209,47 +196,32 @@
         </div>
 
         <!-- Pending Actions -->
-        <div class="space-y-4">
-            <h2 class="text-xl font-semibold flex items-center gap-2 text-blue-400">
-                <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+        <div class="queue-col">
+            <h2 class="queue-header">
+                <span class="dot blue"></span>
                 Pending Actions
-                <span class="text-sm font-normal text-gray-500 ml-2">({actionQueue.length})</span>
+                <span class="count">({actionQueue.length})</span>
             </h2>
 
-            <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden min-h-[400px]">
+            <div class="card queue-list">
                 {#if actionQueue.length === 0}
-                    <div class="p-8 text-center text-gray-500">No pending actions.</div>
+                    <div class="empty">No pending actions.</div>
                 {:else}
-                    <div class="divide-y divide-gray-700">
+                    <div class="list-content">
                         {#each actionQueue as track}
-                            <div class="p-4 hover:bg-white/5 flex items-center justify-between gap-4">
-                                <div class="min-w-0 flex-1">
-                                    <div class="flex items-center gap-2 mb-1">
-                                        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase border {track.action_needed === 'delete' ? 'bg-red-900/50 text-red-200 border-red-800' : 'bg-blue-900/50 text-blue-200 border-blue-800'}">
-                                            {track.action_needed}
-                                        </span>
-                                        <span class="text-sm font-medium text-white truncate">{track.title}</span>
+                            <div class="action-item">
+                                <div class="info">
+                                    <div class="header-row">
+                                        <span class="badge {track.action_needed}">{track.action_needed}</span>
+                                        <span class="title" title={track.title}>{track.title}</span>
                                     </div>
-                                    <div class="text-xs text-gray-400 truncate">{track.artist}</div>
-                                    <div class="text-xs text-gray-500 mt-1">Consensus Rating: {track.current_rating}</div>
+                                    <div class="artist">{track.artist}</div>
+                                    <div class="meta">Consensus Rating: {track.current_rating}</div>
                                 </div>
 
-                                <div class="flex items-center gap-2 shrink-0">
-                                    <button
-                                        on:click={() => handleAction(track.id, 'lock')}
-                                        class="p-2 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors"
-                                        title="Pardon (Lock)"
-                                    >
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-                                    </button>
-
-                                    <button
-                                        on:click={() => handleAction(track.id, track.action_needed)}
-                                        class="p-2 hover:bg-gray-700 rounded text-green-400 hover:text-green-300 transition-colors"
-                                        title="Approve Action"
-                                    >
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-                                    </button>
+                                <div class="actions">
+                                    <button on:click={() => handleAction(track.id, 'lock')} class="btn btn--icon" title="Pardon (Lock)">🔒</button>
+                                    <button on:click={() => handleAction(track.id, track.action_needed)} class="btn btn--icon success" title="Approve">✓</button>
                                 </div>
                             </div>
                         {/each}
@@ -260,3 +232,68 @@
 
     </div>
 </div>
+
+<style>
+    .grid-layout { display: flex; flex-direction: column; gap: 24px; }
+    .card { background: var(--glass); border: 1px solid var(--glass-border); border-radius: 12px; overflow: hidden; }
+    .p-6 { padding: 24px; }
+
+    h2 { font-size: 18px; font-weight: 600; color: var(--text); margin: 0 0 12px 0; }
+    .muted { color: var(--muted); }
+    .icon { font-size: 18px; }
+
+    .input-num {
+        background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 4px; color: var(--text); width: 60px; padding: 4px 8px; text-align: center;
+    }
+    .checkbox { width: 18px; height: 18px; cursor: pointer; }
+
+    .btn { padding: 8px 16px; border-radius: 8px; font-weight: 600; font-size: 13px; border: none; cursor: pointer; transition: all 0.2s; }
+    .btn--primary { background: var(--accent); color: #000; }
+    .btn--primary:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn--danger { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .btn--danger:hover { background: rgba(239, 68, 68, 0.3); }
+    .btn--success { background: rgba(34, 197, 94, 0.1); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.2); }
+    .btn--success:hover { background: rgba(34, 197, 94, 0.2); }
+    .btn--small { padding: 4px 10px; font-size: 11px; }
+    .btn--icon { background: rgba(255,255,255,0.05); width: 32px; height: 32px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 50%; }
+    .btn--icon:hover { background: rgba(255,255,255,0.1); }
+    .btn--icon.success:hover { color: #4ade80; background: rgba(34, 197, 94, 0.1); }
+
+    .queues-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    @media (max-width: 900px) { .queues-grid { grid-template-columns: 1fr; } }
+
+    .queue-col { display: flex; flex-direction: column; gap: 12px; }
+    .queue-header { display: flex; align-items: center; font-size: 16px; margin: 0; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+    .dot.orange { background: #f97316; }
+    .dot.blue { background: #3b82f6; }
+    .count { font-weight: 400; color: var(--muted); margin-left: 8px; font-size: 14px; }
+
+    .queue-list { min-height: 400px; max-height: 600px; display: flex; flex-direction: column; }
+    .list-content { overflow-y: auto; flex: 1; }
+    .empty { padding: 40px; text-align: center; color: var(--muted); }
+
+    /* Hygiene Items */
+    .group-item { padding: 16px; border-bottom: 1px solid var(--glass-border); }
+    .group-item:last-child { border-bottom: none; }
+    .group-item:hover { background: rgba(255,255,255,0.02); }
+    .group-meta { display: flex; justify-content: space-between; margin-bottom: 8px; }
+    .fp { font-family: monospace; font-size: 11px; color: var(--muted); }
+
+    .tracks-stack { display: flex; flex-direction: column; gap: 8px; }
+    .track-option { background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .info { overflow: hidden; }
+    .title { font-weight: 600; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .artist { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .meta { font-size: 11px; color: var(--muted); opacity: 0.7; margin-top: 2px; }
+
+    /* Action Items */
+    .action-item { padding: 16px; border-bottom: 1px solid var(--glass-border); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .action-item:hover { background: rgba(255,255,255,0.02); }
+    .header-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+    .badge { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; }
+    .badge.delete { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .badge.upgrade { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .actions { display: flex; gap: 8px; }
+</style>

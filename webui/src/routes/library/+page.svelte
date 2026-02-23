@@ -38,7 +38,7 @@
 
   async function handleDeepLinks() {
       const artistId = $page.url.searchParams.get('artist_id');
-      const highlightTrackId = $page.url.searchParams.get('highlight_track'); // Use correct param name
+      const highlightTrackId = $page.url.searchParams.get('highlight_track');
       const highlightAlbumId = $page.url.searchParams.get('highlight_album');
 
       if (artistId) {
@@ -46,20 +46,16 @@
           if (artistIndex !== -1) {
               const artist = libraryIndex[artistIndex];
 
-              // Lazy Loading Fix: Ensure this artist is visible in grid (if we ever go back)
-              // But more importantly, we just want to select it.
-              // If we wanted to scroll to it in grid view, we'd need to expand visibleCount.
               if (artistIndex >= visibleCount) {
-                  visibleCount = artistIndex + PAGE_SIZE; // Expand to include it
+                  visibleCount = artistIndex + PAGE_SIZE;
               }
 
               selectArtist(artist);
-              await tick(); // Wait for detail view render
+              await tick();
 
-              // Scroll to Highlight
               let targetId = null;
               if (highlightTrackId) targetId = `track-${highlightTrackId}`;
-              else if (highlightAlbumId) targetId = `album-${highlightAlbumId}`; // Assuming albums have IDs
+              else if (highlightAlbumId) targetId = `album-${highlightAlbumId}`;
 
               if (targetId) {
                   const element = document.getElementById(targetId);
@@ -90,7 +86,6 @@
   function backToGrid() {
       selectedArtist = null;
       viewMode = 'grid';
-      // Clear URL params without reload
       const url = new URL(window.location);
       url.search = '';
       window.history.pushState({}, '', url);
@@ -159,44 +154,39 @@
       }
   }
 
-  function formatDuration(ms) {
-      if (!ms) return '-:--';
-      const seconds = Math.floor(ms / 1000);
-      const m = Math.floor(seconds / 60);
-      const s = seconds % 60;
-      return `${m}:${s.toString().padStart(2, '0')}`;
-  }
-
   onMount(loadLibrary);
 </script>
 
 {#if loading}
-    <div class="text-center p-12 text-gray-500">Loading library index...</div>
+    <div class="empty-state">
+        <div class="spinner"></div>
+        <p>Loading library index...</p>
+    </div>
 {:else if error}
-    <div class="text-center p-12 text-red-500">Error: {error}</div>
+    <div class="error-msg text-center p-12">{error}</div>
 {:else}
 
     <!-- GRID VIEW -->
     {#if viewMode === 'grid'}
-        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
+        <div class="artist-grid">
             {#each visibleArtists as artist (artist.id)}
                 <div
-                    class="bg-gray-800 rounded-xl p-4 border border-gray-700 hover:translate-y-[-4px] hover:bg-white/5 transition-all cursor-pointer group"
+                    class="card artist-card"
                     on:click={() => selectArtist(artist)}
                     on:keydown={(e) => e.key === 'Enter' && selectArtist(artist)}
                     role="button"
                     tabindex="0"
                 >
-                    <div class="w-full aspect-square bg-black rounded-full mb-3 overflow-hidden flex items-center justify-center shadow-lg group-hover:shadow-2xl transition-shadow">
+                    <div class="card-image">
                         {#if artist.image_url}
-                            <img src={artist.image_url} alt={artist.name} loading="lazy" class="w-full h-full object-cover" />
+                            <img src={artist.image_url} alt={artist.name} loading="lazy" />
                         {:else}
-                            <span class="text-4xl opacity-50">👤</span>
+                            <span class="placeholder">👤</span>
                         {/if}
                     </div>
-                    <div class="text-center">
-                        <h3 class="text-sm font-bold text-white truncate">{artist.name}</h3>
-                        <span class="text-xs text-gray-500">{artist.albums.length} Albums</span>
+                    <div class="card-info">
+                        <h3>{artist.name}</h3>
+                        <span class="sub">{artist.albums.length} Albums</span>
                     </div>
                 </div>
             {/each}
@@ -205,7 +195,7 @@
         {#if visibleCount < libraryIndex.length}
             <div class="text-center mt-10">
                 <button
-                    class="px-6 py-2 bg-transparent border border-gray-700 text-gray-400 rounded-full hover:text-white hover:border-white transition-colors"
+                    class="btn"
                     on:click={loadMore}
                 >
                     Load More
@@ -214,47 +204,49 @@
         {/if}
 
         {#if libraryIndex.length === 0}
-            <div class="text-center p-12 text-gray-500">No artists found.</div>
+            <div class="empty-state">
+                <p>No artists found.</p>
+            </div>
         {/if}
 
     <!-- DETAIL VIEW -->
     {:else if viewMode === 'detail' && selectedArtist}
         <div class="animate-fade-in">
-            <button class="text-blue-400 hover:text-blue-300 font-semibold mb-6 flex items-center gap-2" on:click={backToGrid}>
-                <span>←</span> Back to Artists
+            <button class="btn btn-link mb-6" on:click={backToGrid}>
+                ← Back to Artists
             </button>
 
-            <div class="flex items-center gap-6 mb-10 bg-gradient-to-r from-white/5 to-transparent p-6 rounded-2xl border border-white/5">
+            <div class="artist-header card">
                 <img
                     src={selectedArtist.image_url || ''}
                     alt={selectedArtist.name}
-                    class="w-32 h-32 rounded-full object-cover shadow-2xl bg-gray-800"
+                    class="artist-hero-img"
                     on:error={(e) => e.target.style.display='none'}
                 />
                 <div>
-                    <h2 class="text-4xl font-bold text-white mb-2">{selectedArtist.name}</h2>
-                    <p class="text-gray-400">{selectedArtist.albums.reduce((acc, a) => acc + a.tracks.length, 0)} Tracks</p>
+                    <h2>{selectedArtist.name}</h2>
+                    <p class="sub">{selectedArtist.albums.reduce((acc, a) => acc + a.tracks.length, 0)} Tracks</p>
                 </div>
             </div>
 
-            <div class="space-y-10">
+            <div class="space-y-8 mt-8">
                 {#each selectedArtist.albums as album (album.id)}
-                    <div class="bg-gray-800/50 rounded-2xl border border-gray-700 p-6" id="album-{album.id}">
-                        <div class="flex items-center gap-4 mb-6">
-                            <div class="w-16 h-16 bg-white/10 rounded-lg overflow-hidden flex items-center justify-center shrink-0">
+                    <div class="card" id="album-{album.id}">
+                        <div class="album-header">
+                            <div class="album-cover-container">
                                 {#if album.cover_image_url}
-                                    <img src={album.cover_image_url} alt={album.title} class="w-full h-full object-cover"/>
+                                    <img src={album.cover_image_url} alt={album.title} class="album-cover"/>
                                 {:else}
-                                    <span class="text-2xl">💿</span>
+                                    <span class="placeholder-icon">💿</span>
                                 {/if}
                             </div>
                             <div>
-                                <h3 class="text-xl font-bold text-white">{album.title}</h3>
-                                <span class="text-sm text-gray-500">{album.year || 'Unknown Year'}</span>
+                                <h3>{album.title}</h3>
+                                <span class="sub">{album.year || 'Unknown Year'}</span>
                             </div>
                         </div>
 
-                        <div class="space-y-1">
+                        <div class="tracks-list">
                             {#each album.tracks as track}
                                 <div id="track-{track.id}">
                                     <TrackRow
@@ -279,12 +271,154 @@
 {/if}
 
 <style>
+    .artist-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 16px;
+    }
+
+    .card {
+        background: var(--glass);
+        border: 1px solid var(--glass-border);
+        border-radius: 12px;
+        overflow: hidden;
+        transition: transform 0.2s;
+    }
+
+    .artist-card {
+        padding: 16px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+
+    .artist-card:hover {
+        background: rgba(255,255,255,0.05);
+        transform: translateY(-2px);
+    }
+
+    .card-image {
+        width: 100%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: #000;
+        margin-bottom: 12px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    .card-image img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .placeholder { font-size: 32px; opacity: 0.5; }
+
+    .card-info h3 {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0;
+        color: var(--text);
+        width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .sub { font-size: 12px; color: var(--muted); }
+
+    .btn {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
+        color: var(--text);
+        padding: 8px 16px;
+        border-radius: 99px;
+        cursor: pointer;
+        font-size: 13px;
+    }
+    .btn:hover { background: rgba(255,255,255,0.1); }
+
+    .btn-link {
+        background: none; border: none; padding: 0;
+        color: var(--accent); font-weight: 600;
+    }
+
+    /* Detail View */
+    .artist-header {
+        padding: 24px;
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        background: linear-gradient(to right, rgba(255,255,255,0.03), transparent);
+    }
+
+    .artist-hero-img {
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        object-fit: cover;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+
+    .artist-header h2 { font-size: 28px; margin: 0; color: var(--text); }
+
+    .album-header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 16px;
+        border-bottom: 1px solid var(--glass-border);
+        background: rgba(0,0,0,0.2);
+    }
+
+    .album-cover-container {
+        width: 50px;
+        height: 50px;
+        background: #000;
+        border-radius: 4px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .album-cover { width: 100%; height: 100%; object-fit: cover; }
+    .placeholder-icon { font-size: 20px; }
+
+    .album-header h3 { margin: 0; font-size: 16px; color: var(--text); }
+
+    .tracks-list { padding: 4px 0; }
+
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+        color: var(--muted);
+    }
+    .spinner {
+        width: 30px; height: 30px;
+        border: 3px solid rgba(255,255,255,0.1);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
     .flash-highlight {
         animation: flash 1s ease-out;
     }
 
     @keyframes flash {
-        0% { background-color: rgba(59, 130, 246, 0.5); }
+        0% { background-color: rgba(15, 239, 136, 0.3); }
         100% { background-color: transparent; }
     }
 </style>

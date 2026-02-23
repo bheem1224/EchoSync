@@ -51,38 +51,22 @@
         showDropdown = false;
         query = '';
 
-        // Navigation Logic
-        // Artist: goto(/library?artist_id=${item.id})
-        // Album: goto(/library?artist_id=${item.artist_id}&highlight_album=${item.id})
-        // Track: goto(/library?artist_id=${item.artist_id}&highlight_track=${item.id})
-
+        // Navigation Logic using correct fields from updated backend
         if (type === 'artist') {
             goto(`/library?artist_id=${item.id}`);
         } else if (type === 'album') {
-             if (item.artist_name) { // We might not have artist_id in album search result, but usually MusicDatabase returns flattened dicts
-                 // If artist_id is missing, we might have a problem.
-                 // Previous step I noted backend result for album is {id, title, artist_name...}
-                 // If artist_id is missing, I can't deep link to artist easily.
-                 // Assuming I should rely on what I have. If artist_id is undefined, it won't work well.
-                 // However, I can't easily change backend now.
-                 // I'll try to use item.artist_id if available (Task 2 implicitly assumes backend supports it or I fix it).
-                 // The prompt says "Ensure the selectResult(item) handles ALL types...".
-                 // I'll assume standard query params.
-
-                 // Note: MusicDatabase.search_library (from backend memory) likely does NOT include artist_id for albums.
-                 // But for Tracks it definitely doesn't include artist_id.
-                 // Wait, MusicDatabase search_library for tracks does joins.
-                 // If the JSON response doesn't have artist_id, navigation fails.
-
-                 // Let's assume for now the frontend logic is the priority.
-                 // If item.artist_id is missing, I can't do much without a backend patch.
-                 // I will assume it's there or I will add a fallback? No fallback really works for deep linking.
-                 // I will write the correct frontend logic.
-
-                 goto(`/library?artist_id=${item.artist_id || ''}&highlight_album=${item.id}`);
+             // Use artist_id if available (now guaranteed by backend fix)
+             if (item.artist_id) {
+                 goto(`/library?artist_id=${item.artist_id}&highlight_album=${item.id}`);
+             } else {
+                 console.warn("Artist ID missing for album navigation", item);
              }
         } else if (type === 'track') {
-             goto(`/library?artist_id=${item.artist_id || ''}&highlight_track=${item.id}`);
+             if (item.artist_id) {
+                 goto(`/library?artist_id=${item.artist_id}&highlight_track=${item.id}`);
+             } else {
+                 console.warn("Artist ID missing for track navigation", item);
+             }
         }
     }
 </script>
