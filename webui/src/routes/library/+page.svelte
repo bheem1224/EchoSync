@@ -3,6 +3,8 @@
   import apiClient from '../../api/client';
   import { player } from '../../stores/player';
   import TrackRow from '$lib/components/TrackRow.svelte';
+  import Omnibar from '$lib/components/Omnibar.svelte';
+  import ManagerDashboard from '$lib/components/ManagerDashboard.svelte';
 
   let libraryIndex = [];
   let loading = true;
@@ -10,6 +12,7 @@
   let searchQuery = '';
 
   let viewMode = 'grid'; // 'grid' | 'detail'
+  let activeTab = 'library'; // 'library' | 'manager'
   let selectedArtist = null;
 
   // Lazy loading state
@@ -28,10 +31,18 @@
     }
   }
 
-  // Filtered artists
-  $: filteredArtists = libraryIndex.filter(artist =>
-      !searchQuery || artist.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Filtered artists (if user wants to filter the grid, but Omnibar does global search)
+  // We can keep this filter if the user types in the omnibar, BUT Omnibar has its own dropdown.
+  // Ideally, Omnibar handles global search. This filter might be redundant or confusing if Omnibar is here.
+  // However, the prompt says "change the search of library".
+  // If we replace the simple input with Omnibar, the Omnibar's dropdown handles navigation.
+  // We can also bind the query to filter the grid if we want "live filtering".
+  // But Omnibar does async backend search.
+  // Let's keep the grid unfiltered unless we want to implement client-side filtering too.
+  // For now, let's assume Omnibar is the primary search and navigation tool.
+  // We'll keep `filteredArtists` just as `libraryIndex` to show everything, or maybe implement client-side filter if needed later.
+
+  $: filteredArtists = libraryIndex; // Default show all
 
   // Visible subset
   $: visibleArtists = filteredArtists.slice(0, visibleCount);
@@ -42,9 +53,6 @@
       }
   }
 
-  // Reset pagination on search
-  $: if (searchQuery) visibleCount = PAGE_SIZE;
-
   function selectArtist(artist) {
       selectedArtist = artist;
       viewMode = 'detail';
@@ -54,6 +62,14 @@
   function backToGrid() {
       selectedArtist = null;
       viewMode = 'grid';
+  }
+
+  function switchTab(tab) {
+      activeTab = tab;
+      // If switching to library, maybe reset view?
+      if (tab === 'library') {
+          // keep current view state
+      }
   }
 
   function playTrack(track, artist, album) {
@@ -136,108 +152,126 @@
 
 <div class="library-page">
   <header class="header">
-    <div>
-        <h1>Library</h1>
-        <p class="subtitle">Your Collection</p>
+    <div class="flex items-center gap-8">
+        <div>
+            <h1>Library</h1>
+            <p class="subtitle">Your Collection</p>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex bg-gray-800 p-1 rounded-lg">
+            <button
+                class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors {activeTab === 'library' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}"
+                on:click={() => switchTab('library')}
+            >
+                Library
+            </button>
+            <button
+                class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors {activeTab === 'manager' ? 'bg-purple-600 text-white shadow' : 'text-gray-400 hover:text-white'}"
+                on:click={() => switchTab('manager')}
+            >
+                Manager
+            </button>
+        </div>
     </div>
 
-    <div class="search-container">
-        <input
-            type="text"
-            placeholder="Filter artists..."
-            bind:value={searchQuery}
-            class="search-input"
-        />
+    <div class="search-container flex-1 max-w-xl">
+        <Omnibar />
     </div>
   </header>
 
-  {#if loading}
-      <div class="loading">Loading library index...</div>
-  {:else if error}
-      <div class="error">Error: {error}</div>
-  {:else}
+  <div class="content-area">
+      {#if activeTab === 'manager'}
+          <ManagerDashboard />
+      {:else}
+          {#if loading}
+              <div class="loading">Loading library index...</div>
+          {:else if error}
+              <div class="error">Error: {error}</div>
+          {:else}
 
-      <!-- GRID VIEW -->
-      {#if viewMode === 'grid'}
-          <div class="artist-grid">
-              {#each visibleArtists as artist (artist.id)}
-                  <div class="artist-card" on:click={() => selectArtist(artist)} on:keydown={(e) => e.key === 'Enter' && selectArtist(artist)} role="button" tabindex="0">
-                      <div class="card-image">
-                          {#if artist.image_url}
-                              <img src={artist.image_url} alt={artist.name} loading="lazy" />
-                          {:else}
-                              <div class="placeholder">👤</div>
-                          {/if}
-                      </div>
-                      <div class="card-info">
-                          <h3>{artist.name}</h3>
-                          <span class="count">{artist.albums.length} Albums</span>
-                      </div>
-                  </div>
-              {/each}
-          </div>
-
-          {#if visibleCount < filteredArtists.length}
-              <div class="load-more">
-                  <button class="btn-ghost" on:click={loadMore}>Load More</button>
-              </div>
-          {/if}
-
-          {#if filteredArtists.length === 0}
-              <div class="empty-state">No artists found.</div>
-          {/if}
-
-      <!-- DETAIL VIEW -->
-      {:else if viewMode === 'detail' && selectedArtist}
-          <div class="detail-view">
-              <button class="back-btn" on:click={backToGrid}>← Back to Artists</button>
-
-              <div class="artist-header">
-                  {#if selectedArtist.image_url}
-                      <img src={selectedArtist.image_url} alt={selectedArtist.name} class="artist-hero-img"/>
-                  {/if}
-                  <div class="artist-hero-info">
-                      <h2>{selectedArtist.name}</h2>
-                      <p>{selectedArtist.albums.reduce((acc, a) => acc + a.tracks.length, 0)} Tracks</p>
-                  </div>
-              </div>
-
-              <div class="albums-list">
-                  {#each selectedArtist.albums as album (album.id)}
-                      <div class="album-section">
-                          <div class="album-header">
-                              {#if album.cover_image_url}
-                                  <img src={album.cover_image_url} alt={album.title} class="album-cover"/>
-                              {:else}
-                                  <div class="album-placeholder">💿</div>
-                              {/if}
-                              <div class="album-info">
-                                  <h3>{album.title}</h3>
-                                  <span class="year">{album.year || 'Unknown Year'}</span>
+              <!-- GRID VIEW -->
+              {#if viewMode === 'grid'}
+                  <div class="artist-grid">
+                      {#each visibleArtists as artist (artist.id)}
+                          <div class="artist-card" on:click={() => selectArtist(artist)} on:keydown={(e) => e.key === 'Enter' && selectArtist(artist)} role="button" tabindex="0">
+                              <div class="card-image">
+                                  {#if artist.image_url}
+                                      <img src={artist.image_url} alt={artist.name} loading="lazy" />
+                                  {:else}
+                                      <div class="placeholder">👤</div>
+                                  {/if}
+                              </div>
+                              <div class="card-info">
+                                  <h3>{artist.name}</h3>
+                                  <span class="count">{artist.albums.length} Albums</span>
                               </div>
                           </div>
+                      {/each}
+                  </div>
 
-                          <div class="tracks-list">
-                              {#each album.tracks as track}
-                                  <TrackRow
-                                      {track}
-                                      artist={selectedArtist}
-                                      {album}
-                                      onPlay={playTrack}
-                                      onDelete={deleteTrack}
-                                      onFetchMetadata={fetchMetadata}
-                                      onForceUpgrade={forceUpgradeTrack}
-                                      onForceDelete={forceDeleteTrack}
-                                  />
-                              {/each}
+                  {#if visibleCount < filteredArtists.length}
+                      <div class="load-more">
+                          <button class="btn-ghost" on:click={loadMore}>Load More</button>
+                      </div>
+                  {/if}
+
+                  {#if filteredArtists.length === 0}
+                      <div class="empty-state">No artists found.</div>
+                  {/if}
+
+              <!-- DETAIL VIEW -->
+              {:else if viewMode === 'detail' && selectedArtist}
+                  <div class="detail-view">
+                      <button class="back-btn" on:click={backToGrid}>← Back to Artists</button>
+
+                      <div class="artist-header">
+                          {#if selectedArtist.image_url}
+                              <img src={selectedArtist.image_url} alt={selectedArtist.name} class="artist-hero-img"/>
+                          {/if}
+                          <div class="artist-hero-info">
+                              <h2>{selectedArtist.name}</h2>
+                              <p>{selectedArtist.albums.reduce((acc, a) => acc + a.tracks.length, 0)} Tracks</p>
                           </div>
                       </div>
-                  {/each}
-              </div>
-          </div>
-      {/if}
 
-  {/if}
+                      <div class="albums-list">
+                          {#each selectedArtist.albums as album (album.id)}
+                              <div class="album-section">
+                                  <div class="album-header">
+                                      {#if album.cover_image_url}
+                                          <img src={album.cover_image_url} alt={album.title} class="album-cover"/>
+                                      {:else}
+                                          <div class="album-placeholder">💿</div>
+                                      {/if}
+                                      <div class="album-info">
+                                          <h3>{album.title}</h3>
+                                          <span class="year">{album.year || 'Unknown Year'}</span>
+                                      </div>
+                                  </div>
+
+                                  <div class="tracks-list">
+                                      {#each album.tracks as track}
+                                          <TrackRow
+                                              {track}
+                                              artist={selectedArtist}
+                                              {album}
+                                              onPlay={playTrack}
+                                              onDelete={deleteTrack}
+                                              onFetchMetadata={fetchMetadata}
+                                              onForceUpgrade={forceUpgradeTrack}
+                                              onForceDelete={forceDeleteTrack}
+                                          />
+                                      {/each}
+                                  </div>
+                              </div>
+                          {/each}
+                      </div>
+                  </div>
+              {/if}
+          {/if}
+      {/if}
+  </div>
 </div>
 
 <style>
@@ -251,7 +285,7 @@
       align-items: center;
       margin-bottom: 24px;
       flex-wrap: wrap;
-      gap: 16px;
+      gap: 24px;
   }
 
   .subtitle {
@@ -259,14 +293,7 @@
       margin: 0;
   }
 
-  .search-input {
-      padding: 10px 16px;
-      border-radius: 99px;
-      border: 1px solid var(--border-subtle);
-      background: rgba(255,255,255,0.05);
-      color: #fff;
-      min-width: 250px;
-  }
+  /* Omnibar styles are self-contained */
 
   .artist-grid {
       display: grid;
@@ -417,57 +444,6 @@
       font-size: 14px;
   }
 
-  .track-row {
-      display: grid;
-      grid-template-columns: 40px 1fr 60px 80px;
-      align-items: center;
-      padding: 8px 12px;
-      border-radius: 6px;
-  }
-
-  .track-row:hover {
-      background: rgba(255,255,255,0.03);
-  }
-
-  .track-num {
-      color: var(--text-muted);
-      font-size: 13px;
-  }
-
-  .track-duration {
-      font-family: monospace;
-      color: var(--text-muted);
-      font-size: 13px;
-  }
-
-  .track-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      opacity: 0;
-      transition: opacity 0.2s;
-  }
-
-  .track-row:hover .track-actions {
-      opacity: 1;
-  }
-
-  .icon-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      opacity: 0.7;
-      padding: 4px;
-  }
-
-  .icon-btn:hover {
-      opacity: 1;
-      transform: scale(1.1);
-  }
-
-  .play-btn { color: var(--color-primary); }
-  .del-btn { color: var(--error); }
-
   .loading, .error, .empty-state {
       text-align: center;
       padding: 60px;
@@ -478,15 +454,13 @@
       .artist-grid {
           grid-template-columns: repeat(2, 1fr);
       }
-
-      .track-row {
-          grid-template-columns: 30px 1fr 50px 70px;
-          gap: 4px;
+      .header {
+          flex-direction: column;
+          align-items: stretch;
       }
-
-      .track-actions {
-          display: flex;
-          opacity: 1;
+      .search-container {
+          width: 100%;
+          max-width: none;
       }
   }
 </style>
