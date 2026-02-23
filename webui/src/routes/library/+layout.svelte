@@ -2,7 +2,9 @@
     import { page } from '$app/stores';
     import Omnibar from '$lib/components/Omnibar.svelte';
 
-    $: activeTab = $page.url.pathname.endsWith('/manager') ? 'manager' : 'collection';
+    // Simple active tab logic based on path
+    $: activeTab = $page.url.pathname.includes('/library/manager') ? 'manager' :
+                   $page.url.pathname.includes('/library/suggestions') ? 'suggestions' : 'collection';
 </script>
 
 <div class="library-layout min-h-screen bg-gray-900 text-white p-6">
@@ -29,6 +31,12 @@
                         class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors {activeTab === 'manager' ? 'bg-purple-600 text-white shadow' : 'text-gray-400 hover:text-white'}"
                     >
                         Manager
+                    </a>
+                    <a
+                        href="/library/suggestions"
+                        class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors {activeTab === 'suggestions' ? 'bg-purple-600 text-white shadow' : 'text-gray-400 hover:text-white'}"
+                    >
+                        Suggestions
                     </a>
                 </nav>
             </div>

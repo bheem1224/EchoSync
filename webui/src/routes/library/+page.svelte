@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { page } from '$app/stores';
   import apiClient from '../../api/client';
   import { player } from '../../stores/player';
   import TrackRow from '$lib/components/TrackRow.svelte';
@@ -22,6 +23,7 @@
     try {
       const res = await apiClient.get('/library/index');
       libraryIndex = res.data || [];
+      handleDeepLinks();
     } catch (err) {
       error = err.message;
     } finally {
@@ -29,9 +31,29 @@
     }
   }
 
-  // Filter logic is now handled globally via Omnibar deep links or backend search.
-  // For basic browsing, we render the full list.
-  // If we receive a query param (e.g. ?artist=ID), we should jump to it.
+  function handleDeepLinks() {
+      const artistId = $page.url.searchParams.get('artist_id');
+      const highlightTrackId = $page.url.searchParams.get('highlight');
+
+      if (artistId) {
+          const artist = libraryIndex.find(a => a.id == artistId);
+          if (artist) {
+              selectArtist(artist);
+
+              if (highlightTrackId) {
+                  // Wait for DOM update
+                  setTimeout(() => {
+                      const row = document.getElementById(`track-${highlightTrackId}`);
+                      if (row) {
+                          row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          row.classList.add('flash-highlight');
+                          setTimeout(() => row.classList.remove('flash-highlight'), 2000);
+                      }
+                  }, 300);
+              }
+          }
+      }
+  }
 
   $: visibleArtists = libraryIndex.slice(0, visibleCount);
 
@@ -50,11 +72,9 @@
   function backToGrid() {
       selectedArtist = null;
       viewMode = 'grid';
+      // Clear URL params without reload
+      window.history.pushState({}, '', '/library');
   }
-
-  // Deep linking handling could go here (reading $page.url.searchParams),
-  // but for now relying on the user clicking the grid.
-  // The Omnibar navigates to specific routes. If we are on this page, it might reload.
 
   // --- Actions ---
 
@@ -92,7 +112,6 @@
       if (album.tracks.length === 0) {
            selectedArtist.albums = selectedArtist.albums.filter(a => a.id !== album.id);
       }
-      // Force update
       libraryIndex = [...libraryIndex];
       if (selectedArtist) selectedArtist = {...selectedArtist};
   }
@@ -217,16 +236,18 @@
 
                         <div class="space-y-1">
                             {#each album.tracks as track}
-                                <TrackRow
-                                    {track}
-                                    artist={selectedArtist}
-                                    {album}
-                                    onPlay={playTrack}
-                                    onDelete={deleteTrack}
-                                    onFetchMetadata={fetchMetadata}
-                                    onForceUpgrade={forceUpgradeTrack}
-                                    onForceDelete={forceDeleteTrack}
-                                />
+                                <div id="track-{track.id}">
+                                    <TrackRow
+                                        {track}
+                                        artist={selectedArtist}
+                                        {album}
+                                        onPlay={playTrack}
+                                        onDelete={deleteTrack}
+                                        onFetchMetadata={fetchMetadata}
+                                        onForceUpgrade={forceUpgradeTrack}
+                                        onForceDelete={forceDeleteTrack}
+                                    />
+                                </div>
                             {/each}
                         </div>
                     </div>
@@ -236,3 +257,14 @@
     {/if}
 
 {/if}
+
+<style>
+    .flash-highlight {
+        animation: flash 1s ease-out;
+    }
+
+    @keyframes flash {
+        0% { background-color: rgba(59, 130, 246, 0.5); }
+        100% { background-color: transparent; }
+    }
+</style>

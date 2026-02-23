@@ -1,7 +1,7 @@
 <script>
     import { onMount } from 'svelte';
 
-    let trends = { total_ratings: 0, average_rating: 0, distribution: {} };
+    let settings = { enabled: true, delete_threshold: 1, upgrade_threshold: 2 };
     let duplicates = [];
     let actionQueue = [];
     let loading = true;
@@ -15,7 +15,7 @@
         loading = true;
         try {
             await Promise.all([
-                fetchTrends(),
+                fetchSettings(),
                 fetchDuplicates(),
                 fetchActionQueue()
             ]);
@@ -24,13 +24,28 @@
         }
     }
 
-    async function fetchTrends() {
+    async function fetchSettings() {
         try {
-            const res = await fetch('/api/manager/trends');
-            if (res.ok) trends = await res.json();
-        } catch (e) {
-            console.error(e);
-        }
+            const res = await fetch('/api/manager/settings');
+            if (res.ok) {
+                const data = await res.json();
+                settings = data.settings;
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    async function saveSettings() {
+        try {
+            const res = await fetch('/api/manager/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            });
+            if (res.ok) {
+                alert('Settings Saved');
+                await fetchActionQueue(); // Refresh queue as thresholds changed
+            }
+        } catch (e) { console.error(e); }
     }
 
     async function fetchDuplicates() {
@@ -40,9 +55,7 @@
                 const data = await res.json();
                 duplicates = data.duplicates || [];
             }
-        } catch (e) {
-            console.error(e);
-        }
+        } catch (e) { console.error(e); }
     }
 
     async function fetchActionQueue() {
@@ -52,14 +65,11 @@
                 const data = await res.json();
                 actionQueue = data.queue || [];
             }
-        } catch (e) {
-            console.error(e);
-        }
+        } catch (e) { console.error(e); }
     }
 
     async function runPruneJob() {
-        if (!confirm('Are you sure you want to run the Prune Job? This will delete auto-resolved duplicates.')) return;
-
+        if (!confirm('Run Prune Job? This will auto-delete low quality duplicates.')) return;
         pruneLoading = true;
         try {
             const res = await fetch('/api/manager/prune/run', { method: 'POST' });
@@ -67,138 +77,124 @@
                 const result = await res.json();
                 alert(`Prune Complete. Deleted ${result.result.deleted_count} tracks.`);
                 await refreshAll();
-            } else {
-                alert('Prune Job Failed');
-            }
-        } catch (e) {
-            console.error(e);
-            alert('Prune Job Error');
-        } finally {
-            pruneLoading = false;
-        }
+            } else { alert('Prune Job Failed'); }
+        } catch (e) { console.error(e); alert('Prune Job Error'); }
+        finally { pruneLoading = false; }
     }
 
     async function resolveConflict(keepId, tracks) {
-        if (!confirm('This will keep the selected track and DELETE all others in this group. Continue?')) return;
-
+        if (!confirm('Keep selected track and DELETE others?')) return;
         const deleteIds = tracks.filter(t => t.id !== keepId).map(t => t.id);
-
         try {
             const res = await fetch('/api/manager/conflicts/resolve', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ keep_id: keepId, delete_ids: deleteIds })
             });
-
             if (res.ok) {
-                // Optimistic UI update
                 duplicates = duplicates.filter(group => !group.tracks.some(t => t.id === keepId));
-            } else {
-                alert('Failed to resolve conflict');
-            }
-        } catch (e) {
-            console.error(e);
-            alert('Error resolving conflict');
-        }
+            } else { alert('Failed to resolve conflict'); }
+        } catch (e) { console.error(e); }
     }
 
-    async function overrideTrack(id, action) {
-        // action: 'lock' | 'delete' | 'upgrade'
+    async function handleAction(id, type) {
+        // type: 'lock' (Pardon), 'delete' (Approve Delete), 'upgrade' (Approve Upgrade)
+        // Map to backend override action
+        let action = type;
+        if (type === 'lock') action = 'lock';
+        // If type is 'delete' or 'upgrade' passed from UI, it matches backend.
+
         try {
             const res = await fetch(`/api/manager/track/${id}/override`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action })
             });
-
             if (res.ok) {
-                // Remove from action queue if present
                 actionQueue = actionQueue.filter(t => t.id !== id);
-            } else {
-                alert('Failed to override track');
-            }
-        } catch (e) {
-            console.error(e);
-            alert('Error overriding track');
-        }
+            } else { alert('Failed to process action'); }
+        } catch (e) { console.error(e); }
     }
 </script>
 
-<div class="space-y-8">
+<div class="space-y-8 animate-fade-in">
 
-    <!-- Top Stats Section -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
-            <h3 class="text-gray-400 text-xs uppercase tracking-wider mb-1">Total Ratings</h3>
-            <span class="text-2xl font-bold">{trends.total_ratings}</span>
-        </div>
-        <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
-            <h3 class="text-gray-400 text-xs uppercase tracking-wider mb-1">Avg Rating</h3>
-            <span class="text-2xl font-bold text-yellow-400">{trends.average_rating.toFixed(2)}</span>
-        </div>
-        <!-- Prune Job Trigger -->
-        <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 md:col-span-2 flex items-center justify-between">
-            <div>
-                <h3 class="text-gray-400 text-xs uppercase tracking-wider mb-1">Prune Job</h3>
-                <p class="text-xs text-gray-500">Auto-delete low quality duplicates</p>
+    <!-- Settings Panel -->
+    <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
+        <div class="flex flex-col md:flex-row justify-between items-end gap-4">
+            <div class="space-y-4 flex-1">
+                <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                    <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    Manager Settings
+                </h2>
+
+                <div class="flex items-center gap-6">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" bind:checked={settings.enabled} class="form-checkbox h-5 w-5 text-blue-600 rounded bg-gray-700 border-gray-600">
+                        <span class="text-gray-300">Enable Media Manager</span>
+                    </label>
+
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm text-gray-400">Delete Threshold:</span>
+                        <input type="number" bind:value={settings.delete_threshold} min="1" max="5" class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-center">
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm text-gray-400">Upgrade Threshold:</span>
+                        <input type="number" bind:value={settings.upgrade_threshold} min="1" max="5" class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-center">
+                    </div>
+                </div>
             </div>
-            <button
-                on:click={runPruneJob}
-                disabled={pruneLoading}
-                class="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
-            >
-                {#if pruneLoading}
-                    <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    Running...
-                {:else}
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                    Run Prune Now
-                {/if}
-            </button>
+
+            <div class="flex gap-4">
+                <button
+                    on:click={saveSettings}
+                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                >
+                    Save Settings
+                </button>
+                <button
+                    on:click={runPruneJob}
+                    disabled={pruneLoading}
+                    class="bg-red-900/50 border border-red-700 hover:bg-red-800 text-red-200 px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
+                >
+                    {#if pruneLoading}Loading...{:else}Run Prune Job{/if}
+                </button>
+            </div>
         </div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
-        <!-- Hygiene Queue (Left) -->
+        <!-- Duplicate Resolution -->
         <div class="space-y-4">
-            <div class="flex items-center justify-between">
-                <h2 class="text-xl font-semibold flex items-center gap-2">
-                    <span class="w-2 h-2 rounded-full bg-orange-500"></span>
-                    Hygiene Queue
-                    <span class="text-sm font-normal text-gray-500 ml-2">Manual Review ({duplicates.length})</span>
-                </h2>
-            </div>
+            <h2 class="text-xl font-semibold flex items-center gap-2 text-orange-400">
+                <span class="w-2 h-2 rounded-full bg-orange-500"></span>
+                Duplicate Resolution
+                <span class="text-sm font-normal text-gray-500 ml-2">({duplicates.length})</span>
+            </h2>
 
             <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden min-h-[400px]">
                 {#if duplicates.length === 0}
-                    <div class="p-8 text-center text-gray-500">No manual review items found.</div>
+                    <div class="p-8 text-center text-gray-500">No conflicts found.</div>
                 {:else}
                     <div class="divide-y divide-gray-700">
                         {#each duplicates as group}
-                            <div class="p-4 hover:bg-gray-750 transition-colors">
-                                <div class="flex items-center justify-between mb-3">
-                                    <span class="text-xs font-mono text-gray-500 truncate" title={group.fingerprint_hash}>
-                                        FP: {group.fingerprint_hash.substring(0, 8)}...
-                                    </span>
-                                    <span class="bg-orange-900/50 text-orange-200 text-xs px-2 py-0.5 rounded border border-orange-800">Conflict</span>
+                            <div class="p-4 hover:bg-white/5">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-xs font-mono text-gray-500">FP: {group.fingerprint_hash.substring(0, 8)}...</span>
                                 </div>
-
-                                <div class="space-y-2 mb-4">
+                                <div class="space-y-2">
                                     {#each group.tracks as track}
-                                        <div class="flex items-center justify-between bg-gray-900/50 p-2 rounded border border-gray-700">
-                                            <div class="flex-1 min-w-0 mr-4">
-                                                <div class="font-medium text-sm text-white truncate">{track.title}</div>
-                                                <div class="text-xs text-gray-400 truncate">{track.artist} • {track.album}</div>
-                                                <div class="text-[10px] text-gray-500 mt-1 flex gap-2">
-                                                    <span>{track.bitrate ? Math.round(track.bitrate/1000) + 'kbps' : 'Unknown'}</span>
-                                                    <span>{track.sample_rate}Hz</span>
-                                                    <span>{(track.file_size / 1024 / 1024).toFixed(1)}MB</span>
-                                                </div>
+                                        <div class="flex items-center justify-between bg-black/20 p-2 rounded border border-white/5">
+                                            <div class="flex-1 min-w-0 mr-2">
+                                                <div class="font-bold text-sm text-white truncate">{track.title}</div>
+                                                <div class="text-xs text-gray-400 truncate">{track.artist}</div>
+                                                <div class="text-[10px] text-gray-500">{track.bitrate ? Math.round(track.bitrate/1000) + 'k' : '?'} • {track.sample_rate}Hz • {(track.file_size/1024/1024).toFixed(1)}MB</div>
                                             </div>
                                             <button
                                                 on:click={() => resolveConflict(track.id, group.tracks)}
-                                                class="shrink-0 bg-green-600/20 hover:bg-green-600/40 text-green-400 text-xs px-3 py-1.5 rounded border border-green-600/50 transition-colors"
+                                                class="bg-green-600/20 hover:bg-green-600/40 text-green-400 text-xs px-3 py-1 rounded border border-green-600/50"
                                             >
                                                 Keep This
                                             </button>
@@ -212,15 +208,13 @@
             </div>
         </div>
 
-        <!-- Action Queue (Right) -->
+        <!-- Pending Actions -->
         <div class="space-y-4">
-            <div class="flex items-center justify-between">
-                <h2 class="text-xl font-semibold flex items-center gap-2">
-                    <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-                    Action Queue
-                    <span class="text-sm font-normal text-gray-500 ml-2">Pending ({actionQueue.length})</span>
-                </h2>
-            </div>
+            <h2 class="text-xl font-semibold flex items-center gap-2 text-blue-400">
+                <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                Pending Actions
+                <span class="text-sm font-normal text-gray-500 ml-2">({actionQueue.length})</span>
+            </h2>
 
             <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden min-h-[400px]">
                 {#if actionQueue.length === 0}
@@ -228,27 +222,33 @@
                 {:else}
                     <div class="divide-y divide-gray-700">
                         {#each actionQueue as track}
-                            <div class="p-4 hover:bg-gray-750 transition-colors flex items-center justify-between gap-4">
+                            <div class="p-4 hover:bg-white/5 flex items-center justify-between gap-4">
                                 <div class="min-w-0 flex-1">
                                     <div class="flex items-center gap-2 mb-1">
-                                        {#if track.action_needed === 'delete'}
-                                            <span class="bg-red-900/50 text-red-200 text-[10px] font-bold px-1.5 py-0.5 rounded border border-red-800 uppercase">Delete</span>
-                                        {:else}
-                                            <span class="bg-blue-900/50 text-blue-200 text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-800 uppercase">Upgrade</span>
-                                        {/if}
+                                        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase border {track.action_needed === 'delete' ? 'bg-red-900/50 text-red-200 border-red-800' : 'bg-blue-900/50 text-blue-200 border-blue-800'}">
+                                            {track.action_needed}
+                                        </span>
                                         <span class="text-sm font-medium text-white truncate">{track.title}</span>
                                     </div>
                                     <div class="text-xs text-gray-400 truncate">{track.artist}</div>
-                                    <div class="text-xs text-gray-500 mt-1">User Rating: {track.current_rating}/5</div>
+                                    <div class="text-xs text-gray-500 mt-1">Consensus Rating: {track.current_rating}</div>
                                 </div>
 
                                 <div class="flex items-center gap-2 shrink-0">
                                     <button
-                                        on:click={() => overrideTrack(track.id, 'lock')}
+                                        on:click={() => handleAction(track.id, 'lock')}
                                         class="p-2 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors"
-                                        title="Pardon / Lock (Keep Safe)"
+                                        title="Pardon (Lock)"
                                     >
                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                                    </button>
+
+                                    <button
+                                        on:click={() => handleAction(track.id, track.action_needed)}
+                                        class="p-2 hover:bg-gray-700 rounded text-green-400 hover:text-green-300 transition-colors"
+                                        title="Approve Action"
+                                    >
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                                     </button>
                                 </div>
                             </div>

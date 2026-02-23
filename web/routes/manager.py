@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from core.tiered_logger import get_logger
+from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
 from services.metadata_enhancer import get_metadata_enhancer
 from database.music_database import get_database, Track, UserRating
@@ -10,6 +11,38 @@ from datetime import datetime
 
 logger = get_logger("web.routes.manager")
 bp = Blueprint("manager", __name__, url_prefix="/api/manager")
+
+@bp.route("/settings", methods=["GET", "POST"])
+def manager_settings():
+    """Get or update manager settings."""
+    if request.method == "POST":
+        payload = request.get_json() or {}
+        # Validation could be added here
+        try:
+            manager_config = config_manager.get('manager', {})
+            # Update known keys
+            for key in ['enabled', 'delete_threshold', 'upgrade_threshold']:
+                if key in payload:
+                    manager_config[key] = payload[key]
+
+            config_manager.set('manager', manager_config)
+            return jsonify({"success": True, "settings": manager_config}), 200
+        except Exception as e:
+            logger.error(f"Error updating manager settings: {e}")
+            return jsonify({"error": str(e)}), 500
+    else:
+        # GET
+        try:
+            # Return defaults if not set
+            settings = config_manager.get('manager', {
+                'enabled': True,
+                'delete_threshold': 1,
+                'upgrade_threshold': 2
+            })
+            return jsonify({"success": True, "settings": settings}), 200
+        except Exception as e:
+            logger.error(f"Error getting manager settings: {e}")
+            return jsonify({"error": str(e)}), 500
 
 @bp.route("/prune/run", methods=["POST"])
 def run_prune_job():
@@ -40,30 +73,68 @@ def get_action_queue():
     """Get items pending action (delete/upgrade)."""
     db = get_database()
     try:
+        # Get settings to determine thresholds
+        manager_config = config_manager.get('manager', {
+            'enabled': True,
+            'delete_threshold': 1,
+            'upgrade_threshold': 2
+        })
+
+        if not manager_config.get('enabled', True):
+             return jsonify({"success": True, "queue": [], "message": "Manager disabled"}), 200
+
+        delete_threshold = manager_config.get('delete_threshold', 1)
+        upgrade_threshold = manager_config.get('upgrade_threshold', 2)
+
         with db.session_scope() as session:
-            # Query tracks with ratings 1 (Delete) or 2 (Upgrade)
-            # Exclude system flags? Or include them?
-            # "Fetch and display tracks pending deletion (1-star) or upgrade (2-star)."
-            # This implies USER ratings.
+            # We want tracks where the *Consensus* would be DELETE or UPGRADE.
+            # Querying tracks with ratings <= max(delete, upgrade) is a good filter,
+            # but we need to check if they are *not yet* system flagged (locked/deleted/upgraded).
+            # And we need to aggregate user ratings.
+
+            # Simplified approach: Find tracks with user ratings <= thresholds
+            # AND exclude tracks that already have a system flag.
+
+            # 1. Get tracks with ratings in range
+            max_thresh = max(delete_threshold, upgrade_threshold)
 
             query = (
                 session.query(Track, UserRating.rating)
                 .join(UserRating)
-                .filter(UserRating.rating.in_([1, 2]))
+                .filter(UserRating.rating <= max_thresh)
+                .filter(UserRating.rating.isnot(None))
+                # Exclude system flags (floats) from the *triggering* rating check
+                # But we also need to ensure the track doesn't HAVE a system flag.
                 .all()
             )
 
             results = []
-            for track, rating in query:
-                action_type = "delete" if rating == 1 else "upgrade"
-                results.append({
-                    "id": track.id,
-                    "title": track.title,
-                    "artist": track.artist.name,
-                    "album": track.album.title if track.album else "",
-                    "current_rating": rating,
-                    "action_needed": action_type
-                })
+            seen_tracks = set()
+
+            for track, rating_val in query:
+                if track.id in seen_tracks:
+                    continue
+
+                # Check for system flags on this track
+                # This causes N+1 query, but strictly safer for logic.
+                # Optimization: Load all ratings for these tracks or use a subquery.
+                # Given dashboard context, N+1 for visible queue (usually small) might be acceptable or we optimize later.
+
+                all_ratings = [r.rating for r in track.user_ratings]
+
+                # Check Consensus
+                action = ConsensusEngine.determine_action(all_ratings)
+
+                if action in (ConsensusEngine.ConsensusAction.DELETE, ConsensusEngine.ConsensusAction.UPGRADE):
+                    results.append({
+                        "id": track.id,
+                        "title": track.title,
+                        "artist": track.artist.name,
+                        "album": track.album.title if track.album else "",
+                        "current_rating": track.get_consensus_rating, # This property might just be max(rating), let's use the triggering value or calculated max
+                        "action_needed": "delete" if action == ConsensusEngine.ConsensusAction.DELETE else "upgrade"
+                    })
+                    seen_tracks.add(track.id)
 
             return jsonify({"success": True, "queue": results}), 200
     except Exception as e:
