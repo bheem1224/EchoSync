@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { page } from '$app/stores';
   import apiClient from '../../api/client';
   import { player } from '../../stores/player';
@@ -23,7 +23,7 @@
     try {
       const res = await apiClient.get('/library/index');
       libraryIndex = res.data || [];
-      handleDeepLinks();
+      // Initial deep link check handled by reactive statement below
     } catch (err) {
       error = err.message;
     } finally {
@@ -31,25 +31,43 @@
     }
   }
 
-  function handleDeepLinks() {
+  // Reactive deep linking logic
+  $: if (libraryIndex.length > 0 && $page.url.searchParams.has('artist_id')) {
+      handleDeepLinks();
+  }
+
+  async function handleDeepLinks() {
       const artistId = $page.url.searchParams.get('artist_id');
-      const highlightTrackId = $page.url.searchParams.get('highlight');
+      const highlightTrackId = $page.url.searchParams.get('highlight_track'); // Use correct param name
+      const highlightAlbumId = $page.url.searchParams.get('highlight_album');
 
       if (artistId) {
-          const artist = libraryIndex.find(a => a.id == artistId);
-          if (artist) {
-              selectArtist(artist);
+          const artistIndex = libraryIndex.findIndex(a => a.id == artistId);
+          if (artistIndex !== -1) {
+              const artist = libraryIndex[artistIndex];
 
-              if (highlightTrackId) {
-                  // Wait for DOM update
-                  setTimeout(() => {
-                      const row = document.getElementById(`track-${highlightTrackId}`);
-                      if (row) {
-                          row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                          row.classList.add('flash-highlight');
-                          setTimeout(() => row.classList.remove('flash-highlight'), 2000);
-                      }
-                  }, 300);
+              // Lazy Loading Fix: Ensure this artist is visible in grid (if we ever go back)
+              // But more importantly, we just want to select it.
+              // If we wanted to scroll to it in grid view, we'd need to expand visibleCount.
+              if (artistIndex >= visibleCount) {
+                  visibleCount = artistIndex + PAGE_SIZE; // Expand to include it
+              }
+
+              selectArtist(artist);
+              await tick(); // Wait for detail view render
+
+              // Scroll to Highlight
+              let targetId = null;
+              if (highlightTrackId) targetId = `track-${highlightTrackId}`;
+              else if (highlightAlbumId) targetId = `album-${highlightAlbumId}`; // Assuming albums have IDs
+
+              if (targetId) {
+                  const element = document.getElementById(targetId);
+                  if (element) {
+                      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      element.classList.add('flash-highlight');
+                      setTimeout(() => element.classList.remove('flash-highlight'), 2000);
+                  }
               }
           }
       }
@@ -73,7 +91,9 @@
       selectedArtist = null;
       viewMode = 'grid';
       // Clear URL params without reload
-      window.history.pushState({}, '', '/library');
+      const url = new URL(window.location);
+      url.search = '';
+      window.history.pushState({}, '', url);
   }
 
   // --- Actions ---
@@ -219,7 +239,7 @@
 
             <div class="space-y-10">
                 {#each selectedArtist.albums as album (album.id)}
-                    <div class="bg-gray-800/50 rounded-2xl border border-gray-700 p-6">
+                    <div class="bg-gray-800/50 rounded-2xl border border-gray-700 p-6" id="album-{album.id}">
                         <div class="flex items-center gap-4 mb-6">
                             <div class="w-16 h-16 bg-white/10 rounded-lg overflow-hidden flex items-center justify-center shrink-0">
                                 {#if album.cover_image_url}
