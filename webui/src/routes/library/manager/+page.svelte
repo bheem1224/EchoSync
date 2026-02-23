@@ -1,13 +1,5 @@
 <script>
     import { onMount } from 'svelte';
-    import Omnibar from '$lib/components/Omnibar.svelte';
-
-    // Remove Omnibar from here if it is going to be in the parent library page
-    // Actually, the prompt says "change the search of library".
-    // If we use Omnibar in the parent, we might not need it here, or we keep it for consistency.
-    // But in a "Tab" layout, the Omnibar usually sits above the tabs or within the Library tab.
-    // The prompt says "implement the frontend dashboard as a separate tab in the library page".
-    // I will remove the Omnibar from this component since it will be lifted to the parent or Library tab.
 
     let trends = { total_ratings: 0, average_rating: 0, distribution: {} };
     let duplicates = [];
@@ -99,6 +91,7 @@
             });
 
             if (res.ok) {
+                // Optimistic UI update
                 duplicates = duplicates.filter(group => !group.tracks.some(t => t.id === keepId));
             } else {
                 alert('Failed to resolve conflict');
@@ -110,6 +103,7 @@
     }
 
     async function overrideTrack(id, action) {
+        // action: 'lock' | 'delete' | 'upgrade'
         try {
             const res = await fetch(`/api/manager/track/${id}/override`, {
                 method: 'POST',
@@ -118,6 +112,7 @@
             });
 
             if (res.ok) {
+                // Remove from action queue if present
                 actionQueue = actionQueue.filter(t => t.id !== id);
             } else {
                 alert('Failed to override track');
@@ -141,6 +136,7 @@
             <h3 class="text-gray-400 text-xs uppercase tracking-wider mb-1">Avg Rating</h3>
             <span class="text-2xl font-bold text-yellow-400">{trends.average_rating.toFixed(2)}</span>
         </div>
+        <!-- Prune Job Trigger -->
         <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 md:col-span-2 flex items-center justify-between">
             <div>
                 <h3 class="text-gray-400 text-xs uppercase tracking-wider mb-1">Prune Job</h3>
@@ -164,7 +160,7 @@
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
-        <!-- Hygiene Queue -->
+        <!-- Hygiene Queue (Left) -->
         <div class="space-y-4">
             <div class="flex items-center justify-between">
                 <h2 class="text-xl font-semibold flex items-center gap-2">
@@ -216,7 +212,7 @@
             </div>
         </div>
 
-        <!-- Action Queue -->
+        <!-- Action Queue (Right) -->
         <div class="space-y-4">
             <div class="flex items-center justify-between">
                 <h2 class="text-xl font-semibold flex items-center gap-2">

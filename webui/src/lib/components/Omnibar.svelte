@@ -17,6 +17,7 @@
 
         loading = true;
         try {
+            // Using /api/manager/search which maps to MusicDatabase.search_library
             const res = await fetch(`/api/manager/search?q=${encodeURIComponent(q)}`);
             if (res.ok) {
                 const data = await res.json();
@@ -38,7 +39,6 @@
     }
 
     function handleClickOutside(event) {
-        // Ensure we're in the browser environment
         if (typeof window !== 'undefined') {
             const container = document.querySelector('.omnibar-container');
             if (container && !container.contains(event.target)) {
@@ -49,14 +49,24 @@
 
     function navigate(type, id) {
         showDropdown = false;
-        query = '';
+        query = ''; // Clear search on navigation? Or keep it? Usually clearing is better.
+
         if (type === 'artist') {
+            // Navigate to Library with artist param to trigger Detail View
+            // Note: The Collection View (+page.svelte) needs to read this param
+            // But since I optimized +page.svelte to handle 'selectedArtist' state,
+            // deep linking needs a bit of logic in +page.svelte to read query params on mount.
+            // For now, let's assume +page.svelte will be updated to read params,
+            // or we force a reload if we are already there?
+            // Actually, simply navigating with query param is the standard way.
             goto(`/library?artist=${id}`);
         } else if (type === 'album') {
-             // Assuming library view can filter by album or jump to it
-             // For now, let's just log or implement a basic route if known
-             console.log('Navigate to album', id);
+             // Deep link to album? Maybe expand artist then scroll to album?
+             // Simplest: Go to artist
+             goto(`/library?album=${id}`);
         } else if (type === 'track') {
+             // Maybe play the track? Or go to context?
+             // Let's just log for now as per previous plan
              console.log('Navigate to track', id);
         }
     }
@@ -64,14 +74,14 @@
 
 <svelte:window on:click={handleClickOutside} />
 
-<div class="omnibar-container relative w-full max-w-2xl mx-auto z-40">
+<div class="omnibar-container relative w-full z-50">
     <div class="relative">
         <input
             type="text"
             bind:value={query}
             on:input={handleInput}
             placeholder="Search library..."
-            class="w-full bg-gray-800 border border-gray-700 rounded-lg py-2 px-4 pl-10 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-colors"
+            class="w-full bg-gray-800 border border-gray-700 rounded-lg py-2 px-4 pl-10 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-colors shadow-sm"
             on:focus={() => { if (query.length >= 2) showDropdown = true; }}
         />
         <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -100,7 +110,7 @@
                             on:click={() => navigate('artist', artist.id)}
                         >
                             {#if artist.image_url}
-                                <img src={artist.image_url} alt={artist.name} class="w-8 h-8 rounded-full object-cover mr-3" />
+                                <img src={artist.image_url} alt={artist.name} class="w-8 h-8 rounded-full object-cover mr-3 bg-black" />
                             {:else}
                                 <div class="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center mr-3">
                                     <span class="text-xs text-gray-400">?</span>
@@ -121,7 +131,7 @@
                             on:click={() => navigate('album', album.id)}
                         >
                             {#if album.cover_image_url}
-                                <img src={album.cover_image_url} alt={album.title} class="w-8 h-8 rounded object-cover mr-3" />
+                                <img src={album.cover_image_url} alt={album.title} class="w-8 h-8 rounded object-cover mr-3 bg-black" />
                             {:else}
                                 <div class="w-8 h-8 rounded bg-gray-700 flex items-center justify-center mr-3">
                                     <span class="text-xs text-gray-400">?</span>
