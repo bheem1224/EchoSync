@@ -38,20 +38,24 @@ def list_download_clients():
         all_providers = ProviderRegistry.list_providers()
         
         for provider_name in all_providers:
-            # Check if provider supports downloads
-            if provider_name in CAPABILITY_REGISTRY:
-                capabilities = CAPABILITY_REGISTRY[provider_name]
-                if capabilities.supports_downloads:
-                    # Get provider instance
-                    provider_class = ProviderRegistry.get_provider_class(provider_name)
-                    if provider_class:
-                        download_clients.append({
-                            'name': provider_name,
-                            'display_name': provider_name.title(),
-                            'supports_downloads': True,
-                            'description': f'Download music via {provider_name.title()}',
-                            'active': provider_name == active_client
-                        })
+            try:
+                # Check if provider supports downloads
+                if provider_name in CAPABILITY_REGISTRY:
+                    capabilities = CAPABILITY_REGISTRY[provider_name]
+                    if capabilities.supports_downloads:
+                        # Get provider instance
+                        provider_class = ProviderRegistry.get_provider_class(provider_name)
+                        if provider_class:
+                            download_clients.append({
+                                'name': provider_name,
+                                'display_name': provider_name.title(),
+                                'supports_downloads': True,
+                                'description': f'Download music via {provider_name.title()}',
+                                'active': provider_name == active_client
+                            })
+            except Exception as e:
+                logger.error(f"Error processing provider {provider_name} for download clients: {e}")
+                continue
         
         return jsonify(download_clients), 200
         

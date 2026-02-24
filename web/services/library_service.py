@@ -71,7 +71,7 @@ class LibraryAdapter:
                 if is_active:
                     try:
                         provider = ProviderRegistry.create_instance(provider_name)
-                        if hasattr(provider, 'ensure_connection') and hasattr(provider, 'get_library_stats'):
+                        if provider and hasattr(provider, 'ensure_connection') and hasattr(provider, 'get_library_stats'):
                             if provider.ensure_connection():
                                 stats = provider.get_library_stats()
                                 track_count = stats.get('tracks', 0)
@@ -106,12 +106,21 @@ class LibraryAdapter:
         db_size_mb = _get_database_size_mb()
         
         try:
+            # Force fresh database counts
             db = get_database()
+            # Explicitly log to verify query execution
+            logger.debug("Fetching fresh database stats...")
+
             db_artists = db.count_artists()
             db_albums = db.count_albums()
             db_tracks = db.count_tracks()
+
+            logger.debug(f"Database stats retrieved: {db_tracks} tracks, {db_artists} artists, {db_albums} albums")
         except Exception as e:
-            logger.error(f"Error getting database stats: {e}")
+            logger.error(f"Error getting database stats: {e}", exc_info=True)
+            db_artists = 0
+            db_albums = 0
+            db_tracks = 0
 
         tracks = []
         artists = []

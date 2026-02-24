@@ -58,8 +58,13 @@
     }
   }
 
+  let pollingIntervalId = null;
+
   async function startProgressPolling() {
-    const interval = setInterval(async () => {
+    // Clear any existing polling to prevent duplicates
+    if (pollingIntervalId) clearInterval(pollingIntervalId);
+
+    pollingIntervalId = setInterval(async () => {
       try {
         const response = await apiClient.get('/library/update-status');
         if (response.data) {
@@ -83,19 +88,36 @@
             updateProgress = 100;
             updateStatus = 'Complete';
             await loadDatabaseStats();
+
+            // Stop polling since update is finished
+            if (pollingIntervalId) {
+              clearInterval(pollingIntervalId);
+              pollingIntervalId = null;
+            }
+
             setTimeout(() => {
               updateProgress = 0;
               updateStatus = '';
             }, 3000);
+          } else {
+             // Not running and not updating (e.g. page load state), check if we should stop
+             if (!isUpdating && pollingIntervalId) {
+                 // If we started polling but there's nothing running, stop.
+                 clearInterval(pollingIntervalId);
+                 pollingIntervalId = null;
+             }
           }
         }
       } catch (error) {
         // Silently fail - polling
       }
     }, 2000);
-
-    onDestroy(() => clearInterval(interval));
   }
+
+  onDestroy(() => {
+    if (pollingIntervalId) clearInterval(pollingIntervalId);
+    health.stop();
+  });
 
   async function updateDatabase() {
     if (isUpdating) return;
@@ -105,6 +127,9 @@
       updateProgress = 0;
       updateStatus = 'Starting update...';
       
+      // Start polling for progress
+      startProgressPolling();
+
       const params = `?mode=${updateMode}`;
       await apiClient.post(`/library/update-database${params}`);
       
