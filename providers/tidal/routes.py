@@ -10,6 +10,12 @@ bp = Blueprint("tidal_routes", __name__, url_prefix="/api/accounts/tidal")
 @bp.get('')
 def list_accounts():
     """List all Tidal accounts."""
+    # short‑circuit if provider disabled
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('tidal'):
+        # return empty result rather than error
+        return jsonify({'accounts': [], 'redirect_uri': ''}), 200
+
     try:
         storage = get_storage_service()
         storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
@@ -52,6 +58,9 @@ def create_account():
     Create a new Tidal account with per-account credentials.
     Body: { account_name, client_id, client_secret }
     """
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('tidal'):
+        return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         payload = request.get_json(force=True) or {}
         account_name = (payload.get('account_name') or '').strip()
@@ -101,6 +110,9 @@ def create_account():
 @bp.get('/<int:account_id>')
 def get_account(account_id):
     """Get a specific Tidal account with credentials."""
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('tidal'):
+        return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         storage = get_storage_service()
         accounts = storage.list_accounts('tidal')
@@ -136,6 +148,9 @@ def update_account(account_id):
     Update Tidal account name and/or credentials.
     Body: { account_name?, client_id?, client_secret? }
     """
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('tidal'):
+        return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         storage = get_storage_service()
         accounts = storage.list_accounts('tidal')
@@ -194,6 +209,9 @@ def update_account(account_id):
 @bp.put('/<int:account_id>/activate')
 def activate_account(account_id):
     """Activate a Tidal account."""
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('tidal'):
+        return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         storage = get_storage_service()
         accounts = storage.list_accounts('tidal')
@@ -219,6 +237,9 @@ def activate_account(account_id):
 @bp.delete('/<int:account_id>')
 def delete_account(account_id):
     """Delete a Tidal account."""
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('tidal'):
+        return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         storage = get_storage_service()
         deleted = storage.delete_account(account_id)

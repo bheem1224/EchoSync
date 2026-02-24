@@ -12,6 +12,9 @@ bp = Blueprint('jellyfin_routes', __name__, url_prefix='/api/jellyfin')
 @bp.get('/settings')
 def get_settings():
     """Get Jellyfin server settings (base_url, username, password status)."""
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('jellyfin'):
+        return jsonify({'settings': {}}), 200
     try:
         base_url = config_manager.get('jellyfin.base_url', '')
         username = config_manager.get('jellyfin.username', '')
@@ -68,6 +71,9 @@ def get_settings():
 @bp.post('/settings')
 def save_settings():
     """Save Jellyfin server settings."""
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('jellyfin'):
+        return jsonify({'error': 'Jellyfin provider disabled'}), 403
     try:
         data = request.get_json(force=True) or {}
         

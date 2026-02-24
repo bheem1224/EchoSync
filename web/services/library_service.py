@@ -53,6 +53,12 @@ class LibraryAdapter:
         provider_names = ProviderRegistry.list_providers()
         
         for provider_name in provider_names:
+            # skip disabled providers entirely; they shouldn't count toward
+            # servers or be instantiated for stats
+            if ProviderRegistry.is_provider_disabled(provider_name):
+                logger.debug(f"Skipping disabled provider in library overview: {provider_name}")
+                continue
+
             try:
                 caps = get_provider_capabilities(provider_name)
                 
@@ -70,6 +76,7 @@ class LibraryAdapter:
                 
                 if is_active:
                     try:
+                        # only instantiate active provider (and it's not disabled)
                         provider = ProviderRegistry.create_instance(provider_name)
                         if provider and hasattr(provider, 'ensure_connection') and hasattr(provider, 'get_library_stats'):
                             if provider.ensure_connection():

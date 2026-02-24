@@ -117,11 +117,16 @@ def get_provider_playlists(provider_name):
         if not provider_cls:
             return jsonify({'error': f'Provider {provider_name} not found or not installed'}), 404
         
+        # Check disabled state before instantiating
+        if ProviderRegistry.is_provider_disabled(provider_name):
+            return jsonify({'error': f'Provider {provider_name} is disabled'}), 403
+        
         # Instantiate provider
         try:
             plugin = ProviderRegistry.create_instance(provider_name)
-        except ValueError as e:
-            return jsonify({'error': f'Provider {provider_name} is disabled'}), 403
+        except Exception as e:
+            logger.error(f"Error instantiating provider {provider_name}: {e}")
+            return jsonify({'error': f'Provider {provider_name} could not be initialized'}), 500
         
         if not plugin:
             return jsonify({'error': f'Provider {provider_name} instance not found'}), 404
@@ -175,9 +180,11 @@ def get_provider_playlists(provider_name):
                                 else:
                                     continue
 
-                                # Append account name to playlist name
+                                # Append account name to playlist name and keep id
                                 original_name = p_dict.get('name', 'Unknown')
                                 p_dict['name'] = f"{original_name} ({account_name})"
+                                # record which account this playlist came from so clients can target it later
+                                p_dict['account_id'] = account_id
                                 all_playlists.append(p_dict)
 
                     except Exception as acc_err:

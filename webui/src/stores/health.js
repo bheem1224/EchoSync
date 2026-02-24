@@ -19,6 +19,7 @@ function createHealthStore() {
       set({
         status: response.data.status,
         services: response.data.results || {},
+        summary: response.data.summary || { total: 0, operational: 0 },
         lastUpdated: new Date(),
       });
     } catch (error) {
@@ -26,6 +27,7 @@ function createHealthStore() {
       set({
         status: 'error',
         services: {},
+        summary: { total: 0, operational: 0 },
         lastUpdated: new Date(),
       });
     } finally {

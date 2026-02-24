@@ -5,6 +5,7 @@ Efficiently ingests SoulSyncTrack objects into the database with caching.
 from collections import defaultdict
 from typing import List, Dict, Optional, Tuple, Callable
 from datetime import date, datetime
+import time
 
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import sessionmaker, Session
@@ -491,6 +492,11 @@ class LibraryManager:
 
         try:
             for idx, track_data in enumerate(tracks):
+                # yield occasionally to allow other threads to run and avoid hogging the GIL
+                if idx and idx % 10 == 0:
+                    import time
+                    time.sleep(0)
+
                 try:
                     # Skip tracks with missing required fields
                     if not track_data.title or not track_data.title.strip():

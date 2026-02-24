@@ -50,8 +50,45 @@ class SyncProgress:
     failed_tracks: int = 0
 
 class PlaylistSyncService:
-    def __init__(self, spotify_client: SpotifyClient, plex_client: PlexClient, soulseek_client: SlskdProvider, jellyfin_client: JellyfinClient = None, navidrome_client = None):
-        self.spotify_client = spotify_client
+    def __init__(
+        self,
+        spotify_client: Optional[SpotifyClient] = None,
+        plex_client: Optional[PlexClient] = None,
+        soulseek_client: Optional[SlskdProvider] = None,
+        jellyfin_client: Optional[JellyfinClient] = None,
+        navidrome_client=None,
+    ):
+        # Support multiple spotify accounts by default when no client is passed
+        self.spotify_clients: List[SpotifyClient] = []
+        self.spotify_client = None
+        if spotify_client:
+            self.spotify_clients = [spotify_client]
+            self.spotify_client = spotify_client
+        else:
+            try:
+                from sdk.storage_service import get_storage_service
+                storage = get_storage_service()
+                accounts = storage.list_accounts('spotify') or []
+                for acc in accounts:
+                    try:
+                        client = SpotifyClient(account_id=acc.get('id'))
+                        if client.is_configured():
+                            self.spotify_clients.append(client)
+                    except Exception:
+                        continue
+                if self.spotify_clients:
+                    # default to first account
+                    self.spotify_client = self.spotify_clients[0]
+                else:
+                    # fallback to generic auto-detect client
+                    self.spotify_client = SpotifyClient()
+                    self.spotify_clients = [self.spotify_client]
+            except Exception:
+                # if storage service not available, just create a generic client
+                self.spotify_client = SpotifyClient()
+                self.spotify_clients = [self.spotify_client]
+
+        # other providers assume single-client style
         self.plex_client = plex_client
         self.jellyfin_client = jellyfin_client
         self.navidrome_client = navidrome_client
@@ -441,23 +478,32 @@ class PlaylistSyncService:
         
         return results
     
-    def _get_spotify_playlist(self, playlist_name: str) -> Optional[SpotifyPlaylist]:
-        try:
-            playlists = self.spotify_client.get_user_playlists()
-            # playlists is List[Dict]
-            target_playlist = None
-            for p in playlists:
-                if p['name'].lower() == playlist_name.lower():
-                    target_playlist = p
-                    break
+    def _get_spotify_playlist(self, playlist_name: str, account_id: Optional[int] = None) -> Optional[SpotifyPlaylist]:
+        """Locate a Spotify playlist by name across one or all configured accounts.
 
-            if target_playlist:
-                tracks = self.spotify_client.get_playlist_tracks(target_playlist['id'])
-                return SpotifyPlaylist(
-                    id=target_playlist['id'],
-                    name=target_playlist['name'],
-                    tracks=tracks
-                )
+        If `account_id` is provided, only that client's playlists will be searched.
+        Otherwise we iterate through all known spotify_clients until a match is found.
+        """
+        try:
+            clients = []
+            if account_id is not None:
+                # find matching client
+                for c in self.spotify_clients:
+                    if getattr(c, 'account_id', None) == account_id:
+                        clients = [c]
+                        break
+            if not clients:
+                clients = self.spotify_clients
+
+            for client in clients:
+                try:
+                    playlists = client.get_user_playlists() or []
+                except Exception:
+                    playlists = []
+                for p in playlists:
+                    if p.get('name', '').lower() == playlist_name.lower():
+                        tracks = client.get_playlist_tracks(p['id'])
+                        return SpotifyPlaylist(id=p['id'], name=p['name'], tracks=tracks)
             return None
         except Exception as e:
             logger.error(f"Error fetching Spotify playlist: {e}")
@@ -512,9 +558,9 @@ class PlaylistSyncService:
             wishlist_added_count=0
         )
     
-    def get_sync_preview(self, playlist_name: str) -> Dict[str, Any]:
+    def get_sync_preview(self, playlist_name: str, account_id: Optional[int] = None) -> Dict[str, Any]:
         try:
-            spotify_playlist = self._get_spotify_playlist(playlist_name)
+            spotify_playlist = self._get_spotify_playlist(playlist_name, account_id=account_id)
             if not spotify_playlist:
                 return {"error": f"Playlist '{playlist_name}' not found"}
 
@@ -558,7 +604,13 @@ class PlaylistSyncService:
     
     def get_library_comparison(self) -> Dict[str, Any]:
         try:
-            spotify_playlists = self.spotify_client.get_user_playlists()
+            # aggregate across all spotify clients
+            spotify_playlists = []
+            for client in self.spotify_clients:
+                try:
+                    spotify_playlists.extend(client.get_user_playlists() or [])
+                except Exception:
+                    continue
             spotify_track_count = sum(p.get('track_count', 0) for p in spotify_playlists)
 
             media_client, server_type = self._get_active_media_client()

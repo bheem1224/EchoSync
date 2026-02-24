@@ -89,6 +89,9 @@ class DatabaseUpdateWorker(QThread if HAS_QTHREAD else threading.Thread):
                     # Optional: track artists/albums if provided
                     self.processed_artists = progress.get("artists", self.processed_artists)
                     self.processed_albums = progress.get("albums", self.processed_albums)
+                    # yield to other threads, helping HTTP request handling
+                    import time
+                    time.sleep(0)
                 except Exception:
                     pass
 

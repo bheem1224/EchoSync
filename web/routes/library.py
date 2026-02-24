@@ -210,13 +210,10 @@ def update_database():
                     database_path=None,  # Use default path
                     full_refresh=full_refresh,
                     server_type=active_server,
-                    force_sequential=True  # Force sequential for web server to avoid threading issues
+                    force_sequential=False
                 )
-                
                 # Start worker thread
                 _db_update_worker.start()
-            
-            logger.info(f"Database update started ({mode} mode) for {active_server}")
             
             return jsonify({
                 "success": True,
