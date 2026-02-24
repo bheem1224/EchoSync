@@ -44,6 +44,7 @@ from web.routes.accounts import bp as accounts_bp
 from web.routes.media_server import bp as media_server_bp
 from web.routes.library import bp as library_bp
 from web.routes.metadata import bp as metadata_bp
+from web.routes.manager import bp as manager_bp
 
 from core.plugin_loader import PluginLoader
 from core.settings import config_manager
@@ -80,6 +81,7 @@ def create_app() -> Flask:
     app.register_blueprint(media_server_bp)
     app.register_blueprint(library_bp)
     app.register_blueprint(metadata_bp)
+    app.register_blueprint(manager_bp)
     
     # Initialize Plugin Loader
     # Determine app root (parent of 'web/')
