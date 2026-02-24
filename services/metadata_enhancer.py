@@ -139,7 +139,8 @@ class MetadataEnhancerService:
                             logger.debug(f"Comparing {len(candidate_tracks)} candidates for: {file_path.name}")
                             
                             for idx, (candidate, mbid) in enumerate(candidate_tracks, 1):
-                                score = matcher.calculate_score(file_track, candidate)
+                                match_result = matcher.calculate_match(file_track, candidate)
+                                score = match_result.confidence_score
                                 
                                 # Clean comparison log in debug mode
                                 logger.debug(

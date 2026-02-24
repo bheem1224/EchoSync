@@ -122,7 +122,7 @@ def get_provider_playlists(provider_name):
         if not plugin:
             return jsonify({'error': f'Provider {provider_name} instance not found'}), 404
         
-        # For multi-account providers (Spotify, Tidal), try to use specific account if available
+        # For multi-account providers (Spotify, Tidal), loop through all accounts
         multi_account_providers = ['spotify', 'tidal']
         if provider_name in multi_account_providers:
             try:
@@ -130,24 +130,69 @@ def get_provider_playlists(provider_name):
                 storage = get_storage_service()
 
                 accounts = storage.list_accounts(provider_name)
-                if accounts and len(accounts) > 0:
-                    # Use first account for now
-                    account_id = accounts[0]['id']
 
-                    if provider_name == 'spotify':
-                        from providers.spotify.client import SpotifyClient
-                        plugin = SpotifyClient(account_id=account_id)
-                    elif provider_name == 'tidal':
-                        from providers.tidal.client import TidalClient
-                        plugin = TidalClient(account_id=str(account_id))
+                if not accounts:
+                    # No accounts configured
+                    logger.info(f"No accounts found for {provider_name}")
+                    return jsonify({
+                        'provider': provider_name,
+                        'items': [],
+                        'total': 0,
+                        'status': 'not_configured'
+                    }), 200
+
+                all_playlists = []
+
+                for account in accounts:
+                    try:
+                        account_id = account['id']
+                        account_name = account.get('display_name') or account.get('account_name') or f"Account {account_id}"
+
+                        if provider_name == 'spotify':
+                            from providers.spotify.client import SpotifyClient
+                            client = SpotifyClient(account_id=account_id)
+                        elif provider_name == 'tidal':
+                            from providers.tidal.client import TidalClient
+                            client = TidalClient(account_id=str(account_id))
+                        else:
+                            continue
+
+                        if hasattr(client, 'is_configured') and not client.is_configured():
+                            continue
+
+                        if hasattr(client, 'get_user_playlists'):
+                            playlists = client.get_user_playlists()
+                            for p in playlists:
+                                # Convert to dict
+                                if hasattr(p, '__dict__'):
+                                    p_dict = p.__dict__.copy()
+                                elif isinstance(p, dict):
+                                    p_dict = p.copy()
+                                else:
+                                    continue
+
+                                # Append account name to playlist name
+                                original_name = p_dict.get('name', 'Unknown')
+                                p_dict['name'] = f"{original_name} ({account_name})"
+                                all_playlists.append(p_dict)
+
+                    except Exception as acc_err:
+                        logger.warning(f"Error fetching playlists for account {account.get('id')}: {acc_err}")
+                        continue
+
+                return jsonify({
+                    'provider': provider_name,
+                    'items': all_playlists,
+                    'total': len(all_playlists)
+                }), 200
+
             except Exception as e:
-                logger.warning(f"Error checking accounts for {provider_name}: {e}")
-                # Fallback to default plugin instance
+                logger.error(f"Error handling multi-account logic for {provider_name}: {e}")
+                return jsonify({'error': str(e)}), 500
 
-        # Check if configured (common for all providers)
+        # Standard single-instance provider logic
+        # Check if configured
         if hasattr(plugin, 'is_configured') and not plugin.is_configured():
-            # If specifically not configured, return empty list (200) instead of error (400)
-            # This allows the UI to render "No playlists" or handle empty state gracefully
             logger.info(f"Provider {provider_name} is not configured, returning empty list")
             return jsonify({
                 'provider': provider_name,
@@ -162,10 +207,8 @@ def get_provider_playlists(provider_name):
         
         logger.info(f"[ROUTE] Calling get_user_playlists on {provider_name} provider")
         playlists = plugin.get_user_playlists()
-        logger.info(f"[ROUTE] get_user_playlists returned {len(playlists) if playlists else 0} playlists")
-        logger.info(f"[ROUTE] Playlists type: {type(playlists)}, content: {playlists}")
         
-        # Convert to serializable format if needed
+        # Convert to serializable format
         serialized = []
         for p in playlists:
             if hasattr(p, '__dict__'):
@@ -173,20 +216,16 @@ def get_provider_playlists(provider_name):
             elif isinstance(p, dict):
                 serialized.append(p)
             else:
-                # Try to convert to dict for unknown types
                 try:
                     serialized.append({'id': getattr(p, 'id', ''), 'name': getattr(p, 'name', str(p))})
                 except:
                     serialized.append({'name': str(p)})
         
-        logger.info(f"[ROUTE] Serialized {len(serialized)} playlists for response")
-        response_data = {
+        return jsonify({
             'provider': provider_name,
             'items': serialized,
             'total': len(serialized)
-        }
-        logger.info(f"[ROUTE] Response: {response_data}")
-        return jsonify(response_data), 200
+        }), 200
     except Exception as e:
         logger.error(f"Error fetching playlists for {provider_name}: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500

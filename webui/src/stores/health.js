@@ -8,7 +8,12 @@ function createHealthStore() {
     lastUpdated: null,
   });
 
+  let loading = false;
+  let pollInterval = null;
+
   async function load() {
+    if (loading) return;
+    loading = true;
     try {
       const response = await apiClient.get('/health');
       set({
@@ -23,18 +28,31 @@ function createHealthStore() {
         services: {},
         lastUpdated: new Date(),
       });
+    } finally {
+      loading = false;
     }
   }
 
   function poll(interval = 30000) {
+    if (pollInterval) return pollInterval;
+
     load();
-    return setInterval(load, interval);
+    pollInterval = setInterval(load, interval);
+    return pollInterval;
+  }
+
+  function stop() {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
   }
 
   return {
     subscribe,
     load,
     poll,
+    stop,
   };
 }
 

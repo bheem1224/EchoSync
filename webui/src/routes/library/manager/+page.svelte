@@ -125,10 +125,13 @@
                 </h2>
 
                 <div class="flex items-center gap-6 flex-wrap">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" bind:checked={settings.enabled} class="checkbox">
-                        <span class="text-sm">Enable Media Manager</span>
-                    </label>
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm font-medium">Enable Media Manager</span>
+                        <label class="switch">
+                            <input type="checkbox" bind:checked={settings.enabled}>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
 
                     <div class="flex items-center gap-2">
                         <span class="text-sm muted">Delete Threshold:</span>
@@ -246,7 +249,14 @@
         background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
         border-radius: 4px; color: var(--text); width: 60px; padding: 4px 8px; text-align: center;
     }
-    .checkbox { width: 18px; height: 18px; cursor: pointer; }
+
+    /* Toggle Switch */
+    .switch { position: relative; display: inline-block; width: 40px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.1); transition: .4s; border-radius: 24px; border: 1px solid rgba(255,255,255,0.1); }
+    .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: #94a3b8; transition: .4s; border-radius: 50%; }
+    input:checked + .slider { background-color: rgba(15, 239, 136, 0.2); border-color: var(--accent); }
+    input:checked + .slider:before { transform: translateX(16px); background-color: var(--accent); }
 
     .btn { padding: 8px 16px; border-radius: 8px; font-weight: 600; font-size: 13px; border: none; cursor: pointer; transition: all 0.2s; }
     .btn--primary { background: var(--accent); color: #000; }

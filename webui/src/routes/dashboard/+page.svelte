@@ -31,7 +31,7 @@
   });
 
   onDestroy(() => {
-    if (healthPollHandle) clearInterval(healthPollHandle);
+    health.stop();
   });
 
   async function loadDatabaseStats() {
