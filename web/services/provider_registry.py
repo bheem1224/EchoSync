@@ -22,24 +22,30 @@ def list_providers() -> List[Dict]:
     for name in CoreProviderRegistry.list_providers():
         cls = CoreProviderRegistry.get_provider_class(name)
         if cls:
+            is_disabled = CoreProviderRegistry.is_provider_disabled(name)
             provider_dict = {
                 'id': name,  # Add id field for frontend
                 'name': name,
                 'display_name': name.title(),  # Add display name
                 'category': getattr(cls, 'category', 'provider'),
                 'service_type': getattr(cls, 'service_type', None),  # Add service_type
-                'disabled': CoreProviderRegistry.is_provider_disabled(name),
+                'disabled': is_disabled,
                 'supports_downloads': getattr(cls, 'supports_downloads', False)
             }
             
-            # Check if provider is configured by instantiating and calling is_configured
-            try:
-                instance = CoreProviderRegistry.create_instance(name)
-                if instance and hasattr(instance, 'is_configured'):
-                    provider_dict['is_configured'] = instance.is_configured()
-                else:
-                    provider_dict['is_configured'] = True  # Assume configured if method not available
-            except Exception:
+            # Only instantiate if the provider is not disabled; this avoids
+            # configuration warnings and unnecessary health checks for
+            # disabled plugins.
+            if not is_disabled:
+                try:
+                    instance = CoreProviderRegistry.create_instance(name)
+                    if instance and hasattr(instance, 'is_configured'):
+                        provider_dict['is_configured'] = instance.is_configured()
+                    else:
+                        provider_dict['is_configured'] = True  # Assume configured if method not available
+                except Exception:
+                    provider_dict['is_configured'] = False
+            else:
                 provider_dict['is_configured'] = False
             
             try:
@@ -87,10 +93,14 @@ def list_providers() -> List[Dict]:
 def get_providers_for_capability(capability: str) -> List[Dict]:
     """Get providers that support a specific capability."""
     providers = []
-    # For now, return all providers that aren't disabled
-    # In the future, could enhance based on capability metadata
+    # Filter by capability and also exclude disabled providers
     for provider in list_providers():
-        if not provider['disabled']:
+        if provider.get('disabled'):
+            continue
+        caps = provider.get('capabilities') or {}
+        # simple check: provider must either support playlists/search/etc.
+        # this helper is mostly used by the frontend so keep it lightweight
+        if caps.get('supports_playlists') != 'NONE' or caps.get('search', {}).get('tracks'):
             providers.append(provider)
     return providers
 

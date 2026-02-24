@@ -130,6 +130,19 @@ class SpotifyClient(SyncServiceProvider):
             from core.settings import config_manager
             account_id = config_manager.get('active_spotify_account_id')
 
+            # If still None, try to find the first available account
+            if account_id is None:
+                try:
+                    from sdk.storage_service import get_storage_service
+                    storage = get_storage_service()
+                    accounts = storage.list_accounts('spotify')
+                    if accounts:
+                        # Pick the first one
+                        account_id = accounts[0]['id']
+                        logger.info(f"No active account set, defaulting to first found account: {account_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to auto-detect spotify account: {e}")
+
         self.account_id: Optional[int] = account_id
 
         # Initialize centralized HTTP client for Spotify (5 requests/second rate limit)

@@ -239,7 +239,19 @@ class Download(Base):
 
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
+    # ensure foreign keys are enforced
     cursor.execute("PRAGMA foreign_keys=ON")
+    # use WAL mode so long-running writes don't block readers (fixes UI freeze during updates)
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        # older SQLite versions may not support WAL; ignore failure
+        pass
+    # give other connections a bit longer before raising "database is locked"
+    try:
+        cursor.execute("PRAGMA busy_timeout=30000")
+    except Exception:
+        pass
     cursor.close()
 
 

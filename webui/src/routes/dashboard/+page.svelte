@@ -27,14 +27,26 @@
     await health.load();
     healthPollHandle = health.poll(30000);
     await loadDatabaseStats();
-    startProgressPolling();
+
+    // Only poll update-status if an update is in progress.  This avoids
+    // perpetual polling when nothing is running, which was causing
+    // excessive requests and database locks.
+    try {
+      const resp = await apiClient.get('/library/update-status');
+      if (resp.data?.running) {
+        startProgressPolling();
+      }
+    } catch (err) {
+      // ignore; we'll start polling when the user triggers an update
+      console.debug('Initial update-status check failed, will not poll until update requested');
+    }
   });
 
   onDestroy(() => {
-    if (healthPollHandle) clearInterval(healthPollHandle);
+    health.stop();
   });
 
-  async function loadDatabaseStats() {
+  async function loadDatabaseStats(retry = true) {
     try {
       const response = await apiClient.get('/library');
       if (response.data) {
@@ -55,11 +67,20 @@
       }
     } catch (error) {
       console.error('Failed to load database stats:', error);
+      // if we failed due to a transient lock, try again once
+      if (retry) {
+        setTimeout(() => loadDatabaseStats(false), 5000);
+      }
     }
   }
 
+  let pollingIntervalId = null;
+
   async function startProgressPolling() {
-    const interval = setInterval(async () => {
+    // Avoid starting multiple intervals
+    if (pollingIntervalId) return;
+
+    pollingIntervalId = setInterval(async () => {
       try {
         const response = await apiClient.get('/library/update-status');
         if (response.data) {
@@ -83,19 +104,35 @@
             updateProgress = 100;
             updateStatus = 'Complete';
             await loadDatabaseStats();
+
+            // Stop polling since update is finished
+            if (pollingIntervalId) {
+              clearInterval(pollingIntervalId);
+              pollingIntervalId = null;
+            }
+
             setTimeout(() => {
               updateProgress = 0;
               updateStatus = '';
             }, 3000);
+          } else {
+             // Not running and not updating, stop polling
+             if (pollingIntervalId) {
+                 clearInterval(pollingIntervalId);
+                 pollingIntervalId = null;
+             }
           }
         }
       } catch (error) {
         // Silently fail - polling
       }
     }, 2000);
-
-    onDestroy(() => clearInterval(interval));
   }
+
+  onDestroy(() => {
+    if (pollingIntervalId) clearInterval(pollingIntervalId);
+    health.stop();
+  });
 
   async function updateDatabase() {
     if (isUpdating) return;
@@ -105,6 +142,9 @@
       updateProgress = 0;
       updateStatus = 'Starting update...';
       
+      // Start polling for progress
+      startProgressPolling();
+
       const params = `?mode=${updateMode}`;
       await apiClient.post(`/library/update-database${params}`);
       
@@ -120,8 +160,9 @@
 
   $: systemStatus = $health.status;
   $: serviceHealth = $health.services || {};
-  $: healthyServices = Object.values(serviceHealth).filter(s => s.status === 'healthy').length;
-  $: totalServices = Object.keys(serviceHealth).length;
+  // prefer summary fields when available (handles startup/empty results)
+  $: healthyServices = $health.summary?.operational ?? Object.values(serviceHealth).filter(s => s.status === 'healthy').length;
+  $: totalServices = $health.summary?.total ?? Object.keys(serviceHealth).length;
 </script>
 
 <svelte:head>

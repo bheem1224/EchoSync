@@ -89,6 +89,9 @@ class DatabaseUpdateWorker(QThread if HAS_QTHREAD else threading.Thread):
                     # Optional: track artists/albums if provided
                     self.processed_artists = progress.get("artists", self.processed_artists)
                     self.processed_albums = progress.get("albums", self.processed_albums)
+                    # yield to other threads, helping HTTP request handling
+                    import time
+                    time.sleep(0)
                 except Exception:
                     pass
 
@@ -124,19 +127,10 @@ class DatabaseStatsWorker:
     def collect_stats(self):
         """Collect database statistics."""
         try:
-            conn = self.db._get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT COUNT(*) FROM artists")
-            artist_count = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM albums")
-            album_count = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM tracks")
-            track_count = cursor.fetchone()[0]
-            
-            conn.close()
+            # Use MusicDatabase methods which handle sessions correctly
+            artist_count = self.db.count_artists()
+            album_count = self.db.count_albums()
+            track_count = self.db.count_tracks()
             
             return {
                 "artists": artist_count,

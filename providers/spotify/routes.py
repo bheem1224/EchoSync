@@ -44,6 +44,9 @@ def begin_auth():
     """Start OAuth flow for Spotify. Returns an auth URL to redirect the user to.
     Query params: account_id (required)
     """
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('spotify'):
+        return jsonify({'error': 'Spotify provider is disabled'}), 403
     try:
         account_id = request.args.get('account_id')
         
@@ -89,6 +92,9 @@ def oauth_callback():
     """Handle Spotify OAuth callback and exchange code for tokens.
     Expects query params: code, state
     """
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('spotify'):
+        return jsonify({'error': 'Spotify provider is disabled'}), 403
     try:
         code = request.args.get('code')
         state = request.args.get('state')  # account_id

@@ -42,27 +42,40 @@ def analyze_playlists():
         from core.provider import ProviderRegistry
         from database.music_database import MusicDatabase
         
-        # Get source provider instance
-        try:
-            # For multi-account providers (Spotify, Tidal), get the first account
+        # Helper to instantiate a provider, optionally tied to a specific account
+        def _get_provider_for_account(acc_id=None):
             if source in ['spotify', 'tidal']:
-                from sdk.storage_service import get_storage_service
-                storage = get_storage_service()
-                accounts = storage.list_accounts(source)
-                
-                if not accounts or len(accounts) == 0:
-                    return jsonify({"error": f"No {source.title()} accounts configured. Please add an account in Settings."}), 400
-                
-                account_id = accounts[0]['id']
-                
+                if acc_id is None:
+                    # fall back to active/first account if no id provided
+                    from sdk.storage_service import get_storage_service
+                    storage = get_storage_service()
+                    accounts = storage.list_accounts(source)
+                    if not accounts:
+                        return None, None
+                    acc_id_local = accounts[0]['id']
+                else:
+                    acc_id_local = acc_id
+
                 if source == 'spotify':
                     from providers.spotify.client import SpotifyClient
-                    source_provider = SpotifyClient(account_id=account_id)
+                    return SpotifyClient(account_id=acc_id_local), acc_id_local
                 elif source == 'tidal':
                     from providers.tidal.client import TidalClient
-                    source_provider = TidalClient(account_id=str(account_id))
+                    return TidalClient(account_id=str(acc_id_local)), acc_id_local
             else:
-                source_provider = ProviderRegistry.create_instance(source)
+                try:
+                    return ProviderRegistry.create_instance(source), None
+                except ValueError:
+                    return None, None
+
+        # Prepare base provider instance (may be overridden per-playlist)
+        source_provider, default_acc = _get_provider_for_account(None)
+        if source_provider is None:
+            return jsonify({"error": f"No {source.title()} accounts configured. Please add an account in Settings."}), 400
+
+        try:
+            # see above; provider instance created already
+            pass
         except ValueError as e:
             return jsonify({"error": f"Provider {source} is disabled or not available"}), 400
         
@@ -88,7 +101,15 @@ def analyze_playlists():
         for playlist_info in playlists:
             playlist_id = playlist_info.get("id")
             playlist_name = playlist_info.get("name", "Unknown Playlist")
-            
+
+            # if account_id present, ensure we use provider instance tied to that account
+            acc_id = playlist_info.get('account_id')
+            if acc_id and source in ['spotify', 'tidal']:
+                provider_instance, _ = _get_provider_for_account(acc_id)
+                if provider_instance:
+                    # use the per-account client for fetching tracks
+                    source_provider = provider_instance
+
             if not playlist_id:
                 logger.warning(f"Skipping playlist without id: {playlist_name}")
                 continue
