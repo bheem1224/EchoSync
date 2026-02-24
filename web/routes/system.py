@@ -16,36 +16,11 @@ bp = Blueprint("system", __name__, url_prefix="/api")
 def health_check():
     """Health endpoint with actual service health check results."""
     try:
-        from core.health_check import health_check_registry
-        
-        # Get all cached health check results
-        results = health_check_registry.get_all_last_results()
-        
-        # Convert to JSON-serializable format
-        results_dict = {}
-        for service_name, result in results.items():
-            results_dict[service_name] = {
-                "status": result.status,
-                "message": result.message,
-                "details": result.details,
-                "timestamp": result.timestamp.isoformat() if result.timestamp else None,
-                "response_time_ms": result.response_time_ms
-            }
-        
-        # Overall status: healthy if all services are healthy or degraded
-        overall_status = "healthy"
-        for result in results.values():
-            if result.status == "unhealthy":
-                overall_status = "degraded"
-                break
-        
-        return jsonify({
-            "status": overall_status,
-            "results": results_dict,
-            "timestamp": None,
-        }), 200
+        from services.health_check import get_system_health
+        health_data = get_system_health()
+        return jsonify(health_data), 200
     except Exception as e:
-        logger.error(f"Error in health check: {e}")
+        logger.error(f"Error in health check: {e}", exc_info=True)
         return jsonify({"status": "error", "results": {}}), 500
 
 

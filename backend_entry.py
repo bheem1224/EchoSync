@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Iterable
+from typing import Any, Iterable, List
 from dotenv import load_dotenv
 
 # Load environment variables from .env file before importing config_manager
@@ -20,6 +20,8 @@ logger = get_logger("backend")
 
 async def _graceful_close(clients: Iterable[Any]) -> None:
     for client in clients:
+        if client is None:
+            continue
         close_fn = getattr(client, "close", None)
         if callable(close_fn):
             try:
@@ -38,14 +40,88 @@ async def start_services() -> None:
     """
     logger.info("Starting backend services...")
 
+    disabled_providers = config_manager.get_disabled_providers()
+
     # Initialize provider clients (each registers its own health check)
-    spotify_client = SpotifyClient()
-    plex_client = PlexClient()
-    jellyfin_client = JellyfinClient()
-    navidrome_client = NavidromeClient()
-    soulseek_client = SlskdProvider()
+    spotify_client = None
+    plex_client = None
+    jellyfin_client = None
+    navidrome_client = None
+    soulseek_client = None
+
+    # Spotify
+    if "spotify" not in disabled_providers:
+        creds = config_manager.get_spotify_config()
+        # Also check active account or global creds
+        active_acc = config_manager.get_active_spotify_account()
+        if (creds.get("client_id") and creds.get("client_secret")) or active_acc:
+            try:
+                spotify_client = SpotifyClient()
+                logger.info("Spotify client started")
+            except Exception as e:
+                logger.error(f"Failed to start Spotify client: {e}")
+        else:
+            logger.debug("Spotify not configured, skipping")
+    else:
+        logger.info("Spotify is disabled")
+
+    # Plex
+    if "plex" not in disabled_providers:
+        conf = config_manager.get_plex_config()
+        if conf.get("base_url") and conf.get("token"):
+            try:
+                plex_client = PlexClient()
+                logger.info("Plex client started")
+            except Exception as e:
+                logger.error(f"Failed to start Plex client: {e}")
+        else:
+            logger.debug("Plex not configured, skipping")
+    else:
+        logger.info("Plex is disabled")
+
+    # Jellyfin
+    if "jellyfin" not in disabled_providers:
+        conf = config_manager.get_jellyfin_config()
+        if conf.get("base_url") and conf.get("api_key"):
+            try:
+                jellyfin_client = JellyfinClient()
+                logger.info("Jellyfin client started")
+            except Exception as e:
+                logger.error(f"Failed to start Jellyfin client: {e}")
+        else:
+            logger.debug("Jellyfin not configured, skipping")
+    else:
+        logger.info("Jellyfin is disabled")
+
+    # Navidrome
+    if "navidrome" not in disabled_providers:
+        conf = config_manager.get_navidrome_config()
+        if conf.get("base_url") and conf.get("username"):
+            try:
+                navidrome_client = NavidromeClient()
+                logger.info("Navidrome client started")
+            except Exception as e:
+                logger.error(f"Failed to start Navidrome client: {e}")
+        else:
+            logger.debug("Navidrome not configured, skipping")
+    else:
+        logger.info("Navidrome is disabled")
+
+    # Slskd (Soulseek)
+    if "soulseek" not in disabled_providers and "slskd" not in disabled_providers:
+        conf = config_manager.get_soulseek_config()
+        if conf.get("slskd_url") and conf.get("api_key"):
+            try:
+                soulseek_client = SlskdProvider()
+                logger.info("Slskd client started")
+            except Exception as e:
+                logger.error(f"Failed to start Slskd client: {e}")
+        else:
+            logger.debug("Slskd not configured, skipping")
+    else:
+        logger.info("Soulseek/Slskd is disabled")
     
-    logger.info("Provider clients initialized - health checks registered with global system")
+    logger.info("Provider clients initialization complete")
 
     # Start Download Manager only if explicitly enabled (default: off)
     downloads_cfg = config_manager.get_all().get("downloads", {}) if hasattr(config_manager, "get_all") else {}
@@ -67,7 +143,9 @@ async def start_services() -> None:
         logger.info("Backend shutdown signal received")
     finally:
         await download_manager.stop_background_task()
-        await _graceful_close([soulseek_client, plex_client, jellyfin_client, navidrome_client])
+        # Filter out None clients
+        active_clients = [c for c in [soulseek_client, plex_client, jellyfin_client, navidrome_client] if c is not None]
+        await _graceful_close(active_clients)
         logger.info("Backend services stopped")
 
 
