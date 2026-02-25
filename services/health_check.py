@@ -1,19 +1,121 @@
 from core.health_check import health_check_registry
 from core.settings import config_manager
 from typing import Dict, Any
+import logging
+
+# Ensure logger is set up
+logger = logging.getLogger("health_check")
 
 def get_system_health() -> Dict[str, Any]:
     """
     Calculate overall system health, total services, and operational services.
 
+    Logic:
+    - Core System (Database + Task Queue) is always the first service.
+    - Total Services = 1 (Core) + Count(Enabled Providers).
+    - Operational Services = (1 if Core is healthy) + Count(Healthy Enabled Providers).
+
     Returns:
         Dict with keys: status, results, timestamp, summary
     """
-    # Get all cached health check results
+    # Get all cached health check results from the registry
     results = health_check_registry.get_all_last_results()
 
-    # Convert to JSON-serializable format
-    results_dict = {}
+    # 1. Determine Core Health
+    # We check if the database is accessible. If so, Core is healthy.
+    core_healthy = False
+    core_message = "Database connection failed"
+    try:
+        from database import get_database
+        db = get_database()
+        # Simple query to check connection
+        # db.session_scope() handles session creation/closing
+        with db.session_scope() as session:
+            session.execute(text("SELECT 1"))
+        core_healthy = True
+        core_message = "Core services operational"
+    except NameError:
+        # Fallback if 'text' is not imported, though SQLAlchemy usually requires it for raw strings
+        try:
+             from sqlalchemy import text
+             from database import get_database
+             db = get_database()
+             with db.session_scope() as session:
+                session.execute(text("SELECT 1"))
+             core_healthy = True
+             core_message = "Core services operational"
+        except Exception as e:
+             logger.error(f"Core health check failed (fallback): {e}")
+             core_message = str(e)
+    except Exception as e:
+        logger.error(f"Core health check failed: {e}")
+        core_message = str(e)
+
+    # 2. Count Enabled Providers
+    disabled_providers = config_manager.get_disabled_providers()
+    enabled_providers_count = 0
+
+    # Check Spotify
+    if 'spotify' not in disabled_providers:
+        creds = config_manager.get_spotify_config()
+        active = config_manager.get_active_spotify_account()
+        if (creds.get('client_id') and creds.get('client_secret')) or active:
+            enabled_providers_count += 1
+
+    # Check Plex
+    if 'plex' not in disabled_providers:
+        conf = config_manager.get_plex_config()
+        if conf.get('base_url') and conf.get('token'):
+            enabled_providers_count += 1
+
+    # Check Jellyfin
+    if 'jellyfin' not in disabled_providers:
+        conf = config_manager.get_jellyfin_config()
+        if conf.get('base_url') and conf.get('api_key'):
+            enabled_providers_count += 1
+
+    # Check Navidrome
+    if 'navidrome' not in disabled_providers:
+        conf = config_manager.get_navidrome_config()
+        if conf.get('base_url') and conf.get('username'):
+            enabled_providers_count += 1
+
+    # Check Soulseek (slskd)
+    if 'soulseek' not in disabled_providers and 'slskd' not in disabled_providers:
+        conf = config_manager.get_soulseek_config()
+        if conf.get('slskd_url') and conf.get('api_key'):
+            enabled_providers_count += 1
+
+    # Check LRClib (bundled, usually enabled unless explicitly disabled)
+    if 'lrclib' not in disabled_providers:
+         # It's enabled by default in backend_entry if not disabled
+         enabled_providers_count += 1
+
+    # 3. Calculate Operational Services
+    # Start with Core
+    operational_count = 1 if core_healthy else 0
+
+    # Add healthy providers from registry results
+    # We only count them if they are in the enabled list logic above (implicitly, by being in results)
+    # But strictly speaking, results only contains *running* providers.
+    # So if a provider is enabled but failed to start, it might not be in results, or it might be there with 'unhealthy'.
+
+    for res in results.values():
+        if res.status == 'healthy':
+            operational_count += 1
+
+    # 4. Construct Results Dictionary
+    results_dict = {
+        "core": {
+            "status": "healthy" if core_healthy else "unhealthy",
+            "message": core_message,
+            "details": {"component": "database"},
+            "timestamp": None,
+            "response_time_ms": 0
+        }
+    }
+
+    # Merge provider results
     for service_name, result in results.items():
         results_dict[service_name] = {
             "status": result.status,
@@ -23,82 +125,29 @@ def get_system_health() -> Dict[str, Any]:
             "response_time_ms": result.response_time_ms
         }
 
-    # Calculate counts
-    # We define "total services" as providers that are enabled and configured.
-    # Since we modified backend_entry.py to only start enabled/configured services,
-    # and those services register their health checks, the keys in 'results'
-    # largely represent the enabled services.
-
-    # However, to be more precise according to specs:
-    # "total_services should calculate count(providers where enabled == True)"
-
-    # Let's count enabled providers from config
-    disabled_providers = config_manager.get_disabled_providers()
-
-    # List of known providers we care about for stats
-    # (In a real plugin system this might be dynamic, but for now we list core ones)
-    known_providers = ['spotify', 'plex', 'jellyfin', 'navidrome', 'soulseek', 'slskd']
-
-    # Also check if they are configured
-    # We can use config_manager.is_configured() but that checks EVERYTHING.
-    # We want per-provider check.
-
-    enabled_count = 0
-
-    # Check Spotify
-    if 'spotify' not in disabled_providers:
-        creds = config_manager.get_spotify_config()
-        active = config_manager.get_active_spotify_account()
-        if (creds.get('client_id') and creds.get('client_secret')) or active:
-            enabled_count += 1
-
-    # Check Plex
-    if 'plex' not in disabled_providers:
-        conf = config_manager.get_plex_config()
-        if conf.get('base_url') and conf.get('token'):
-            enabled_count += 1
-
-    # Check Jellyfin
-    if 'jellyfin' not in disabled_providers:
-        conf = config_manager.get_jellyfin_config()
-        if conf.get('base_url') and conf.get('api_key'):
-            enabled_count += 1
-
-    # Check Navidrome
-    if 'navidrome' not in disabled_providers:
-        conf = config_manager.get_navidrome_config()
-        if conf.get('base_url') and conf.get('username'):
-            enabled_count += 1
-
-    # Check Soulseek
-    if 'soulseek' not in disabled_providers and 'slskd' not in disabled_providers:
-        conf = config_manager.get_soulseek_config()
-        if conf.get('slskd_url') and conf.get('api_key'):
-            enabled_count += 1
-
-    # Operational = Status is 'healthy'
-    operational_count = 0
-    for res in results.values():
-        if res.status == 'healthy':
-            operational_count += 1
-
-    # Overall status logic
+    # 5. Determine Overall Status
     overall_status = "healthy"
-    for result in results.values():
-        if result.status == "unhealthy":
-            overall_status = "degraded"
-            break
+    if not core_healthy:
+        overall_status = "unhealthy"
+    else:
+        # Check if any *enabled* provider is unhealthy
+        # If a provider is missing from results but enabled, it's implicitly 'unknown' or 'starting',
+        # but technically not 'unhealthy' yet unless we track start failures.
+        # For now, we degrade if any reported result is unhealthy.
+        for result in results.values():
+            if result.status == "unhealthy":
+                overall_status = "degraded"
+                break
 
-    # If we have enabled services but 0 results (startup), status might be unknown
-    if enabled_count > 0 and len(results) == 0:
-        overall_status = "unknown"
+    # Total services = Core (1) + Enabled Providers
+    total_services = 1 + enabled_providers_count
 
     return {
         "status": overall_status,
         "results": results_dict,
         "timestamp": None,
         "summary": {
-            "total": enabled_count,
+            "total": total_services,
             "operational": operational_count
         }
     }

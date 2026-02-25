@@ -602,15 +602,89 @@ class PlaylistSyncService:
             logger.error(f"Error generating sync preview: {e}")
             return {"error": str(e)}
     
+    async def _get_all_spotify_playlists(self) -> List[SpotifyPlaylist]:
+        """
+        Fetch playlists from ALL configured and active Spotify accounts.
+        Append ' ({Account Name})' to playlist names to distinguish them.
+        """
+        all_playlists = []
+        try:
+            # 1. Get all accounts from config/storage
+            from core.settings import config_manager
+            accounts = config_manager.get_spotify_accounts()
+
+            # If no accounts found, fallback to default single-client behavior
+            if not accounts:
+                logger.debug("No multi-account config found, using default client")
+                if self.spotify_client:
+                     playlists = self.spotify_client.get_user_playlists() or []
+                     return [SpotifyPlaylist(id=p['id'], name=p['name'], tracks=[]) for p in playlists]
+                return []
+
+            # 2. Iterate through each account
+            for account in accounts:
+                try:
+                    account_id = account.get('id')
+                    account_name = account.get('name', f"Account {account_id}")
+
+                    # Instantiate client for this account
+                    # We create a temporary client just for this fetch
+                    client = SpotifyClient(account_id=account_id)
+
+                    if not client.is_configured():
+                        continue
+
+                    logger.info(f"Fetching playlists for Spotify account: {account_name}")
+                    playlists = client.get_user_playlists() or []
+
+                    for p in playlists:
+                        # Append account name to playlist name
+                        display_name = f"{p['name']} ({account_name})"
+                        # Create generic playlist object (tracks loaded lazily later)
+                        # We store the account_id in the SpotifyPlaylist object if we need it later,
+                        # but for now, the name uniqueness is key.
+                        sp_playlist = SpotifyPlaylist(id=p['id'], name=display_name, tracks=[])
+                        all_playlists.append(sp_playlist)
+
+                except Exception as e:
+                    logger.error(f"Error fetching playlists for account {account.get('id')}: {e}")
+                    continue
+
+        except Exception as e:
+            logger.error(f"Error in _get_all_spotify_playlists: {e}")
+
+        return all_playlists
+
     def get_library_comparison(self) -> Dict[str, Any]:
         try:
-            # aggregate across all spotify clients
+            # Use the robust multi-account fetcher (wrapped in async runner for sync context)
+            # Since this is often called synchronously or from a route handler, we might need
+            # to be careful. However, based on the signature, this method is sync.
+            # But we just added an async helper.
+            # Let's stick to the previous loop approach but robustly implemented here
+            # to match the logic of _get_all_spotify_playlists, OR adapt it to sync.
+
+            # Re-implementing logic synchronously for compatibility
+            from core.settings import config_manager
+            accounts = config_manager.get_spotify_accounts()
+
             spotify_playlists = []
-            for client in self.spotify_clients:
-                try:
-                    spotify_playlists.extend(client.get_user_playlists() or [])
-                except Exception:
-                    continue
+
+            if not accounts and self.spotify_client:
+                 try:
+                    spotify_playlists.extend(self.spotify_client.get_user_playlists() or [])
+                 except Exception:
+                    pass
+            else:
+                for account in accounts:
+                    try:
+                        client = SpotifyClient(account_id=account.get('id'))
+                        if client.is_configured():
+                             playlists = client.get_user_playlists() or []
+                             spotify_playlists.extend(playlists)
+                    except Exception:
+                        continue
+
             spotify_track_count = sum(p.get('track_count', 0) for p in spotify_playlists)
 
             media_client, server_type = self._get_active_media_client()
