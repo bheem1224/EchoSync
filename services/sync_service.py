@@ -624,6 +624,29 @@ class PlaylistSyncService:
             # 2. Iterate through each account
             for account in accounts:
                 try:
+                    # Debug dump to confirm key names
+                    logger.debug(f"DEBUG ACCOUNT OBJ: {account}")
+
+                    # Filter inactive accounts
+                    # Check both 'is_active' (DB convention) and 'enabled' (Config convention)
+                    is_active = account.get('is_active') or account.get('enabled')
+                    # Explicitly check against False/0/None, allowing True/1
+                    if not is_active and is_active is not None:
+                         # Some legacy configs might miss the key, defaulting to True if missing?
+                         # No, standard safe practice is default False if missing, or True?
+                         # Requirement says "strictly filter by is_active=True".
+                         # So if key is missing, we assume False? Or let it pass?
+                         # Let's assume strict: must be truthy.
+                         logger.info(f"Skipping inactive Spotify account: {account.get('name')} (id={account.get('id')})")
+                         continue
+
+                    # Determine next step if key is missing (legacy) - assuming active if not explicitly false?
+                    # The prompt says "is_active flag is being ignored".
+                    # If the key exists and is 0/False, we must skip.
+                    if 'is_active' in account and not account['is_active']:
+                        logger.info(f"Skipping inactive Spotify account: {account.get('name')}")
+                        continue
+
                     account_id = account.get('id')
                     account_name = account.get('name', f"Account {account_id}")
 
@@ -657,32 +680,35 @@ class PlaylistSyncService:
 
     def get_library_comparison(self) -> Dict[str, Any]:
         try:
-            # Use the robust multi-account fetcher (wrapped in async runner for sync context)
-            # Since this is often called synchronously or from a route handler, we might need
-            # to be careful. However, based on the signature, this method is sync.
-            # But we just added an async helper.
-            # Let's stick to the previous loop approach but robustly implemented here
-            # to match the logic of _get_all_spotify_playlists, OR adapt it to sync.
-
-            # Re-implementing logic synchronously for compatibility
+            # Re-implementing logic synchronously for compatibility with multi-account support
             from core.settings import config_manager
             accounts = config_manager.get_spotify_accounts()
 
             spotify_playlists = []
 
-            if not accounts and self.spotify_client:
-                 try:
-                    spotify_playlists.extend(self.spotify_client.get_user_playlists() or [])
-                 except Exception:
-                    pass
+            if not accounts:
+                 # Fallback to default client if configured
+                 if self.spotify_client and self.spotify_client.is_configured():
+                     try:
+                        spotify_playlists.extend(self.spotify_client.get_user_playlists() or [])
+                     except Exception as e:
+                        logger.error(f"Error fetching default playlists: {e}")
             else:
                 for account in accounts:
                     try:
+                        # STRICT Filter for active accounts
+                        is_active = account.get('is_active') or account.get('enabled')
+                        if not is_active and is_active is not None:
+                             continue
+                        if 'is_active' in account and not account['is_active']:
+                             continue
+
                         client = SpotifyClient(account_id=account.get('id'))
                         if client.is_configured():
                              playlists = client.get_user_playlists() or []
                              spotify_playlists.extend(playlists)
-                    except Exception:
+                    except Exception as e:
+                        logger.error(f"Error fetching playlists for account {account.get('id')}: {e}")
                         continue
 
             spotify_track_count = sum(p.get('track_count', 0) for p in spotify_playlists)
