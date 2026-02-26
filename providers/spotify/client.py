@@ -211,13 +211,19 @@ class SpotifyClient(SyncServiceProvider):
             # Updated scope to include write permissions
             scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
 
+            # Initialize cache handler and pre-load token to ensure state is primed
+            self.cache_handler = ConfigCacheHandler(self.account_id)
+            preloaded_token = self.cache_handler.get_cached_token()
+            logger.debug(f"DEBUG: Pre-loaded token info for account {self.account_id}: {bool(preloaded_token)}")
+
             # Create auth manager WITHOUT requesting authorization on init
+            # Pass the instance of cache_handler, not a new one
             auth_manager = SpotifyOAuth(
                 client_id=creds['client_id'],
                 client_secret=creds['client_secret'],
                 redirect_uri=creds['redirect_uri'],
                 scope=scope,
-                cache_handler=ConfigCacheHandler(self.account_id),
+                cache_handler=self.cache_handler,
                 show_dialog=False
             )
 
