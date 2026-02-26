@@ -8,9 +8,10 @@ and attaches Jellyfin ProviderRef. Adheres to Track-centric architecture.
 from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
-from sdk.storage_service import get_storage_service
+from core.settings import config_manager
 from core.provider_base import ProviderBase
 from core.matching_engine.soul_sync_track import SoulSyncTrack
+from database import get_database
 
 logger = get_logger("jellyfin_adapter")
 
@@ -145,9 +146,8 @@ def convert_jellyfin_track_to_soulsync(jellyfin_track) -> Optional[SoulSyncTrack
 
 class JellyfinAdapter:
     def __init__(self, jellyfin_client=None):
-        storage = get_storage_service()
-        db = storage.get_music_database()
-        super().__init__(db=db, provider_type=ProviderType.JELLYFIN)
+        self.db = get_database()
+        super().__init__(db=self.db, provider_type=ProviderType.JELLYFIN)
         self.jellyfin = jellyfin_client
 
     def get_provides_fields(self) -> List[str]:

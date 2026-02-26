@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
-from sdk.storage_service import get_storage_service
+from core.settings import config_manager
+from core.account_manager import AccountManager
 from core.tiered_logger import get_logger
 
 logger = get_logger("accounts_route")
@@ -9,8 +10,7 @@ bp = Blueprint("accounts", __name__, url_prefix="/api/accounts")
 def list_service_accounts(service_name):
     """List all accounts for a specific service."""
     try:
-        storage = get_storage_service()
-        accounts = storage.list_accounts(service_name)
+        accounts = AccountManager.list_accounts(service_name)
         return jsonify({
             'service': service_name,
             'accounts': accounts,
@@ -31,8 +31,14 @@ def create_account(service_name):
         if not account_name:
             return jsonify({'error': 'account_name is required'}), 400
         
-        storage = get_storage_service()
-        account_id = storage.ensure_account(
+        # Use ConfigManager's specific add methods where available
+        # Currently explicit methods exist only for spotify/tidal in config_manager.py
+        # but ConfigDatabase supports any.
+
+        from database.config_database import get_config_database
+        db = get_config_database()
+
+        account_id = db.ensure_account(
             service_name=service_name,
             account_name=account_name,
             display_name=display_name
@@ -57,8 +63,9 @@ def activate_account(service_name, account_id):
         payload = request.get_json(silent=True) or {}
         is_active = payload.get('is_active', True)
         
-        storage = get_storage_service()
-        success = storage.toggle_account_active(account_id, is_active)
+        from database.config_database import get_config_database
+        db = get_config_database()
+        success = db.toggle_account_active(account_id, is_active)
         
         if success:
             return jsonify({'success': True, 'is_active': is_active}), 200
@@ -72,8 +79,9 @@ def activate_account(service_name, account_id):
 def delete_account(service_name, account_id):
     """Delete an account."""
     try:
-        storage = get_storage_service()
-        success = storage.delete_account(account_id)
+        from database.config_database import get_config_database
+        db = get_config_database()
+        success = db.delete_account(account_id)
         
         if success:
             return jsonify({'success': True}), 200
@@ -93,8 +101,9 @@ def update_account_name(service_name, account_id):
         if not new_name:
             return jsonify({'error': 'name is required'}), 400
         
-        storage = get_storage_service()
-        success = storage.update_account_name(account_id, new_name)
+        from database.config_database import get_config_database
+        db = get_config_database()
+        success = db.update_account_name(account_id, new_name)
         
         if success:
             return jsonify({'success': True}), 200

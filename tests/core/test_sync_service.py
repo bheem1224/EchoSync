@@ -40,10 +40,11 @@ def patch_spotify_client(monkeypatch):
     # disable provider registry registration which isn't needed for these fakes
     monkeypatch.setattr('core.provider.ProviderRegistry.register', lambda *args, **kwargs: None)
 
-    # also patch storage service to return two accounts
+    # also patch account manager to return two accounts
     fake_storage = MagicMock()
-    fake_storage.list_accounts.return_value = [{'id': 1}, {'id': 2}]
-    monkeypatch.setattr('sdk.storage_service.get_storage_service', lambda: fake_storage)
+    # Mock AccountManager.list_accounts to return accounts
+    monkeypatch.setattr('core.account_manager.AccountManager.list_accounts',
+                        lambda service: [{'id': 1}, {'id': 2}] if service == 'spotify' else [])
 
     yield
 
