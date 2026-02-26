@@ -1,5 +1,6 @@
 import asyncio
 from core.tiered_logger import get_logger
+from core.settings import config_manager
 from services.download_manager import get_download_manager
 from services.auto_importer import get_auto_importer
 from services.metadata_enhancer import get_metadata_enhancer
@@ -16,19 +17,24 @@ async def start_services():
     # 1. Download Manager
     try:
         dm = get_download_manager()
-        # Ensure it's running (it usually starts its own thread/loop on init or first access if designed that way,
-        # but explicit start is safer if method exists)
-        if hasattr(dm, 'start'):
-            # Some implementations might be async or sync
-            if asyncio.iscoroutinefunction(dm.start):
-                await dm.start()
-            else:
-                dm.start()
-        # If it uses ensure_background_task pattern:
-        if hasattr(dm, 'ensure_background_task'):
-            dm.ensure_background_task()
+        # Respect optional configuration flag to suppress automatic startup
+        start_on_boot = config_manager.get('download', {}).get('start_on_boot', True)
+        if start_on_boot:
+            # Ensure it's running (it usually starts its own thread/loop on init or first access if designed that way,
+            # but explicit start is safer if method exists)
+            if hasattr(dm, 'start'):
+                # Some implementations might be async or sync
+                if asyncio.iscoroutinefunction(dm.start):
+                    await dm.start()
+                else:
+                    dm.start()
+            # If it uses ensure_background_task pattern:
+            if hasattr(dm, 'ensure_background_task'):
+                dm.ensure_background_task()
 
-        logger.info("DownloadManager service started")
+            logger.info("DownloadManager service started")
+        else:
+            logger.info("DownloadManager startup suppressed by configuration (start_on_boot=false)")
     except Exception as e:
         logger.error(f"Failed to start DownloadManager: {e}")
 

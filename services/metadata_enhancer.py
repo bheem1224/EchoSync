@@ -13,7 +13,7 @@ It does NOT move files or scan directories (see AutoImportService).
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
-import datetime
+from datetime import datetime, timezone
 
 from core.enums import Capability
 from core.settings import config_manager
@@ -198,7 +198,7 @@ class MetadataEnhancerService:
                     existing.detected_metadata = metadata
                     existing.confidence_score = confidence
                     existing.status = status
-                    existing.created_at = datetime.datetime.now(datetime.UTC)
+                    existing.created_at = datetime.now(timezone.utc)
                 else:
                     task = ReviewTask(
                         file_path=str(file_path),

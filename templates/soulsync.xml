@@ -83,9 +83,10 @@ Default WebUI: http://[IP]:[PORT:5000]</Overview>
   <Config Name="Web UI Port" Target="5000" Default="5000" Mode="tcp" Description="Main Web Interface" Type="Port" Display="always" Required="true" Mask="false">5000</Config>
   <Config Name="Spotify Callback Port" Target="8888" Default="8888" Mode="tcp" Description="OAuth Callback for Spotify" Type="Port" Display="always" Required="true" Mask="false">8888</Config>
   <Config Name="Tidal Callback Port" Target="8889" Default="8889" Mode="tcp" Description="OAuth Callback for Tidal" Type="Port" Display="always" Required="true" Mask="false">8889</Config>
-  <Config Name="Config Directory" Target="/config" Default="/mnt/user/appdata/soulsync" Mode="rw" Description="Container Config Path" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/soulsync</Config>
-  <Config Name="Music Library" Target="/music" Default="/mnt/user/media/music" Mode="rw" Description="Path to Music Library" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media/music</Config>
-  <Config Name="Downloads" Target="/downloads" Default="/mnt/user/downloads/soulsync" Mode="rw" Description="Path to Downloads" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/downloads/soulsync</Config>
+  <Config Name="Config Directory" Target="/config" Default="/mnt/user/appdata/soulsync/config" Mode="rw" Description="Container Config Path" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/soulsync</Config>
+  <Config Name="Music Library" Target="/data/library" Default="/mnt/user/appdata/soulsync/data/library" Mode="rw" Description="Path to Music Library" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/media/music</Config>
+  <Config Name="Downloads" Target="/data/downloads" Default="/mnt/user/appdata/soulsync/data/downloads" Mode="rw" Description="Path to Downloads" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/downloads/soulsync</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/soulsync/data" Mode="rw" Description="Data Directory" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/downloads/soulsync</Config>
   <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
 </Container>

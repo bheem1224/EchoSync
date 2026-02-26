@@ -126,7 +126,9 @@ def create_app() -> Flask:
     
     try:
         from services.download_manager import register_download_manager_job
-        register_download_manager_job()
+        # interval can be overridden via configuration (seconds)
+        interval = config_manager.get('download', {}).get('status_interval_seconds')
+        register_download_manager_job(interval_seconds=interval)
     except Exception as e:
         print(f"[WARN] Failed to register download manager job: {e}")
     
