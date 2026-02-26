@@ -65,30 +65,36 @@ class TestSpotifyPagination:
 class TestSyncServiceConsumption:
     def test_get_all_spotify_playlists_consumes_generator(self):
         """Verify SyncService correctly consumes the generator."""
-        service = PlaylistSyncService()
+        # Mock dependencies during initialization
+        with patch('services.sync_service.ProviderRegistry') as mock_registry:
+            # Mock default client creation
+            mock_client = MagicMock()
+            mock_registry.create_instance.return_value = mock_client
 
-        # Mock client
-        mock_client = MagicMock()
-        service.spotify_client = mock_client
-        service.spotify_clients = [mock_client]
+            service = PlaylistSyncService()
 
-        # Mock generator returning 3 playlists
-        def playlist_gen():
-            yield {'id': '1', 'name': 'P1'}
-            yield {'id': '2', 'name': 'P2'}
-            yield {'id': '3', 'name': 'P3'}
+            # Setup service state manually
+            service.spotify_client = mock_client
+            service.spotify_clients = [mock_client]
 
-        mock_client.get_user_playlists.return_value = playlist_gen()
-        mock_client.is_configured.return_value = True
+            # Mock generator returning 3 playlists
+            def playlist_gen():
+                yield {'id': '1', 'name': 'P1'}
+                yield {'id': '2', 'name': 'P2'}
+                yield {'id': '3', 'name': 'P3'}
 
-        # Mock config to return one account
-        with patch('core.settings.config_manager.get_spotify_accounts', return_value=[{'id': 1, 'name': 'Test', 'is_active': True}]):
-            with patch('services.sync_service.SpotifyClient', return_value=mock_client):
+            mock_client.get_user_playlists.return_value = playlist_gen()
+            mock_client.is_configured.return_value = True
+
+            # Mock config to return one account
+            with patch('core.settings.config_manager.get_spotify_accounts', return_value=[{'id': 1, 'name': 'Test', 'is_active': True}]):
+                # The service uses ProviderRegistry.create_instance inside _get_all_spotify_playlists too
+                mock_registry.create_instance.return_value = mock_client
                 playlists = asyncio_run(service._get_all_spotify_playlists())
 
-        assert len(playlists) == 3
-        assert playlists[0].name == "P1 (Test)"
-        assert playlists[2].id == "3"
+            assert len(playlists) == 3
+            assert playlists[0].name == "P1 (Test)"
+            assert playlists[2].id == "3"
 
 def asyncio_run(coro):
     """Helper for async test"""

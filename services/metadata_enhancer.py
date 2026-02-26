@@ -184,31 +184,9 @@ class MetadataEnhancerService:
 
     def tag_file(self, file_path: Path, metadata: Dict[str, Any]):
         """
-        Write tags using Mutagen. Public wrapper.
+        Write tags to file (abstracted).
         """
-        self._tag_file(file_path, metadata)
-
-    def _tag_file(self, file_path: Path, metadata: Dict[str, Any]):
-        """
-        Internal: Write tags using Mutagen.
-        """
-        if not MUTAGEN_AVAILABLE:
-            logger.warning("Mutagen not available, skipping tagging")
-            return
-
-        try:
-            ext = file_path.suffix.lower()
-
-            if ext == '.mp3':
-                self._tag_mp3(file_path, metadata)
-            elif ext == '.flac':
-                self._tag_flac(file_path, metadata)
-            # Add other formats as needed
-
-            logger.info(f"Tagged {file_path.name}")
-
-        except Exception as e:
-            logger.error(f"Failed to tag {file_path}: {e}")
+        _TaggingHelper.write_tags(file_path, metadata)
 
     def create_or_update_review_task(self, file_path: Path, metadata: Optional[Dict[str, Any]], confidence: float, status='pending'):
         """Create or update a task in the review queue."""
@@ -296,7 +274,31 @@ class MetadataEnhancerService:
             logger.warning(f"Failed to convert search result to track: {e}")
             return None
 
-    def _tag_mp3(self, file_path: Path, metadata: Dict[str, Any]):
+
+class _TaggingHelper:
+    """
+    Internal helper class to abstract raw mutagen logic.
+    Supports Tier 1 Auto-Write.
+    """
+    @staticmethod
+    def write_tags(file_path: Path, metadata: Dict[str, Any]):
+        if not MUTAGEN_AVAILABLE:
+            logger.warning("Mutagen not available, skipping tagging")
+            return
+
+        try:
+            ext = file_path.suffix.lower()
+            if ext == '.mp3':
+                _TaggingHelper._tag_mp3(file_path, metadata)
+            elif ext == '.flac':
+                _TaggingHelper._tag_flac(file_path, metadata)
+
+            logger.info(f"Tagged {file_path.name}")
+        except Exception as e:
+            logger.error(f"Failed to tag {file_path}: {e}")
+
+    @staticmethod
+    def _tag_mp3(file_path: Path, metadata: Dict[str, Any]):
         """Tag MP3 with ID3v2.4"""
         try:
             try:
@@ -327,11 +329,11 @@ class MetadataEnhancerService:
                 audio.add(TXXX(encoding=3, desc='MusicBrainz Release Id', text=metadata['release_id']))
 
             audio.save(str(file_path), v2_version=4)
-
         except Exception as e:
             logger.error(f"Error tagging MP3: {e}")
 
-    def _tag_flac(self, file_path: Path, metadata: Dict[str, Any]):
+    @staticmethod
+    def _tag_flac(file_path: Path, metadata: Dict[str, Any]):
         """Tag FLAC with Vorbis Comments"""
         try:
             audio = FLAC(str(file_path))
@@ -358,7 +360,6 @@ class MetadataEnhancerService:
                 audio['MUSICBRAINZ_ALBUMID'] = metadata['release_id']
 
             audio.save()
-
         except Exception as e:
             logger.error(f"Error tagging FLAC: {e}")
 

@@ -3,11 +3,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from core.tiered_logger import get_logger
-from providers.spotify.client import SpotifyClient
-from providers.plex.client import PlexClient
-from providers.jellyfin.client import JellyfinClient
-from providers.navidrome.client import NavidromeClient
-from providers.slskd.client import SlskdProvider
+from core.provider import ProviderRegistry
 from services.download_manager import get_download_manager
 from services.match_service import MatchService, MatchContext
 from core.matching_engine import SoulSyncTrack, MatchResult
@@ -53,46 +49,75 @@ class SyncProgress:
 class PlaylistSyncService:
     def __init__(
         self,
-        spotify_client: Optional[SpotifyClient] = None,
-        plex_client: Optional[PlexClient] = None,
-        soulseek_client: Optional[SlskdProvider] = None,
-        jellyfin_client: Optional[JellyfinClient] = None,
+        spotify_client=None,
+        plex_client=None,
+        soulseek_client=None,
+        jellyfin_client=None,
         navidrome_client=None,
     ):
         # Support multiple spotify accounts by default when no client is passed
-        self.spotify_clients: List[SpotifyClient] = []
+        self.spotify_clients = []
         self.spotify_client = None
+
         if spotify_client:
             self.spotify_clients = [spotify_client]
             self.spotify_client = spotify_client
         else:
+            # Use ProviderRegistry to load all spotify clients
             try:
                 from sdk.storage_service import get_storage_service
                 storage = get_storage_service()
                 accounts = storage.list_accounts('spotify') or []
+
                 for acc in accounts:
                     try:
-                        client = SpotifyClient(account_id=acc.get('id'))
+                        # Instantiate via Registry
+                        client = ProviderRegistry.create_instance('spotify', account_id=acc.get('id'))
                         if client.is_configured():
                             self.spotify_clients.append(client)
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"Failed to load spotify client for account {acc.get('id')}: {e}")
                         continue
+
                 if self.spotify_clients:
                     # default to first account
                     self.spotify_client = self.spotify_clients[0]
                 else:
-                    # fallback to generic auto-detect client
-                    self.spotify_client = SpotifyClient()
-                    self.spotify_clients = [self.spotify_client]
-            except Exception:
+                    # fallback to generic auto-detect client via Registry
+                    try:
+                        self.spotify_client = ProviderRegistry.create_instance('spotify')
+                        self.spotify_clients = [self.spotify_client]
+                    except Exception as e:
+                        logger.error(f"Failed to create default spotify client: {e}")
+            except Exception as e:
                 # if storage service not available, just create a generic client
-                self.spotify_client = SpotifyClient()
-                self.spotify_clients = [self.spotify_client]
+                try:
+                    self.spotify_client = ProviderRegistry.create_instance('spotify')
+                    self.spotify_clients = [self.spotify_client]
+                except Exception as create_err:
+                    logger.error(f"Critical failure creating spotify client: {create_err}")
 
-        # other providers assume single-client style
+        # other providers assume single-client style (injected or lazy-loaded)
         self.plex_client = plex_client
         self.jellyfin_client = jellyfin_client
         self.navidrome_client = navidrome_client
+
+        # Lazy load clients if not injected
+        if not self.plex_client:
+            try:
+                self.plex_client = ProviderRegistry.create_instance('plex')
+            except: pass
+
+        if not self.jellyfin_client:
+            try:
+                self.jellyfin_client = ProviderRegistry.create_instance('jellyfin')
+            except: pass
+
+        if not self.navidrome_client:
+            try:
+                self.navidrome_client = ProviderRegistry.create_instance('navidrome')
+            except: pass
+
         self.download_manager = get_download_manager()
         self.progress_callbacks = {}  # Playlist-specific progress callbacks
         self.syncing_playlists = set()  # Track multiple syncing playlists
@@ -654,7 +679,7 @@ class PlaylistSyncService:
 
                     # Instantiate client for this account
                     # We create a temporary client just for this fetch
-                    client = SpotifyClient(account_id=account_id)
+                    client = ProviderRegistry.create_instance('spotify', account_id=account_id)
 
                     if not client.is_configured():
                         continue
@@ -705,7 +730,7 @@ class PlaylistSyncService:
                         if 'is_active' in account and not account['is_active']:
                              continue
 
-                        client = SpotifyClient(account_id=account.get('id'))
+                        client = ProviderRegistry.create_instance('spotify', account_id=account.get('id'))
                         if client.is_configured():
                              # Consume generator
                              for p in client.get_user_playlists() or []:
