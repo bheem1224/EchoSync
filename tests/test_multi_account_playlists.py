@@ -22,12 +22,13 @@ def client():
 
 def test_providers_playlist_route_includes_account_id(client, monkeypatch):
     """The providers playlist endpoint should return playlists with account_id for multi-account providers."""
-    # fake account manager to return two spotify accounts
-    monkeypatch.setattr('core.account_manager.AccountManager.list_accounts',
-                        lambda service: [
-                            {'id': 1, 'display_name': 'First', 'client_id': 'id1', 'client_secret': 'sec1'},
-                            {'id': 2, 'display_name': 'Second', 'client_id': 'id2', 'client_secret': 'sec2'}
-                        ] if service == 'spotify' else [])
+    # fake storage service to return two spotify accounts
+    fake_storage = MagicMock()
+    fake_storage.list_accounts.return_value = [
+        {'id': 1, 'display_name': 'First'},
+        {'id': 2, 'display_name': 'Second'}
+    ]
+    monkeypatch.setattr('sdk.storage_service.get_storage_service', lambda: fake_storage)
 
     # fake SpotifyClient to return one playlist per account with distinctive id
     class FakeSpotifyClient:
@@ -59,9 +60,9 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
 
 def test_analyze_playlists_honors_account_id(client, monkeypatch):
     """analyze_playlists should instantiate provider per-account when account_id supplied."""
-    # Mock AccountManager to return fake accounts when needed
-    monkeypatch.setattr('core.account_manager.AccountManager.list_accounts',
-                        lambda service: [{'id': 1, 'client_id': '1'}, {'id': 2, 'client_id': '2'}] if service == 'spotify' else [])
+    fake_storage = MagicMock()
+    fake_storage.list_accounts.return_value = [{'id': 1}, {'id': 2}]
+    monkeypatch.setattr('sdk.storage_service.get_storage_service', lambda: fake_storage)
 
     called = []
 
