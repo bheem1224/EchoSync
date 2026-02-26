@@ -218,13 +218,15 @@ class SpotifyClient(SyncServiceProvider):
 
             # Create auth manager WITHOUT requesting authorization on init
             # Pass the instance of cache_handler, not a new one
+            # IMPORTANT: open_browser=False prevents browser popup in headless mode
             auth_manager = SpotifyOAuth(
                 client_id=creds['client_id'],
                 client_secret=creds['client_secret'],
                 redirect_uri=creds['redirect_uri'],
                 scope=scope,
                 cache_handler=self.cache_handler,
-                show_dialog=False
+                show_dialog=False,
+                open_browser=False
             )
 
             try:
