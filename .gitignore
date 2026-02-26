@@ -75,4 +75,3 @@ uv.lock
 core/.encryption_key
 core/config.db
 tests/data/music_library.db
-tests/data/sync_history.jsonl
