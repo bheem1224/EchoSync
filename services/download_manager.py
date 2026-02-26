@@ -1003,7 +1003,7 @@ def register_download_manager_job(interval_seconds: int | None = None):
     """
     Register download manager processing as a periodic job with the global job_queue.
     Note: The download manager already runs a continuous processing loop when started.
-    This job is mainly for visibility in the jobs UI.
+    This job is mainly for visibility in the jobs UI or as a heartbeat.
     
     Args:
         interval_seconds: How often the status job should appear to run. If
@@ -1029,6 +1029,7 @@ def register_download_manager_job(interval_seconds: int | None = None):
         func=process_downloads,
         interval_seconds=interval_seconds,
         enabled=False,  # Disabled by default since _process_loop runs continuously
+        run_on_start=False, # Do not run immediately on boot
         tags=["soulsync", "downloads"],
         max_retries=3
     )
