@@ -214,6 +214,10 @@ class DownloadManager:
 
         while not self._shutdown:
             try:
+                # 0. Periodic Cleanup: Ensure we aren't downloading things already in library
+                # This prevents "ghost loops" where we keep trying to download something that was imported
+                self._purge_existing_tracks_from_queue()
+
                 # 1. Process Queued Items
                 await self._process_queued_items()
 
@@ -438,6 +442,8 @@ class DownloadManager:
 
         for db_id, provider_id in active_downloads:
             if not provider_id:
+                # Ghost item with no provider ID? Fail it.
+                self._update_status(db_id, "failed_no_id")
                 continue
 
             try:
@@ -449,28 +455,48 @@ class DownloadManager:
                     loop = asyncio.get_running_loop()
                     status = await loop.run_in_executor(None, provider.get_download_status, provider_id)
 
-                if status:
-                    # Map provider status to DB status
-                    # Slskd returns: queued, downloading, complete, failed
-                    remote_state = status.get('status', '').lower()
+                # If status is None, it means the provider can't find it anymore.
+                # This could be because it was removed, or failed silently.
+                # We should NOT keep polling forever.
+                if status is None:
+                    logger.warning(f"Download {db_id} (Provider {provider_id}) not found by provider. Marking as failed/missing.")
+                    self._update_status(db_id, "failed_not_found")
+                    continue
 
-                    new_status = "downloading" # default
-                    if remote_state == "complete":
-                        new_status = "completed"
-                    elif remote_state == "failed":
-                        new_status = "failed"
-                    elif remote_state == "queued":
-                        new_status = "downloading" # We treat remote queue as active downloading phase
+                # Map provider status to DB status
+                # Slskd/Provider returns: queued, downloading, complete, failed, aborted, etc.
+                remote_state = status.get('status', '').lower()
 
-                    if new_status != "downloading":
-                        logger.info(f"Download {db_id} (Provider {provider_id}) finished with status: {new_status}")
-                        self._update_status(db_id, new_status)
+                new_status = "downloading" # default
+                is_terminal = False
 
-                        if new_status == "completed":
-                            # CLEANUP TASK 1: Remove from queue after download completes
-                            logger.info(f"Download completed, removing {db_id} from queue")
-                            self._remove_from_queue(db_id)
-                            logger.info(f"Download {db_id} completed. TODO: Trigger Auto Import/Post-Processing.")
+                if remote_state in ["complete", "completed", "succeeded", "finished"]:
+                    new_status = "completed"
+                    is_terminal = True
+                elif remote_state in ["failed", "error", "aborted", "cancelled", "not_found"]:
+                    new_status = "failed"
+                    is_terminal = True
+                elif remote_state in ["queued", "initializing", "downloading", "transferring"]:
+                    new_status = "downloading" # Still active
+                else:
+                    logger.warning(f"Unknown remote state '{remote_state}' for {db_id}, treating as active")
+                    new_status = "downloading"
+
+                # Update DB if status changed OR if it's terminal (to trigger cleanup)
+                if new_status != "downloading" or is_terminal:
+                    logger.info(f"Download {db_id} (Provider {provider_id}) finished/terminal with status: {new_status} (Remote: {remote_state})")
+                    self._update_status(db_id, new_status)
+
+                    # CLEANUP TASK: Remove from queue/DB if completed (or optionally failed, depending on policy)
+                    # For now, we only remove 'completed' to keep history of failures visible if needed,
+                    # OR we can remove everything terminal. The requirement says:
+                    # "If ... completed, failed, aborted ... DownloadManager MUST explicitly pop/remove ... from active polling loop"
+                    # By updating status to non-"downloading", it is effectively removed from the next _check_active_downloads query.
+
+                    if new_status == "completed":
+                        logger.info(f"Download completed successfully, removing {db_id} from queue")
+                        self._remove_from_queue(db_id)
+                        # Trigger any post-processing hooks here if needed
 
             except Exception as e:
                 logger.error(f"Error checking status for {db_id}: {e}")
