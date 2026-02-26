@@ -9,6 +9,7 @@ from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.provider import get_provider_capabilities, DownloaderProvider, ProviderRegistry
 from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.request_manager import RequestManager, RateLimitConfig
 
 logger = get_logger("slskd_provider")
 
@@ -132,9 +133,10 @@ class SlskdProvider(DownloaderProvider):
     """
     name = "slskd"
     supports_downloads = True
+    rate_limit = 5.0 # High throughput allowed
 
     def __init__(self):
-        super().__init__()
+        super().__init__() # Initialize rate-limited http client
         self.base_url: Optional[str] = None
         self.api_key: Optional[str] = None
         self.download_path: Path = Path("./downloads")
@@ -251,6 +253,7 @@ class SlskdProvider(DownloaderProvider):
                 logger.debug(f"Payload: {kwargs.get('json')}")
 
             # RequestManager.request is synchronous, so run in executor to avoid blocking
+            # This respects the ProviderBase rate limit configuration
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,

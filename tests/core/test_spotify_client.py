@@ -128,5 +128,6 @@ def test_cached_scope_used_even_if_oauth_invalidates(monkeypatch):
         client = SpotifyClient(account_id=6)
         # we should still have initialized with the limited scope value
         assert created.get('scope') == limited_scope
-        # authentication check will still be False because OAuth said token invalid
-        assert client.is_authenticated() is False
+        # authentication check should be True because we verify cached token in is_authenticated()
+        # even if OAuth object failed to initialize fully
+        assert client.is_authenticated() is True

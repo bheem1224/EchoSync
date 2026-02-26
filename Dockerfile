@@ -1,17 +1,29 @@
-# SoulSync WebUI Dockerfile
-# Multi-architecture support for AMD64 and ARM64
+# SoulSync Dockerfile
+# Multi-stage build for Svelte Web UI and Python Backend
 
+# ---- Node Stage: Build Svelte Web UI ----
+FROM node:20-slim as node
+
+WORKDIR /app/webui
+
+# Copy package files and install dependencies
+COPY webui/package.json webui/package-lock.json* ./
+RUN npm install
+
+# Copy the rest of the web UI source code
+COPY webui ./
+
+# Build the Svelte application
+RUN npm run build
+
+# ---- Python Stage: Final Application Image ----
 FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libc6-dev \
-    libffi-dev \
-    libssl-dev \
+# Install runtime system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gosu \
     && rm -rf /var/lib/apt/lists/*
@@ -24,8 +36,16 @@ COPY requirements-webui.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements-webui.txt
 
+# Copy requirements and install Python dependencies
+COPY legacy/requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
 # Copy application code
 COPY . .
+
+# Copy built Svelte UI from the node stage
+COPY --from=node /app/webui/build /app/webui/build
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /config /data/logs /data/downloads /data/Transfer && \
@@ -35,8 +55,7 @@ RUN mkdir -p /config /data/logs /data/downloads /data/Transfer && \
 # These will be used by entrypoint.sh to initialize empty volumes
 RUN mkdir -p /defaults && \
     cp /app/config/config.example.json /defaults/config.json && \
-    cp /app/config/settings.py /defaults/settings.py && \
-    chmod 644 /defaults/config.json /defaults/settings.py
+    chmod 644 /defaults/config.json
 
 # Create volume mount points
 VOLUME ["/config", "/data"]
@@ -45,26 +64,25 @@ VOLUME ["/config", "/data"]
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Note: Don't switch to soulsync user yet - entrypoint needs root to change UIDs
-# The entrypoint script will switch to soulsync after setting up permissions
-
-# Expose port
-EXPOSE 8008
+# Expose ports for web app and OAuth callbacks
+EXPOSE 5000 8888 8889
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8008/ || exit 1
+    CMD curl -f http://localhost:5000/api/v1/health || exit 1
 
 # Set environment variables
 ENV PYTHONPATH=/app
-ENV FLASK_APP=web_server.py
-ENV FLASK_ENV=production
 ENV PUID=1000
 ENV PGID=1000
 ENV UMASK=022
 ENV SOULSYNC_CONFIG_DIR=/config
 ENV SOULSYNC_DATA_DIR=/data
+ENV UVICORN_PORT=5000
+# default timezone and log verbosity (can be overridden at runtime)
+ENV TZ=UTC
+ENV SOULSYNC_LOG_LEVEL=INFO
 
 # Set entrypoint and default command
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python", "web_server.py"]
+CMD ["python", "run_api.py"]
