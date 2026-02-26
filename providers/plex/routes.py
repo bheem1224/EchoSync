@@ -17,6 +17,9 @@ bp = Blueprint('plex_routes', __name__, url_prefix='/api/plex')
 @bp.get('/settings')
 def get_settings():
     """Get Plex server settings (base_url, token status)."""
+    from core.provider import ProviderRegistry
+    if ProviderRegistry.is_provider_disabled('plex'):
+        return jsonify({'settings': {}}), 200
     try:
         base_url = config_manager.get('plex.base_url', '')
         token = config_manager.get('plex.token', '')

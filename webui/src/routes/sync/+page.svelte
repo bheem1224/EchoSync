@@ -111,7 +111,13 @@
     try {
       const selectedDetails = playlists
         .filter(p => selectedPlaylists.includes(p.id))
-        .map(p => ({ id: p.id, name: p.name, track_count: p.track_count }));
+        .map(p => {
+          const detail = { id: p.id, name: p.name, track_count: p.track_count };
+          if (p.account_id !== undefined) {
+            detail.account_id = p.account_id;
+          }
+          return detail;
+        });
 
       const response = await apiClient.post('/playlists/analyze', {
         source: sourceProvider,
