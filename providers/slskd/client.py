@@ -631,6 +631,12 @@ class SlskdProvider(DownloaderProvider):
             # Let's try to fetch history to confirm if it succeeded
             try:
                 # Assuming /api/v0/transfers/history exists and returns list
+                # Use a silent request (suppress_error_logs=True) if available, or just catch generic exceptions
+                # Since _make_request might not support suppression flag yet, we rely on broad try/except
+                # But to avoid the RequestManager logging "HTTP 404", we can't easily prevent it unless we modify RequestManager or _make_request.
+                # However, the user instruction is to "wrap it in a try/except HttpError block".
+                # This implies HttpError propagates. RequestManager raises HttpError.
+
                 history_response = await self._make_request('GET', 'transfers/history')
                 if history_response and isinstance(history_response, list):
                     for item in history_response:

@@ -18,7 +18,7 @@ import asyncio
 import json
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -106,8 +106,8 @@ class DownloadManager:
             download = Download(
                 soul_sync_track=track_json,
                 status="queued",
-                created_at=datetime.now(datetime.UTC),
-                updated_at=datetime.now(datetime.UTC)
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
             )
             session.add(download)
             session.flush() # Populate ID
@@ -184,7 +184,7 @@ class DownloadManager:
                 logger.warning(f"Found {len(stuck_items)} stuck downloads. Resetting to 'queued'.")
                 for item in stuck_items:
                     item.status = "queued"
-                    item.updated_at = datetime.now(datetime.UTC)
+                    item.updated_at = datetime.now(timezone.utc)
             
             # Also clean up legacy downloads with invalid provider_id format
             # These are from before the compound ID (username|filename) format was implemented
@@ -199,7 +199,7 @@ class DownloadManager:
                     # Legacy format without username prefix - mark as failed
                     logger.debug(f"Cleaning up legacy download entry: {item.id}")
                     item.status = "failed_legacy_format"
-                    item.updated_at = datetime.now(datetime.UTC)
+                    item.updated_at = datetime.now(timezone.utc)
                     cleaned += 1
             
             if cleaned > 0:
@@ -257,7 +257,7 @@ class DownloadManager:
             for item in items:
                 # Mark as processing so other workers (if any) don't grab it
                 item.status = "searching"
-                item.updated_at = datetime.now(datetime.UTC)
+                item.updated_at = datetime.now(timezone.utc)
                 queued_ids.append(item.id)
 
         if not queued_ids:
@@ -867,7 +867,7 @@ class DownloadManager:
             download = session.query(Download).get(download_id)
             if download:
                 download.status = status
-                download.updated_at = datetime.now(datetime.UTC)
+                download.updated_at = datetime.now(timezone.utc)
                 if provider_id:
                     download.provider_id = provider_id
 
@@ -999,14 +999,14 @@ def get_download_manager():
     return DownloadManager.get_instance()
 
 
-def register_download_manager_job(interval_seconds: int = 300):
+def register_download_manager_job(interval_seconds: int = 21600):
     """
     Register download manager processing as a periodic job with the global job_queue.
     Note: The download manager already runs a continuous processing loop when started.
-    This job is mainly for visibility in the jobs UI.
+    This job is mainly for visibility in the jobs UI or as a heartbeat.
     
     Args:
-        interval_seconds: Interval placeholder (default 5 minutes = 300s)
+        interval_seconds: Interval placeholder (default 6 hours = 21600s)
     """
     from core.job_queue import job_queue
     
@@ -1019,6 +1019,7 @@ def register_download_manager_job(interval_seconds: int = 300):
         func=process_downloads,
         interval_seconds=interval_seconds,
         enabled=False,  # Disabled by default since _process_loop runs continuously
+        run_on_start=False, # Do not run immediately on boot
         tags=["soulsync", "downloads"],
         max_retries=3
     )
