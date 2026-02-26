@@ -9,7 +9,8 @@ from providers.jellyfin.client import JellyfinClient
 from providers.navidrome.client import NavidromeClient
 from providers.slskd.client import SlskdProvider
 from services.download_manager import get_download_manager
-from core import MatchService, MatchContext, SoulSyncTrack, MatchResult
+from services.match_service import MatchService, MatchContext
+from core.matching_engine import SoulSyncTrack, MatchResult
 
 logger = get_logger("sync_service")
 

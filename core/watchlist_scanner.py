@@ -13,7 +13,8 @@ from bs4 import BeautifulSoup
 from database.music_database import get_database, WatchlistArtist
 from providers.spotify.client import SpotifyClient
 from core.wishlist_service import get_wishlist_service
-from core import MatchService, MatchContext, SoulSyncTrack
+from core.matching_engine import SoulSyncTrack
+from services.match_service import MatchService, MatchContext
 from core.tiered_logger import get_logger
 
 logger = get_logger("watchlist_scanner")

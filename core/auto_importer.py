@@ -31,7 +31,8 @@ from typing import List, Optional, Dict
 from datetime import datetime
 import logging  # Add this import for logging levels
 
-from .matching_engine import parse_file, MatchService, MatchContext, SoulSyncTrack
+from .matching_engine import parse_file, SoulSyncTrack
+from services.match_service import MatchService, MatchContext
 from .post_processor import PostProcessor
 from core.tiered_logger import tiered_logger
 from core.error_handler import error_handler

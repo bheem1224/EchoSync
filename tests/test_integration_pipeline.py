@@ -14,13 +14,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from core import (
-    SoulSyncTrack,
-    TrackParser,
-    MatchService,
-    MatchContext,
-    get_match_service,
-)
+from core.matching_engine import SoulSyncTrack, TrackParser
+from services.match_service import MatchService, MatchContext, get_match_service
 from core.post_processor import PostProcessor
 
 

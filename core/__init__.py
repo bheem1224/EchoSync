@@ -6,7 +6,6 @@ Main components:
 - TrackParser: Converts raw filenames to SoulSyncTrack objects
 - WeightedMatchingEngine: 5-step gating scoring algorithm
 - ScoringProfile: Strategy pattern for different match contexts
-- MatchService: High-level API integrating all components
 - @provider_cache: Decorator for caching provider queries
 """
 
@@ -24,11 +23,6 @@ from .matching_engine import (
     PROFILE_EXACT_SYNC,
     PROFILE_DOWNLOAD_SEARCH,
     PROFILE_LIBRARY_IMPORT,
-    MatchService,
-    MatchContext,
-    get_match_service,
-    find_best_match,
-    parse_and_match,
 )
 from .caching import (
     provider_cache,
@@ -72,12 +66,6 @@ __all__ = [
     'PROFILE_EXACT_SYNC',
     'PROFILE_DOWNLOAD_SEARCH',
     'PROFILE_LIBRARY_IMPORT',
-    # High-level service
-    'MatchService',
-    'MatchContext',
-    'get_match_service',
-    'find_best_match',
-    'parse_and_match',
     # Caching
     'provider_cache',
     'ProviderCache',
