@@ -124,10 +124,10 @@ added as features expand.
 
 | Service module | Purpose |
 |----------------|---------|
-| `auto_importer.py` | Scans configured libraries for new files and queues them for import. |
+| `auto_importer.py` | Scans configured libraries for new files and queues them for import. also call metadata enhancer to write the correct metadata to each tracl |
 | `download_manager.py` | Manages downloads from downloader providers (e.g. Soulseek). |
-| `library_hygiene.py` | Periodic cleaning/renaming of local media library files. |
-| `media_manager.py` | Orchestrates local file movement/copying after successful sync. |
+| `library_hygiene.py` | Periodic cleaning/renaming of local media library files. sub service of media manager |
+| `media_manager.py` | Orchestrates removal and upgrading of tracks based on user ratings and preferences. |
 | `metadata_enhancer.py` | Queries external services (AcoustID, MusicBrainz) to enrich track metadata. |
 | `sync_service.py` | Core sync engine that compares sources and transfers tracks. |
 
