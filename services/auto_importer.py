@@ -85,9 +85,6 @@ class AutoImportService:
             supported_exts = {'.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape', '.wav', '.dsd', '.dsf', '.dff'}
             files_to_process = []
 
-            # We also need to skip files that are already ignored
-            pending_files = self._get_pending_review_files()
-
             for root, dirs, files in os.walk(download_dir):
                 logger.debug(f"Scanning directory: {root}")
                 logger.debug(f"Found {len(files)} files in {root}")
@@ -96,9 +93,12 @@ class AutoImportService:
                     logger.debug(f"Checking file: {path}")
                     if path.suffix.lower() in supported_exts:
                         logger.debug(f"File matches audio extension: {path.suffix}")
-                        if str(path) in pending_files:
+
+                        # Check if file is ignored via DB check (avoids loading all ignored files into memory)
+                        if self._is_path_ignored(str(path)):
                             logger.debug(f"File is ignored in review queue, skipping: {path}")
                             continue
+
                         with self._processing_lock:
                             if str(path) in self._processing_files:
                                 logger.debug(f"File already being processed, skipping: {path}")
@@ -114,16 +114,24 @@ class AutoImportService:
         finally:
             self._scan_lock.release()
 
-    def _get_pending_review_files(self) -> set:
-        """Get set of file paths currently ignored (NOT reprocessing pending items).
+    def _is_path_ignored(self, file_path: str) -> bool:
+        """Check if a file path is explicitly ignored in the database.
         
-        Only skip files that are explicitly 'ignored' by the user.
-        Files in 'pending' status should be reprocessed (they're waiting for manual review).
+        Uses a fast existence query on the indexed file_path column.
         """
-        db = get_database()
-        with db.session_scope() as session:
-            rows = session.query(ReviewTask.file_path).filter(ReviewTask.status == 'ignored').all()
-            return {row[0] for row in rows}
+        try:
+            db = get_database()
+            with db.session_scope() as session:
+                # Use query().exists() for efficiency
+                # Note: ReviewTask.file_path is indexed
+                exists = session.query(session.query(ReviewTask).filter(
+                    ReviewTask.file_path == file_path,
+                    ReviewTask.status == 'ignored'
+                ).exists()).scalar()
+                return bool(exists)
+        except Exception as e:
+            logger.error(f"Error checking ignored status for {file_path}: {e}")
+            return False
 
     def process_batch(self, files: List[Path]):
         """

@@ -28,7 +28,7 @@ from core.matching_engine.text_utils import normalize_artist, normalize_title
 from core.settings import config_manager
 from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
-from database.music_database import get_database, Download
+from database.music_database import get_database, Download, Track, Artist
 
 logger = logging.getLogger("download_manager")
 
@@ -84,6 +84,11 @@ class DownloadManager:
         Returns the database ID of the new download record.
         """
         logger.info(f"Queueing download: {track.artist_name} - {track.title}")
+
+        # Check if track already exists in library
+        if self._track_exists_in_library(track.artist_name, track.title):
+            logger.info(f"Skipping download: Track '{track.title}' by '{track.artist_name}' already exists in library")
+            return 0  # 0 indicates no download created
 
         with self.db.session_scope() as session:
             # Serialize track to JSON for storage
@@ -202,8 +207,9 @@ class DownloadManager:
 
     async def _process_loop(self):
         """Main control loop: Process Queue -> Check Active"""
-        # 0. Recover stuck items on startup
+        # 0. Recover stuck items and clean up queue on startup
         await self._recover_stuck_items()
+        self._purge_existing_tracks_from_queue()
         logger.info("DownloadManager processing loop started.")
 
         while not self._shutdown:
@@ -880,6 +886,87 @@ class DownloadManager:
                     "updated_at": download.updated_at.isoformat()
                 }
         return None
+
+    def _track_exists_in_library(self, artist_name: str, title: str) -> bool:
+        """
+        Check if a track already exists in the library (database).
+
+        Args:
+            artist_name: Artist name
+            title: Track title
+
+        Returns:
+            True if track exists, False otherwise
+        """
+        if not artist_name or not title:
+            return False
+
+        try:
+            with self.db.session_scope() as session:
+                # Perform strict match on title and artist
+                # We join Track and Artist tables
+                exists = session.query(
+                    session.query(Track).join(Artist).filter(
+                        Artist.name.ilike(artist_name.strip()),
+                        Track.title.ilike(title.strip())
+                    ).exists()
+                ).scalar()
+                return bool(exists)
+        except Exception as e:
+            logger.error(f"Error checking library for {artist_name} - {title}: {e}")
+            return False
+
+    def _purge_existing_tracks_from_queue(self):
+        """
+        Startup Check: Remove items from the download queue that are already in the library.
+        Prevents re-downloading tracks that were imported while the queue was active/stalled.
+        """
+        try:
+            with self.db.session_scope() as session:
+                # Get all queued items
+                queued_items = session.query(Download).filter(
+                    Download.status.in_(['queued', 'searching', 'failed_no_match'])
+                ).all()
+
+                if not queued_items:
+                    return
+
+                logger.info(f"Startup check: Verifying {len(queued_items)} queued items against library...")
+                removed_count = 0
+
+                for item in queued_items:
+                    try:
+                        track_data = item.soul_sync_track
+                        if not track_data:
+                            continue
+
+                        artist = track_data.get('artist_name') or track_data.get('artist')
+                        title = track_data.get('title')
+
+                        if not artist or not title:
+                            continue
+
+                        # Check existence using the same logic as _track_exists_in_library
+                        # Re-implement inline to reuse session
+                        exists = session.query(
+                            session.query(Track).join(Artist).filter(
+                                Artist.name.ilike(artist.strip()),
+                                Track.title.ilike(title.strip())
+                            ).exists()
+                        ).scalar()
+
+                        if exists:
+                            logger.info(f"Removing redundant download {item.id}: '{title}' by '{artist}' is already in library")
+                            session.delete(item)
+                            removed_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error checking queued item {item.id}: {e}")
+
+                if removed_count > 0:
+                    logger.info(f"Startup purge removed {removed_count} redundant items from download queue")
+
+        except Exception as e:
+            logger.error(f"Error purging existing tracks from queue: {e}")
 
 # Global Accessor
 def get_download_manager():
