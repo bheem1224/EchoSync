@@ -106,8 +106,8 @@ class DownloadManager:
             download = Download(
                 soul_sync_track=track_json,
                 status="queued",
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                created_at=datetime.now(datetime.UTC),
+                updated_at=datetime.now(datetime.UTC)
             )
             session.add(download)
             session.flush() # Populate ID
@@ -184,7 +184,7 @@ class DownloadManager:
                 logger.warning(f"Found {len(stuck_items)} stuck downloads. Resetting to 'queued'.")
                 for item in stuck_items:
                     item.status = "queued"
-                    item.updated_at = datetime.utcnow()
+                    item.updated_at = datetime.now(datetime.UTC)
             
             # Also clean up legacy downloads with invalid provider_id format
             # These are from before the compound ID (username|filename) format was implemented
@@ -199,7 +199,7 @@ class DownloadManager:
                     # Legacy format without username prefix - mark as failed
                     logger.debug(f"Cleaning up legacy download entry: {item.id}")
                     item.status = "failed_legacy_format"
-                    item.updated_at = datetime.utcnow()
+                    item.updated_at = datetime.now(datetime.UTC)
                     cleaned += 1
             
             if cleaned > 0:
@@ -253,7 +253,7 @@ class DownloadManager:
             for item in items:
                 # Mark as processing so other workers (if any) don't grab it
                 item.status = "searching"
-                item.updated_at = datetime.utcnow()
+                item.updated_at = datetime.now(datetime.UTC)
                 queued_ids.append(item.id)
 
         if not queued_ids:
@@ -841,7 +841,7 @@ class DownloadManager:
             download = session.query(Download).get(download_id)
             if download:
                 download.status = status
-                download.updated_at = datetime.utcnow()
+                download.updated_at = datetime.now(datetime.UTC)
                 if provider_id:
                     download.provider_id = provider_id
 
