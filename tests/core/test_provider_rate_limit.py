@@ -7,7 +7,7 @@ import time
 from core.provider_base import ProviderBase
 from core.request_manager import RequestManager, RateLimitConfig
 
-class TestRateLimitedProvider(ProviderBase):
+class MockRateLimitedProvider(ProviderBase):
     name = "test_fast"
     rate_limit = 10.0 # 10 req/s = 0.1s interval
 
@@ -22,7 +22,7 @@ class TestRateLimitedProvider(ProviderBase):
     def is_configured(self): return True
     def get_logo_url(self): return ""
 
-class TestSlowProvider(ProviderBase):
+class MockSlowProvider(ProviderBase):
     name = "test_slow"
     rate_limit = 1.0 # 1 req/s = 1.0s interval
 
@@ -40,10 +40,10 @@ class TestSlowProvider(ProviderBase):
 class TestRateLimiting:
     def test_provider_initialization_respects_rate_limit(self):
         """Verify providers initialize RequestManager with correct rate limits."""
-        fast = TestRateLimitedProvider()
+        fast = MockRateLimitedProvider()
         assert fast.http.rate.requests_per_second == 10.0
 
-        slow = TestSlowProvider()
+        slow = MockSlowProvider()
         assert slow.http.rate.requests_per_second == 1.0
 
     def test_request_manager_applies_limit(self):

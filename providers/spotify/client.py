@@ -250,7 +250,7 @@ class SpotifyClient(SyncServiceProvider):
 
             try:
                 # Check if we have a valid cached token
-                cached = auth_manager.get_cached_token()
+                cached = auth_manager.cache_handler.get_cached_token()
                 if cached and cached.get('access_token'):
                     # We have a valid access token
                     logger.info(f"Using valid cached access token for Spotify account {self.account_id}")
@@ -305,7 +305,7 @@ class SpotifyClient(SyncServiceProvider):
             if not auth_manager:
                 return False
                 
-            cached_token = auth_manager.get_cached_token()
+            cached_token = auth_manager.cache_handler.get_cached_token()
             if not cached_token:
                 return False
                 
