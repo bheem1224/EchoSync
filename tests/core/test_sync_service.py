@@ -29,11 +29,13 @@ class FakeSpotifyClient:
 @pytest.fixture(autouse=True)
 def patch_spotify_client(monkeypatch):
     # intercept SpotifyClient constructor to return fake instance
-    def factory(account_id=None):
-        return FakeSpotifyClient(account_id=account_id)
-    # patch both the provider module and where sync_service imported it
-    monkeypatch.setattr('providers.spotify.client.SpotifyClient', factory)
-    monkeypatch.setattr('services.sync_service.SpotifyClient', factory)
+    def factory(provider_name, account_id=None, **kwargs):
+        if provider_name == 'spotify':
+            return FakeSpotifyClient(account_id=account_id)
+        return MagicMock()
+
+    # patch ProviderRegistry.create_instance used by sync_service
+    monkeypatch.setattr('core.provider.ProviderRegistry.create_instance', factory)
 
     # disable provider registry registration which isn't needed for these fakes
     monkeypatch.setattr('core.provider.ProviderRegistry.register', lambda *args, **kwargs: None)

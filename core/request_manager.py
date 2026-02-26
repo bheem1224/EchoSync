@@ -35,6 +35,8 @@ class RateLimitConfig:
     """Configuration for rate limiting."""
     # Requests per second allowed; None means unlimited (provider handles it)
     requests_per_second: Optional[float] = None
+    # Token bucket capacity (burst size) - Not currently used but good for future
+    burst: int = 1
 
 
 class HttpError(Exception):

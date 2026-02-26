@@ -129,7 +129,8 @@ class SpotifyAdapter:
             return track  # No match found
         
         # Find best match (using new MatchService)
-        from core import MatchService, MatchContext, SoulSyncTrack
+        from services.match_service import MatchService, MatchContext
+        from core.matching_engine import SoulSyncTrack
         service = MatchService()
         
         source = SoulSyncTrack(

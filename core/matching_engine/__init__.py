@@ -7,7 +7,6 @@ Main components:
 - TrackParser: Converts raw filenames to SoulSyncTrack objects
 - WeightedMatchingEngine: 5-step gating scoring algorithm
 - ScoringProfile: Strategy pattern for different match contexts
-- MatchService: High-level API integrating all components
 - FingerprintMatcher: Audio fingerprinting for acoustic matching
 """
 
@@ -22,13 +21,6 @@ from .scoring_profile import (
     PROFILE_EXACT_SYNC,
     PROFILE_DOWNLOAD_SEARCH,
     PROFILE_LIBRARY_IMPORT,
-)
-from .match_service import (
-    MatchService,
-    MatchContext,
-    get_match_service,
-    find_best_match,
-    parse_and_match,
 )
 from .fingerprinting import FingerprintMatcher
 
@@ -54,13 +46,6 @@ __all__ = [
     'PROFILE_EXACT_SYNC',
     'PROFILE_DOWNLOAD_SEARCH',
     'PROFILE_LIBRARY_IMPORT',
-    
-    # Match service
-    'MatchService',
-    'MatchContext',
-    'get_match_service',
-    'find_best_match',
-    'parse_and_match',
     
     # Fingerprinting
     'FingerprintMatcher',

@@ -5,14 +5,14 @@ try:
     from spotipy.cache_handler import CacheHandler
 except Exception:
     CacheHandler = object
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Iterator
 import time
 from dataclasses import dataclass
 from core.tiered_logger import get_logger
 from core.provider_base import ProviderBase
 from core.provider import SyncServiceProvider, get_provider_capabilities, ProviderRegistry
 from core.matching_engine.soul_sync_track import SoulSyncTrack
-from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
+from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 
 logger = get_logger("spotify_client")
 
@@ -123,8 +123,10 @@ class SpotifyClient(SyncServiceProvider):
     name = "spotify"
     category = "provider"
     supports_downloads = False
+    rate_limit = 5.0  # 5 requests/second rate limit
 
     def __init__(self, account_id: Optional[int] = None):
+        super().__init__()  # Initialize ProviderBase which sets up rate-limited HTTP client
         self.sp: Optional[spotipy.Spotify] = None
         self.user_id: Optional[str] = None
 
@@ -147,13 +149,6 @@ class SpotifyClient(SyncServiceProvider):
                     logger.warning(f"Failed to auto-detect spotify account: {e}")
 
         self.account_id: Optional[int] = account_id
-
-        # Initialize centralized HTTP client for Spotify (5 requests/second rate limit)
-        self._http = HttpClient(
-            provider='spotify',
-            retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
-            rate=RateLimitConfig(requests_per_second=5.0)
-        )
 
         self._setup_client()
         ProviderRegistry.register(SpotifyClient)
@@ -255,7 +250,7 @@ class SpotifyClient(SyncServiceProvider):
 
             try:
                 # Check if we have a valid cached token
-                cached = auth_manager.get_cached_token()
+                cached = auth_manager.cache_handler.get_cached_token()
                 if cached and cached.get('access_token'):
                     # We have a valid access token
                     logger.info(f"Using valid cached access token for Spotify account {self.account_id}")
@@ -310,7 +305,7 @@ class SpotifyClient(SyncServiceProvider):
             if not auth_manager:
                 return False
                 
-            cached_token = auth_manager.get_cached_token()
+            cached_token = auth_manager.cache_handler.get_cached_token()
             if not cached_token:
                 return False
                 
@@ -465,21 +460,22 @@ class SpotifyClient(SyncServiceProvider):
     # SyncServiceProvider Implementations
     # ==========================================
 
-    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_user_playlists(self, user_id: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+        """
+        Yield user playlists page by page to conserve memory.
+        """
         if not self.is_authenticated():
-            return []
+            return
         
         if not self._ensure_user_id():
-            return []
+            return
             
-        playlists = []
         try:
+            # Use generator to yield playlists
             results = self.sp.current_user_playlists(limit=50)
             while results:
                 for item in results['items']:
-                    # Filter for owned or collaborative playlists if needed,
-                    # but usually we want to see everything available to the user.
-                    playlists.append({
+                    yield {
                         'id': item['id'],
                         'name': item['name'],
                         'description': item.get('description'),
@@ -487,12 +483,15 @@ class SpotifyClient(SyncServiceProvider):
                         'owner': item['owner']['display_name'],
                         'public': item.get('public'),
                         'collaborative': item.get('collaborative')
-                    })
-                results = self.sp.next(results) if results['next'] else None
-            return playlists
+                    }
+                # Check for next page
+                if results['next']:
+                    results = self.sp.next(results)
+                else:
+                    break
         except Exception as e:
             logger.error(f"Error getting user playlists: {e}")
-            return []
+            return
 
     def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
         if not self.is_authenticated():
