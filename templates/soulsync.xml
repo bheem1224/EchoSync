@@ -1,92 +1,37 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>SoulSync</Name>
-  <Repository>soulsync/soulsync:latest</Repository>
-  <Registry>https://ghcr.io/soulsync/soulsync</Registry>
+  <Repository>boulderbadgedad/soulsync:latest</Repository>
+  <Registry>https://hub.docker.com/r/boulderbadgedad/soulsync</Registry>
   <Network>bridge</Network>
   <MyIP/>
-  <Shell>sh</Shell>
+  <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/soulsync/soulsync</Support>
-  <Project>https://github.com/soulsync/soulsync</Project>
-  <Overview>SoulSync: Your Ultimate Music Library Synchronizer.&#xD;
-&#xD;
-Sync playlists between Spotify, Tidal, Plex, Jellyfin, and Navidrome.&#xD;
-Metadata Enhancement, Auto-Import, and Duplicate Management included.&#xD;
-&#xD;
-Default WebUI: http://[IP]:[PORT:5000]</Overview>
-  <Category>MediaApp:Music Status:Beta</Category>
-  <WebUI>http://[IP]:[PORT:5000]</WebUI>
-  <TemplateURL/>
-  <Icon>https://raw.githubusercontent.com/soulsync/soulsync/main/assets/logo.png</Icon>
-  <ExtraParams/>
+  <Support>https://github.com/Nezreka/SoulSync/issues</Support>
+  <Project>https://github.com/Nezreka/SoulSync</Project>
+  <Overview>Automated music discovery and collection manager. Sync Spotify/Tidal/YouTube playlists to Plex/Jellyfin/Navidrome via Soulseek with FLAC priority, customizable file organization templates, metadata enhancement, and smart matching. Features include wishlist management, artist watchlist, intelligent discovery playlists, and automatic lyrics integration.</Overview>
+  <Category>MediaApp:Music</Category>
+  <WebUI>http://[IP]:[PORT:8008]</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/Nezreka/SoulSync/main/templates/soulsync.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/Nezreka/SoulSync/main/assets/trans.png</Icon>
+  <ExtraParams>--restart unless-stopped --add-host=host.docker.internal:host-gateway</ExtraParams>
   <PostArgs/>
   <CPUset/>
-  <DateInstalled>1709251200</DateInstalled>
-  <DonateText/>
-  <DonateLink/>
-  <Description>SoulSync: Your Ultimate Music Library Synchronizer.</Description>
-  <Networking>
-    <Mode>bridge</Mode>
-    <Publish>
-      <Port>
-        <HostPort>5000</HostPort>
-        <ContainerPort>5000</ContainerPort>
-        <Protocol>tcp</Protocol>
-      </Port>
-      <Port>
-        <HostPort>8888</HostPort>
-        <ContainerPort>8888</ContainerPort>
-        <Protocol>tcp</Protocol>
-      </Port>
-      <Port>
-        <HostPort>8889</HostPort>
-        <ContainerPort>8889</ContainerPort>
-        <Protocol>tcp</Protocol>
-      </Port>
-    </Publish>
-  </Networking>
-  <Data>
-    <Volume>
-      <HostDir>/mnt/user/appdata/soulsync</HostDir>
-      <ContainerDir>/config</ContainerDir>
-      <Mode>rw</Mode>
-    </Volume>
-    <Volume>
-      <HostDir>/mnt/user/media/music</HostDir>
-      <ContainerDir>/music</ContainerDir>
-      <Mode>rw</Mode>
-    </Volume>
-    <Volume>
-      <HostDir>/mnt/user/downloads/soulsync</HostDir>
-      <ContainerDir>/downloads</ContainerDir>
-      <Mode>rw</Mode>
-    </Volume>
-  </Data>
-  <Environment>
-    <Variable>
-      <Value>1000</Value>
-      <Name>PUID</Name>
-      <Mode/>
-    </Variable>
-    <Variable>
-      <Value>1000</Value>
-      <Name>PGID</Name>
-      <Mode/>
-    </Variable>
-    <Variable>
-      <Value>UTC</Value>
-      <Name>TZ</Name>
-      <Mode/>
-    </Variable>
-  </Environment>
-  <Config Name="Web UI Port" Target="5000" Default="5000" Mode="tcp" Description="Main Web Interface" Type="Port" Display="always" Required="true" Mask="false">5000</Config>
-  <Config Name="Spotify Callback Port" Target="8888" Default="8888" Mode="tcp" Description="OAuth Callback for Spotify" Type="Port" Display="always" Required="true" Mask="false">8888</Config>
-  <Config Name="Tidal Callback Port" Target="8889" Default="8889" Mode="tcp" Description="OAuth Callback for Tidal" Type="Port" Display="always" Required="true" Mask="false">8889</Config>
-  <Config Name="Config Directory" Target="/config" Default="/mnt/user/appdata/soulsync/config" Mode="rw" Description="Container Config Path" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/soulsync</Config>
-  <Config Name="Music Library" Target="/data/library" Default="/mnt/user/appdata/soulsync/data/library" Mode="rw" Description="Path to Music Library" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/media/music</Config>
-  <Config Name="Downloads" Target="/data/downloads" Default="/mnt/user/appdata/soulsync/data/downloads" Mode="rw" Description="Path to Downloads" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/downloads/soulsync</Config>
-  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/soulsync/data" Mode="rw" Description="Data Directory" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/downloads/soulsync</Config>
-  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
-  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <DateInstalled>1704067200</DateInstalled>
+  <DonateText>Support Development</DonateText>
+  <DonateLink>https://ko-fi.com/boulderbadgedad</DonateLink>
+  <Requires>slskd running on host machine or container. Spotify API credentials required.</Requires>
+  <Config Name="WebUI Port" Target="8008" Default="8008" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8008</Config>
+  <Config Name="Spotify OAuth Port" Target="8888" Default="8888" Mode="tcp" Description="Spotify OAuth callback port" Type="Port" Display="always" Required="true" Mask="false">8888</Config>
+  <Config Name="Tidal OAuth Port" Target="8889" Default="8889" Mode="tcp" Description="Tidal OAuth callback port" Type="Port" Display="always" Required="true" Mask="false">8889</Config>
+  <Config Name="Data Directory" Target="/data" Default="/mnt/user/appdata/soulsync/data" Mode="rw" Description="Stores all application data including configuration and database." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/soulsync/data</Config>
+  <Config Name="Logs Directory" Target="/app/logs" Default="/mnt/user/appdata/soulsync/logs" Mode="rw" Description="Application logs storage." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/soulsync/logs</Config>
+  <Config Name="Music Share" Target="/host/music" Default="/mnt/user/Music" Mode="rw" Description="Mount your music share (containing slskd downloads and music library). Use /host/music/... in settings." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Music</Config>
+  <Config Name="Timezone" Target="TZ" Default="America/New_York" Mode="" Description="Container timezone (e.g., America/New_York, Europe/London)" Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
+  <Config Name="User ID" Target="PUID" Default="99" Mode="" Description="User ID for file permissions (typically 99 for Unraid)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="Group ID" Target="PGID" Default="100" Mode="" Description="Group ID for file permissions (typically 100 for Unraid)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="PYTHONPATH" Target="PYTHONPATH" Default="/app" Mode="" Description="Python path (do not change)" Type="Variable" Display="advanced" Required="true" Mask="false">/app</Config>
+  <Config Name="FLASK_ENV" Target="FLASK_ENV" Default="production" Mode="" Description="Flask environment (do not change)" Type="Variable" Display="advanced" Required="true" Mask="false">production</Config>
+  <Config Name="FLASK_APP" Target="FLASK_APP" Default="web_server.py" Mode="" Description="Flask app entry point (do not change)" Type="Variable" Display="advanced" Required="true" Mask="false">web_server.py</Config>
+  <Config Name="Data Directory Env" Target="SOULSYNC_DATA_DIR" Default="/data" Mode="" Description="[ADVANCED] Container path for application data." Type="Variable" Display="advanced" Required="true" Mask="false">/data</Config>
 </Container>

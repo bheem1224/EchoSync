@@ -54,15 +54,7 @@
   "download": {
     "concurrency": 2,
     "retry_count": 3,
-    "min_free_space_mb": 500,
-    // if false the DownloadManager will not automatically start when the
-    // backend boots; the job remains visible but disabled and you can start
-    // the service manually via the UI or API.
-    "start_on_boot": true,
-    // how frequently (in seconds) the download_manager_status job is shown to run
-    // in the jobs UI. This has no effect on actual downloading; it is purely a
-    // visibility placeholder. Defaults to 21600 (6 hours).
-    "status_interval_seconds": 21600
+    "min_free_space_mb": 500
   },
   "discovery_pool": {
     "lookback_period_days": 90,

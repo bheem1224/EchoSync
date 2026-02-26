@@ -1,7 +1,6 @@
 """Tidal provider routes."""
 from flask import Blueprint, request, jsonify
-from core.settings import config_manager
-from core.account_manager import AccountManager
+from sdk.storage_service import get_storage_service
 from core.tiered_logger import get_logger
 
 logger = get_logger("tidal_routes")
@@ -18,24 +17,31 @@ def list_accounts():
         return jsonify({'accounts': [], 'redirect_uri': ''}), 200
 
     try:
-        db_accounts = AccountManager.list_accounts('tidal')
+        storage = get_storage_service()
+        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+        
+        db_accounts = storage.list_accounts('tidal')
         accounts = []
         
         for a in db_accounts:
+            # Load per-account credentials
+            client_id = storage.get_account_config(a.get('id', 0), 'client_id')
+            client_secret_present = bool(storage.get_account_config(a.get('id', 0), 'client_secret'))
+            
             normalized = {
                 'id': a.get('id'),
-                'account_name': a.get('account_name') or a.get('name') or 'Unnamed',
-                'display_name': a.get('display_name') or a.get('name') or 'Unnamed',
+                'account_name': a.get('account_name') or a.get('display_name') or 'Unnamed',
+                'display_name': a.get('display_name') or a.get('account_name') or 'Unnamed',
                 'user_id': a.get('user_id'),
-                'is_active': a.get('is_active', True),
-                'is_authenticated': a.get('is_authenticated', False),
-                'client_id': a.get('client_id'),
-                'client_secret_configured': bool(a.get('client_secret'))
+                'is_active': a.get('is_active'),
+                'is_authenticated': a.get('is_authenticated'),
+                'client_id': client_id,
+                'client_secret_configured': client_secret_present
             }
             accounts.append(normalized)
         
         # Get global redirect URI
-        redirect_uri = AccountManager.get_service_config('tidal', 'redirect_uri') or 'http://127.0.0.1:8000/api/tidal/callback'
+        redirect_uri = storage.get_service_config('tidal', 'redirect_uri') or 'http://127.0.0.1:8000/api/tidal/callback'
         
         return jsonify({
             'accounts': accounts,
@@ -66,24 +72,30 @@ def create_account():
         if not client_id or not client_secret:
             return jsonify({'error': 'client_id and client_secret are required'}), 400
         
-        # Create account via ConfigManager helper
-        new_account = {
-            'name': account_name,
-            'client_id': client_id,
-            'client_secret': client_secret,
-            'is_active': False,
-            'is_authenticated': False
-        }
+        storage = get_storage_service()
+        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
         
-        created = config_manager.add_tidal_account(new_account)
+        # Create account in encrypted config.db
+        account_id = storage.ensure_account('tidal', account_name=account_name, display_name=account_name)
+        if not account_id:
+            return jsonify({'error': 'Failed to create account'}), 500
         
-        logger.info(f"Created Tidal account {created.get('id')} with credentials")
+        # Store per-account credentials
+        storage.set_account_config(account_id, 'client_id', client_id, is_sensitive=False)
+        storage.set_account_config(account_id, 'client_secret', client_secret, is_sensitive=True)
+        
+        # Store client_id and client_secret in service_config
+        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+        storage.set_service_config('tidal', 'client_id', client_id, is_sensitive=False)
+        storage.set_service_config('tidal', 'client_secret', client_secret, is_sensitive=True)
+        
+        logger.info(f"Created Tidal account {account_id} with credentials")
         
         return jsonify({
             'account': {
-                'id': created.get('id'),
-                'account_name': created.get('name'),
-                'display_name': created.get('name'),
+                'id': account_id,
+                'account_name': account_name,
+                'display_name': account_name,
                 'is_active': False,
                 'is_authenticated': False,
                 'client_id': client_id,
@@ -102,21 +114,27 @@ def get_account(account_id):
     if ProviderRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
-        account = AccountManager.get_account('tidal', account_id)
+        storage = get_storage_service()
+        accounts = storage.list_accounts('tidal')
+        account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
             return jsonify({'error': 'Account not found'}), 404
         
+        # Load per-account credentials
+        client_id = storage.get_account_config(account_id, 'client_id')
+        client_secret = storage.get_account_config(account_id, 'client_secret')
+        
         return jsonify({
             'account': {
                 'id': account.get('id'),
-                'account_name': account.get('name') or 'Unnamed',
-                'display_name': account.get('name') or 'Unnamed',
+                'account_name': account.get('account_name') or account.get('display_name') or 'Unnamed',
+                'display_name': account.get('display_name') or account.get('account_name') or 'Unnamed',
                 'user_id': account.get('user_id'),
-                'is_active': account.get('is_active', True),
-                'is_authenticated': account.get('is_authenticated', False),
-                'client_id': account.get('client_id'),
-                'client_secret': account.get('client_secret')  # Only returned on explicit GET
+                'is_active': account.get('is_active'),
+                'is_authenticated': account.get('is_authenticated'),
+                'client_id': client_id,
+                'client_secret': client_secret  # Only returned on explicit GET
             }
         })
     except Exception as e:
@@ -134,40 +152,53 @@ def update_account(account_id):
     if ProviderRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
-        account = AccountManager.get_account('tidal', account_id)
+        storage = get_storage_service()
+        accounts = storage.list_accounts('tidal')
+        account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
             return jsonify({'error': 'Account not found'}), 404
         
         payload = request.get_json(force=True) or {}
-        updates = {}
         
         # Update account name if provided
         if payload.get('account_name'):
-            updates['name'] = payload.get('account_name').strip()
+            new_name = payload.get('account_name').strip()
+            if new_name:
+                storage.update_account_name(account_id, new_name)
+        
+        # Update credentials if provided (non-empty)
+        logger.info(f"UPDATE PAYLOAD for account {account_id}: client_id={'present' if payload.get('client_id') else 'missing'}, client_secret={'present' if payload.get('client_secret') else 'missing'}, secret_length={len(payload.get('client_secret', ''))}")
         
         if 'client_id' in payload and payload.get('client_id'):
-            updates['client_id'] = payload.get('client_id').strip()
+            client_id_value = payload.get('client_id').strip()
+            logger.info(f"Saving client_id for account {account_id}: {client_id_value}")
+            result = storage.set_account_config(account_id, 'client_id', client_id_value, is_sensitive=False)
+            logger.info(f"Save client_id result: {result}")
             
         if 'client_secret' in payload and payload.get('client_secret'):
-            updates['client_secret'] = payload.get('client_secret').strip()
-
-        if updates:
-            AccountManager.update_account('tidal', account_id, updates)
+            client_secret_value = payload.get('client_secret').strip()
+            logger.info(f"Saving client_secret for account {account_id}, length: {len(client_secret_value)}")
+            result = storage.set_account_config(account_id, 'client_secret', client_secret_value, is_sensitive=True)
+            logger.info(f"Save client_secret result: {result}")
+            # Verify it was saved
+            verify_secret = storage.get_account_config(account_id, 'client_secret')
+            logger.info(f"VERIFICATION READ: client_secret length after save: {len(verify_secret) if verify_secret else 0}")
         
         # Return updated account
-        updated_account = AccountManager.get_account('tidal', account_id)
+        accounts = storage.list_accounts('tidal')
+        account = next((a for a in accounts if a.get('id') == account_id), None)
         
         return jsonify({
             'account': {
-                'id': updated_account.get('id'),
-                'account_name': updated_account.get('name'),
-                'display_name': updated_account.get('name'),
-                'user_id': updated_account.get('user_id'),
-                'is_active': updated_account.get('is_active', True),
-                'is_authenticated': updated_account.get('is_authenticated', False),
-                'client_id': updated_account.get('client_id'),
-                'client_secret_configured': bool(updated_account.get('client_secret'))
+                'id': account.get('id'),
+                'account_name': account.get('account_name') or account.get('display_name') or 'Unnamed',
+                'display_name': account.get('display_name') or account.get('account_name') or 'Unnamed',
+                'user_id': account.get('user_id'),
+                'is_active': account.get('is_active'),
+                'is_authenticated': account.get('is_authenticated'),
+                'client_id': storage.get_account_config(account_id, 'client_id'),
+                'client_secret_configured': bool(storage.get_account_config(account_id, 'client_secret'))
             }
         })
     except Exception as e:
@@ -182,7 +213,9 @@ def activate_account(account_id):
     if ProviderRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
-        account = AccountManager.get_account('tidal', account_id)
+        storage = get_storage_service()
+        accounts = storage.list_accounts('tidal')
+        account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
             return jsonify({'error': 'Account not found'}), 404
@@ -190,7 +223,10 @@ def activate_account(account_id):
         payload = request.get_json(force=True) or {}
         is_active = payload.get('is_active', True)
         
-        AccountManager.update_account('tidal', account_id, {'is_active': is_active})
+        if is_active:
+            storage.toggle_account_active(account_id, True)
+        else:
+            storage.toggle_account_active(account_id, False)
         
         return jsonify({'status': 'ok', 'is_active': is_active})
     except Exception as e:
@@ -205,15 +241,18 @@ def delete_account(account_id):
     if ProviderRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
-        # Currently ConfigManager doesn't support deleting accounts from list directly via simple API
-        # We need to implement removal logic
-        accounts = config_manager.get_tidal_accounts()
-        new_accounts = [a for a in accounts if a.get('id') != account_id]
+        storage = get_storage_service()
+        deleted = storage.delete_account(account_id)
         
-        if len(accounts) == len(new_accounts):
+        if not deleted:
             return jsonify({'error': 'Account not found'}), 404
-
-        config_manager.set('tidal_accounts', new_accounts)
+        
+        # Clean up per-account credentials
+        try:
+            storage.delete_account_config(account_id, 'client_id')
+            storage.delete_account_config(account_id, 'client_secret')
+        except Exception:
+            pass
         
         logger.info(f"Deleted Tidal account {account_id}")
         return jsonify({'status': 'ok', 'message': 'Account deleted'})
@@ -235,10 +274,9 @@ def set_redirect_uri():
         if not redirect_uri:
             return jsonify({'error': 'redirect_uri is required'}), 400
         
-        # Update global tidal config
-        tidal_config = config_manager.get('tidal', {})
-        tidal_config['redirect_uri'] = redirect_uri
-        config_manager.set('tidal', tidal_config)
+        storage = get_storage_service()
+        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+        storage.set_service_config('tidal', 'redirect_uri', redirect_uri, is_sensitive=False)
         
         return jsonify({'status': 'ok', 'redirect_uri': redirect_uri})
     except Exception as e:
@@ -252,19 +290,34 @@ def debug_account(account_id):
     Debug endpoint to inspect what's stored for an account.
     """
     try:
-        account = AccountManager.get_account('tidal', account_id)
+        storage = get_storage_service()
+        
+        # Check if account exists
+        accounts = storage.list_accounts('tidal')
+        account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
             return jsonify({'error': 'Account not found'}), 404
         
-        client_id = account.get('client_id')
-        client_secret = account.get('client_secret')
+        # Try to load credentials
+        client_id = storage.get_account_config(account_id, 'client_id')
+        client_secret = storage.get_account_config(account_id, 'client_secret')
+        
+        # Check if values exist in raw DB
+        from database.config_database import get_config_database
+        cfg_db = get_config_database()
+        with cfg_db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT metadata_key, metadata_value FROM account_metadata WHERE account_id = ?", (account_id,))
+            raw_metadata = c.fetchall()
         
         return jsonify({
             'account': account,
             'client_id': client_id,
             'client_secret_present': bool(client_secret),
-            'client_secret_length': len(client_secret) if client_secret else 0
+            'client_secret_length': len(client_secret) if client_secret else 0,
+            'raw_metadata_entries': len(raw_metadata),
+            'raw_keys': [row[0] for row in raw_metadata]
         })
     except Exception as e:
         logger.error(f"Error debugging account: {e}", exc_info=True)

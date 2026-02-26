@@ -1,8 +1,8 @@
-# SoulSync Dockerfile (UV Optimized)
+# SoulSync Dockerfile
 # Multi-stage build for Svelte Web UI and Python Backend
 
-# ---- Stage 1: Build Svelte Web UI ----
-FROM node:20-slim as frontend-builder
+# ---- Node Stage: Build Svelte Web UI ----
+FROM node:20-slim as node
 
 WORKDIR /app/webui
 
@@ -13,92 +13,76 @@ RUN npm install
 # Copy the rest of the web UI source code
 COPY webui ./
 
-# Build the Svelte application (outputs to build/ or dist/)
+# Build the Svelte application
 RUN npm run build
 
-# ---- Stage 2: Python Backend (UV) ----
-# Using python:3.12-slim as base since 3.14 is not standard yet in most registries.
-# If 3.14 is explicitly required by pyproject.toml, ensure a compatible image exists.
-# For stability, we use 3.12-slim-bookworm which is modern and stable.
-FROM python:3.12-slim-bookworm
-
-# Copy uv binary from the official image
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+# ---- Python Stage: Final Application Image ----
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
-    PUID=1000 \
-    PGID=1000 \
-    SOULSYNC_CONFIG_DIR=/config \
-    SOULSYNC_DATA_DIR=/data \
-    PATH="/app/.venv/bin:$PATH"
-
-# Install system dependencies
+# Install runtime system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gosu \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN groupadd -g 1000 soulsync && \
-    useradd -u 1000 -g soulsync -s /bin/bash -m soulsync
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash --uid 1000 soulsync
 
-# Copy dependency files
-COPY pyproject.toml uv.lock* ./
+# Copy requirements and install Python dependencies
+COPY requirements-webui.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements-webui.txt
 
-# Install dependencies using uv
-# --frozen: require uv.lock to be up-to-date
-# --no-dev: do not install dev dependencies
-RUN uv sync --frozen --no-dev
+# Copy requirements and install Python dependencies
+COPY legacy/requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Copy built frontend assets from Stage 1
-# Assuming SvelteKit adapter-static outputs to 'build' by default
-# We place it in webui/build so Flask can serve it if configured, or Nginx
-COPY --from=frontend-builder /app/webui/build /app/webui/build
+# Copy built Svelte UI from the node stage
+COPY --from=node /app/webui/build /app/webui/build
 
-# Create config and data directories
-RUN mkdir -p /config /data/logs /data/downloads /data/library /data/plugins && \
-    chown -R soulsync:soulsync /config /data /app
-
-# Expose ports
-# 5000: API/WebUI
-# 8888, 8889: OAuth callbacks
-EXPOSE 5000 8888 8889
-
-# Volumes
-VOLUME ["/config", "/data"]
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:5000/api/v1/health || exit 1
-
-# Entrypoint script to handle PUID/PGID and permissions
-COPY --chmod=755 <<EOF /entrypoint.sh
-#!/bin/bash
-set -e
-
-# Fix permissions if running as root (Docker default)
-if [ "$(id -u)" = '0' ]; then
-    groupmod -o -g "\$PGID" soulsync
-    usermod -o -u "\$PUID" soulsync
-
+# Create necessary directories with proper permissions
+RUN mkdir -p /config /data/logs /data/downloads /data/Transfer && \
     chown -R soulsync:soulsync /config /data
 
-    exec gosu soulsync "\$@"
-else
-    exec "\$@"
-fi
-EOF
+# Create defaults directory and copy template files
+# These will be used by entrypoint.sh to initialize empty volumes
+RUN mkdir -p /defaults && \
+    cp /app/config/config.example.json /defaults/config.json && \
+    chmod 644 /defaults/config.json
 
+# Create volume mount points
+VOLUME ["/config", "/data"]
+
+# Copy and set up entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Expose ports for web app and OAuth callbacks
+EXPOSE 5000 8888 8889
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:5000/api/v1/health || exit 1
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PUID=1000
+ENV PGID=1000
+ENV UMASK=022
+ENV SOULSYNC_CONFIG_DIR=/config
+ENV SOULSYNC_DATA_DIR=/data
+ENV UVICORN_PORT=5000
+# default timezone and log verbosity (can be overridden at runtime)
+ENV TZ=UTC
+ENV SOULSYNC_LOG_LEVEL=INFO
+
+# Set entrypoint and default command
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "run_api.py"]

@@ -9,7 +9,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Optional, Any
 from core.tiered_logger import get_logger
 from core.settings import config_manager
-from core.account_manager import AccountManager
 from core.provider import SyncServiceProvider, get_provider_capabilities
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 
@@ -101,18 +100,17 @@ class TidalClient(SyncServiceProvider):
                 # Persist refreshed tokens to config.db
                 try:
                     if self.account_id and self.access_token:
-                        AccountManager.save_account_token(
-                            'tidal',
-                            int(self.account_id),
-                            {
-                                'access_token': self.access_token,
-                                'refresh_token': self.refresh_token,
-                                'token_type': 'Bearer',
-                                'expires_at': int(self.token_expires_at),
-                                'scope': None,
-                                'is_authenticated': True
-                            }
+                        from sdk.storage_service import get_storage_service
+                        storage = get_storage_service()
+                        storage.save_account_token(
+                            account_id=int(self.account_id),
+                            access_token=self.access_token,
+                            refresh_token=self.refresh_token,
+                            token_type='Bearer',
+                            expires_at=int(self.token_expires_at),
+                            scope=None,
                         )
+                        storage.mark_account_authenticated(int(self.account_id))
                 except Exception:
                     pass
                 logger.info("Tidal access token refreshed successfully")
@@ -267,9 +265,13 @@ class TidalClient(SyncServiceProvider):
     def _load_config(self):
         """Load Tidal configuration from database using centralized config_manager helper"""
         try:
+            from sdk.storage_service import get_storage_service
+            storage = get_storage_service()
+            storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+            
             # Ensure client_id and client_secret are retrieved from service_config
-            self.client_id = AccountManager.get_service_config('tidal', 'client_id')
-            self.client_secret = AccountManager.get_service_config('tidal', 'client_secret')
+            self.client_id = storage.get_service_config('tidal', 'client_id') or None
+            self.client_secret = storage.get_service_config('tidal', 'client_secret') or None
 
             # Log a warning if they are missing
             if not self.client_id or not self.client_secret:
@@ -287,7 +289,9 @@ class TidalClient(SyncServiceProvider):
             if not self.account_id:
                 logger.warning("No account_id specified for Tidal client")
                 return
-            token_data = AccountManager.get_account_token('tidal', int(self.account_id))
+            from sdk.storage_service import get_storage_service
+            storage = get_storage_service()
+            token_data = storage.get_account_token(int(self.account_id))
             if token_data:
                 self.access_token = token_data.get('access_token')
                 self.refresh_token = token_data.get('refresh_token')

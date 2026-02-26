@@ -1,25 +1,18 @@
 """Tidal OAuth routes - handles PKCE-based OAuth flow for Tidal accounts."""
 from flask import Blueprint, request, jsonify, redirect
-from core.settings import config_manager
-from core.account_manager import AccountManager
+from sdk.storage_service import get_storage_service
 from core.tiered_logger import get_logger
-from core.request_manager import RequestManager
 import json
 import base64
 import uuid
 import urllib.parse
 import time
-import requests
 
 logger = get_logger("tidal_oauth")
 bp = Blueprint("tidal_oauth", __name__, url_prefix="/api/tidal")
 
-# Temporary in-memory store for PKCE sessions since we removed storage_service
-# In a real distributed system this should be in Redis or DB
-# Structure: { pkce_id: { ...data... } }
-_pkce_sessions = {}
 
-@bp.route('/auth', methods=['GET'])
+@bp.get('/auth')
 def begin_auth():
     """
     Start OAuth flow for Tidal with PKCE.
@@ -34,47 +27,55 @@ def begin_auth():
             return jsonify({'error': 'account_id is required'}), 400
 
         account_id = int(account_id)
+        storage = get_storage_service()
 
         # Verify account exists
-        accounts = AccountManager.list_accounts('tidal')
+        accounts = storage.list_accounts('tidal')
         account = next((a for a in accounts if a.get('id') == account_id), None)
         if not account:
             return jsonify({'error': 'Account not found'}), 404
 
-        # Load per-account credentials
-        client_id = account.get('client_id')
-        client_secret = account.get('client_secret')
+        # Load per-account credentials from storage
+        # Tidal requires per-account client_id and client_secret
+        client_id = storage.get_account_config(account_id, 'client_id')
+        client_secret = storage.get_account_config(account_id, 'client_secret')
         
         # Debug logging
         logger.info(f"Tidal auth for account {account_id}: client_id={'present' if client_id else 'MISSING'}, client_secret={'present' if client_secret else 'MISSING'}")
         
-        # Global redirect URI
-        redirect_uri = AccountManager.get_service_config('tidal', 'redirect_uri') or 'http://127.0.0.1:8000/api/tidal/callback'
+        # Global redirect URI (shared across all Tidal accounts)
+        redirect_uri = storage.get_service_config('tidal', 'redirect_uri') or 'http://127.0.0.1:8000/api/tidal/callback'
         
         if not client_id or not client_secret:
-            logger.error(f"Tidal account {account_id} exists but credentials missing")
+            # Try to fetch account to see if it exists
+            accounts = storage.list_accounts('tidal')
+            account_exists = any(a.get('id') == account_id for a in accounts)
+            logger.error(f"Tidal account {account_id} exists: {account_exists}, but credentials missing")
             return jsonify({'error': 'Account missing client_id or client_secret. Please edit the account to configure credentials.'}), 400
 
         # Generate PKCE values
-        # We need to implement manual PKCE generation since we can't import TidalClient easily without circular dependency
-        # or we just import it locally
         from providers.tidal.client import TidalClient
-        # Create temp client just for PKCE generation
         temp_client = TidalClient(account_id=str(account_id))
         verifier, challenge = temp_client.generate_pkce()
 
-        # Create unique PKCE session and store in memory
+        # Create unique PKCE session and store in config.db
         pkce_id = str(uuid.uuid4())
+        success = storage.store_pkce_session(
+            pkce_id=pkce_id,
+            service='tidal',
+            account_id=account_id,
+            code_verifier=verifier,
+            code_challenge=challenge,
+            redirect_uri=redirect_uri,
+            client_id=client_id,
+            ttl_seconds=600  # 10 minutes
+        )
         
-        _pkce_sessions[pkce_id] = {
-            'service': 'tidal',
-            'account_id': account_id,
-            'code_verifier': verifier,
-            'code_challenge': challenge,
-            'redirect_uri': redirect_uri,
-            'client_id': client_id,
-            'expires_at': time.time() + 600  # 10 minutes
-        }
+        if not success:
+            return jsonify({'error': 'Failed to store PKCE session'}), 500
+
+        # Cleanup expired PKCE sessions
+        storage.cleanup_expired_pkce_sessions()
 
         # Build state containing only pkce_id
         state_payload = {'pkce_id': pkce_id}
@@ -104,7 +105,7 @@ def begin_auth():
         return jsonify({'error': str(e)}), 500
 
 
-@bp.route('/callback', methods=['GET'])
+@bp.get('/callback')
 def oauth_callback():
     """
     Handle Tidal OAuth callback and exchange code for tokens using PKCE.
@@ -143,11 +144,12 @@ def oauth_callback():
             logger.error(f"Failed to decode state: {e}")
             return jsonify({"error": f"Invalid state parameter: {e}"}), 400
 
-        # Retrieve PKCE entry
-        pkce_entry = _pkce_sessions.get(pkce_id)
+        # Retrieve PKCE entry from config.db
+        storage = get_storage_service()
+        pkce_entry = storage.get_pkce_session(pkce_id)
         
-        if not pkce_entry or pkce_entry.get('expires_at', 0) < time.time():
-            logger.error(f"No valid PKCE entry found for id={pkce_id[:8]}...")
+        if not pkce_entry:
+            logger.error(f"No PKCE entry found for id={pkce_id[:8]}...")
             return jsonify({"error": "PKCE session not found or expired"}), 400
 
         account_id = pkce_entry.get('account_id')
@@ -159,17 +161,13 @@ def oauth_callback():
             return jsonify({"error": "Incomplete PKCE session data"}), 400
 
         # Load client_secret from account config
-        account = AccountManager.get_account('tidal', account_id)
-        if not account:
-            return jsonify({"error": "Account not found"}), 400
-
-        client_secret = account.get('client_secret')
+        client_secret = storage.get_account_config(account_id, 'client_secret')
         if not client_secret:
             return jsonify({"error": "Account missing client_secret"}), 400
 
-        # Exchange authorization code for tokens using direct requests
-        # We don't use RequestManager here to avoid circular dependencies or complex setup
-        # for a simple one-off auth request.
+        # Exchange authorization code for tokens
+        from sdk.http_client import HttpClient
+        http_client = HttpClient(provider='tidal')
         
         token_data = {
             'grant_type': 'authorization_code',
@@ -179,11 +177,8 @@ def oauth_callback():
             'code_verifier': code_verifier
         }
         
-        # Basic auth with client_id:client_secret is required by Tidal
-        auth = (client_id, client_secret)
-
         logger.info(f"Exchanging code for tokens (account {account_id})")
-        response = requests.post('https://auth.tidal.com/v1/oauth2/token', data=token_data, auth=auth)
+        response = http_client.post('https://auth.tidal.com/v1/oauth2/token', data=token_data)
         
         if response.status_code != 200:
             logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
@@ -201,26 +196,21 @@ def oauth_callback():
 
         # Persist tokens to storage
         try:
-            token_update = {
-                'access_token': access_token,
-                'refresh_token': refresh_token,
-                'token_type': 'Bearer',
-                'expires_at': expires_at,
-                'scope': scope,
-                'is_authenticated': True
-            }
-            AccountManager.save_account_token('tidal', account_id, token_update)
+            storage.save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at, scope)
+            storage.mark_account_authenticated(account_id)
             logger.info(f"Tokens saved for Tidal account {account_id}")
         except Exception as e:
             logger.error(f"Failed to persist tokens: {e}")
 
         # Clean up one-time PKCE session
-        if pkce_id in _pkce_sessions:
-            del _pkce_sessions[pkce_id]
+        storage.delete_pkce_session(pkce_id)
 
         # Redirect back to UI
-        # Assuming UI runs on standard port or served by same host
-        ui_redirect = '/settings/music-services'
+        ui_base = storage.get_service_config('webui', 'base_url')
+        if ui_base:
+            ui_redirect = ui_base.rstrip('/') + '/settings/music-services'
+        else:
+            ui_redirect = 'http://localhost:5173/settings/music-services'
             
         return redirect(ui_redirect)
 
