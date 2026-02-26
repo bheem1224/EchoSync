@@ -8,7 +8,7 @@ const config = {
     // Proxy API requests to backend
     proxy: {
       '/api': {
-        target: 'https://localhost:8000', // HTTPS self-signed
+        target: 'http://localhost:5000', // Standard HTTP backend
         changeOrigin: true,
         secure: false,
         ws: false

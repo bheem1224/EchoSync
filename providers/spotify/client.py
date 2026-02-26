@@ -46,7 +46,10 @@ class ConfigCacheHandler(CacheHandler):
             expires_at = token_data.get('expires_at')
             scope = token_data.get('scope', "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private")
             
-            logger.debug(f"Loaded token data for account {self.account_id}: access={bool(access_token)}, refresh={bool(refresh_token)}, expires={expires_at}")
+            logger.debug(
+                f"Loaded token data for account {self.account_id}: access={bool(access_token)}, "
+                f"refresh={bool(refresh_token)}, expires={expires_at}, scope={scope}"
+            )
             
             # Return full token info - Spotipy will handle refresh if needed
             return {
@@ -211,14 +214,43 @@ class SpotifyClient(SyncServiceProvider):
             # Updated scope to include write permissions
             scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
 
+            # Initialize cache handler and pre-load token to ensure state is primed
+            self.cache_handler = ConfigCacheHandler(self.account_id)
+            preloaded_token = self.cache_handler.get_cached_token()
+            logger.debug(f"DEBUG: Pre-loaded token info for account {self.account_id}: {bool(preloaded_token)}")
+
+            # Determine which scopes to pass to SpotifyOAuth.  When we reload
+            # an existing account that already has saved tokens, we should use
+            # the scopes that were granted previously rather than forcing the
+            # full set of scopes.  If we always request the full permission set
+            # on init then SpotifyOAuth.validate_token() will reject cached
+            # tokens that lack newly-added scopes (see issue where a second
+            # account with read-only scopes was treated as unauthenticated).
+            default_scope = (
+                "user-library-read user-read-private playlist-read-private "
+                "playlist-read-collaborative user-read-email playlist-modify-public "
+                "playlist-modify-private"
+            )
+            if preloaded_token and preloaded_token.get('scope'):
+                # Use the stored scope string so validate_token doesn't fail due
+                # to a mismatch.  We'll still re-authenticate later if we try to
+                # perform an operation that requires a missing scope.
+                scope = preloaded_token.get('scope')
+                logger.debug(f"Using existing cached scope for account {self.account_id}: {scope}")
+            else:
+                scope = default_scope
+
             # Create auth manager WITHOUT requesting authorization on init
+            # Pass the instance of cache_handler, not a new one
+            # IMPORTANT: open_browser=False prevents browser popup in headless mode
             auth_manager = SpotifyOAuth(
                 client_id=creds['client_id'],
                 client_secret=creds['client_secret'],
                 redirect_uri=creds['redirect_uri'],
                 scope=scope,
-                cache_handler=ConfigCacheHandler(self.account_id),
-                show_dialog=False
+                cache_handler=self.cache_handler,
+                show_dialog=False,
+                open_browser=False
             )
 
             try:
@@ -240,7 +272,11 @@ class SpotifyClient(SyncServiceProvider):
                     except Exception as e:
                         logger.warning(f"Failed to refresh Spotify token for account {self.account_id}: {e}")
                 else:
-                    logger.debug(f"No cached tokens found for account {self.account_id}. User authentication required.")
+                    # provide more context so we can diagnose why validate_token returned None
+                    logger.debug(
+                        f"Cached token invalid/absent for account {self.account_id} (after validation). "
+                        f"Raw token info: {cached}. User authentication required."
+                    )
             except Exception as e:
                 logger.debug(f"Error checking/refreshing cached token: {e}")
 

@@ -437,8 +437,18 @@ class ProviderRegistry:
 
     @classmethod
     def create_instance(cls, name: str, *args, **kwargs) -> ProviderBase:
+        # Double check against config manager to ensure latest state
+        # (The set_disabled_providers might be stale if config reloaded)
+        from core.settings import config_manager
+
+        # Check global disabled list
+        disabled = config_manager.get_disabled_providers()
+        if name.lower() in [d.lower() for d in disabled]:
+             raise ValueError(f"Provider '{name}' is disabled via config")
+
         if name.lower() in cls._disabled_providers:
             raise ValueError(f"Provider '{name}' is disabled")
+
         provider_cls = cls.get_provider_class(name)
         if not provider_cls:
             raise ValueError(f"Provider '{name}' not registered")
