@@ -2,6 +2,8 @@ version: '3.8'
 
 services:
   soulsync:
+    # build locally by default (comment out image line if using remote)
+    build: .
     image: boulderbadgedad/soulsync:latest
     container_name: soulsync-webui
     environment:
@@ -16,8 +18,10 @@ services:
       - SOULSYNC_CONFIG_DIR=/config
       # Set the data directory for database and logs
       - SOULSYNC_DATA_DIR=/data
-      # Set timezone
+      # Set timezone (override as needed)
       - TZ=America/New_York
+      # Logging verbosity (INFO, DEBUG, etc.)
+      - SOULSYNC_LOG_LEVEL=INFO
     ports:
       - "8008:8008"      # Main web app
       - "8888:8888"      # Spotify OAuth callback
@@ -44,7 +48,7 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8008/"]
       interval: 30s
       timeout: 10s
       retries: 3
