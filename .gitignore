@@ -69,9 +69,6 @@ database/config.db
 *.bak
 database/music_library.db
 data/music_library.db
-.python-version
-pyproject.toml
-uv.lock
 core/.encryption_key
 core/config.db
 tests/data/music_library.db
