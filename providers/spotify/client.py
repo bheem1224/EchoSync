@@ -12,7 +12,7 @@ from core.tiered_logger import get_logger
 from core.provider_base import ProviderBase
 from core.provider import SyncServiceProvider, get_provider_capabilities, ProviderRegistry
 from core.matching_engine.soul_sync_track import SoulSyncTrack
-from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
+from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 
 logger = get_logger("spotify_client")
 
@@ -123,8 +123,10 @@ class SpotifyClient(SyncServiceProvider):
     name = "spotify"
     category = "provider"
     supports_downloads = False
+    rate_limit = 5.0  # 5 requests/second rate limit
 
     def __init__(self, account_id: Optional[int] = None):
+        super().__init__()  # Initialize ProviderBase which sets up rate-limited HTTP client
         self.sp: Optional[spotipy.Spotify] = None
         self.user_id: Optional[str] = None
 
@@ -147,13 +149,6 @@ class SpotifyClient(SyncServiceProvider):
                     logger.warning(f"Failed to auto-detect spotify account: {e}")
 
         self.account_id: Optional[int] = account_id
-
-        # Initialize centralized HTTP client for Spotify (5 requests/second rate limit)
-        self._http = HttpClient(
-            provider='spotify',
-            retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
-            rate=RateLimitConfig(requests_per_second=5.0)
-        )
 
         self._setup_client()
         ProviderRegistry.register(SpotifyClient)

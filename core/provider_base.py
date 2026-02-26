@@ -26,9 +26,20 @@ class ProviderBase(ABC):
     enabled: bool = True  # Flag to enable/disable provider without deleting files
     capabilities: List[Capability] = []  # List of capabilities this provider supports
 
+    # Default rate limit (requests per second). Can be overridden by subclasses.
+    # None = unlimited/config driven.
+    rate_limit: float = None
+
     def __init__(self):
         """Initialize provider with HTTP client."""
-        self.http = RequestManager(self.name)
+        from core.request_manager import RequestManager, RateLimitConfig
+
+        # Configure rate limiting if specified by subclass
+        rate_config = None
+        if self.rate_limit:
+            rate_config = RateLimitConfig(requests_per_second=self.rate_limit)
+
+        self.http = RequestManager(self.name, rate=rate_config)
 
     @abstractmethod
     def authenticate(self, **kwargs) -> bool:
