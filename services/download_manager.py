@@ -1029,7 +1029,6 @@ def register_download_manager_job(interval_seconds: int | None = None):
         func=process_downloads,
         interval_seconds=interval_seconds,
         enabled=False,  # Disabled by default since _process_loop runs continuously
-        run_on_start=False, # Do not run immediately on boot
         tags=["soulsync", "downloads"],
         max_retries=3
     )

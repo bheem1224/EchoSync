@@ -54,19 +54,30 @@ class AccountManager:
 
     @staticmethod
     def get_service_config(service_name: str, key: str) -> Optional[Any]:
-        """Get global service configuration."""
-        # Special handling for legacy calls
-        if service_name == 'spotify':
-            return config_manager.get(f'spotify.{key}')
-        elif service_name == 'tidal':
-            return config_manager.get(f'tidal.{key}')
+        """Get global service configuration.
 
-        # Generic fallback using config_manager.get_service_credentials
-        creds = config_manager.get_service_credentials(service_name)
+        Modern credentials are stored in the encrypted *service_config* table and
+        exposed through :meth:`ConfigManager.get_service_credentials`.  Legacy
+        single‑account settings (e.g. ``spotify.client_id``) lived in the
+        in‑memory ``config_data`` dictionary and are accessible via
+        :meth:`ConfigManager.get`.
+
+        The previous implementation special‑cased ``spotify`` and ``tidal`` by
+        always reading through ``config_manager.get``, which meant that any
+        values saved with ``set_service_credentials`` (the UI path) were not
+        visible.  That’s why the web UI showed empty fields even though the
+        database contained valid entries.
+
+        To fix it we now always try the service_credentials first and fall back
+        to the legacy path only if nothing is found.  This keeps backwards
+        compatibility while ensuring the database values are picked up.
+        """
+        # Attempt to retrieve from the modern service_config table first
+        creds = config_manager.get_service_credentials(service_name) or {}
         if key in creds:
             return creds[key]
 
-        # Last resort: config_manager.get
+        # Legacy fallback (stored in config_data)
         return config_manager.get(f'{service_name}.{key}')
 
     @staticmethod
