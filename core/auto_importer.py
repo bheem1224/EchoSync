@@ -31,13 +31,15 @@ from typing import List, Optional, Dict
 from datetime import datetime
 import logging  # Add this import for logging levels
 
-from .matching_engine import parse_file, MatchService, MatchContext, SoulSyncTrack
+from .matching_engine import parse_file, SoulSyncTrack
+from services.match_service import MatchService, MatchContext
 from .post_processor import PostProcessor
 from core.tiered_logger import tiered_logger
 from core.error_handler import error_handler
 from core.tiered_logger import get_logger
 from core.media_scan_manager import MediaScanManager
 from core.job_queue import job_queue  # Use global singleton
+from database.music_database import get_database, ReviewTask
 
 logger = get_logger("auto_importer")
 
@@ -66,10 +68,10 @@ class AutoImporter:
 
         # Get source and destination from storage config
         source_key = self.auto_import_config.get("source_folder", "download_dir")
-        dest_key = self.auto_import_config.get("destination_folder", "transfer_dir")
+        dest_key = self.auto_import_config.get("destination_folder", "library_dir")
 
         self.source_folder = Path(self.storage_config.get(source_key, "./downloads")).expanduser().resolve()
-        self.destination_folder = Path(self.storage_config.get(dest_key, "./Transfer")).expanduser().resolve()
+        self.destination_folder = Path(self.storage_config.get(dest_key, "./library")).expanduser().resolve()
 
         self.file_pattern = self.auto_import_config.get("file_organization_pattern", "{Artist}/{Album}/{Title}")
         self.skip_if_tagged = self.auto_import_config.get("skip_if_already_tagged", True)

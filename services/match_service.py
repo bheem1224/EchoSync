@@ -19,10 +19,10 @@ from typing import List, Optional, Dict, Tuple
 from enum import Enum
 from dataclasses import dataclass
 
-from .soul_sync_track import SoulSyncTrack
-from .track_parser import TrackParser
-from .matching_engine import WeightedMatchingEngine, MatchResult
-from .scoring_profile import ProfileFactory, ProfileType, ScoringProfile
+from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.track_parser import TrackParser
+from core.matching_engine.matching_engine import WeightedMatchingEngine, MatchResult
+from core.matching_engine.scoring_profile import ProfileFactory, ProfileType, ScoringProfile
 from core.caching import provider_cache, get_cache
 
 logger = logging.getLogger(__name__)

@@ -8,8 +8,9 @@ const config = {
     // Proxy API requests to backend
     proxy: {
       '/api': {
-        target: 'http://localhost:8000', // HTTP for dev (HTTPS in production)
+        target: 'http://localhost:5000', // Standard HTTP backend
         changeOrigin: true,
+        secure: false,
         ws: false
       }
     }

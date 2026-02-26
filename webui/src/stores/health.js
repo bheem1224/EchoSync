@@ -8,12 +8,18 @@ function createHealthStore() {
     lastUpdated: null,
   });
 
+  let loading = false;
+  let pollInterval = null;
+
   async function load() {
+    if (loading) return;
+    loading = true;
     try {
       const response = await apiClient.get('/health');
       set({
         status: response.data.status,
         services: response.data.results || {},
+        summary: response.data.summary || { total: 0, operational: 0 },
         lastUpdated: new Date(),
       });
     } catch (error) {
@@ -21,20 +27,34 @@ function createHealthStore() {
       set({
         status: 'error',
         services: {},
+        summary: { total: 0, operational: 0 },
         lastUpdated: new Date(),
       });
+    } finally {
+      loading = false;
     }
   }
 
   function poll(interval = 30000) {
+    if (pollInterval) return pollInterval;
+
     load();
-    return setInterval(load, interval);
+    pollInterval = setInterval(load, interval);
+    return pollInterval;
+  }
+
+  function stop() {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
   }
 
   return {
     subscribe,
     load,
     poll,
+    stop,
   };
 }
 

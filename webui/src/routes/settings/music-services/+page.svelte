@@ -9,18 +9,28 @@
 
   onMount(async () => {
     try {
-      await providers.load();
-      // Filter providers that are music services (streaming, metadata, etc.)
+      // Use catch inside load() to allow partial success
+      await providers.load().catch(e => console.warn('Partial provider load failure:', e));
+
+      // Filter enabled providers that are music services
       const allProviders = Object.values($providers?.items ?? []);
-      musicServiceProviders = allProviders.filter(p => {
-        // Include providers that support playlists, sync, search, or are streaming services
-        return p.capabilities?.supports_playlists !== 'NONE' ||
-               p.capabilities?.supports_sync ||
-               p.capabilities?.search?.tracks ||
-               p.service_type === 'streaming' ||
-               p.service_type === 'metadata';
-      });
+
+      if (allProviders.length === 0) {
+          // If totally empty, maybe we really did fail hard
+          console.warn("No providers found.");
+      }
+
+      musicServiceProviders = allProviders
+        .filter(p => !p.disabled)
+        .filter(p => {
+          return p.capabilities?.supports_playlists !== 'NONE' ||
+                 p.capabilities?.supports_sync ||
+                 p.capabilities?.search?.tracks ||
+                 p.service_type === 'streaming' ||
+                 p.service_type === 'metadata';
+        });
     } catch (err) {
+      // Should be rare given the internal catch, but safety first
       loadError = 'Failed to load music services. Check backend connection.';
       console.error(err);
     }
@@ -53,9 +63,17 @@
     </div>
   {:else}
     <div class="services-container">
-      <!-- Always show Spotify and Tidal cards so users can configure credentials/accounts -->
-      <SpotifyServiceCard />
-      <TidalServiceCard />
+      {#if hasSpotify}
+        <SpotifyServiceCard />
+      {/if}
+      {#if hasTidal}
+        <TidalServiceCard />
+      {/if}
+      {#if !hasSpotify && !hasTidal}
+        <div class="empty-state">
+          <p>No music service providers are enabled. Enable one in the provider list first.</p>
+        </div>
+      {/if}
     </div>
   {/if}
 </section>

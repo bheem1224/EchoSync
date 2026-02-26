@@ -3,8 +3,8 @@
 Simple launcher for the SoulSync Flask API backend.
 
 Usage:
-    python run_api.py                    # Run with HTTPS (self-signed cert)
-    DISABLE_INTERNAL_HTTPS=true python run_api.py  # Run with HTTP (dev only)
+    python run_api.py                    # Run in standard HTTP mode (Production)
+    DEV_MODE=true python run_api.py      # Run in Development mode (Verbose logs, CORS, Debugger)
 """
 
 from dotenv import load_dotenv
@@ -13,26 +13,33 @@ import os
 
 # Load .env file from project root explicitly so SOULSYNC_* vars are available before config_manager
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=True)
-print("SOULSYNC_CONFIG_DIR env:", os.environ.get("SOULSYNC_CONFIG_DIR"))
-print("SOULSYNC_DATA_DIR env:", os.environ.get("SOULSYNC_DATA_DIR"))
+
+# Determine development mode
+dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
 
 from core.settings import config_manager
 
-# Setup logging from config.json settings (loaded via config_manager, which now honors .env)
+# Setup logging from config.json settings (loaded via config_manager)
+# DEV_MODE determines the log level override
 from core.tiered_logger import setup_logging
 logging_config = config_manager.get_logging_config()
-setup_logging(level=logging_config.get("level", "INFO"), log_file=logging_config.get("path"))
 
-from web.api_app import run_with_ssl, create_app
+# Task 2: DEV_MODE=true -> Level DEBUG. DEV_MODE=false -> Level INFO (Production).
+log_level = "DEBUG" if dev_mode else logging_config.get("level", "INFO")
+
+setup_logging(level=log_level, log_file=logging_config.get("path"))
+
+from web.api_app import create_app
 
 if __name__ == "__main__":
-    # Check if development mode is enabled (skips HTTPS)
-    dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
-    
     if dev_mode:
-        print("[DEV] Development mode enabled - skipping HTTPS")
-        app = create_app()
-        app.run(host="0.0.0.0", port=8000, debug=True)
+        print("[DEV] Development mode enabled - Log Level: DEBUG, CORS: *")
     else:
-        # Default: Run with ephemeral self-signed cert, fallback to HTTP on error
-        run_with_ssl(debug=True)
+        print("[PROD] Production mode - Log Level: INFO")
+
+    print(f"[API] Starting HTTP backend on http://0.0.0.0:5000/api")
+
+    app = create_app()
+    # Run in standard HTTP mode
+    # debug=True enables the reloader and debugger, which is only desired in DEV_MODE
+    app.run(host="0.0.0.0", port=5000, debug=dev_mode)

@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional, Any
 from core.tiered_logger import get_logger
 from core.settings import config_manager
-from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
+from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 from core.provider import get_provider_capabilities
 import time
 
@@ -15,8 +15,8 @@ class ListenBrainzClient:
         self.token = config_manager.get("listenbrainz.token", "")
         self.username = None
 
-        # Create HttpClient with rate limiting
-        self._http = HttpClient(
+        # Create RequestManager with rate limiting
+        self._http = RequestManager(
             provider='listenbrainz',
             retry=RetryConfig(max_retries=3, base_backoff=0.5),
             rate=RateLimitConfig(requests_per_second=2.0)
@@ -35,8 +35,8 @@ class ListenBrainzClient:
             self._validate_and_get_username()
 
     def _make_request_with_retry(self, method: str, url: str, max_retries: int = 3, **kwargs):
-        """Make HTTP request with retry logic - now delegated to HttpClient"""
-        # HttpClient already handles retries, so this is just a wrapper
+        """Make HTTP request with retry logic - now delegated to RequestManager"""
+        # RequestManager already handles retries, so this is just a wrapper
         try:
             if method.lower() == 'get':
                 response = self._http.get(url, **kwargs)

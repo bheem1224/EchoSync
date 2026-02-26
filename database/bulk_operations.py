@@ -3,8 +3,9 @@ Bulk import operations using SQLAlchemy 2.0 and LibraryManager.
 Efficiently ingests SoulSyncTrack objects into the database with caching.
 """
 from collections import defaultdict
-from typing import List, Dict, Optional, Tuple, Callable
+from typing import List, Dict, Optional, Tuple, Callable, Iterable
 from datetime import date, datetime
+import time
 
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import sessionmaker, Session
@@ -461,15 +462,18 @@ class LibraryManager:
 
     def bulk_import(
         self,
-        tracks: List[SoulSyncTrack],
-        progress_callback: Optional[Callable[[Dict[str, int]], None]] = None
+        tracks: Iterable[SoulSyncTrack],
+        progress_callback: Optional[Callable[[Dict[str, int]], None]] = None,
+        total_count: Optional[int] = None
     ) -> int:
         """
         Bulk import SoulSyncTrack objects into database.
         Uses local caching and batched commits for efficiency.
+        Supports generators to minimize memory usage.
 
         Args:
-            tracks: List of SoulSyncTrack objects
+            tracks: Iterable (list or generator) of SoulSyncTrack objects
+            total_count: Optional total count for progress reporting (if tracks is a generator)
 
         Returns:
             Number of tracks processed (new + updated)
@@ -478,7 +482,14 @@ class LibraryManager:
             logger.warning("No tracks provided for bulk import")
             return 0
 
-        logger.info(f"Starting bulk import of {len(tracks)} tracks")
+        # Try to determine length if not provided
+        if total_count is None:
+            try:
+                total_count = len(tracks)
+            except TypeError:
+                total_count = 0  # Unknown total
+
+        logger.info(f"Starting bulk import of {total_count if total_count > 0 else 'unknown number of'} tracks")
 
         session = self.session_factory()
         imported_count = 0
@@ -491,14 +502,18 @@ class LibraryManager:
 
         try:
             for idx, track_data in enumerate(tracks):
+                # yield occasionally to allow other threads to run and avoid hogging the GIL
+                if idx and idx % 10 == 0:
+                    import time
+                    time.sleep(0)
+
                 try:
                     # Skip tracks with missing required fields
                     if not track_data.title or not track_data.title.strip():
                         failed_count += 1
                         logger.warning(
-                            "Skipping track %s/%s due to missing title: artist='%s' album='%s'",
+                            "Skipping track %s due to missing title: artist='%s' album='%s'",
                             idx + 1,
-                            len(tracks),
                             track_data.artist_name,
                             track_data.album_title,
                         )
@@ -507,9 +522,8 @@ class LibraryManager:
                     if not track_data.artist_name or not track_data.artist_name.strip():
                         failed_count += 1
                         logger.warning(
-                            "Skipping track %s/%s due to missing artist: title='%s'",
+                            "Skipping track %s due to missing artist: title='%s'",
                             idx + 1,
-                            len(tracks),
                             track_data.title,
                         )
                         continue
@@ -517,9 +531,8 @@ class LibraryManager:
                     # Only log every 100 tracks to reduce spam (batch commits log at that interval)
                     if (idx + 1) % 100 == 0 or idx == 0:
                         logger.debug(
-                            "Processing track %s/%s: title='%s' artist='%s' album='%s'",
+                            "Processing track %s: title='%s' artist='%s' album='%s'",
                             idx + 1,
-                            len(tracks),
                             track_data.title,
                             track_data.artist_name,
                             track_data.album_title,
@@ -576,7 +589,7 @@ class LibraryManager:
                 if (idx + 1) % BATCH_SIZE == 0:
                     session.commit()
                     logger.info(
-                        f"Batch committed: {idx + 1}/{len(tracks)} tracks processed"
+                        f"Batch committed: {idx + 1} tracks processed"
                     )
 
                 # Emit progress updates periodically (every 25 items and on each batch commit)
@@ -584,7 +597,7 @@ class LibraryManager:
                     try:
                         progress_callback({
                             "processed": idx + 1,
-                            "total": len(tracks),
+                            "total": total_count,
                             "imported": imported_count,
                             "updated": updated_count,
                             "failed": failed_count,
@@ -612,8 +625,8 @@ class LibraryManager:
             if progress_callback:
                 try:
                     progress_callback({
-                        "processed": len(tracks),
-                        "total": len(tracks),
+                        "processed": imported_count + updated_count + failed_count,
+                        "total": total_count,
                         "imported": imported_count,
                         "updated": updated_count,
                         "failed": failed_count,

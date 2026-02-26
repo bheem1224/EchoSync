@@ -3,6 +3,7 @@
   import Sidebar from '../components/Sidebar.svelte';
   import BottomNav from '../components/BottomNav.svelte';
   import Toast from '../components/Toast.svelte';
+  import AudioPlayer from '../components/AudioPlayer.svelte';
   import { providers } from '../stores/providers';
   import '../app.css';
 
@@ -27,6 +28,7 @@
     </main>
     <BottomNav />
   {/if}
+  <AudioPlayer />
   <Toast />
 </div>
 
@@ -41,6 +43,7 @@
   .app-content {
     flex: 1;
     padding: 24px;
+    padding-bottom: 100px; /* Add padding for player */
   }
 
   @media (max-width: 900px) {
@@ -50,6 +53,7 @@
 
     .app-content {
       padding: 16px;
+      padding-bottom: 140px; /* Add padding for player + bottom nav */
     }
   }
 </style>

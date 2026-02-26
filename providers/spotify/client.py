@@ -5,14 +5,14 @@ try:
     from spotipy.cache_handler import CacheHandler
 except Exception:
     CacheHandler = object
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Iterator
 import time
 from dataclasses import dataclass
 from core.tiered_logger import get_logger
 from core.provider_base import ProviderBase
 from core.provider import SyncServiceProvider, get_provider_capabilities, ProviderRegistry
 from core.matching_engine.soul_sync_track import SoulSyncTrack
-from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
+from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 
 logger = get_logger("spotify_client")
 
@@ -46,7 +46,10 @@ class ConfigCacheHandler(CacheHandler):
             expires_at = token_data.get('expires_at')
             scope = token_data.get('scope', "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private")
             
-            logger.debug(f"Loaded token data for account {self.account_id}: access={bool(access_token)}, refresh={bool(refresh_token)}, expires={expires_at}")
+            logger.debug(
+                f"Loaded token data for account {self.account_id}: access={bool(access_token)}, "
+                f"refresh={bool(refresh_token)}, expires={expires_at}, scope={scope}"
+            )
             
             # Return full token info - Spotipy will handle refresh if needed
             return {
@@ -120,8 +123,10 @@ class SpotifyClient(SyncServiceProvider):
     name = "spotify"
     category = "provider"
     supports_downloads = False
+    rate_limit = 5.0  # 5 requests/second rate limit
 
     def __init__(self, account_id: Optional[int] = None):
+        super().__init__()  # Initialize ProviderBase which sets up rate-limited HTTP client
         self.sp: Optional[spotipy.Spotify] = None
         self.user_id: Optional[str] = None
 
@@ -130,14 +135,20 @@ class SpotifyClient(SyncServiceProvider):
             from core.settings import config_manager
             account_id = config_manager.get('active_spotify_account_id')
 
-        self.account_id: Optional[int] = account_id
+            # If still None, try to find the first available account
+            if account_id is None:
+                try:
+                    from sdk.storage_service import get_storage_service
+                    storage = get_storage_service()
+                    accounts = storage.list_accounts('spotify')
+                    if accounts:
+                        # Pick the first one
+                        account_id = accounts[0]['id']
+                        logger.info(f"No active account set, defaulting to first found account: {account_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to auto-detect spotify account: {e}")
 
-        # Initialize centralized HTTP client for Spotify (5 requests/second rate limit)
-        self._http = HttpClient(
-            provider='spotify',
-            retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
-            rate=RateLimitConfig(requests_per_second=5.0)
-        )
+        self.account_id: Optional[int] = account_id
 
         self._setup_client()
         ProviderRegistry.register(SpotifyClient)
@@ -198,19 +209,48 @@ class SpotifyClient(SyncServiceProvider):
             # Updated scope to include write permissions
             scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
 
+            # Initialize cache handler and pre-load token to ensure state is primed
+            self.cache_handler = ConfigCacheHandler(self.account_id)
+            preloaded_token = self.cache_handler.get_cached_token()
+            logger.debug(f"DEBUG: Pre-loaded token info for account {self.account_id}: {bool(preloaded_token)}")
+
+            # Determine which scopes to pass to SpotifyOAuth.  When we reload
+            # an existing account that already has saved tokens, we should use
+            # the scopes that were granted previously rather than forcing the
+            # full set of scopes.  If we always request the full permission set
+            # on init then SpotifyOAuth.validate_token() will reject cached
+            # tokens that lack newly-added scopes (see issue where a second
+            # account with read-only scopes was treated as unauthenticated).
+            default_scope = (
+                "user-library-read user-read-private playlist-read-private "
+                "playlist-read-collaborative user-read-email playlist-modify-public "
+                "playlist-modify-private"
+            )
+            if preloaded_token and preloaded_token.get('scope'):
+                # Use the stored scope string so validate_token doesn't fail due
+                # to a mismatch.  We'll still re-authenticate later if we try to
+                # perform an operation that requires a missing scope.
+                scope = preloaded_token.get('scope')
+                logger.debug(f"Using existing cached scope for account {self.account_id}: {scope}")
+            else:
+                scope = default_scope
+
             # Create auth manager WITHOUT requesting authorization on init
+            # Pass the instance of cache_handler, not a new one
+            # IMPORTANT: open_browser=False prevents browser popup in headless mode
             auth_manager = SpotifyOAuth(
                 client_id=creds['client_id'],
                 client_secret=creds['client_secret'],
                 redirect_uri=creds['redirect_uri'],
                 scope=scope,
-                cache_handler=ConfigCacheHandler(self.account_id),
-                show_dialog=False
+                cache_handler=self.cache_handler,
+                show_dialog=False,
+                open_browser=False
             )
 
             try:
                 # Check if we have a valid cached token
-                cached = auth_manager.get_cached_token()
+                cached = auth_manager.cache_handler.get_cached_token()
                 if cached and cached.get('access_token'):
                     # We have a valid access token
                     logger.info(f"Using valid cached access token for Spotify account {self.account_id}")
@@ -227,7 +267,11 @@ class SpotifyClient(SyncServiceProvider):
                     except Exception as e:
                         logger.warning(f"Failed to refresh Spotify token for account {self.account_id}: {e}")
                 else:
-                    logger.debug(f"No cached tokens found for account {self.account_id}. User authentication required.")
+                    # provide more context so we can diagnose why validate_token returned None
+                    logger.debug(
+                        f"Cached token invalid/absent for account {self.account_id} (after validation). "
+                        f"Raw token info: {cached}. User authentication required."
+                    )
             except Exception as e:
                 logger.debug(f"Error checking/refreshing cached token: {e}")
 
@@ -261,7 +305,7 @@ class SpotifyClient(SyncServiceProvider):
             if not auth_manager:
                 return False
                 
-            cached_token = auth_manager.get_cached_token()
+            cached_token = auth_manager.cache_handler.get_cached_token()
             if not cached_token:
                 return False
                 
@@ -416,21 +460,22 @@ class SpotifyClient(SyncServiceProvider):
     # SyncServiceProvider Implementations
     # ==========================================
 
-    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_user_playlists(self, user_id: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+        """
+        Yield user playlists page by page to conserve memory.
+        """
         if not self.is_authenticated():
-            return []
+            return
         
         if not self._ensure_user_id():
-            return []
+            return
             
-        playlists = []
         try:
+            # Use generator to yield playlists
             results = self.sp.current_user_playlists(limit=50)
             while results:
                 for item in results['items']:
-                    # Filter for owned or collaborative playlists if needed,
-                    # but usually we want to see everything available to the user.
-                    playlists.append({
+                    yield {
                         'id': item['id'],
                         'name': item['name'],
                         'description': item.get('description'),
@@ -438,12 +483,15 @@ class SpotifyClient(SyncServiceProvider):
                         'owner': item['owner']['display_name'],
                         'public': item.get('public'),
                         'collaborative': item.get('collaborative')
-                    })
-                results = self.sp.next(results) if results['next'] else None
-            return playlists
+                    }
+                # Check for next page
+                if results['next']:
+                    results = self.sp.next(results)
+                else:
+                    break
         except Exception as e:
             logger.error(f"Error getting user playlists: {e}")
-            return []
+            return
 
     def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
         if not self.is_authenticated():

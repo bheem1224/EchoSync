@@ -40,6 +40,7 @@ from web.routes.accounts import bp as accounts_bp
 from web.routes.media_server import bp as media_server_bp
 from web.routes.library import bp as library_bp
 from web.routes.metadata import bp as metadata_bp
+from web.routes.manager import bp as manager_bp
 
 from core.plugin_loader import PluginLoader
 from core.settings import config_manager
@@ -62,7 +63,24 @@ def create_app() -> Flask:
 
     # Enable CORS for frontend (if flask-cors is installed)
     if CORS_AVAILABLE:
-        CORS(app, origins=['http://localhost:5173', 'https://localhost:5173'])
+        dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+
+        if dev_mode:
+            # Allow all origins in DEV_MODE
+            CORS(app, resources={r"/*": {"origins": "*"}})
+            print("[DEV] CORS enabled for ALL origins")
+        else:
+            # Production: Allow origins defined in config or default to same-origin
+            # If no cors_origins config is present, we don't enable global CORS,
+            # effectively enforcing same-origin policy (unless handled by proxy).
+            allowed_origins = config_manager.get('cors_origins', [])
+            if allowed_origins:
+                 CORS(app, origins=allowed_origins)
+            else:
+                 # Minimal fallback for typical local setups if needed,
+                 # or simply do nothing to enforce same-origin.
+                 # User requested "default to same-origin".
+                 pass
 
     # Register Core API blueprints
     app.register_blueprint(providers_bp)
@@ -76,6 +94,7 @@ def create_app() -> Flask:
     app.register_blueprint(media_server_bp)
     app.register_blueprint(library_bp)
     app.register_blueprint(metadata_bp)
+    app.register_blueprint(manager_bp)
     
     # Initialize Plugin Loader
     # Determine app root (parent of 'web/')
@@ -135,11 +154,18 @@ def create_app() -> Flask:
         print(f"[WARN] Failed to register auto import service: {e}")
 
     # Start Backend Services (Download Manager, Monitors) in a separate thread
-    # We use WERKZEUG_RUN_MAIN to ensure we only run in the reloader child process
-    # to avoid double execution (one in watcher, one in worker).
-    # Since run_api.py defaults to debug=True (reloader enabled), this is the safest check.
+    # In debug mode (reloader enabled), WERKZEUG_RUN_MAIN is set in the child process.
+    # In production mode (no reloader), WERKZEUG_RUN_MAIN is not set.
+    # We want to run services in:
+    # 1. Production mode (DEV_MODE=false)
+    # 2. Debug mode's child process (DEV_MODE=true AND WERKZEUG_RUN_MAIN="true")
     global _backend_started
-    if os.environ.get("WERKZEUG_RUN_MAIN") == "true" and not _backend_started:
+
+    dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+    is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+    should_start = (not dev_mode) or is_reloader_child
+
+    if should_start and not _backend_started:
         def run_backend_services():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -157,8 +183,6 @@ def create_app() -> Flask:
 
     return app
 
-
 if __name__ == "__main__":
-    print("[API] Starting HTTP backend on http://0.0.0.0:8000/api")
     app = create_app()
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)

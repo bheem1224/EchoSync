@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Any
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.provider import SyncServiceProvider, get_provider_capabilities
-from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
+from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 
 logger = get_logger("tidal_client")
 
@@ -61,8 +61,8 @@ class TidalClient(SyncServiceProvider):
         self.auth_url = "https://login.tidal.com/authorize"
         self.token_url = "https://auth.tidal.com/v1/oauth2/token"
         self.redirect_uri = "http://127.0.0.1:8008/tidal/callback"
-        # Initialize centralized HTTP client for Tidal (2 requests/second rate limit)
-        self._http = HttpClient(
+        # Initialize centralized RequestManager for Tidal (2 requests/second rate limit)
+        self._http = RequestManager(
             provider='tidal',
             retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
             rate=RateLimitConfig(requests_per_second=2.0)
