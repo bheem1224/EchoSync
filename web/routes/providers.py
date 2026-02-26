@@ -1,6 +1,8 @@
 from flask import Blueprint, jsonify, request
 from web.services.provider_registry import list_providers, get_providers_for_capability, get_provider
 from core.tiered_logger import get_logger
+from core.settings import config_manager
+from core.account_manager import AccountManager
 
 logger = get_logger("providers_route")
 bp = Blueprint("providers", __name__, url_prefix="/api/providers")
@@ -29,7 +31,6 @@ def list_download_clients():
     """
     try:
         from core.provider import ProviderRegistry, CAPABILITY_REGISTRY
-        from core.settings import config_manager
         
         active_client = config_manager.get_active_download_client()
         download_clients = []
@@ -67,7 +68,6 @@ def list_download_clients():
 def get_active_download_client():
     """Get the currently active download client."""
     try:
-        from core.settings import config_manager
         active = config_manager.get_active_download_client()
         return jsonify({'active_client': active}), 200
     except Exception as e:
@@ -78,7 +78,6 @@ def get_active_download_client():
 def set_active_download_client():
     """Set the active download client."""
     try:
-        from core.settings import config_manager
         from core.provider import ProviderRegistry
 
         data = request.get_json(silent=True) or {}
@@ -135,10 +134,7 @@ def get_provider_playlists(provider_name):
         multi_account_providers = ['spotify', 'tidal']
         if provider_name in multi_account_providers:
             try:
-                from sdk.storage_service import get_storage_service
-                storage = get_storage_service()
-
-                accounts = storage.list_accounts(provider_name)
+                accounts = AccountManager.list_accounts(provider_name)
 
                 if not accounts:
                     # No accounts configured
@@ -249,21 +245,12 @@ def get_provider_settings(provider_name):
     The storage service handles decryption automatically via config.db.
     """
     try:
-        from sdk.storage_service import get_storage_service
-        storage = get_storage_service()
-        
-        # Ensure service exists in config.db
-        try:
-            storage.ensure_service(provider_name)
-        except Exception:
-            return jsonify({'error': f'Provider {provider_name} not found'}), 404
-
         # Retrieve a known set of provider config keys (client_id, client_secret, redirect_uri)
-        # Storage service returns decrypted values when present in config.db
+        # AccountManager returns decrypted values when present
         keys_of_interest = ['client_id', 'client_secret', 'redirect_uri']
         config = {}
         for key in keys_of_interest:
-            config[key] = storage.get_service_config(provider_name, key)
+            config[key] = AccountManager.get_service_config(provider_name, key)
         
         # Mock schema for dynamic UI generation (should eventually come from provider class)
         schema = _get_mock_schema(provider_name)
@@ -292,25 +279,23 @@ def update_provider_settings(provider_name):
         # SECURITY: Log only that we're updating, not the actual credentials
         logger.info(f"Updating settings for provider: {provider_name}")
 
-        # Use the storage service so credentials are saved into the encrypted config.db
-        from sdk.storage_service import get_storage_service
-        storage = get_storage_service()
-
         try:
-            # Ensure service exists in config.db
-            storage.ensure_service(provider_name)
-
             # Default sensitive keys
-            sensitive_keys = ['client_secret', 'access_token', 'refresh_token']
+            sensitive_keys = ['client_secret', 'access_token', 'refresh_token', 'token', 'password', 'api_key']
 
             all_ok = True
+            credentials = {}
             for k, v in payload.items():
-                is_sensitive = k in sensitive_keys
-                ok = storage.set_service_config(provider_name, k, (v or '').strip() if isinstance(v, str) else v, is_sensitive=is_sensitive)
-                if not ok:
-                    all_ok = False
+                credentials[k] = (v or '').strip() if isinstance(v, str) else v
 
-            if all_ok:
+            # Save via config_manager
+            ok = config_manager.set_service_credentials(
+                provider_name,
+                credentials,
+                sensitive_keys=sensitive_keys
+            )
+
+            if ok:
                 logger.info(f"Successfully updated {provider_name} settings in config.db")
                 return jsonify({'success': True, 'message': f'{provider_name} credentials saved securely'}), 200
             else:
@@ -437,8 +422,6 @@ def get_provider_details(provider_name):
 def get_provider_credentials(provider_name):
     """Get credentials/configuration for a specific provider."""
     try:
-        from core.settings import config_manager
-        
         # Get service credentials from config database
         credentials = config_manager.get_service_credentials(provider_name)
         
@@ -454,7 +437,6 @@ def get_provider_credentials(provider_name):
 def set_provider_credentials(provider_name):
     """Set credentials/configuration for a specific provider."""
     try:
-        from core.settings import config_manager
         from database.config_database import get_config_database
         
         data = request.get_json(silent=True) or {}

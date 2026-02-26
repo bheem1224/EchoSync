@@ -257,7 +257,7 @@ Located in `core/job_queue.py`
 
 **Jobs Registered**:
 - `auto_import_scan` (5 min interval): Scan downloads folder, identify new files, tag and move to library
-- `download_manager_status` (5 min interval): Check download queue, process failed downloads
+- `download_manager_status` (6 hour interval): Status placeholder for the download manager (job is disabled by default).  The interval can be overridden via `download.status_interval_seconds` in the configuration file, and the service itself can be prevented from starting on boot by setting `download.start_on_boot` to `false`.
 - `health_check_*` (5 min intervals): Monitor provider health and availability
 - `database_update` (hourly): Clean up stale entries, update metadata
 - Sync jobs: Per-provider playlist sync on user-defined schedule

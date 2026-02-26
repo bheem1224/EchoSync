@@ -45,11 +45,8 @@ from web.routes.manager import bp as manager_bp
 from core.plugin_loader import PluginLoader
 from core.settings import config_manager
 from core.job_queue import start_job_queue
-from backend_entry import start_services
 import threading
 import asyncio
-
-_backend_started = False
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -71,15 +68,10 @@ def create_app() -> Flask:
             print("[DEV] CORS enabled for ALL origins")
         else:
             # Production: Allow origins defined in config or default to same-origin
-            # If no cors_origins config is present, we don't enable global CORS,
-            # effectively enforcing same-origin policy (unless handled by proxy).
             allowed_origins = config_manager.get('cors_origins', [])
             if allowed_origins:
                  CORS(app, origins=allowed_origins)
             else:
-                 # Minimal fallback for typical local setups if needed,
-                 # or simply do nothing to enforce same-origin.
-                 # User requested "default to same-origin".
                  pass
 
     # Register Core API blueprints
@@ -97,7 +89,6 @@ def create_app() -> Flask:
     app.register_blueprint(manager_bp)
     
     # Initialize Plugin Loader
-    # Determine app root (parent of 'web/')
     app_root = Path(__file__).parent.parent
     loader = PluginLoader(app_root)
     
@@ -135,7 +126,9 @@ def create_app() -> Flask:
     
     try:
         from services.download_manager import register_download_manager_job
-        register_download_manager_job()
+        # interval can be overridden via configuration (seconds)
+        interval = config_manager.get('download', {}).get('status_interval_seconds')
+        register_download_manager_job(interval_seconds=interval)
     except Exception as e:
         print(f"[WARN] Failed to register download manager job: {e}")
     
@@ -153,33 +146,7 @@ def create_app() -> Flask:
     except Exception as e:
         print(f"[WARN] Failed to register auto import service: {e}")
 
-    # Start Backend Services (Download Manager, Monitors) in a separate thread
-    # In debug mode (reloader enabled), WERKZEUG_RUN_MAIN is set in the child process.
-    # In production mode (no reloader), WERKZEUG_RUN_MAIN is not set.
-    # We want to run services in:
-    # 1. Production mode (DEV_MODE=false)
-    # 2. Debug mode's child process (DEV_MODE=true AND WERKZEUG_RUN_MAIN="true")
-    global _backend_started
-
-    dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
-    is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
-    should_start = (not dev_mode) or is_reloader_child
-
-    if should_start and not _backend_started:
-        def run_backend_services():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(start_services())
-            except Exception as e:
-                print(f"[ERROR] Backend services failed: {e}")
-            finally:
-                loop.close()
-
-        backend_thread = threading.Thread(target=run_backend_services, daemon=True, name="BackendServices")
-        backend_thread.start()
-        _backend_started = True
-        print("[INFO] Backend services thread started")
+    # Background services are now started by run_api.py
 
     return app
 

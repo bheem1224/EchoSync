@@ -10,7 +10,7 @@ Adheres to Track-centric architecture.
 from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
-from sdk.storage_service import get_storage_service
+from database import get_database
 from core.provider_base import ProviderBase
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 
@@ -145,9 +145,8 @@ def convert_navidrome_track_to_soulsync(navidrome_track) -> Optional[SoulSyncTra
 
 class NavidromeAdapter:
     def __init__(self, navidrome_client=None):
-        storage = get_storage_service()
-        db = storage.get_music_database()
-        super().__init__(db=db, provider_type=ProviderType.NAVIDROME)
+        self.db = get_database()
+        super().__init__(db=self.db, provider_type=ProviderType.NAVIDROME)
         self.navidrome = navidrome_client
 
     # Field contracts

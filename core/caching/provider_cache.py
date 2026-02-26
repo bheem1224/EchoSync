@@ -11,7 +11,7 @@ This module provides:
 import functools
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional, TypeVar, cast
 from pathlib import Path
 import hashlib
@@ -113,7 +113,7 @@ class ProviderCache:
             json_value = json.dumps(value, default=str)
 
             # Calculate expiration time
-            expires_at = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
 
             query = text("""
                 INSERT OR REPLACE INTO parsed_tracks

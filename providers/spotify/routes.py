@@ -3,6 +3,7 @@
 from flask import Blueprint, request, jsonify, redirect
 from core.tiered_logger import get_logger
 from core.settings import config_manager
+from core.account_manager import AccountManager
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import time
@@ -13,29 +14,8 @@ bp = Blueprint("spotify_routes", __name__, url_prefix="/api/spotify")
 
 def _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_uri):
     """Normalize legacy redirect URIs and seed credentials into the encrypted config DB."""
-    try:
-        # Normalize old localhost:8888 callback URIs to our Flask callback
-        if redirect_uri and (
-            "127.0.0.1:8888/callback" in redirect_uri or
-            "localhost:8888/callback" in redirect_uri or
-            redirect_uri.rstrip('/').endswith(":8888/callback")
-        ):
-            redirect_uri = "http://127.0.0.1:8008/api/spotify/callback"
-
-        # Seed into storage if we have app credentials
-        if client_id and client_secret:
-            try:
-                storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
-                storage.set_service_config('spotify', 'client_id', client_id, is_sensitive=False)
-                storage.set_service_config('spotify', 'client_secret', client_secret, is_sensitive=True)
-                if redirect_uri:
-                    storage.set_service_config('spotify', 'redirect_uri', redirect_uri, is_sensitive=False)
-            except Exception as e:
-                logger.warning(f"Failed to seed Spotify service config into config.db: {e}")
-
-    except Exception:
-        # Don't block auth on normalization failures
-        pass
+    # Stubbed - logic moved to core/settings.py or initialization if needed
+    pass
 
 
 @bp.get('/auth')
@@ -53,24 +33,10 @@ def begin_auth():
         if not account_id:
             return jsonify({'error': 'account_id parameter is required'}), 400
         
-        # Read client credentials from storage (service config)
-        from sdk.storage_service import get_storage_service
-        storage = get_storage_service()
-
-        client_id = storage.get_service_config('spotify', 'client_id')
-        client_secret = storage.get_service_config('spotify', 'client_secret')
-        redirect_uri = storage.get_service_config('spotify', 'redirect_uri') or None
-
-        # Fallback to legacy config.json via config_manager and seed into storage
-        if not client_id or not client_secret or not redirect_uri:
-            try:
-                spotify_conf = config_manager.get_spotify_config()
-                client_id = client_id or spotify_conf.get('client_id')
-                client_secret = client_secret or spotify_conf.get('client_secret')
-                redirect_uri = redirect_uri or spotify_conf.get('redirect_uri') or None
-                _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_uri)
-            except Exception:
-                pass
+        # Read client credentials
+        client_id = AccountManager.get_service_config('spotify', 'client_id')
+        client_secret = AccountManager.get_service_config('spotify', 'client_secret')
+        redirect_uri = AccountManager.get_service_config('spotify', 'redirect_uri') or None
 
         if not client_id or not client_secret or not redirect_uri:
             return jsonify({'error': 'Spotify client_id, client_secret, or redirect_uri not configured'}), 400
@@ -121,23 +87,9 @@ def oauth_callback():
         except (ValueError, TypeError):
             account_id = None
 
-        from sdk.storage_service import get_storage_service
-        storage = get_storage_service()
-
-        client_id = storage.get_service_config('spotify', 'client_id')
-        client_secret = storage.get_service_config('spotify', 'client_secret')
-        redirect_uri = storage.get_service_config('spotify', 'redirect_uri') or None
-
-        # Fallback to legacy config.json and seed storage if needed
-        if not client_id or not client_secret or not redirect_uri:
-            try:
-                spotify_conf = config_manager.get_spotify_config()
-                client_id = client_id or spotify_conf.get('client_id')
-                client_secret = client_secret or spotify_conf.get('client_secret')
-                redirect_uri = redirect_uri or spotify_conf.get('redirect_uri') or None
-                _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_uri)
-            except Exception:
-                pass
+        client_id = AccountManager.get_service_config('spotify', 'client_id')
+        client_secret = AccountManager.get_service_config('spotify', 'client_secret')
+        redirect_uri = AccountManager.get_service_config('spotify', 'redirect_uri') or None
 
         if not client_id or not client_secret:
             return jsonify({"error": "Spotify client_id/client_secret not configured"}), 400
@@ -163,18 +115,26 @@ def oauth_callback():
 
         # If no account_id passed, create a new account entry
         if not account_id:
-            account_id = storage.ensure_account('spotify', account_name=f"spotify_{int(time.time())}")
+            new_acc = config_manager.add_spotify_account({'name': f"spotify_{int(time.time())}"})
+            account_id = new_acc.get('id')
 
         # Persist tokens and mark authenticated
         try:
-            storage.save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at, scope)
-            storage.mark_account_authenticated(account_id)
+            token_update = {
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'token_type': 'Bearer',
+                'expires_at': expires_at,
+                'scope': scope,
+                'is_authenticated': True
+            }
+            AccountManager.save_account_token('spotify', account_id, token_update)
         except Exception as e:
             logger.error(f"Failed to persist tokens to config.db: {e}")
 
         # Optionally activate the account
         try:
-            storage.toggle_account_active(account_id, True)
+            AccountManager.update_account('spotify', account_id, {'is_active': True})
         except Exception:
             pass
 
@@ -182,7 +142,7 @@ def oauth_callback():
         # If a `webui.base_url` is configured in storage, use that as the base.
         # Otherwise default to the local dev frontend URL so the browser returns
         # to the Svelte app instead of the Flask backend (which would 404).
-        ui_base = storage.get_service_config('webui', 'base_url')
+        ui_base = AccountManager.get_service_config('webui', 'base_url')
         if ui_base:
             ui_redirect = ui_base.rstrip('/') + '/settings/music-services'
         else:

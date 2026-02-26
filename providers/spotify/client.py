@@ -13,6 +13,8 @@ from core.provider_base import ProviderBase
 from core.provider import SyncServiceProvider, get_provider_capabilities, ProviderRegistry
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
+from core.settings import config_manager
+from core.account_manager import AccountManager
 
 logger = get_logger("spotify_client")
 
@@ -33,9 +35,7 @@ class ConfigCacheHandler(CacheHandler):
                 logger.debug("No account_id specified, cannot load token")
                 return None
             
-            from sdk.storage_service import get_storage_service
-            storage = get_storage_service()
-            token_data = storage.get_account_token(self.account_id)
+            token_data = AccountManager.get_account_token('spotify', self.account_id)
             
             if not token_data:
                 logger.debug(f"No token data found in storage for account {self.account_id}")
@@ -78,9 +78,6 @@ class ConfigCacheHandler(CacheHandler):
                 logger.warning(f"No token_info provided to save for account {self.account_id}")
                 return
             
-            from sdk.storage_service import get_storage_service
-            storage = get_storage_service()
-            
             access_token = token_info.get('access_token')
             refresh_token = token_info.get('refresh_token')
             expires_at = token_info.get('expires_at')
@@ -92,28 +89,26 @@ class ConfigCacheHandler(CacheHandler):
             
             # If no refresh token provided, try to preserve existing one
             if not refresh_token:
-                existing_token = storage.get_account_token(self.account_id)
+                existing_token = AccountManager.get_account_token('spotify', self.account_id)
                 if existing_token and existing_token.get('refresh_token'):
                     refresh_token = existing_token.get('refresh_token')
                     logger.debug(f"Preserving existing refresh_token for account {self.account_id}")
             
             logger.debug(f"Saving token for account {self.account_id}: access={bool(access_token)}, refresh={bool(refresh_token)}, expires={expires_at}")
             
-            success = storage.save_account_token(
-                account_id=self.account_id,
-                access_token=access_token,
-                refresh_token=refresh_token,
-                token_type='Bearer',
-                expires_at=expires_at,
-                scope=scope
-            )
+            # Construct dictionary for save_account_token
+            token_data = {
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'token_type': 'Bearer',
+                'expires_at': expires_at,
+                'scope': scope
+            }
+
+            success = AccountManager.save_account_token('spotify', self.account_id, token_data)
             
             if success:
                 logger.info(f"Successfully persisted Spotify tokens for account {self.account_id}")
-                try:
-                    storage.mark_account_authenticated(self.account_id)
-                except Exception as e:
-                    logger.debug(f"Failed to mark account as authenticated: {e}")
             else:
                 logger.error(f"Failed to save Spotify tokens for account {self.account_id}")
         except Exception as e:
@@ -132,15 +127,12 @@ class SpotifyClient(SyncServiceProvider):
 
         # Auto-detect active account if not provided
         if account_id is None:
-            from core.settings import config_manager
             account_id = config_manager.get('active_spotify_account_id')
 
             # If still None, try to find the first available account
             if account_id is None:
                 try:
-                    from sdk.storage_service import get_storage_service
-                    storage = get_storage_service()
-                    accounts = storage.list_accounts('spotify')
+                    accounts = AccountManager.list_accounts('spotify')
                     if accounts:
                         # Pick the first one
                         account_id = accounts[0]['id']
@@ -196,11 +188,9 @@ class SpotifyClient(SyncServiceProvider):
     def _setup_client(self):
         try:
             creds = {'client_id': None, 'client_secret': None, 'redirect_uri': None}
-            from sdk.storage_service import get_storage_service
-            storage = get_storage_service()
-            creds['client_id'] = storage.get_service_config('spotify', 'client_id')
-            creds['client_secret'] = storage.get_service_config('spotify', 'client_secret')
-            creds['redirect_uri'] = storage.get_service_config('spotify', 'redirect_uri')
+            creds['client_id'] = AccountManager.get_service_config('spotify', 'client_id')
+            creds['client_secret'] = AccountManager.get_service_config('spotify', 'client_secret')
+            creds['redirect_uri'] = AccountManager.get_service_config('spotify', 'redirect_uri')
 
             if not creds['client_id'] or not creds['client_secret']:
                 logger.warning("Spotify credentials not configured in config.db")
@@ -331,10 +321,8 @@ class SpotifyClient(SyncServiceProvider):
         if self.sp is not None:
              return True
         # Check storage if we can potentially configure it
-        from sdk.storage_service import get_storage_service
-        storage = get_storage_service()
-        return bool(storage.get_service_config('spotify', 'client_id') and
-                    storage.get_service_config('spotify', 'client_secret'))
+        return bool(AccountManager.get_service_config('spotify', 'client_id') and
+                    AccountManager.get_service_config('spotify', 'client_secret'))
 
     def get_logo_url(self) -> str:
         return "/static/img/spotify_logo.png"

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pathlib import Path
 from typing import Dict, Generator, List, Optional, Tuple
 
@@ -32,6 +32,9 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
+# Replace deprecated datetime.utcnow() with aware datetime.now(timezone.utc)
+def utcnow():
+    return datetime.now(timezone.utc)
 
 class Base(DeclarativeBase):
     """Base metadata class for SQLAlchemy models."""
@@ -45,7 +48,7 @@ class User(Base):
     plex_id: Mapped[Optional[str]] = mapped_column(String, unique=True)
     provider: Mapped[Optional[str]] = mapped_column(String)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Artist(Base):
@@ -109,7 +112,7 @@ class Track(Base):
     sample_rate: Mapped[Optional[int]] = mapped_column(Integer)
     bit_depth: Mapped[Optional[int]] = mapped_column(Integer)
     file_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger)
-    added_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    added_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=utcnow)
 
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
@@ -162,7 +165,7 @@ class UserRating(Base):
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
     rating: Mapped[float] = mapped_column(Float)  # 1-5, or system flags 0.1, 2.1, 3.1
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     track: Mapped[Track] = relationship(back_populates="user_ratings")
 
@@ -187,9 +190,9 @@ class Wishlist(Base):
     query_string: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
 
@@ -203,9 +206,9 @@ class WatchlistArtist(Base):
     last_scan_timestamp: Mapped[Optional[datetime]] = mapped_column(DateTime)
     image_url: Mapped[Optional[str]] = mapped_column(String)
     
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
 
@@ -218,7 +221,7 @@ class ReviewTask(Base):
     status: Mapped[str] = mapped_column(String, default="pending", nullable=False)  # pending, approved, ignored
     detected_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
     confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Download(Base):
@@ -231,9 +234,9 @@ class Download(Base):
     provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
 

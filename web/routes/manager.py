@@ -7,7 +7,11 @@ from database.music_database import get_database, Track, UserRating
 from core.consensus import ConsensusEngine, SYSTEM_DELETE, SYSTEM_UPGRADE, SYSTEM_LOCK
 from pathlib import Path
 from sqlalchemy import func
-from datetime import datetime
+from datetime import datetime, timezone
+
+# Replace deprecated datetime.utcnow() with aware datetime.now(timezone.utc)
+def utcnow():
+    return datetime.now(timezone.utc)
 
 logger = get_logger("web.routes.manager")
 bp = Blueprint("manager", __name__, url_prefix="/api/manager")
@@ -192,7 +196,7 @@ def override_track(track_id):
 
             if existing:
                 existing.rating = rating_value
-                existing.timestamp = datetime.utcnow()
+                existing.timestamp = utcnow()
             else:
                 new_rating = UserRating(
                     track_id=track_id,

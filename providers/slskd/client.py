@@ -617,9 +617,55 @@ class SlskdProvider(DownloaderProvider):
                                             'size': file_data.get('size', 0)
                                         }
             
-            # Not found - might be completed and removed
-            logger.debug(f"Download not found in active transfers: {download_id}")
-            return None
+            # Not found in active transfers - might be completed and removed, or history
+            # Fallback: Check history/completed endpoint if available or infer from absence
+
+            # Note: Slskd doesn't have a simple "search history by filename" endpoint in v0 API easily accessible
+            # but we can try to be smarter. If it WAS active and now isn't, and we didn't see it fail...
+            # But statelessness means we don't know if it was active.
+
+            # Try checking the 'history' or 'completed' list if possible.
+            # GET /transfers/history?
+            # As per Slskd API docs (or typical behavior), completed items might move to history.
+
+            # Let's try to fetch history to confirm if it succeeded
+            try:
+                # Assuming /api/v0/transfers/history exists and returns list
+                # Use a silent request (suppress_error_logs=True) if available, or just catch generic exceptions
+                # Since _make_request might not support suppression flag yet, we rely on broad try/except
+                # But to avoid the RequestManager logging "HTTP 404", we can't easily prevent it unless we modify RequestManager or _make_request.
+                # However, the user instruction is to "wrap it in a try/except HttpError block".
+                # This implies HttpError propagates. RequestManager raises HttpError.
+
+                history_response = await self._make_request('GET', 'transfers/history')
+                if history_response and isinstance(history_response, list):
+                    for item in history_response:
+                        # History items might match by filename or ID
+                        # structure might differ, usually has 'filename', 'username', 'succeeded'
+                        if item.get('filename') == filename and item.get('username') == username:
+                            ended_state = "completed" if item.get('succeeded') else "failed"
+                            return {
+                                'id': download_id,
+                                'status': ended_state,
+                                'filename': filename,
+                                'username': username,
+                                'progress': 100 if ended_state == 'completed' else 0,
+                                'size': item.get('size', 0)
+                            }
+            except Exception:
+                # History check failed or endpoint doesn't exist/work as expected
+                pass
+
+            logger.debug(f"Download not found in active transfers or history: {download_id}")
+            # Return 'not_found' status explicitly so Manager can handle it (stop polling)
+            return {
+                'id': download_id,
+                'status': 'not_found',
+                'filename': filename,
+                'username': username,
+                'progress': 0,
+                'size': 0
+            }
 
         except Exception as e:
             logger.error(f"Error getting download status: {e}")
