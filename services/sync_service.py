@@ -618,9 +618,10 @@ class PlaylistSyncService:
             if not accounts:
                 logger.debug("No multi-account config found, using default client")
                 if self.spotify_client:
-                     playlists = self.spotify_client.get_user_playlists() or []
-                     return [SpotifyPlaylist(id=p['id'], name=p['name'], tracks=[]) for p in playlists]
-                return []
+                     # Iterate generator directly
+                     for p in self.spotify_client.get_user_playlists() or []:
+                         all_playlists.append(SpotifyPlaylist(id=p['id'], name=p['name'], tracks=[]))
+                return all_playlists
 
             # 2. Iterate through each account
             for account in accounts:
@@ -659,14 +660,12 @@ class PlaylistSyncService:
                         continue
 
                     logger.info(f"Fetching playlists for Spotify account: {account_name}")
-                    playlists = client.get_user_playlists() or []
 
-                    for p in playlists:
+                    # Consume generator
+                    for p in client.get_user_playlists() or []:
                         # Append account name to playlist name
                         display_name = f"{p['name']} ({account_name})"
                         # Create generic playlist object (tracks loaded lazily later)
-                        # We store the account_id in the SpotifyPlaylist object if we need it later,
-                        # but for now, the name uniqueness is key.
                         sp_playlist = SpotifyPlaylist(id=p['id'], name=display_name, tracks=[])
                         all_playlists.append(sp_playlist)
 
@@ -691,7 +690,9 @@ class PlaylistSyncService:
                  # Fallback to default client if configured
                  if self.spotify_client and self.spotify_client.is_configured():
                      try:
-                        spotify_playlists.extend(self.spotify_client.get_user_playlists() or [])
+                        # Consume generator
+                        for p in self.spotify_client.get_user_playlists() or []:
+                            spotify_playlists.append(p)
                      except Exception as e:
                         logger.error(f"Error fetching default playlists: {e}")
             else:
@@ -706,8 +707,9 @@ class PlaylistSyncService:
 
                         client = SpotifyClient(account_id=account.get('id'))
                         if client.is_configured():
-                             playlists = client.get_user_playlists() or []
-                             spotify_playlists.extend(playlists)
+                             # Consume generator
+                             for p in client.get_user_playlists() or []:
+                                 spotify_playlists.append(p)
                     except Exception as e:
                         logger.error(f"Error fetching playlists for account {account.get('id')}: {e}")
                         continue
