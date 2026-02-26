@@ -1,7 +1,6 @@
 """Spotify provider routes."""
 
 from flask import Blueprint, request, jsonify, redirect
-from sdk.storage_service import get_storage_service
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 import spotipy
@@ -54,9 +53,10 @@ def begin_auth():
         if not account_id:
             return jsonify({'error': 'account_id parameter is required'}), 400
         
+        # Read client credentials from storage (service config)
+        from sdk.storage_service import get_storage_service
         storage = get_storage_service()
 
-        # Read client credentials from storage (service config)
         client_id = storage.get_service_config('spotify', 'client_id')
         client_secret = storage.get_service_config('spotify', 'client_secret')
         redirect_uri = storage.get_service_config('spotify', 'redirect_uri') or None
@@ -121,6 +121,7 @@ def oauth_callback():
         except (ValueError, TypeError):
             account_id = None
 
+        from sdk.storage_service import get_storage_service
         storage = get_storage_service()
 
         client_id = storage.get_service_config('spotify', 'client_id')

@@ -198,7 +198,7 @@ class MetadataEnhancerService:
                     existing.detected_metadata = metadata
                     existing.confidence_score = confidence
                     existing.status = status
-                    existing.created_at = datetime.datetime.utcnow()
+                    existing.created_at = datetime.datetime.now(datetime.UTC)
                 else:
                     task = ReviewTask(
                         file_path=str(file_path),

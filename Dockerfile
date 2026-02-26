@@ -31,11 +31,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash --uid 1000 soulsync
 
-# Create a virtual environment
-RUN python -m venv /opt/venv
-
-# Activate virtual environment for subsequent commands
-ENV PATH="/opt/venv/bin:$PATH"
+# Copy requirements and install Python dependencies
+COPY requirements-webui.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements-webui.txt
 
 # Copy requirements and install Python dependencies
 COPY legacy/requirements.txt .

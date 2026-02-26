@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 from core.tiered_logger import get_logger
 from core.settings import config_manager
-from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig, HttpError
+from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
 from core.provider import get_provider_capabilities
 
 logger = get_logger("jellyfin_client")
@@ -309,7 +309,7 @@ class JellyfinClient(MediaServerProvider):
         self._progress_callback = None
         
         # Initialize centralized HTTP client for Jellyfin (10 requests/second)
-        self._http = HttpClient(
+        self._http = RequestManager(
             provider='jellyfin',
             retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
             rate=RateLimitConfig(requests_per_second=10.0)

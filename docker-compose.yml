@@ -17,10 +17,8 @@ services:
       - SOULSYNC_CONFIG_DIR=/config
       # Set the data directory for database and logs
       - SOULSYNC_DATA_DIR=/data
-      # Set timezone (override as needed)
+      # Set timezone
       - TZ=America/New_York
-      # Logging verbosity (INFO, DEBUG, etc.)
-      - SOULSYNC_LOG_LEVEL=INFO
     ports:
       - "5000:5000"      # Main web app
       - "8888:8888"      # Spotify OAuth callback
