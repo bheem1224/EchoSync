@@ -196,11 +196,32 @@ class SpotifyClient(SyncServiceProvider):
     def _setup_client(self):
         try:
             creds = {'client_id': None, 'client_secret': None, 'redirect_uri': None}
+
+            # first, if we were given an account_id, see if that account record
+            # itself contains credentials.  this supports multi‑account setups
+            # where each Spotify account may have its own client credentials.
+            if self.account_id is not None:
+                try:
+                    from core.account_manager import AccountManager
+                    account = AccountManager.get_account('spotify', self.account_id)
+                    if account:
+                        creds['client_id'] = account.get('client_id') or creds['client_id']
+                        creds['client_secret'] = account.get('client_secret') or creds['client_secret']
+                        creds['redirect_uri'] = account.get('redirect_uri') or creds['redirect_uri']
+                except Exception:
+                    # if anything goes wrong, we'll fall back to global values
+                    pass
+
             from core.storage import get_storage_service
             storage = get_storage_service()
-            creds['client_id'] = storage.get_service_config('spotify', 'client_id')
-            creds['client_secret'] = storage.get_service_config('spotify', 'client_secret')
-            creds['redirect_uri'] = storage.get_service_config('spotify', 'redirect_uri')
+            # if we still haven't obtained values from the account, read global
+            # service configuration (old single‑account path).
+            if not creds['client_id']:
+                creds['client_id'] = storage.get_service_config('spotify', 'client_id')
+            if not creds['client_secret']:
+                creds['client_secret'] = storage.get_service_config('spotify', 'client_secret')
+            if not creds['redirect_uri']:
+                creds['redirect_uri'] = storage.get_service_config('spotify', 'redirect_uri')
 
             if not creds['client_id'] or not creds['client_secret']:
                 # do not log secrets, include account id for diagnostics

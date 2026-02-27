@@ -7,7 +7,7 @@ web_server.py UI and should be used as the backend for the Svelte frontend.
 import os
 import logging
 from pathlib import Path
-from flask import Flask
+from flask import Flask, send_from_directory
 from core.settings import config_manager
 
 try:
@@ -52,7 +52,13 @@ import asyncio
 _backend_started = False
 
 def create_app() -> Flask:
-    app = Flask(__name__)
+    # configure static folder for the compiled Svelte frontend build
+    # path is relative to this file; container working dir is /app
+    app = Flask(
+        __name__,
+        static_folder=os.path.join(os.path.dirname(__file__), '../webui/build'),
+        static_url_path='/'
+    )
     
     # Configure sensitive logging filter for Werkzeug
     werkzeug_logger = logging.getLogger('werkzeug')
@@ -180,6 +186,28 @@ def create_app() -> Flask:
         backend_thread.start()
         _backend_started = True
         print("[INFO] Backend services thread started")
+
+
+    # ------------------------------------------------------------
+    # SPA support: Serve static files for any non-API route
+    # ------------------------------------------------------------
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def serve_frontend(path):
+        # If the path starts with "api/", let Flask return its own 404
+        if path.startswith('api/'):
+            return {"error": "API route not found"}, 404
+
+        # serve the requested file if it exists under static_folder
+        if path and os.path.exists(os.path.join(app.static_folder, path)):
+            return send_from_directory(app.static_folder, path)
+
+        # otherwise fall back to index.html (for client-side routing)
+        index_file = os.path.join(app.static_folder, 'index.html')
+        if os.path.exists(index_file):
+            return send_from_directory(app.static_folder, 'index.html')
+
+        return "Frontend build not found", 404
 
     return app
 

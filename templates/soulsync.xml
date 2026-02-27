@@ -1,19 +1,19 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>SoulSync</Name>
-  <Repository>boulderbadgedad/soulsync:latest</Repository>
-  <Registry>https://hub.docker.com/r/boulderbadgedad/soulsync</Registry>
+  <Repository>ghcr.io/bheem1224/soulsync:latest</Repository>
+  <Registry>https://github.com/bheem1224/SoulSync</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/Nezreka/SoulSync/issues</Support>
-  <Project>https://github.com/Nezreka/SoulSync</Project>
+  <Support>https://github.com/bheem1224/SoulSync/issues</Support>
+  <Project>https://github.com/bheem1224/SoulSync</Project>
   <Overview>Automated music discovery and collection manager. Sync Spotify/Tidal/YouTube playlists to Plex/Jellyfin/Navidrome via Soulseek with FLAC priority, customizable file organization templates, metadata enhancement, and smart matching. Features include wishlist management, artist watchlist, intelligent discovery playlists, and automatic lyrics integration.</Overview>
   <Category>MediaApp:Music</Category>
-  <WebUI>http://[IP]:[PORT:8008]</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/Nezreka/SoulSync/main/templates/soulsync.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/Nezreka/SoulSync/main/assets/trans.png</Icon>
+  <WebUI>http://[IP]:[PORT:5000]</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/bheem1224/SoulSync/refs/heads/main/templates/soulsync.xml?token=GHSAT0AAAAAADS4D7MTJH52ZE42S7TASLWO2NBEAIQ</TemplateURL>
+  <Icon>https://github.com/bheem1224/SoulSync/blob/main/assets/trans.png</Icon>
   <ExtraParams>--restart unless-stopped --add-host=host.docker.internal:host-gateway</ExtraParams>
   <PostArgs/>
   <CPUset/>
