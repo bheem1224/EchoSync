@@ -37,7 +37,7 @@
 - Wishlist system with automatic retry (30-minute intervals)
 - Granular wishlist management (remove individual tracks or entire albums)
 - Dynamic log level control (DEBUG/INFO/WARNING/ERROR)
-- Background automation handles retries and database updates
+- Background automation handles retries and database updates 
 
 ## 🚀 Installation
 
