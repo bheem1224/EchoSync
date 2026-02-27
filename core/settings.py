@@ -308,11 +308,19 @@ class ConfigManager:
                 output[key] = value
         return output
     
+    def _get_db_connection(self) -> sqlite3.Connection:
+        """Helper to get a database connection with WAL mode and timeout."""
+        conn = sqlite3.connect(str(self.database_path), timeout=30.0)
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        return conn
+
     def _ensure_database_exists(self):
         """Ensure database file and metadata table exist"""
         try:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(str(self.database_path))
+            conn = self._get_db_connection()
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS metadata (
@@ -330,7 +338,7 @@ class ConfigManager:
         """Load configuration from database and decrypt secrets."""
         try:
             self._ensure_database_exists()
-            conn = sqlite3.connect(str(self.database_path))
+            conn = self._get_db_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT value FROM metadata WHERE key = 'app_config'")
             row = cursor.fetchone()
@@ -365,7 +373,7 @@ class ConfigManager:
             
             encrypted_data = self._traverse_and_transform(copy.deepcopy(config_data), self._encrypt_value, SECRETS)
 
-            conn = sqlite3.connect(str(self.database_path))
+            conn = self._get_db_connection()
             cursor = conn.cursor()
 
             config_json = json.dumps(encrypted_data, indent=2)

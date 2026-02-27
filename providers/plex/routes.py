@@ -18,12 +18,16 @@ bp = Blueprint('plex_routes', __name__, url_prefix='/api/plex')
 def get_settings():
     """Get Plex server settings (base_url, token status)."""
     from core.provider import ProviderRegistry
+    from core.storage import get_storage_service
     if ProviderRegistry.is_provider_disabled('plex'):
         return jsonify({'settings': {}}), 200
     try:
-        base_url = config_manager.get('plex.base_url', '')
-        token = config_manager.get('plex.token', '')
-        server_name = config_manager.get('plex.server_name', '')
+        storage = get_storage_service()
+        storage.ensure_service('plex')
+
+        base_url = storage.get_service_config('plex', 'base_url') or config_manager.get('plex.base_url', '')
+        token = storage.get_service_config('plex', 'token') or config_manager.get('plex.token', '')
+        server_name = storage.get_service_config('plex', 'server_name') or config_manager.get('plex.server_name', '')
         
         # Check if this is the active media server
         active_media_server = config_manager.get('active_media_server', 'plex')
@@ -43,7 +47,7 @@ def get_settings():
         
         # Get path mappings
         import json
-        path_mappings_str = config_manager.get('plex.path_mappings', '[]')
+        path_mappings_str = storage.get_service_config('plex', 'path_mappings') or config_manager.get('plex.path_mappings', '[]')
         try:
             path_mappings = json.loads(path_mappings_str)
         except:
@@ -67,28 +71,31 @@ def get_settings():
 @bp.post('/settings')
 def save_settings():
     """Save Plex server settings."""
+    from core.storage import get_storage_service
     try:
         data = request.get_json(force=True) or {}
+        storage = get_storage_service()
+        storage.ensure_service('plex')
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
-            config_manager.set('plex.base_url', base_url)
-            logger.info(f"Plex base_url saved: {base_url}")
+            storage.set_service_config('plex', 'base_url', base_url, is_sensitive=False)
+            logger.info(f"Plex base_url saved to service_config")
         
         if 'server_name' in data:
             server_name = data['server_name'].strip()
-            config_manager.set('plex.server_name', server_name)
-            logger.info(f"Plex server_name saved: {server_name}")
+            storage.set_service_config('plex', 'server_name', server_name, is_sensitive=False)
+            logger.info(f"Plex server_name saved to service_config")
         
         if 'token' in data:
             token = data['token'].strip()
-            config_manager.set('plex.token', token)
-            logger.info(f"Plex token saved")
+            storage.set_service_config('plex', 'token', token, is_sensitive=True)
+            logger.info(f"Plex token saved to service_config")
         
         if 'path_mappings' in data:
             import json
             path_mappings = data['path_mappings']
-            config_manager.set('plex.path_mappings', json.dumps(path_mappings))
+            storage.set_service_config('plex', 'path_mappings', json.dumps(path_mappings), is_sensitive=False)
             logger.info(f"Plex path_mappings saved: {len(path_mappings)} mappings")
         
         return jsonify({'success': True})

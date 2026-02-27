@@ -11,10 +11,14 @@ bp = Blueprint("soulseek_routes", __name__, url_prefix="/api/providers/soulseek"
 @bp.route("/settings", methods=["GET"])
 def get_settings():
     """Get slskd configuration settings."""
+    from core.storage import get_storage_service
     try:
-        slskd_url = config_manager.get('soulseek.slskd_url', '')
-        server_name = config_manager.get('soulseek.server_name', '')
-        api_key = config_manager.get('soulseek.api_key', '')
+        storage = get_storage_service()
+        storage.ensure_service('soulseek')
+
+        slskd_url = storage.get_service_config('soulseek', 'slskd_url') or config_manager.get('soulseek.slskd_url', '')
+        server_name = storage.get_service_config('soulseek', 'server_name') or config_manager.get('soulseek.server_name', '')
+        api_key = storage.get_service_config('soulseek', 'api_key') or config_manager.get('soulseek.api_key', '')
         
         # Return masked API key if it exists
         masked_api_key = '****' if api_key else ''
@@ -34,8 +38,11 @@ def get_settings():
 @bp.route("/settings", methods=["POST"])
 def save_settings():
     """Save slskd configuration settings."""
+    from core.storage import get_storage_service
     try:
         data = request.get_json()
+        storage = get_storage_service()
+        storage.ensure_service('soulseek')
         
         if not data:
             return jsonify({"error": "No data provided"}), 400
@@ -47,15 +54,15 @@ def save_settings():
         if not slskd_url:
             return jsonify({"error": "Server URL is required"}), 400
         
-        # Save settings using config_manager
-        config_manager.set('soulseek.slskd_url', slskd_url)
-        config_manager.set('soulseek.server_name', server_name)
+        # Save settings using storage service
+        storage.set_service_config('soulseek', 'slskd_url', slskd_url, is_sensitive=False)
+        storage.set_service_config('soulseek', 'server_name', server_name, is_sensitive=False)
         
         # Only update API key if provided (don't overwrite with empty string)
         if api_key:
-            config_manager.set('soulseek.api_key', api_key)
+            storage.set_service_config('soulseek', 'api_key', api_key, is_sensitive=True)
         
-        logger.info(f"Saved slskd settings: {slskd_url}")
+        logger.info(f"Saved slskd settings to service_config: {slskd_url}")
         
         return jsonify({"success": True}), 200
     except Exception as e:
@@ -66,10 +73,13 @@ def save_settings():
 @bp.route("/connection/test", methods=["POST"])
 def test_connection():
     """Test connection to slskd server."""
+    from core.storage import get_storage_service
     try:
-        slskd_url = config_manager.get('soulseek.slskd_url', '')
-        api_key = config_manager.get('soulseek.api_key', '')
-        server_name = config_manager.get('soulseek.server_name', '')
+        storage = get_storage_service()
+
+        slskd_url = storage.get_service_config('soulseek', 'slskd_url') or config_manager.get('soulseek.slskd_url', '')
+        api_key = storage.get_service_config('soulseek', 'api_key') or config_manager.get('soulseek.api_key', '')
+        server_name = storage.get_service_config('soulseek', 'server_name') or config_manager.get('soulseek.server_name', '')
         
         if not slskd_url:
             return jsonify({
@@ -153,8 +163,10 @@ def get_api_key():
     """Return the raw API key for slskd. This is only used by the web UI when
     the user explicitly requests to reveal the key via the show/hide toggle.
     """
+    from core.storage import get_storage_service
     try:
-        api_key = config_manager.get('soulseek.api_key', '')
+        storage = get_storage_service()
+        api_key = storage.get_service_config('soulseek', 'api_key') or config_manager.get('soulseek.api_key', '')
         if not api_key:
             return jsonify({"error": "API key not configured"}), 404
 
