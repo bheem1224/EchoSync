@@ -121,13 +121,42 @@ def test_cached_scope_used_even_if_oauth_invalidates(monkeypatch):
 
     monkeypatch.setattr('providers.spotify.client.SpotifyOAuth', FakeSpotifyOAuth2)
 
-    with patch('core.storage.get_storage_service') as mock_storage:
-        ms = MagicMock()
-        ms.get_service_config.return_value = 'fake'
-        mock_storage.return_value = ms
-        client = SpotifyClient(account_id=6)
-        # we should still have initialized with the limited scope value
-        assert created.get('scope') == limited_scope
-        # authentication check should be True because we verify cached token in is_authenticated()
-        # even if OAuth object failed to initialize fully
-        assert client.is_authenticated() is True
+    with patch('core.account_manager.AccountManager.get_service_config') as mock_config:
+        mock_config.return_value = 'fake'
+
+        with patch('core.account_manager.AccountManager.get_account_token') as mock_get_token:
+            mock_get_token.return_value = limited_token
+
+            client = SpotifyClient(account_id=6)
+            # we should still have initialized with the limited scope value
+            assert created.get('scope') == limited_scope
+            # authentication check should be True because we verify cached token in is_authenticated()
+            # even if OAuth object failed to initialize fully
+            assert client.is_authenticated() is True
+
+
+def test_setup_client_prefers_account_creds(monkeypatch):
+    """Instantiation should pull credentials from the named account."""
+    captured = {}
+    class FakeSpotifyOAuth3:
+        def __init__(self, client_id, client_secret, redirect_uri, scope, cache_handler, show_dialog, open_browser):
+            captured['client_id'] = client_id
+            captured['client_secret'] = client_secret
+            captured['redirect_uri'] = redirect_uri
+            self.cache_handler = cache_handler
+        def get_cached_token(self):
+            return None
+        def refresh_access_token(self, refresh_token):
+            return None
+
+    monkeypatch.setattr('providers.spotify.client.SpotifyOAuth', FakeSpotifyOAuth3)
+    # no global credentials present
+    monkeypatch.setattr('core.account_manager.AccountManager.get_service_config', lambda svc, key: None)
+    # return an account with its own creds
+    monkeypatch.setattr('core.account_manager.AccountManager.get_account',
+                        lambda svc, aid: {'client_id': 'acctid', 'client_secret': 'acctsec', 'redirect_uri': 'acct://cb'})
+
+    client = SpotifyClient(account_id=99)
+    assert captured.get('client_id') == 'acctid'
+    assert captured.get('client_secret') == 'acctsec'
+    assert captured.get('redirect_uri') == 'acct://cb'

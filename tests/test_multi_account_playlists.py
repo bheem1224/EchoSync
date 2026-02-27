@@ -20,6 +20,27 @@ def client():
         yield c
 
 
+def test_provider_settings_route_uses_service_config(client, monkeypatch):
+    """GET /api/providers/<provider>/settings should surface database credentials.
+
+    This test exercises the end-to-end path used by the web UI.  We patch
+    ``config_manager`` such that the "database" value differs from the
+    legacy config and ensure the route prefers the former.
+    """
+    monkeypatch.setattr('core.settings.config_manager.get_service_credentials',
+                        lambda svc: {'client_id': 'db1', 'client_secret': 'db2', 'redirect_uri': 'db3'})
+    # legacy getter returns a different value so we can tell which one was used
+    monkeypatch.setattr('core.settings.config_manager.get', lambda key, default=None: 'legacy')
+
+    resp = client.get('/api/providers/spotify/settings')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    settings = data.get('settings', {})
+    assert settings.get('client_id') == 'db1'
+    assert settings.get('client_secret') == 'db2'
+    assert settings.get('redirect_uri') == 'db3'
+
+
 def test_providers_playlist_route_includes_account_id(client, monkeypatch):
     """The providers playlist endpoint should return playlists with account_id for multi-account providers."""
     # fake storage service to return two spotify accounts
