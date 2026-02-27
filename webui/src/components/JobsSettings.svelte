@@ -294,7 +294,7 @@
                         Run
                       </button>
                       
-                      {#if catId === 'user' && job.interval_seconds}
+                      {#if job.interval_seconds}
                         <button
                           class="btn-action"
                           on:click={() => startEditInterval(job)}

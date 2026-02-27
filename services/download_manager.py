@@ -973,14 +973,14 @@ def get_download_manager():
     return DownloadManager.get_instance()
 
 
-def register_download_manager_job(interval_seconds: int = 300):
+def register_download_manager_job(interval_seconds: int = 21600):
     """
     Register download manager processing as a periodic job with the global job_queue.
     Note: The download manager already runs a continuous processing loop when started.
     This job is mainly for visibility in the jobs UI.
     
     Args:
-        interval_seconds: Interval placeholder (default 5 minutes = 300s)
+        interval_seconds: Interval placeholder (default 6 hours = 21600s)
     """
     from core.job_queue import job_queue
     

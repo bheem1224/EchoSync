@@ -27,6 +27,16 @@
               radial-gradient(circle at 80% 0%, rgba(14, 165, 233, 0.06), transparent 28%),
               var(--bg-main);
   color: var(--text-main);
+
+  /* Component Aliases - Mapping legacy/component vars to global theme */
+  --card-bg: var(--bg-card);
+  --input-bg: var(--bg-input);
+  --text: var(--text-main);
+  --muted: var(--text-muted);
+  --border-color: var(--border-subtle);
+  --accent: var(--color-primary);
+  --glass: rgba(20, 24, 31, 0.7);
+  --glass-border: var(--border-subtle);
 }
 
 * {
@@ -62,7 +72,7 @@ a:hover {
 
 .glass {
   background: var(--glass);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
@@ -182,6 +192,6 @@ select option {
 
 hr {
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-subtle);
   margin: 16px 0;
 }

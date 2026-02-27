@@ -82,8 +82,8 @@ def run_job():
 
 
 @bp.post("/<job_name>/interval")
-def update_job_interval(job_name):
-    """Update interval for a user-configurable job."""
+def update_job_interval_route(job_name):
+    """Update interval for any job and persist to config."""
     payload = request.get_json(silent=True) or {}
     new_interval = payload.get("interval_seconds")
     
@@ -91,18 +91,13 @@ def update_job_interval(job_name):
         return Response(json.dumps({"error": "interval_seconds required and must be >= 60"}), status=400, mimetype="application/json")
     
     try:
-        with job_queue._lock:
-            job = job_queue._jobs.get(job_name)
-            if not job:
-                return Response(json.dumps({"error": "job not found"}), status=404, mimetype="application/json")
-            
-            # Only allow updating user-configurable jobs (not system/SoulSync)
-            if job.tags and any(t in ["system", "soulsync"] for t in job.tags):
-                return Response(json.dumps({"error": "cannot modify system or SoulSync jobs"}), status=403, mimetype="application/json")
-            
-            job.interval_seconds = new_interval
+        from core.job_queue import update_job_interval
+
+        success = update_job_interval(job_name, float(new_interval))
+
+        if not success:
+             return Response(json.dumps({"error": "job not found or update failed"}), status=404, mimetype="application/json")
         
-        logger.info(f"Updated job {job_name} interval to {new_interval}s")
         return Response(json.dumps({"accepted": True, "job": job_name, "interval": new_interval}), status=200, mimetype="application/json")
     except Exception as e:
         logger.error(f"Error updating job {job_name} interval: {e}")

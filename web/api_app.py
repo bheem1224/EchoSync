@@ -57,7 +57,7 @@ def create_app() -> Flask:
     app = Flask(
         __name__,
         static_folder=os.path.join(os.path.dirname(__file__), '../webui/build'),
-        static_url_path='/'
+        static_url_path='/static_assets_placeholder' # Avoid conflict with catch-all route at /
     )
     
     # Configure sensitive logging filter for Werkzeug
@@ -198,11 +198,20 @@ def create_app() -> Flask:
         if path.startswith('api/'):
             return {"error": "API route not found"}, 404
 
+        # Explicitly handle app assets to prevent fallback to index.html
+        # SvelteKit with adapter-static uses _app/immutable/...
+        if path.startswith('_app/') or path.startswith('assets/'):
+             if path and os.path.exists(os.path.join(app.static_folder, path)):
+                 return send_from_directory(app.static_folder, path)
+             else:
+                 return "Asset not found", 404
+
         # serve the requested file if it exists under static_folder
         if path and os.path.exists(os.path.join(app.static_folder, path)):
             return send_from_directory(app.static_folder, path)
 
         # otherwise fall back to index.html (for client-side routing)
+        # This handles nested routes like /settings/servers by serving the main SPA entry point
         index_file = os.path.join(app.static_folder, 'index.html')
         if os.path.exists(index_file):
             return send_from_directory(app.static_folder, 'index.html')
