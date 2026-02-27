@@ -148,5 +148,5 @@
   .drag-handle { cursor:grab }
   .settings-btn, .delete { margin-left:8px }
   .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:2000; backdrop-filter: blur(6px); }
-  .modal { background:var(--bg-card); padding:16px; border-radius:12px; width:90%; max-width:760px; box-shadow: 0 20px 60px rgba(0,0,0,0.6); color:var(--text-main) }
+  .modal { background:var(--bg-card); padding:16px; border-radius:12px; width:90%; max-width:760px; max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.6); color:var(--text-main) }
 </style>

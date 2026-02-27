@@ -126,9 +126,9 @@
 </div>
 
 <style>
-  .file-browser-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:60}
-  .file-browser{width:720px;max-width:95%;background:var(--surface);border-radius:12px;padding:12px;color:var(--text)}
-  .fb-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .file-browser-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:2000;backdrop-filter:blur(4px)}
+  .file-browser{width:720px;max-width:95%;background:var(--bg-card);border:1px solid var(--border-subtle);box-shadow:0 20px 60px rgba(0,0,0,0.6);border-radius:12px;padding:16px;color:var(--text)}
+  .fb-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
   .fb-title{font-weight:600}
   .fb-actions button{margin-left:8px}
   .fb-path-row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
