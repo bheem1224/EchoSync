@@ -1,12 +1,16 @@
 version: '3.8'
 
+# The legacy `legacy/` directory and backend_entry.py have been removed;
+# Docker builds now install dependencies from requirements-webui.txt only.
+
 services:
   backend:
     build: .
     image: soulsync:latest
     container_name: soulsync_backend
     environment:
-      # User/Group ID configuration
+      # User/Group ID configuration (backend_entry.py is gone, the service now
+      # launches `run_api.py` directly as in the Dockerfile)
       - PUID=1000
       - PGID=1000
       - UMASK=022

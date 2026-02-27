@@ -36,12 +36,9 @@ COPY requirements-webui.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements-webui.txt
 
-# Copy requirements and install Python dependencies
-COPY legacy/requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# legacy requirements are no longer needed; all deps are consolidated above
 
-# Copy application code
+# Copy application code (legacy files have been removed from repository)
 COPY . .
 
 # Copy built Svelte UI from the node stage
