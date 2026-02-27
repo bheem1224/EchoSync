@@ -57,9 +57,8 @@ RUN mkdir -p /defaults && \
 # Create volume mount points
 VOLUME ["/config", "/data"]
 
-# Copy and set up entrypoint script
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# The previous entrypoint script was removed during refactor; backend
+# now starts directly via the default command below.
 
 # Expose ports for web app and OAuth callbacks
 EXPOSE 5000 8888 8889
@@ -80,6 +79,5 @@ ENV UVICORN_PORT=5000
 ENV TZ=UTC
 ENV SOULSYNC_LOG_LEVEL=INFO
 
-# Set entrypoint and default command
-ENTRYPOINT ["/entrypoint.sh"]
+# Default command; no entrypoint script is used any more
 CMD ["python", "run_api.py"]
