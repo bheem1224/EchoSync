@@ -76,7 +76,7 @@
       class="nav-item settings-item"
       href="/settings/preferences"
       on:click={toggleSettings}
-      class:active={isActive('/settings') || settingsOpen}
+      class:active={!settingsOpen && isActive('/settings')}
     >
       <span class="icon">⚙️</span>
       <span>Settings</span>

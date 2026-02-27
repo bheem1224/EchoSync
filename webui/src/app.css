@@ -5,8 +5,8 @@
 :root {
   color-scheme: dark;
   /* Brand / Palette from rulebook */
-  --color-primary: #00fa9a; /* Neon Mint */
-  --color-primary-hover: #00e08a;
+  --color-primary: #14b8a6; /* Subtle Teal */
+  --color-primary-hover: #0d9488;
 
   --bg-main: #050508; /* very dark void */
   --bg-sidebar: #0f1216;
@@ -170,7 +170,7 @@ select {
 
 /* Force dark background on options for browsers that support it */
 select option {
-  background-color: var(--bg-card);
+  background-color: #262626;
   color: var(--text-main);
 }
 
