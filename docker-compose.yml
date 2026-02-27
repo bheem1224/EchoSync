@@ -1,7 +1,7 @@
 version: '3.8'
 
 # The legacy `legacy/` directory and backend_entry.py have been removed;
-# Docker builds now install dependencies from requirements-webui.txt only.
+# Docker builds now install dependencies from the project's pyproject.toml.
 
 services:
   backend:

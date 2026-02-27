@@ -31,12 +31,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash --uid 1000 soulsync
 
-# Copy requirements and install Python dependencies
-COPY requirements-webui.txt .
+# Install Python dependencies using pyproject.toml (PEP 517 project)
+# copying only the metadata files first allows Docker layer caching
+COPY pyproject.toml poetry.lock* ./
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements-webui.txt
-
-# legacy requirements are no longer needed; all deps are consolidated above
+    pip install --no-cache-dir .
 
 # Copy application code (legacy files have been removed from repository)
 COPY . .
