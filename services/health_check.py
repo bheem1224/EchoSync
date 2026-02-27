@@ -88,7 +88,7 @@ def get_system_health() -> Dict[str, Any]:
 
     # Check LRClib (bundled, usually enabled unless explicitly disabled)
     if 'lrclib' not in disabled_providers:
-         # It's enabled by default in backend_entry if not disabled
+         # It's enabled by default in the backend startup logic if not disabled
          enabled_providers_count += 1
 
     # 3. Calculate Operational Services

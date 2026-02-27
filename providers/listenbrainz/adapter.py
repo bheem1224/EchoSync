@@ -10,7 +10,7 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 from typing import List
 from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
-from sdk.storage_service import get_storage_service
+from core.storage import get_storage_service
 
 logger = get_logger("listenbrainz_adapter")
 

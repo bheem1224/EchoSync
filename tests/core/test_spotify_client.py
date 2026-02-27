@@ -20,7 +20,7 @@ def test_initialization(spotify_client):
 def test_is_configured_false(spotify_client):
     # Reset sp to test unconfigured state
     spotify_client.sp = None
-    with patch('sdk.storage_service.get_storage_service') as mock_storage:
+    with patch('core.storage.get_storage_service') as mock_storage:
         mock_storage_instance = MagicMock()
         mock_storage_instance.get_service_config.return_value = None
         mock_storage.return_value = mock_storage_instance
@@ -71,7 +71,7 @@ def test_existing_token_scope_does_not_invalidate(monkeypatch):
     monkeypatch.setattr('providers.spotify.client.SpotifyOAuth', FakeSpotifyOAuth)
 
     # patch storage service to provide dummy credentials
-    with patch('sdk.storage_service.get_storage_service') as mock_storage:
+    with patch('core.storage.get_storage_service') as mock_storage:
         ms = MagicMock()
         ms.get_service_config.return_value = 'fake'
         mock_storage.return_value = ms
@@ -121,7 +121,7 @@ def test_cached_scope_used_even_if_oauth_invalidates(monkeypatch):
 
     monkeypatch.setattr('providers.spotify.client.SpotifyOAuth', FakeSpotifyOAuth2)
 
-    with patch('sdk.storage_service.get_storage_service') as mock_storage:
+    with patch('core.storage.get_storage_service') as mock_storage:
         ms = MagicMock()
         ms.get_service_config.return_value = 'fake'
         mock_storage.return_value = ms

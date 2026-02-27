@@ -47,7 +47,7 @@ def analyze_playlists():
             if source in ['spotify', 'tidal']:
                 if acc_id is None:
                     # fall back to active/first account if no id provided
-                    from sdk.storage_service import get_storage_service
+                    from core.storage import get_storage_service
                     storage = get_storage_service()
                     accounts = storage.list_accounts(source)
                     if not accounts:

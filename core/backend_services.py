@@ -1,19 +1,24 @@
+"""Contains helper routines for starting the background services.
+
+This replaces the now-removed ``backend_entry.py`` script.  The Flask
+application imports :func:`start_services` to spin up the download manager
+and provider clients in a dedicated thread; the former script also exposed a
+standalone ``backend_main`` entry point which may be used for debugging or
+CLI workflows.
+
+The code is intentionally kept minimal: logging configuration is performed by
+``run_api.py`` prior to invoking these helpers, and environment variables are
+expected to have been loaded already.  No code outside the core package should
+need to import this module, but the tests may reference it.
+"""
+
 import asyncio
 import logging
-from typing import Any, Iterable, List
-from dotenv import load_dotenv
-
-# Load environment variables from .env file before importing config_manager
-load_dotenv()
+from typing import Any, Iterable
 
 from core.settings import config_manager
 from core.tiered_logger import setup_logging, get_logger
 from services.download_manager import get_download_manager
-from providers.spotify.client import SpotifyClient
-from providers.plex.client import PlexClient
-from providers.jellyfin.client import JellyfinClient
-from providers.navidrome.client import NavidromeClient
-from providers.slskd.client import SlskdProvider
 
 logger = get_logger("backend")
 
@@ -33,10 +38,12 @@ async def _graceful_close(clients: Iterable[Any]) -> None:
 
 
 async def start_services() -> None:
-    """Start the backend services without configuring logging (assumes external logging setup).
-    
-    Note: Provider health checks are registered automatically by each client's __init__ method
-    and managed by the global health check system (see core/health_check.py).
+    """Start backend services.
+
+    This logic mirrors the original ``backend_entry.start_services``.  It
+    initializes provider clients (Spotify, Plex, etc.) and optionally starts
+    the download manager if ``downloads.auto_start`` is enabled in the
+    configuration.
     """
     logger.info("Starting backend services...")
 
@@ -56,6 +63,7 @@ async def start_services() -> None:
         active_acc = config_manager.get_active_spotify_account()
         if (creds.get("client_id") and creds.get("client_secret")) or active_acc:
             try:
+                from providers.spotify.client import SpotifyClient
                 spotify_client = SpotifyClient()
                 logger.info("Spotify client started")
             except Exception as e:
@@ -70,6 +78,7 @@ async def start_services() -> None:
         conf = config_manager.get_plex_config()
         if conf.get("base_url") and conf.get("token"):
             try:
+                from providers.plex.client import PlexClient
                 plex_client = PlexClient()
                 logger.info("Plex client started")
             except Exception as e:
@@ -84,6 +93,7 @@ async def start_services() -> None:
         conf = config_manager.get_jellyfin_config()
         if conf.get("base_url") and conf.get("api_key"):
             try:
+                from providers.jellyfin.client import JellyfinClient
                 jellyfin_client = JellyfinClient()
                 logger.info("Jellyfin client started")
             except Exception as e:
@@ -98,6 +108,7 @@ async def start_services() -> None:
         conf = config_manager.get_navidrome_config()
         if conf.get("base_url") and conf.get("username"):
             try:
+                from providers.navidrome.client import NavidromeClient
                 navidrome_client = NavidromeClient()
                 logger.info("Navidrome client started")
             except Exception as e:
@@ -112,6 +123,7 @@ async def start_services() -> None:
         conf = config_manager.get_soulseek_config()
         if conf.get("slskd_url") and conf.get("api_key"):
             try:
+                from providers.slskd.client import SlskdProvider
                 soulseek_client = SlskdProvider()
                 logger.info("Slskd client started")
             except Exception as e:
@@ -136,29 +148,21 @@ async def start_services() -> None:
 
     # Keep services alive indefinitely
     try:
-        # Create an event that will never be set - keeps the service running
         shutdown_event = asyncio.Event()
         await shutdown_event.wait()
     except asyncio.CancelledError:
         logger.info("Backend shutdown signal received")
     finally:
         await download_manager.stop_background_task()
-        # Filter out None clients
         active_clients = [c for c in [soulseek_client, plex_client, jellyfin_client, navidrome_client] if c is not None]
         await _graceful_close(active_clients)
         logger.info("Backend services stopped")
 
 
 async def backend_main() -> None:
+    """Standalone entry point if someone wants to run services outside of Flask."""
     logging_config = config_manager.get_logging_config()
     log_file = logging_config.get("path", "logs/backend.log")
     setup_logging(level=logging_config.get("level", "INFO"), log_file=log_file)
 
     await start_services()
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(backend_main())
-    except KeyboardInterrupt:
-        logger.info("Backend interrupted by user")

@@ -135,7 +135,7 @@ def get_provider_playlists(provider_name):
         multi_account_providers = ['spotify', 'tidal']
         if provider_name in multi_account_providers:
             try:
-                from sdk.storage_service import get_storage_service
+                from core.storage import get_storage_service
                 storage = get_storage_service()
 
                 accounts = storage.list_accounts(provider_name)
@@ -249,7 +249,7 @@ def get_provider_settings(provider_name):
     The storage service handles decryption automatically via config.db.
     """
     try:
-        from sdk.storage_service import get_storage_service
+        from core.storage import get_storage_service
         storage = get_storage_service()
         
         # Ensure service exists in config.db
@@ -293,7 +293,7 @@ def update_provider_settings(provider_name):
         logger.info(f"Updating settings for provider: {provider_name}")
 
         # Use the storage service so credentials are saved into the encrypted config.db
-        from sdk.storage_service import get_storage_service
+        from core.storage import get_storage_service
         storage = get_storage_service()
 
         try:

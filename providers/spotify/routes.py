@@ -54,7 +54,7 @@ def begin_auth():
             return jsonify({'error': 'account_id parameter is required'}), 400
         
         # Read client credentials from storage (service config)
-        from sdk.storage_service import get_storage_service
+        from core.storage import get_storage_service
         storage = get_storage_service()
 
         client_id = storage.get_service_config('spotify', 'client_id')
@@ -121,7 +121,7 @@ def oauth_callback():
         except (ValueError, TypeError):
             account_id = None
 
-        from sdk.storage_service import get_storage_service
+        from core.storage import get_storage_service
         storage = get_storage_service()
 
         client_id = storage.get_service_config('spotify', 'client_id')

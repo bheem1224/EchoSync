@@ -1,6 +1,6 @@
 """Tidal OAuth routes - handles PKCE-based OAuth flow for Tidal accounts."""
 from flask import Blueprint, request, jsonify, redirect
-from sdk.storage_service import get_storage_service
+from core.storage import get_storage_service
 from core.tiered_logger import get_logger
 import json
 import base64

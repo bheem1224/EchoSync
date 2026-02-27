@@ -33,7 +33,7 @@ class ConfigCacheHandler(CacheHandler):
                 logger.debug("No account_id specified, cannot load token")
                 return None
             
-            from sdk.storage_service import get_storage_service
+            from core.storage import get_storage_service
             storage = get_storage_service()
             token_data = storage.get_account_token(self.account_id)
             
@@ -78,7 +78,7 @@ class ConfigCacheHandler(CacheHandler):
                 logger.warning(f"No token_info provided to save for account {self.account_id}")
                 return
             
-            from sdk.storage_service import get_storage_service
+            from core.storage import get_storage_service
             storage = get_storage_service()
             
             access_token = token_info.get('access_token')
@@ -138,7 +138,7 @@ class SpotifyClient(SyncServiceProvider):
             # If still None, try to find the first available account
             if account_id is None:
                 try:
-                    from sdk.storage_service import get_storage_service
+                    from core.storage import get_storage_service
                     storage = get_storage_service()
                     accounts = storage.list_accounts('spotify')
                     if accounts:
@@ -196,7 +196,7 @@ class SpotifyClient(SyncServiceProvider):
     def _setup_client(self):
         try:
             creds = {'client_id': None, 'client_secret': None, 'redirect_uri': None}
-            from sdk.storage_service import get_storage_service
+            from core.storage import get_storage_service
             storage = get_storage_service()
             creds['client_id'] = storage.get_service_config('spotify', 'client_id')
             creds['client_secret'] = storage.get_service_config('spotify', 'client_secret')
@@ -331,7 +331,7 @@ class SpotifyClient(SyncServiceProvider):
         if self.sp is not None:
              return True
         # Check storage if we can potentially configure it
-        from sdk.storage_service import get_storage_service
+        from core.storage import get_storage_service
         storage = get_storage_service()
         return bool(storage.get_service_config('spotify', 'client_id') and
                     storage.get_service_config('spotify', 'client_secret'))

@@ -45,7 +45,7 @@ from web.routes.manager import bp as manager_bp
 from core.plugin_loader import PluginLoader
 from core.settings import config_manager
 from core.job_queue import start_job_queue
-from backend_entry import start_services
+from core.backend_services import start_services
 import threading
 import asyncio
 

@@ -43,7 +43,7 @@ def patch_spotify_client(monkeypatch):
     # also patch storage service to return two accounts
     fake_storage = MagicMock()
     fake_storage.list_accounts.return_value = [{'id': 1}, {'id': 2}]
-    monkeypatch.setattr('sdk.storage_service.get_storage_service', lambda: fake_storage)
+    monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
 
     yield
 
