@@ -59,6 +59,7 @@
     } catch (error) {
       console.error('Failed to save Spotify settings:', error);
       feedback.addToast('Failed to save credentials', 'error');
+      throw error; // Re-throw to allow caller to handle failure
     } finally {
       savingGlobal = false;
     }
@@ -131,6 +132,15 @@
     if (!clientId || !clientSecret) {
       feedback.addToast('Please save Spotify Client ID and Client Secret before authenticating an account', 'error');
       return;
+    }
+
+    // Force save settings first to ensure backend has the latest Redirect URI
+    // This fixes the issue where auto-populated URI isn't seen by backend until manual save
+    try {
+        await saveGlobalSettings();
+    } catch (e) {
+        // saveGlobalSettings already shows toast, just abort
+        return;
     }
 
     try {
