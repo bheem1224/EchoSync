@@ -8,7 +8,9 @@ WORKDIR /app/webui
 
 # Copy package files and install dependencies
 COPY webui/package.json webui/package-lock.json* ./
-RUN npm install
+# install using legacy peer deps to bypass transient conflicts between
+# vite and the Svelte plugin; the lockfile (if present) will pin versions
+RUN npm install --legacy-peer-deps
 
 # Copy the rest of the web UI source code
 COPY webui ./
