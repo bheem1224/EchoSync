@@ -24,7 +24,6 @@ env/
 node_modules/
 .svelte-kit/
 /webui/build/
-package-lock.json
 dist/
 build/
 
