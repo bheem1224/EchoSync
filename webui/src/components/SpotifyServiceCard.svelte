@@ -18,6 +18,12 @@
   onMount(async () => {
     await loadGlobalSettings();
     await loadAccounts();
+
+    // Auto-populate redirect URI if empty
+    if (!redirectUri && typeof window !== 'undefined') {
+      redirectUri = `${window.location.protocol}//${window.location.host}/api/spotify/callback`;
+    }
+
     // Collapse credentials by default when all globals are present and at least one account is authenticated
     credsCollapsed = Boolean(clientId && clientSecret && redirectUri && accounts.some(a => a.is_authenticated));
     loading = false;

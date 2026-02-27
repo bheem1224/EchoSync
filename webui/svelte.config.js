@@ -10,8 +10,11 @@ const config = {
 			assets: 'build',
 			fallback: 'index.html', // dependent on your host setup
 			precompress: false,
-			strict: true
-		})
+			strict: false
+		}),
+		paths: {
+			relative: false
+		}
 	}
 };
 

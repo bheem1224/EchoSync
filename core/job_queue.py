@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, List
 from core.tiered_logger import get_logger
+from core.settings import config_manager
 
 logger = get_logger("job_queue")
 
@@ -90,8 +91,18 @@ class JobQueue:
     ) -> None:
         """
         Register a job. If interval_seconds is provided, job is periodic; otherwise one-off.
+
+        Checks config for any saved interval overrides for this job.
         """
         with self._lock:
+            # Check for saved overrides in config
+            saved_config = config_manager.get(f"jobs.{name}")
+            if saved_config and isinstance(saved_config, dict):
+                saved_interval = saved_config.get("interval_seconds")
+                if saved_interval is not None:
+                    interval_seconds = float(saved_interval)
+                    logger.debug(f"Applied saved interval override for {name}: {interval_seconds}s")
+
             next_run = time.time() + max(start_after, 0.0)
             job = ScheduledJob(
                 next_run=next_run,
@@ -105,9 +116,43 @@ class JobQueue:
                 tags=tags or [],
                 plugin=plugin,
             )
+
+            # If job already exists, remove it from heap first (idempotency)
+            if name in self._jobs:
+                self._remove_from_heap(name)
+
             self._jobs[name] = job
             heapq.heappush(self._heap, job)
             logger.info(f"Registered job: {name}")
+
+    def update_job_interval(self, name: str, interval_seconds: float) -> bool:
+        """
+        Update a job's interval and persist to config.
+        """
+        with self._lock:
+            job = self._jobs.get(name)
+            if not job:
+                return False
+
+            job.interval_seconds = interval_seconds
+
+            # Persist to config
+            try:
+                # We need to ensure the parent 'jobs' key exists if we are going deep
+                current_jobs_config = config_manager.get("jobs", {})
+                if not isinstance(current_jobs_config, dict):
+                    current_jobs_config = {}
+
+                job_config = current_jobs_config.get(name, {})
+                job_config["interval_seconds"] = interval_seconds
+                current_jobs_config[name] = job_config
+
+                config_manager.set("jobs", current_jobs_config)
+                logger.info(f"Updated and persisted interval for job '{name}': {interval_seconds}s")
+            except Exception as e:
+                logger.error(f"Failed to persist job interval for '{name}': {e}")
+
+            return True
 
     def enable_job(self, name: str):
         with self._lock:
@@ -309,3 +354,6 @@ def start_job_queue():
 
 def stop_job_queue():
     job_queue.stop()
+
+def update_job_interval(name: str, interval_seconds: float) -> bool:
+    return job_queue.update_job_interval(name, interval_seconds)
