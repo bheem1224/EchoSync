@@ -2,15 +2,14 @@
 # Multi-stage build for Svelte Web UI and Python Backend
 
 # ---- Node Stage: Build Svelte Web UI ----
-FROM node:20-slim as node
+FROM node:20-slim AS node
 
 WORKDIR /app/webui
 
 # Copy package files and install dependencies
 COPY webui/package.json webui/package-lock.json* ./
-# install using legacy peer deps to bypass transient conflicts between
-# vite and the Svelte plugin; the lockfile (if present) will pin versions
-RUN npm install --legacy-peer-deps
+# A standard npm install is safe here since we fixed the dependencies in package.json
+RUN npm install
 
 # Copy the rest of the web UI source code
 COPY webui ./
@@ -33,13 +32,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash --uid 1000 soulsync
 
-# Install Python dependencies using pyproject.toml (PEP 517 project)
-# copying only the metadata files first allows Docker layer caching
-COPY pyproject.toml poetry.lock* ./
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir .
+# --- UV INSTALLATION & DEPENDENCY SYNC ---
+# Install uv directly from the official astral-sh image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Copy application code (legacy files have been removed from repository)
+# Copy backend dependency files
+COPY pyproject.toml uv.lock .python-version ./
+
+# Use uv to sync the environment exactly as it is in uv.lock
+RUN uv sync --frozen --no-dev
+
+# Put the uv virtual environment in the PATH so 'python' automatically uses it
+ENV PATH="/app/.venv/bin:$PATH"
+# ------------------------------------------
+
+# Copy application code 
 COPY . .
 
 # Copy built Svelte UI from the node stage
@@ -50,16 +57,13 @@ RUN mkdir -p /config /data/logs /data/downloads /data/Transfer && \
     chown -R soulsync:soulsync /config /data
 
 # Create defaults directory and copy template files
-# These will be used by entrypoint.sh to initialize empty volumes
+# (Using || true to ensure build doesn't fail if example config is missing)
 RUN mkdir -p /defaults && \
-    cp /app/config/config.example.json /defaults/config.json && \
-    chmod 644 /defaults/config.json
+    cp /app/config/config.example.json /defaults/config.json || true && \
+    chmod 644 /defaults/config.json || true
 
 # Create volume mount points
 VOLUME ["/config", "/data"]
-
-# The previous entrypoint script was removed during refactor; backend
-# now starts directly via the default command below.
 
 # Expose ports for web app and OAuth callbacks
 EXPOSE 5000 8888 8889
@@ -80,5 +84,5 @@ ENV UVICORN_PORT=5000
 ENV TZ=UTC
 ENV SOULSYNC_LOG_LEVEL=INFO
 
-# Default command; no entrypoint script is used any more
+# Default command; using the uv virtual environment
 CMD ["python", "run_api.py"]
