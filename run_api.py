@@ -40,6 +40,32 @@ if __name__ == "__main__":
     print(f"[API] Starting HTTP backend on http://0.0.0.0:5000/api")
 
     app = create_app()
+
+    # Generate SSL certs for the sidecar
+    from core.cert_manager import generate_ssl_certs
+    cert_path, key_path = generate_ssl_certs()
+
+    # Start the OAuth Sidecar App in a background thread if certs exist
+    if cert_path and key_path:
+        print(f"[API] Starting HTTPS OAuth Sidecar on https://0.0.0.0:5001")
+        from web.oauth_sidecar import sidecar_app
+        import threading
+
+        def run_sidecar():
+            # Use Werkzeug's SSL context
+            ssl_context = (cert_path, key_path)
+            # Disable Werkzeug's own logging for the sidecar so we don't get duplicate request logs
+            import logging
+            log = logging.getLogger('werkzeug')
+            log.setLevel(logging.ERROR)
+
+            sidecar_app.run(host="0.0.0.0", port=5001, ssl_context=ssl_context, debug=False, use_reloader=False)
+
+        sidecar_thread = threading.Thread(target=run_sidecar, daemon=True, name="OAuthSidecar")
+        sidecar_thread.start()
+    else:
+        print("[WARN] Failed to generate or locate SSL certs. OAuth Sidecar will not start.")
+
     # Run in standard HTTP mode
     # debug=True enables the reloader and debugger, which is only desired in DEV_MODE
     app.run(host="0.0.0.0", port=5000, debug=dev_mode)

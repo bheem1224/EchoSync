@@ -330,7 +330,7 @@ def _get_mock_schema(provider_name):
         'spotify': [
             {'key': 'client_id', 'label': 'Client ID', 'type': 'text', 'sensitive': True},
             {'key': 'client_secret', 'label': 'Client Secret', 'type': 'password', 'sensitive': True},
-            {'key': 'redirect_uri', 'label': 'Redirect URI', 'type': 'text', 'default': 'http://127.0.0.1:8008/api/spotify/callback'},
+            {'key': 'redirect_uri', 'label': 'Redirect URI', 'type': 'text', 'default': 'https://127.0.0.1:5001/api/spotify/callback'},
         ],
         'plex': [
             {'key': 'server_url', 'label': 'Server URL', 'type': 'text', 'default': 'http://localhost:32400'},

@@ -19,9 +19,9 @@
     await loadGlobalSettings();
     await loadAccounts();
 
-    // Auto-populate redirect URI if empty
+    // Auto-populate redirect URI with sidecar URL if empty
     if (!redirectUri && typeof window !== 'undefined') {
-      redirectUri = `${window.location.protocol}//${window.location.host}/api/spotify/callback`;
+      redirectUri = `https://${window.location.hostname}:5001/api/spotify/callback`;
     }
 
     // Collapse credentials by default when all globals are present and at least one account is authenticated
@@ -48,12 +48,18 @@
       return;
     }
 
+    let finalRedirectUri = redirectUri;
+    if (!finalRedirectUri && typeof window !== 'undefined') {
+      finalRedirectUri = `https://${window.location.hostname}:5001/api/spotify/callback`;
+      redirectUri = finalRedirectUri; // Update UI state too
+    }
+
     try {
       savingGlobal = true;
       await apiClient.post('/providers/spotify/settings', {
         client_id: clientId,
         client_secret: clientSecret,
-        redirect_uri: redirectUri
+        redirect_uri: finalRedirectUri
       });
       feedback.addToast('Spotify credentials saved', 'success');
     } catch (error) {
@@ -206,8 +212,11 @@
             <input
               type="text"
               bind:value={redirectUri}
-              placeholder="http://127.0.0.1:8008/api/spotify/callback"
+              placeholder="https://127.0.0.1:5001/api/spotify/callback"
               class="input"
+              readonly
+              style="opacity: 0.7; cursor: not-allowed;"
+              title="This URL is auto-generated to handle Spotify's HTTPS requirement"
             />
           </label>
           <button 
