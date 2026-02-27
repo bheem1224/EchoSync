@@ -12,7 +12,6 @@ from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.job_queue import job_queue
 from web.utils.event_bus import event_bus
 from core.sync_history import sync_history
-from core.account_manager import AccountManager
 import time
 
 logger = get_logger("playlists_api")
@@ -48,7 +47,9 @@ def analyze_playlists():
             if source in ['spotify', 'tidal']:
                 if acc_id is None:
                     # fall back to active/first account if no id provided
-                    accounts = AccountManager.list_accounts(source)
+                    from sdk.storage_service import get_storage_service
+                    storage = get_storage_service()
+                    accounts = storage.list_accounts(source)
                     if not accounts:
                         return None, None
                     acc_id_local = accounts[0]['id']

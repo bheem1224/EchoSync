@@ -7,7 +7,6 @@ from core.provider import ProviderRegistry
 from services.download_manager import get_download_manager
 from services.match_service import MatchService, MatchContext
 from core.matching_engine import SoulSyncTrack, MatchResult
-from core.account_manager import AccountManager
 
 logger = get_logger("sync_service")
 
@@ -66,7 +65,9 @@ class PlaylistSyncService:
         else:
             # Use ProviderRegistry to load all spotify clients
             try:
-                accounts = AccountManager.list_accounts('spotify') or []
+                from sdk.storage_service import get_storage_service
+                storage = get_storage_service()
+                accounts = storage.list_accounts('spotify') or []
 
                 for acc in accounts:
                     try:

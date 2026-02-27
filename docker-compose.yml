@@ -1,24 +1,74 @@
-version: "3.8"
+version: '3.8'
 
 services:
-  soulsync:
+  backend:
     build: .
-    container_name: soulsync
-    restart: unless-stopped
+    image: soulsync:latest
+    container_name: soulsync_backend
     environment:
+      # User/Group ID configuration
       - PUID=1000
       - PGID=1000
-      - TZ=UTC
       - UMASK=022
-      - SOULSYNC_LOG_LEVEL=INFO
+      # API server configuration
+      - UVICORN_PORT=5000
+      - PYTHONPATH=/app
+      # Set the config directory for settings and encrypted secrets
+      - SOULSYNC_CONFIG_DIR=/config
+      # Set the data directory for database and logs
+      - SOULSYNC_DATA_DIR=/data
+      # Set timezone
+      - TZ=America/New_York
     ports:
-      - "5000:5000" # Web UI & API
-      - "8888:8888" # Spotify Callback
-      - "8889:8889" # Tidal Callback
+      - "5000:5000"      # Main web app
+      - "8888:8888"      # Spotify OAuth callback
+      - "8889:8889"      # Tidal OAuth callback
     volumes:
+      # Configuration and encrypted secrets
       - ./config:/config
+      # Persistent data, logs, downloads
       - ./data:/data
-      - /mnt/user/media/music:/music # Example host path
-      - /mnt/user/downloads/soulsync:/downloads # Example host path
-    # Optional: Network mode host is often easier for local discovery
-    # network_mode: host
+      # IMPORTANT: Mount the drives containing your download and transfer folders
+      # Example for Windows:
+      # - "E:/Downloads:/downloads"
+      # Example for Linux/macOS:
+      # - "/path/to/your/downloads:/downloads"
+    extra_hosts:
+      # Allow container to reach host services
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # Resource limits (adjust as needed)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    networks:
+      - soulsync-network
+
+  frontend:
+    image: node:20-slim
+    container_name: soulsync_frontend
+    ports:
+      - "5173:5173"
+    working_dir: /app/webui
+    volumes:
+      - ./webui:/app/webui
+    command: npm run dev
+    depends_on:
+      - backend
+    networks:
+      - soulsync-network
+
+networks:
+  soulsync-network:
+    driver: bridge

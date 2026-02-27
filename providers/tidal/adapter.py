@@ -10,15 +10,16 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 from typing import List, Optional
 from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
-from database import get_database
+from sdk.storage_service import get_storage_service
 
 logger = get_logger("tidal_adapter")
 
 # TidalAdapter class deprecated - use convert_tidal_track_to_soulsync instead
 class TidalAdapter:
     def __init__(self, tidal_client=None):
-        self.db = get_database()
-        super().__init__(db=self.db, provider_type=ProviderType.TIDAL)
+        storage = get_storage_service()
+        db = storage.get_music_database()
+        super().__init__(db=db, provider_type=ProviderType.TIDAL)
         self.tidal = tidal_client
 
     # Field contracts
