@@ -195,15 +195,35 @@ class SpotifyClient(SyncServiceProvider):
 
     def _setup_client(self):
         try:
-            creds = {'client_id': None, 'client_secret': None, 'redirect_uri': None}
-            from sdk.storage_service import get_storage_service
-            storage = get_storage_service()
-            creds['client_id'] = storage.get_service_config('spotify', 'client_id')
-            creds['client_secret'] = storage.get_service_config('spotify', 'client_secret')
-            creds['redirect_uri'] = storage.get_service_config('spotify', 'redirect_uri')
+            # Credentials may live per-account (recommended) or as a legacy global service
+            # configuration.  Prioritize the account entry when one is specified; fall
+            # back to the legacy service-level settings if the account doesn't exist or
+            # doesn't contain its own keys.
+            creds: dict[str, str | None] = {
+                'client_id': None,
+                'client_secret': None,
+                'redirect_uri': None,
+            }
+
+            if self.account_id is not None:
+                acc = AccountManager.get_account('spotify', self.account_id)
+                if acc:
+                    creds['client_id'] = acc.get('client_id')
+                    creds['client_secret'] = acc.get('client_secret')
+                    # redirect URI is usually global; fall back if not set on account
+                    creds['redirect_uri'] = acc.get('redirect_uri') or AccountManager.get_service_config('spotify', 'redirect_uri')
+
+            # if we still don't have ID/secret, try the legacy global service config
+            if not creds['client_id'] or not creds['client_secret']:
+                creds['client_id'] = creds['client_id'] or AccountManager.get_service_config('spotify', 'client_id')
+            creds['client_secret'] = creds['client_secret'] or AccountManager.get_service_config('spotify', 'client_secret')
+            creds['redirect_uri'] = creds['redirect_uri'] or AccountManager.get_service_config('spotify', 'redirect_uri')
 
             if not creds['client_id'] or not creds['client_secret']:
-                logger.warning("Spotify credentials not configured in config.db")
+                # do not log secrets, include account id for diagnostics
+                logger.warning(
+                    f"Spotify credentials not configured (account_id={self.account_id})"
+                )
                 return
 
             # Updated scope to include write permissions
@@ -248,26 +268,22 @@ class SpotifyClient(SyncServiceProvider):
                 open_browser=False
             )
 
+            # optionally refresh token if expired/refreshable
             try:
-                # Check if we have a valid cached token
                 cached = auth_manager.cache_handler.get_cached_token()
                 if cached and cached.get('access_token'):
-                    # We have a valid access token
                     logger.info(f"Using valid cached access token for Spotify account {self.account_id}")
                 elif cached and cached.get('refresh_token'):
-                    # We have a refresh token but no valid access token - refresh it silently
                     logger.debug(f"Refresh token found for account {self.account_id}, attempting silent refresh")
                     try:
                         new_token = auth_manager.refresh_access_token(cached.get('refresh_token'))
                         if new_token and new_token.get('access_token'):
                             logger.info(f"Successfully refreshed Spotify token for account {self.account_id}")
-                            # Cache handler will save it automatically via SpotifyOAuth
                         else:
                             logger.warning(f"Refresh token refresh returned no access token for account {self.account_id}")
                     except Exception as e:
                         logger.warning(f"Failed to refresh Spotify token for account {self.account_id}: {e}")
                 else:
-                    # provide more context so we can diagnose why validate_token returned None
                     logger.debug(
                         f"Cached token invalid/absent for account {self.account_id} (after validation). "
                         f"Raw token info: {cached}. User authentication required."
