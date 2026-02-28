@@ -64,7 +64,7 @@ def get_settings():
             }
         })
     except Exception as e:
-        logger.error(f"Error getting Plex settings: {e}", exc_info=True)
+        logger.exception(f"Action failed for plex settings get: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -100,7 +100,7 @@ def save_settings():
         
         return jsonify({'success': True})
     except Exception as e:
-        logger.error(f"Error saving Plex settings: {e}", exc_info=True)
+        logger.exception(f"Action failed for plex settings save: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -115,7 +115,7 @@ def activate_server():
             'message': 'Plex is now the active media server'
         })
     except Exception as e:
-        logger.error(f"Error activating Plex: {e}", exc_info=True)
+        logger.exception(f"Action failed for plex activate: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -150,7 +150,7 @@ def test_connection():
     except ImportError:
         return jsonify({'error': 'Plex library not available'}), 500
     except Exception as e:
-        logger.error(f"Plex connection test failed: {e}", exc_info=True)
+        logger.exception(f"Action failed for plex connection test: {e}")
         return jsonify({'connected': False, 'error': str(e)}), 400
 
 # --- OAuth Logic (from providers/plex/oauth_routes.py) ---
@@ -198,7 +198,7 @@ def start_oauth():
         logger.error("plexapi library not installed")
         return jsonify({'error': 'Plex library not available'}), 500
     except Exception as e:
-        logger.error(f"Error starting Plex OAuth: {e}", exc_info=True)
+        logger.exception(f"Action failed for plex start_oauth: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -233,7 +233,7 @@ def poll_oauth(session_id: str):
             })
 
     except Exception as e:
-        logger.error(f"Error polling Plex OAuth: {e}", exc_info=True)
+        logger.exception(f"Action failed for plex poll_oauth: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -248,5 +248,5 @@ def cancel_oauth(session_id: str):
 
         return jsonify({'success': True})
     except Exception as e:
-        logger.error(f"Error cancelling Plex OAuth: {e}", exc_info=True)
+        logger.exception(f"Action failed for plex cancel_oauth: {e}")
         return jsonify({'error': str(e)}), 500

@@ -31,7 +31,7 @@ def get_settings():
             "configured": bool(slskd_url and api_key),
         }), 200
     except Exception as e:
-        logger.error(f"Failed to get slskd settings: {e}", exc_info=True)
+        logger.exception(f"Action failed for slskd get settings: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -66,7 +66,7 @@ def save_settings():
         
         return jsonify({"success": True}), 200
     except Exception as e:
-        logger.error(f"Failed to save slskd settings: {e}", exc_info=True)
+        logger.exception(f"Action failed for slskd save settings: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -151,7 +151,7 @@ def test_connection():
         return jsonify(result), status_code
         
     except Exception as e:
-        logger.error(f"Failed to test slskd connection: {e}", exc_info=True)
+        logger.exception(f"Action failed for slskd test connection: {e}")
         return jsonify({
             "success": False,
             "error": str(e)
@@ -172,5 +172,5 @@ def get_api_key():
 
         return jsonify({"api_key": api_key}), 200
     except Exception as e:
-        logger.error(f"Failed to fetch API key: {e}", exc_info=True)
+        logger.exception(f"Action failed for slskd get api key: {e}")
         return jsonify({"error": str(e)}), 500

@@ -274,7 +274,7 @@ def get_provider_settings(provider_name):
             'schema': schema
         }), 200
     except Exception as e:
-        logger.error(f"Error getting settings for {provider_name}: {e}")
+        logger.exception(f"Action failed for {provider_name}: {e}")
         return jsonify({'error': str(e)}), 500
 
 @bp.post("/<provider_name>/settings")
@@ -317,11 +317,11 @@ def update_provider_settings(provider_name):
                 logger.warning(f"Failed to update one or more settings for {provider_name}")
                 return jsonify({'error': 'Failed to update one or more settings'}), 500
         except Exception as e:
-            logger.error(f"Error updating settings for {provider_name}: {e}")
+            logger.exception(f"Action failed for {provider_name}: {e}")
             return jsonify({'error': 'Failed to update settings'}), 500
     except Exception as e:
         # SECURITY: Log error but not the payload
-        logger.error(f"Error updating settings for {provider_name}: {type(e).__name__}")
+        logger.exception(f"Action failed for {provider_name}: {type(e).__name__}")
         return jsonify({'error': 'Failed to update settings'}), 500
 
 def _get_mock_schema(provider_name):

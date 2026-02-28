@@ -48,7 +48,7 @@ def list_accounts():
             'redirect_uri': redirect_uri
         })
     except Exception as e:
-        logger.error(f"Error getting Tidal accounts: {e}", exc_info=True)
+        logger.exception(f"Action failed for tidal list accounts: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -103,7 +103,7 @@ def create_account():
             }
         }), 201
     except Exception as e:
-        logger.error(f"Error creating Tidal account: {e}", exc_info=True)
+        logger.exception(f"Action failed for tidal create account: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -138,7 +138,7 @@ def get_account(account_id):
             }
         })
     except Exception as e:
-        logger.error(f"Error getting Tidal account: {e}", exc_info=True)
+        logger.exception(f"Action failed for tidal get account: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -202,7 +202,7 @@ def update_account(account_id):
             }
         })
     except Exception as e:
-        logger.error(f"Error updating Tidal account: {e}", exc_info=True)
+        logger.exception(f"Action failed for tidal update account: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -230,7 +230,7 @@ def activate_account(account_id):
         
         return jsonify({'status': 'ok', 'is_active': is_active})
     except Exception as e:
-        logger.error(f"Error activating Tidal account: {e}", exc_info=True)
+        logger.exception(f"Action failed for tidal activate account: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -257,7 +257,7 @@ def delete_account(account_id):
         logger.info(f"Deleted Tidal account {account_id}")
         return jsonify({'status': 'ok', 'message': 'Account deleted'})
     except Exception as e:
-        logger.error(f"Error deleting Tidal account: {e}", exc_info=True)
+        logger.exception(f"Action failed for tidal delete account: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -280,7 +280,7 @@ def set_redirect_uri():
         
         return jsonify({'status': 'ok', 'redirect_uri': redirect_uri})
     except Exception as e:
-        logger.error(f"Error setting redirect URI: {e}", exc_info=True)
+        logger.exception(f"Action failed for tidal set redirect uri: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -320,5 +320,5 @@ def debug_account(account_id):
             'raw_keys': [row[0] for row in raw_metadata]
         })
     except Exception as e:
-        logger.error(f"Error debugging account: {e}", exc_info=True)
+        logger.exception(f"Action failed for tidal debug account: {e}")
         return jsonify({'error': str(e)}), 500

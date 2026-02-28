@@ -83,7 +83,7 @@ def begin_auth():
         logger.info(f"Generated Spotify authorize URL for account {account_id}")
         return jsonify({'auth_url': auth_url}), 200
     except Exception as e:
-        logger.error(f"Error creating Spotify auth URL: {e}")
+        logger.exception(f"Action failed for spotify: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -127,6 +127,6 @@ def oauth_callback():
 
         return redirect(ui_redirect)
     except Exception as e:
-        logger.error(f"Spotify callback error: {e}", exc_info=True)
+        logger.exception(f"Action failed for spotify: {e}")
         error_html = f"""<html><body style='font-family: Arial, sans-serif;'><h2>Spotify Authentication Failed</h2><p>{str(e)}</p></body></html>"""
         return error_html, 500, {"Content-Type": "text/html"}

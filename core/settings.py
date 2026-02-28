@@ -409,20 +409,7 @@ class ConfigManager:
         # Use container-friendly defaults when available, fall back to project-relative paths
         cfg = {
             "active_media_server": "plex",
-            "spotify": {"client_id": "", "client_secret": "", "redirect_uri": "http://127.0.0.1:8008/api/spotify/callback"},
-            # Multi-account Spotify support
-            "spotify_accounts": [],
-            "active_spotify_account_id": None,
-            "tidal": {"client_id": "", "client_secret": "", "redirect_uri": "http://127.0.0.1:8889/tidal/callback"},
-            # Multi-account Tidal support
-            "tidal_accounts": [],
-            "active_tidal_account_id": None,
-            "plex": {"base_url": "", "token": "", "auto_detect": True, "path_mappings": []},
-            "jellyfin": {"base_url": "", "api_key": "", "auto_detect": True},
-            "navidrome": {"base_url": "", "username": "", "password": "", "auto_detect": True},
-            "soulseek": {"slskd_url": "", "api_key": ""},
             "active_download_client": None,
-            "listenbrainz": {"token": ""},
             "logging": {"path": str(self.logs_path / 'app.log'), "level": "INFO"},
             "database": {"path": str(self.media_db_path), "max_workers": 2},
             "metadata_enhancement": {
@@ -869,16 +856,52 @@ class ConfigManager:
         return None
 
     def get_plex_config(self) -> Dict[str, str]:
-        return self.get('plex', {})
+        from core.storage import get_storage_service
+        try:
+            storage = get_storage_service()
+            return {
+                'base_url': storage.get_service_config('plex', 'base_url') or '',
+                'token': storage.get_service_config('plex', 'token') or '',
+                'server_name': storage.get_service_config('plex', 'server_name') or '',
+                'path_mappings': storage.get_service_config('plex', 'path_mappings') or []
+            }
+        except Exception:
+            return {}
 
     def get_jellyfin_config(self) -> Dict[str, str]:
-        return self.get('jellyfin', {})
+        from core.storage import get_storage_service
+        try:
+            storage = get_storage_service()
+            return {
+                'base_url': storage.get_service_config('jellyfin', 'base_url') or '',
+                'api_key': storage.get_service_config('jellyfin', 'api_key') or ''
+            }
+        except Exception:
+            return {}
 
     def get_navidrome_config(self) -> Dict[str, str]:
-        return self.get('navidrome', {})
+        from core.storage import get_storage_service
+        try:
+            storage = get_storage_service()
+            return {
+                'base_url': storage.get_service_config('navidrome', 'base_url') or '',
+                'username': storage.get_service_config('navidrome', 'username') or '',
+                'password': storage.get_service_config('navidrome', 'password') or ''
+            }
+        except Exception:
+            return {}
 
     def get_soulseek_config(self) -> Dict[str, str]:
-        return self.get('soulseek', {})
+        from core.storage import get_storage_service
+        try:
+            storage = get_storage_service()
+            return {
+                'slskd_url': storage.get_service_config('soulseek', 'slskd_url') or '',
+                'api_key': storage.get_service_config('soulseek', 'api_key') or '',
+                'server_name': storage.get_service_config('soulseek', 'server_name') or ''
+            }
+        except Exception:
+            return {}
 
     def get_settings(self) -> Dict[str, Any]:
         return self.get('settings', {})
@@ -1026,51 +1049,47 @@ class ConfigManager:
             self.set_disabled_providers(disabled)
 
     def is_configured(self) -> bool:
-        # Check Spotify credentials (global or active account overrides)
-        spotify_creds = self.get_spotify_active_credentials()
-        spotify_configured = bool(spotify_creds.get('client_id')) and bool(spotify_creds.get('client_secret')) and bool(spotify_creds.get('redirect_uri'))
-        
-        active_server = self.get_active_media_server()
-        soulseek = self.get_soulseek_config()
+        """Determines if enough services are configured to run."""
+        try:
+            from core.storage import get_storage_service
+            storage = get_storage_service()
 
-        # Check active media server configuration
-        media_server_configured = False
-        if active_server == 'plex':
-            plex = self.get_plex_config()
-            media_server_configured = bool(plex.get('base_url')) and bool(plex.get('token'))
-        elif active_server == 'jellyfin':
-            jellyfin = self.get_jellyfin_config()
-            media_server_configured = bool(jellyfin.get('base_url')) and bool(jellyfin.get('api_key'))
-        elif active_server == 'navidrome':
-            navidrome = self.get_navidrome_config()
-            media_server_configured = bool(navidrome.get('base_url')) and bool(navidrome.get('username')) and bool(navidrome.get('password'))
+            spotify_creds = self.get_spotify_active_credentials()
+            spotify_configured = bool(spotify_creds.get('client_id')) and bool(spotify_creds.get('client_secret'))
 
-        return (
-            spotify_configured and
-            media_server_configured and
-            bool(soulseek.get('slskd_url'))
-        )
+            active_server = self.get_active_media_server()
+            media_server_configured = False
+
+            if active_server == 'plex':
+                media_server_configured = bool(storage.get_service_config('plex', 'base_url') and storage.get_service_config('plex', 'token'))
+            elif active_server == 'jellyfin':
+                media_server_configured = bool(storage.get_service_config('jellyfin', 'base_url') and storage.get_service_config('jellyfin', 'api_key'))
+            elif active_server == 'navidrome':
+                media_server_configured = bool(storage.get_service_config('navidrome', 'base_url') and storage.get_service_config('navidrome', 'username') and storage.get_service_config('navidrome', 'password'))
+
+            slskd_configured = bool(storage.get_service_config('soulseek', 'slskd_url'))
+
+            return spotify_configured and media_server_configured and slskd_configured
+        except Exception:
+            return False
 
     def validate_config(self) -> Dict[str, bool]:
-        active_server = self.get_active_media_server()
+        try:
+            from core.storage import get_storage_service
+            storage = get_storage_service()
+            active_server = self.get_active_media_server()
 
-        # Check global Spotify app credentials
-        spotify_valid = bool(self.get('spotify.client_id')) and bool(self.get('spotify.client_secret'))
-
-        validation = {
-            'spotify': spotify_valid,
-            'soulseek': bool(self.get('soulseek.slskd_url'))
-        }
-
-        # Validate all server types but mark active one
-        validation['plex'] = bool(self.get('plex.base_url')) and bool(self.get('plex.token'))
-        validation['jellyfin'] = bool(self.get('jellyfin.base_url')) and bool(self.get('jellyfin.api_key'))
-        validation['navidrome'] = bool(self.get('navidrome.base_url')) and bool(self.get('navidrome.username')) and bool(self.get('navidrome.password'))
-        # Set to True if the active media server is configured, False otherwise
-        validation['active_media_server'] = bool(active_server)
-        validation['active_download_client'] = bool(self.get('active_download_client'))
-
-        return validation
+            return {
+                'spotify': bool(self.get('spotify.client_id')) and bool(self.get('spotify.client_secret')),
+                'soulseek': bool(storage.get_service_config('soulseek', 'slskd_url')),
+                'plex': bool(storage.get_service_config('plex', 'base_url') and storage.get_service_config('plex', 'token')),
+                'jellyfin': bool(storage.get_service_config('jellyfin', 'base_url') and storage.get_service_config('jellyfin', 'api_key')),
+                'navidrome': bool(storage.get_service_config('navidrome', 'base_url') and storage.get_service_config('navidrome', 'username') and storage.get_service_config('navidrome', 'password')),
+                'active_media_server': bool(active_server),
+                'active_download_client': bool(self.get('active_download_client'))
+            }
+        except Exception:
+            return {}
 
     def get_service_credentials(self, service_name: str) -> Dict[str, Any]:
         """

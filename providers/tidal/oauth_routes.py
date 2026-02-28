@@ -101,7 +101,7 @@ def begin_auth():
     except ValueError:
         return jsonify({'error': 'Invalid account_id format'}), 400
     except Exception as e:
-        logger.error(f"Error creating Tidal auth URL: {e}", exc_info=True)
+        logger.exception(f"Action failed for tidal begin_auth: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -215,7 +215,7 @@ def oauth_callback():
         return redirect(ui_redirect)
 
     except Exception as e:
-        logger.error(f"Tidal callback error: {e}", exc_info=True)
+        logger.exception(f"Action failed for tidal callback: {e}")
         error_html = f"""<html><body style='font-family: Arial, sans-serif;'>
             <h2>Tidal Authentication Failed</h2>
             <p>{str(e)}</p>
