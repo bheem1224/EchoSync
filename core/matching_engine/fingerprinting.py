@@ -168,17 +168,19 @@ class FingerprintCache:
         """Ensure fingerprint cache table exists in database"""
         try:
             import sqlite3
-            conn = sqlite3.connect(self.db_path)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS fingerprint_cache (
-                    file_path TEXT PRIMARY KEY,
-                    fingerprint TEXT NOT NULL,
-                    file_hash TEXT NOT NULL,
-                    cached_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
-            conn.close()
+            import contextlib
+            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+                conn.execute("PRAGMA busy_timeout = 5000")
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS fingerprint_cache (
+                        file_path TEXT PRIMARY KEY,
+                        fingerprint TEXT NOT NULL,
+                        file_hash TEXT NOT NULL,
+                        cached_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.commit()
         except Exception as e:
             logger.warning(f"Failed to create fingerprint cache table: {e}")
 
@@ -195,23 +197,25 @@ class FingerprintCache:
         """
         try:
             import sqlite3
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            import contextlib
+            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+                conn.execute("PRAGMA busy_timeout = 5000")
+                conn.execute("PRAGMA journal_mode = WAL")
+                cursor = conn.cursor()
 
-            if file_hash:
-                cursor.execute(
-                    "SELECT fingerprint FROM fingerprint_cache WHERE file_path = ? AND file_hash = ?",
-                    (str(file_path), file_hash)
-                )
-            else:
-                cursor.execute(
-                    "SELECT fingerprint FROM fingerprint_cache WHERE file_path = ?",
-                    (str(file_path),)
-                )
+                if file_hash:
+                    cursor.execute(
+                        "SELECT fingerprint FROM fingerprint_cache WHERE file_path = ? AND file_hash = ?",
+                        (str(file_path), file_hash)
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT fingerprint FROM fingerprint_cache WHERE file_path = ?",
+                        (str(file_path),)
+                    )
 
-            result = cursor.fetchone()
-            conn.close()
-            return result[0] if result else None
+                result = cursor.fetchone()
+                return result[0] if result else None
         except Exception as e:
             logger.debug(f"Failed to retrieve cached fingerprint: {e}")
             return None
@@ -227,16 +231,18 @@ class FingerprintCache:
         """
         try:
             import sqlite3
-            conn = sqlite3.connect(self.db_path)
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO fingerprint_cache (file_path, fingerprint, file_hash)
-                VALUES (?, ?, ?)
-                """,
-                (str(file_path), fingerprint, file_hash or "")
-            )
-            conn.commit()
-            conn.close()
+            import contextlib
+            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+                conn.execute("PRAGMA busy_timeout = 5000")
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO fingerprint_cache (file_path, fingerprint, file_hash)
+                    VALUES (?, ?, ?)
+                    """,
+                    (str(file_path), fingerprint, file_hash or "")
+                )
+                conn.commit()
         except Exception as e:
             logger.warning(f"Failed to cache fingerprint: {e}")
 
@@ -249,15 +255,17 @@ class FingerprintCache:
         """
         try:
             import sqlite3
-            conn = sqlite3.connect(self.db_path)
-            conn.execute(
-                """
-                DELETE FROM fingerprint_cache
-                WHERE datetime(cached_at) < datetime('now', ? || ' days')
-                """,
-                (f'-{days}',)
-            )
-            conn.commit()
-            conn.close()
+            import contextlib
+            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+                conn.execute("PRAGMA busy_timeout = 5000")
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute(
+                    """
+                    DELETE FROM fingerprint_cache
+                    WHERE datetime(cached_at) < datetime('now', ? || ' days')
+                    """,
+                    (f'-{days}',)
+                )
+                conn.commit()
         except Exception as e:
             logger.warning(f"Failed to clear expired fingerprints: {e}")

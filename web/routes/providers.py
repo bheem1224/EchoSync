@@ -249,21 +249,23 @@ def get_provider_settings(provider_name):
     The storage service handles decryption automatically via config.db.
     """
     try:
-        from core.storage import get_storage_service
-        storage = get_storage_service()
+        from database.config_database import get_config_database
+        config_db = get_config_database()
         
         # Ensure service exists in config.db
         try:
-            storage.ensure_service(provider_name)
+            service_id = config_db.get_or_create_service_id(provider_name)
         except Exception:
             return jsonify({'error': f'Provider {provider_name} not found'}), 404
 
-        # Retrieve a known set of provider config keys (client_id, client_secret, redirect_uri)
-        # Storage service returns decrypted values when present in config.db
-        keys_of_interest = ['client_id', 'client_secret', 'redirect_uri']
+        # Retrieve a known set of provider config keys
+        # The new config_db automatically handles decryption
+        keys_of_interest = ['client_id', 'client_secret', 'redirect_uri', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
         config = {}
         for key in keys_of_interest:
-            config[key] = storage.get_service_config(provider_name, key)
+            val = config_db.get_service_config(service_id, key)
+            if val is not None:
+                config[key] = val
         
         # Mock schema for dynamic UI generation (should eventually come from provider class)
         schema = _get_mock_schema(provider_name)
@@ -292,21 +294,21 @@ def update_provider_settings(provider_name):
         # SECURITY: Log only that we're updating, not the actual credentials
         logger.info(f"Updating settings for provider: {provider_name}")
 
-        # Use the storage service so credentials are saved into the encrypted config.db
-        from core.storage import get_storage_service
-        storage = get_storage_service()
+        # Use the config database directly
+        from database.config_database import get_config_database
+        config_db = get_config_database()
 
         try:
             # Ensure service exists in config.db
-            storage.ensure_service(provider_name)
+            service_id = config_db.get_or_create_service_id(provider_name)
 
             # Default sensitive keys
-            sensitive_keys = ['client_secret', 'access_token', 'refresh_token']
+            sensitive_keys = ['client_secret', 'access_token', 'refresh_token', 'password', 'token', 'api_key']
 
             all_ok = True
             for k, v in payload.items():
-                is_sensitive = k in sensitive_keys
-                ok = storage.set_service_config(provider_name, k, (v or '').strip() if isinstance(v, str) else v, is_sensitive=is_sensitive)
+                is_sensitive = k in sensitive_keys or any(s in k.lower() for s in ['secret', 'token', 'password', 'key'])
+                ok = config_db.set_service_config(service_id, k, (v or '').strip() if isinstance(v, str) else v, is_sensitive=is_sensitive)
                 if not ok:
                     all_ok = False
 
@@ -437,10 +439,18 @@ def get_provider_details(provider_name):
 def get_provider_credentials(provider_name):
     """Get credentials/configuration for a specific provider."""
     try:
-        from core.settings import config_manager
+        from database.config_database import get_config_database
+        config_db = get_config_database()
         
-        # Get service credentials from config database
-        credentials = config_manager.get_service_credentials(provider_name)
+        service_id = config_db.get_or_create_service_id(provider_name)
+        # Fetch directly since config_manager might be deprecated for these
+        # But we don't have a get_all_service_config endpoint natively, so we fetch keys of interest
+        keys_of_interest = ['client_id', 'client_secret', 'redirect_uri', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
+        credentials = {}
+        for key in keys_of_interest:
+            val = config_db.get_service_config(service_id, key)
+            if val is not None:
+                credentials[key] = val
         
         return jsonify({
             'provider': provider_name,
@@ -454,7 +464,6 @@ def get_provider_credentials(provider_name):
 def set_provider_credentials(provider_name):
     """Set credentials/configuration for a specific provider."""
     try:
-        from core.settings import config_manager
         from database.config_database import get_config_database
         
         data = request.get_json(silent=True) or {}

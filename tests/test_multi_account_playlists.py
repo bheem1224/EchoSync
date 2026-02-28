@@ -24,21 +24,26 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
     """GET /api/providers/<provider>/settings should surface database credentials.
 
     This test exercises the end-to-end path used by the web UI.  We patch
-    ``config_manager`` such that the "database" value differs from the
+    ``ConfigDatabase`` such that the "database" value differs from the
     legacy config and ensure the route prefers the former.
     """
-    monkeypatch.setattr('core.settings.config_manager.get_service_credentials',
-                        lambda svc: {'client_id': 'db1', 'client_secret': 'db2', 'redirect_uri': 'db3'})
-    # legacy getter returns a different value so we can tell which one was used
-    monkeypatch.setattr('core.settings.config_manager.get', lambda key, default=None: 'legacy')
+    class FakeConfigDB:
+        def get_or_create_service_id(self, name):
+            return 1
+        def get_service_config(self, sid, key):
+            if key == 'client_id': return 'db1'
+            if key == 'client_secret': return 'db2'
+            if key == 'redirect_uri': return 'db3'
+            return None
 
-    resp = client.get('/api/providers/spotify/settings')
-    assert resp.status_code == 200
-    data = resp.get_json()
-    settings = data.get('settings', {})
-    assert settings.get('client_id') == 'db1'
-    assert settings.get('client_secret') == 'db2'
-    assert settings.get('redirect_uri') == 'db3'
+    with patch('database.config_database.get_config_database', return_value=FakeConfigDB()):
+        resp = client.get('/api/providers/spotify/settings')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        settings = data.get('settings', {})
+        assert settings.get('client_id') == 'db1'
+        assert settings.get('client_secret') == 'db2'
+        assert settings.get('redirect_uri') == 'db3'
 
 
 def test_providers_playlist_route_includes_account_id(client, monkeypatch):

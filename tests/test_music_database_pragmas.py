@@ -19,7 +19,7 @@ def test_sqlite_pragmas_enable_wal_and_timeout(tmp_path):
         mode = result.fetchone()[0]
         assert mode.lower() == "wal"
 
-        # busy_timeout should be set to a value >= 30000 (returned as milliseconds)
+        # busy_timeout should be set to a value >= 5000 (returned as milliseconds)
         result = conn.exec_driver_sql("PRAGMA busy_timeout;")
         timeout_val = result.fetchone()[0]
-        assert timeout_val >= 30000
+        assert timeout_val >= 5000

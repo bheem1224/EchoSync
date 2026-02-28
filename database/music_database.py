@@ -22,6 +22,7 @@ from sqlalchemy import (
     create_engine,
     event,
 )
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -241,16 +242,16 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     # ensure foreign keys are enforced
     cursor.execute("PRAGMA foreign_keys=ON")
+    # give other connections a bit longer before raising "database is locked" (MUST be before WAL)
+    try:
+        cursor.execute("PRAGMA busy_timeout=5000")
+    except Exception:
+        pass
     # use WAL mode so long-running writes don't block readers (fixes UI freeze during updates)
     try:
         cursor.execute("PRAGMA journal_mode=WAL")
     except Exception:
         # older SQLite versions may not support WAL; ignore failure
-        pass
-    # give other connections a bit longer before raising "database is locked"
-    try:
-        cursor.execute("PRAGMA busy_timeout=30000")
-    except Exception:
         pass
     cursor.close()
 
@@ -274,6 +275,7 @@ class MusicDatabase:
             f"sqlite:///{self.database_path}",
             future=True,
             echo=False,
+            poolclass=NullPool,
             connect_args={"check_same_thread": False},
         )
         event.listen(self.engine, "connect", _sqlite_pragmas)

@@ -29,6 +29,10 @@ log_level = "DEBUG" if dev_mode else logging_config.get("level", "INFO")
 
 setup_logging(level=log_level, log_file=logging_config.get("path"))
 
+# Run Phase 1 Database Migrations securely
+from core.migrations import run_migrations
+run_migrations()
+
 from web.api_app import create_app
 
 if __name__ == "__main__":

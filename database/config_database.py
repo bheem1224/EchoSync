@@ -30,8 +30,8 @@ class ConfigDatabase:
         conn = sqlite3.connect(str(self.database_path), timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA busy_timeout = 30000")
         return conn
 
     def _initialize_schema(self):
@@ -137,13 +137,14 @@ class ConfigDatabase:
 
     # Service helpers
     def get_or_create_service_id(self, name: str) -> int:
-        with self._get_connection() as conn:
+        import contextlib
+        with contextlib.closing(self._get_connection()) as conn:
             c = conn.cursor()
             c.execute("SELECT id FROM services WHERE name = ?", (name,))
             row = c.fetchone()
             if row:
                 return int(row[0])
-            return self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service")
+        return self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service")
 
     def register_service(self, name: str, display_name: str, service_type: str, description: str) -> int:
         try:
@@ -154,6 +155,10 @@ class ConfigDatabase:
 
     def set_service_config(self, service_id: int, key: str, value: Any, is_sensitive: bool = False) -> bool:
         try:
+            from core.security import encrypt_string
+            if is_sensitive and value is not None:
+                value = encrypt_string(str(value))
+
             execute_write_sql(
                 str(self.database_path),
                 """
@@ -171,11 +176,21 @@ class ConfigDatabase:
 
     def get_service_config(self, service_id: int, key: str) -> Optional[str]:
         try:
-            with self._get_connection() as conn:
+            import contextlib
+            with contextlib.closing(self._get_connection()) as conn:
                 c = conn.cursor()
-                c.execute("SELECT config_value FROM service_config WHERE service_id=? AND config_key=?", (service_id, key))
+                c.execute("SELECT config_value, is_sensitive FROM service_config WHERE service_id=? AND config_key=?", (service_id, key))
                 row = c.fetchone()
-                return row[0] if row else None
+
+                if not row:
+                    return None
+
+                value, is_sensitive = row[0], row[1]
+                if is_sensitive and value is not None:
+                    from core.security import decrypt_string
+                    value = decrypt_string(value)
+
+                return value
         except Exception as e:
             logger.error(f"Error reading service config: {e}")
             return None
@@ -183,7 +198,8 @@ class ConfigDatabase:
     # Accounts
     def get_accounts(self, service_id: Optional[int] = None, is_active: Optional[bool] = None) -> List[Dict[str, Any]]:
         try:
-            with self._get_connection() as conn:
+            import contextlib
+            with contextlib.closing(self._get_connection()) as conn:
                 c = conn.cursor()
                 query = "SELECT id, service_id, account_name, display_name, user_id, account_email, is_active, is_authenticated, last_authenticated_at FROM accounts WHERE 1=1"
                 params: list[Any] = []
@@ -212,7 +228,8 @@ class ConfigDatabase:
         try:
             # If explicit account_id is provided, check existence using a reader
             if account_id is not None:
-                with self._get_connection() as conn:
+                import contextlib
+                with contextlib.closing(self._get_connection()) as conn:
                     c = conn.cursor()
                     c.execute("SELECT id FROM accounts WHERE id = ?", (account_id,))
                     row = c.fetchone()
@@ -319,6 +336,12 @@ class ConfigDatabase:
     # Tokens
     def save_account_token(self, account_id: int, access_token: str, refresh_token: Optional[str] = None, token_type: str = 'Bearer', expires_at: Optional[int] = None, scope: Optional[str] = None) -> bool:
         try:
+            from core.security import encrypt_string
+            if access_token:
+                access_token = encrypt_string(access_token)
+            if refresh_token:
+                refresh_token = encrypt_string(refresh_token)
+
             execute_write_sql(
                 str(self.database_path),
                 """
@@ -337,14 +360,24 @@ class ConfigDatabase:
 
     def get_account_token(self, account_id: int) -> Optional[Dict[str, Any]]:
         try:
-            with self._get_connection() as conn:
+            import contextlib
+            with contextlib.closing(self._get_connection()) as conn:
                 c = conn.cursor()
                 c.execute("SELECT access_token, refresh_token, token_type, expires_at, scope FROM account_tokens WHERE account_id = ?", (account_id,))
                 row = c.fetchone()
                 if not row:
                     return None
+
+                access_token, refresh_token, token_type, expires_at, scope = row
+                from core.security import decrypt_string
+
+                if access_token:
+                    access_token = decrypt_string(access_token)
+                if refresh_token:
+                    refresh_token = decrypt_string(refresh_token)
+
                 return {
-                    'access_token': row[0], 'refresh_token': row[1], 'token_type': row[2], 'expires_at': row[3], 'scope': row[4]
+                    'access_token': access_token, 'refresh_token': refresh_token, 'token_type': token_type, 'expires_at': expires_at, 'scope': scope
                 }
         except Exception as e:
             logger.error(f"Error getting account token: {e}")
@@ -357,8 +390,11 @@ class ConfigDatabase:
             logger.info(f"ConfigDB.set_account_metadata: account_id={account_id}, key={key}, value_length={len(value) if value else 0}, is_sensitive={is_sensitive}")
             logger.info(f"ConfigDB: Database path = {self.database_path}")
             
-            # Store the value directly (encryption would require config_manager.encrypt_value if needed)
-            # For now, storing as plaintext since config.db itself is encrypted at rest
+            from core.security import encrypt_string
+            if is_sensitive and value is not None:
+                value = encrypt_string(str(value))
+
+            # Store the value
             logger.info(f"ConfigDB: Executing SQL INSERT/UPDATE on account_metadata table")
             rowcount = execute_write_sql(
                 str(self.database_path),
@@ -374,7 +410,8 @@ class ConfigDatabase:
             logger.info(f"ConfigDB: Rows affected = {rowcount}")
             
             # Verify it was saved
-            with self._get_connection() as conn:
+            import contextlib
+            with contextlib.closing(self._get_connection()) as conn:
                 c = conn.cursor()
                 c.execute("SELECT metadata_value FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
                 row = c.fetchone()
@@ -390,7 +427,8 @@ class ConfigDatabase:
         try:
             logger.info(f"ConfigDB.get_account_metadata: account_id={account_id}, key={key}")
             logger.info(f"ConfigDB: Database path = {self.database_path}")
-            with self._get_connection() as conn:
+            import contextlib
+            with contextlib.closing(self._get_connection()) as conn:
                 c = conn.cursor()
                 c.execute("SELECT metadata_value FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
                 row = c.fetchone()
@@ -398,6 +436,11 @@ class ConfigDatabase:
                 if not row or row[0] is None:
                     return None
                 value = row[0]
+
+                if value and value.startswith('enc:'):
+                    from core.security import decrypt_string
+                    value = decrypt_string(value)
+
                 logger.info(f"ConfigDB: Returning value length: {len(value) if value else 0}")
                 return value
         except Exception as e:
@@ -432,7 +475,8 @@ class ConfigDatabase:
 
     def get_pkce_session(self, pkce_id: str) -> Optional[Dict[str, Any]]:
         try:
-            with self._get_connection() as conn:
+            import contextlib
+            with contextlib.closing(self._get_connection()) as conn:
                 c = conn.cursor()
                 c.execute("SELECT pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, created_at, expires_at FROM pkce_sessions WHERE pkce_id = ?", (pkce_id,))
                 row = c.fetchone()

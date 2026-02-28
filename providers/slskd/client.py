@@ -192,20 +192,24 @@ class SlskdProvider(DownloaderProvider):
         register_health_check_job("slskd_health_check", slskd_health_check, interval_seconds=300)
 
     def _setup_client(self):
-        config = config_manager.get_soulseek_config()
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+        service_id = config_db.get_or_create_service_id('slskd')
 
-        if not config.get('slskd_url'):
+        slskd_url = config_db.get_service_config(service_id, 'slskd_url') or config_db.get_service_config(service_id, 'server_url')
+        api_key = config_db.get_service_config(service_id, 'api_key') or ''
+
+        if not slskd_url:
             logger.warning("Slskd URL not configured")
             return
 
         # Apply Docker URL resolution if running in container
-        slskd_url = config.get('slskd_url', '')
         if os.path.exists('/.dockerenv') and 'localhost' in slskd_url:
             slskd_url = slskd_url.replace('localhost', 'host.docker.internal')
             logger.info(f"Docker detected, using {slskd_url} for slskd connection")
 
         self.base_url = slskd_url.rstrip('/')
-        self.api_key = config.get('api_key', '')
+        self.api_key = api_key
 
         # Prefer global storage settings (from config manager) but fall back to per-provider values
         try:
