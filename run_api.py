@@ -68,4 +68,5 @@ if __name__ == "__main__":
 
     # Run in standard HTTP mode
     # debug=True enables the reloader and debugger, which is only desired in DEV_MODE
-    app.run(host="0.0.0.0", port=5000, debug=dev_mode)
+    # threaded=True ensures that Werkzeug can handle concurrent requests correctly
+    app.run(host="0.0.0.0", port=5000, debug=dev_mode, threaded=True)
