@@ -88,6 +88,20 @@ def create_app() -> Flask:
                  # User requested "default to same-origin".
                  pass
 
+    # Database Session Teardown
+    @app.teardown_appcontext
+    def shutdown_session(exception=None):
+        """Strictly tear down the database session at the end of each request
+        to prevent session leaks and release SQLite file locks.
+        """
+        try:
+            from database import get_database
+            db = get_database()
+            if hasattr(db, 'SessionLocal') and hasattr(db.SessionLocal, 'remove'):
+                db.SessionLocal.remove()
+        except Exception as e:
+            logging.error(f"Error during database session teardown: {e}")
+
     # Register Core API blueprints
     app.register_blueprint(providers_bp)
     app.register_blueprint(jobs_bp)

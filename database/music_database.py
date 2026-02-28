@@ -22,6 +22,8 @@ from sqlalchemy import (
     create_engine,
     event,
 )
+from sqlalchemy.pool import NullPool
+from sqlalchemy.engine import Engine
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -30,6 +32,7 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
     sessionmaker,
+    scoped_session,
 )
 
 
@@ -237,6 +240,7 @@ class Download(Base):
     )
 
 
+@event.listens_for(Engine, "connect")
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     # ensure foreign keys are enforced
@@ -244,12 +248,13 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     # use WAL mode so long-running writes don't block readers (fixes UI freeze during updates)
     try:
         cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
     except Exception:
         # older SQLite versions may not support WAL; ignore failure
         pass
     # give other connections a bit longer before raising "database is locked"
     try:
-        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA busy_timeout=5000")
     except Exception:
         pass
     cursor.close()
@@ -274,10 +279,11 @@ class MusicDatabase:
             f"sqlite:///{self.database_path}",
             future=True,
             echo=False,
-            connect_args={"check_same_thread": False},
+            connect_args={"check_same_thread": False, "timeout": 15},
+            poolclass=NullPool
         )
-        event.listen(self.engine, "connect", _sqlite_pragmas)
-        self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
+        session_factory = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
+        self.SessionLocal = scoped_session(session_factory)
 
     def create_all(self) -> None:
         Base.metadata.create_all(self.engine)
