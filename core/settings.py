@@ -936,7 +936,7 @@ class ConfigManager:
         from database.config_database import get_config_database
         config_db = get_config_database()
 
-        slskd_id = config_db.get_or_create_service_id('slskd')
+        slskd_id = config_db.get_or_create_service_id('soulseek')
         slskd_url = config_db.get_service_config(slskd_id, 'slskd_url') or config_db.get_service_config(slskd_id, 'server_url')
         slskd_api_key = config_db.get_service_config(slskd_id, 'api_key')
 

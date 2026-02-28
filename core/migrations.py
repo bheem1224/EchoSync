@@ -77,8 +77,11 @@ def run_migrations():
 
                     # Migrate Slskd Data
                     slskd_data = decrypted_config.get('slskd')
+                    if not slskd_data:
+                        slskd_data = decrypted_config.get('soulseek')
+
                     if slskd_data:
-                        service_id = config_db.get_or_create_service_id('slskd')
+                        service_id = config_db.get_or_create_service_id('soulseek')
                         for key, value in slskd_data.items():
                             is_sensitive = key in SECRETS or 'password' in key
                             config_db.set_service_config(service_id, key, value, is_sensitive=is_sensitive)

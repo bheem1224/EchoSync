@@ -194,7 +194,7 @@ class SlskdProvider(DownloaderProvider):
     def _setup_client(self):
         from database.config_database import get_config_database
         config_db = get_config_database()
-        service_id = config_db.get_or_create_service_id('slskd')
+        service_id = config_db.get_or_create_service_id('soulseek')
 
         slskd_url = config_db.get_service_config(service_id, 'slskd_url') or config_db.get_service_config(service_id, 'server_url')
         api_key = config_db.get_service_config(service_id, 'api_key') or ''

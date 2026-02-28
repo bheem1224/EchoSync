@@ -127,7 +127,7 @@ async def start_services() -> None:
     if "soulseek" not in disabled_providers and "slskd" not in disabled_providers:
         from database.config_database import get_config_database
         config_db = get_config_database()
-        slskd_id = config_db.get_or_create_service_id('slskd')
+        slskd_id = config_db.get_or_create_service_id('soulseek')
         slskd_url = config_db.get_service_config(slskd_id, 'slskd_url') or config_db.get_service_config(slskd_id, 'server_url')
         api_key = config_db.get_service_config(slskd_id, 'api_key')
 
