@@ -341,7 +341,14 @@ def _get_mock_schema(provider_name):
         'soulseek': [
             {'key': 'username', 'label': 'Username', 'type': 'text'},
             {'key': 'password', 'label': 'Password', 'type': 'password', 'sensitive': True},
-            {'key': 'server_url', 'label': 'slskd URL', 'type': 'text', 'default': 'http://localhost:5030'},
+            {'key': 'slskd_url', 'label': 'slskd URL', 'type': 'text', 'default': 'http://localhost:5030'},
+            {'key': 'api_key', 'label': 'API Key', 'type': 'password', 'sensitive': True},
+        ],
+        'slskd': [
+            {'key': 'username', 'label': 'Username', 'type': 'text'},
+            {'key': 'password', 'label': 'Password', 'type': 'password', 'sensitive': True},
+            {'key': 'slskd_url', 'label': 'slskd URL', 'type': 'text', 'default': 'http://localhost:5030'},
+            {'key': 'api_key', 'label': 'API Key', 'type': 'password', 'sensitive': True},
         ]
     }
     return schemas.get(provider_name, [])
