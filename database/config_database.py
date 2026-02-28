@@ -26,12 +26,26 @@ class ConfigDatabase:
             pass
         self._initialize_schema()
 
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _transaction(self):
+        """Helper to manage transaction and connection closure."""
+        conn = self._get_connection()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.database_path), timeout=30.0)
         conn.row_factory = sqlite3.Row
+        # Set busy_timeout FIRST before WAL, otherwise WAL initialization
+        # instantly raises 'database is locked' if there's a concurrent reader
+        conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
@@ -138,7 +152,7 @@ class ConfigDatabase:
 
     # Service helpers
     def get_or_create_service_id(self, name: str) -> int:
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             c = conn.cursor()
             c.execute("SELECT id FROM services WHERE name = ?", (name,))
             row = c.fetchone()
@@ -172,7 +186,7 @@ class ConfigDatabase:
 
     def get_service_config(self, service_id: int, key: str) -> Optional[str]:
         try:
-            with self._get_connection() as conn:
+            with self._transaction() as conn:
                 c = conn.cursor()
                 c.execute("SELECT config_value FROM service_config WHERE service_id=? AND config_key=?", (service_id, key))
                 row = c.fetchone()
@@ -184,7 +198,7 @@ class ConfigDatabase:
     # Accounts
     def get_accounts(self, service_id: Optional[int] = None, is_active: Optional[bool] = None) -> List[Dict[str, Any]]:
         try:
-            with self._get_connection() as conn:
+            with self._transaction() as conn:
                 c = conn.cursor()
                 query = "SELECT id, service_id, account_name, display_name, user_id, account_email, is_active, is_authenticated, last_authenticated_at FROM accounts WHERE 1=1"
                 params: list[Any] = []
@@ -213,7 +227,7 @@ class ConfigDatabase:
         try:
             # If explicit account_id is provided, check existence using a reader
             if account_id is not None:
-                with self._get_connection() as conn:
+                with self._transaction() as conn:
                     c = conn.cursor()
                     c.execute("SELECT id FROM accounts WHERE id = ?", (account_id,))
                     row = c.fetchone()
@@ -338,7 +352,7 @@ class ConfigDatabase:
 
     def get_account_token(self, account_id: int) -> Optional[Dict[str, Any]]:
         try:
-            with self._get_connection() as conn:
+            with self._transaction() as conn:
                 c = conn.cursor()
                 c.execute("SELECT access_token, refresh_token, token_type, expires_at, scope FROM account_tokens WHERE account_id = ?", (account_id,))
                 row = c.fetchone()
@@ -375,7 +389,7 @@ class ConfigDatabase:
             logger.info(f"ConfigDB: Rows affected = {rowcount}")
             
             # Verify it was saved
-            with self._get_connection() as conn:
+            with self._transaction() as conn:
                 c = conn.cursor()
                 c.execute("SELECT metadata_value FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
                 row = c.fetchone()
@@ -391,7 +405,7 @@ class ConfigDatabase:
         try:
             logger.info(f"ConfigDB.get_account_metadata: account_id={account_id}, key={key}")
             logger.info(f"ConfigDB: Database path = {self.database_path}")
-            with self._get_connection() as conn:
+            with self._transaction() as conn:
                 c = conn.cursor()
                 c.execute("SELECT metadata_value FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
                 row = c.fetchone()
@@ -433,7 +447,7 @@ class ConfigDatabase:
 
     def get_pkce_session(self, pkce_id: str) -> Optional[Dict[str, Any]]:
         try:
-            with self._get_connection() as conn:
+            with self._transaction() as conn:
                 c = conn.cursor()
                 c.execute("SELECT pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, created_at, expires_at FROM pkce_sessions WHERE pkce_id = ?", (pkce_id,))
                 row = c.fetchone()

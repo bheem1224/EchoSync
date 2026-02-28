@@ -311,8 +311,8 @@ class ConfigManager:
     def _get_db_connection(self) -> sqlite3.Connection:
         """Helper to get a database connection with WAL mode and timeout."""
         conn = sqlite3.connect(str(self.database_path), timeout=30.0)
-        conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
@@ -321,16 +321,18 @@ class ConfigManager:
         try:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
             conn = self._get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
-            conn.close()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS metadata (
+                        key TEXT PRIMARY KEY,
+                        value TEXT,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.commit()
+            finally:
+                conn.close()
         except Exception as e:
             logger.debug(f"Could not ensure database exists: {e}")
 
@@ -339,10 +341,12 @@ class ConfigManager:
         try:
             self._ensure_database_exists()
             conn = self._get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM metadata WHERE key = 'app_config'")
-            row = cursor.fetchone()
-            conn.close()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM metadata WHERE key = 'app_config'")
+                row = cursor.fetchone()
+            finally:
+                conn.close()
 
             if row and row[0]:
                 config_data = json.loads(row[0])
@@ -374,16 +378,18 @@ class ConfigManager:
             encrypted_data = self._traverse_and_transform(copy.deepcopy(config_data), self._encrypt_value, SECRETS)
 
             conn = self._get_db_connection()
-            cursor = conn.cursor()
+            try:
+                cursor = conn.cursor()
 
-            config_json = json.dumps(encrypted_data, indent=2)
-            cursor.execute("""
-                INSERT OR REPLACE INTO metadata (key, value, updated_at)
-                VALUES ('app_config', ?, CURRENT_TIMESTAMP)
-            """, (config_json,))
+                config_json = json.dumps(encrypted_data, indent=2)
+                cursor.execute("""
+                    INSERT OR REPLACE INTO metadata (key, value, updated_at)
+                    VALUES ('app_config', ?, CURRENT_TIMESTAMP)
+                """, (config_json,))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
+            finally:
+                conn.close()
             logger.debug(f"Configuration saved to database")
             return True
         except Exception as e:
@@ -1109,7 +1115,7 @@ class ConfigManager:
             
             # Get all config values for this service
             result = {}
-            with config_db._get_connection() as conn:
+            with config_db._transaction() as conn:
                 c = conn.cursor()
                 c.execute("SELECT config_key, config_value FROM service_config WHERE service_id = ?", (service_id,))
                 rows = c.fetchall()

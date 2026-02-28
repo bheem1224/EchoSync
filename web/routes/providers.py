@@ -259,11 +259,12 @@ def get_provider_settings(provider_name):
             return jsonify({'error': f'Provider {provider_name} not found'}), 404
 
         # Retrieve a known set of provider config keys (client_id, client_secret, redirect_uri)
-        # Storage service returns decrypted values when present in config.db
+        # We fetch all credentials at once to avoid opening multiple SQLite connections rapidly
+        from core.settings import config_manager
+        all_creds = config_manager.get_service_credentials(provider_name) or {}
+
         keys_of_interest = ['client_id', 'client_secret', 'redirect_uri']
-        config = {}
-        for key in keys_of_interest:
-            config[key] = storage.get_service_config(provider_name, key)
+        config = {k: all_creds.get(k) for k in keys_of_interest}
         
         # Mock schema for dynamic UI generation (should eventually come from provider class)
         schema = _get_mock_schema(provider_name)
