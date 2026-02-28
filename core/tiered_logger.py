@@ -214,6 +214,9 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.NOTSET) # Capture everything, handlers will filter
 
+    # Quiet asyncio verbose debugging that confuses users on Windows
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+
     # Clear existing handlers to prevent duplicates
     if root_logger.handlers:
         root_logger.handlers.clear()

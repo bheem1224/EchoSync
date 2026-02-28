@@ -88,6 +88,24 @@ def create_app() -> Flask:
                  # User requested "default to same-origin".
                  pass
 
+    # Global Error Handler
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        """Catch all unhandled exceptions and log them with full stack traces,
+        so they don't silently drop to the frontend as generic 500s.
+        """
+        import traceback
+        logger = logging.getLogger("flask_error_handler")
+
+        # Don't catch Flask HTTP exceptions (like 404s) the same way
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return e
+
+        logger.error(f"Unhandled Exception: {str(e)}\n{traceback.format_exc()}")
+
+        return {"error": "Internal Server Error", "details": str(e)}, 500
+
     # Database Session Teardown
     @app.teardown_appcontext
     def shutdown_session(exception=None):

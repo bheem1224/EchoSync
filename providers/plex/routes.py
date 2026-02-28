@@ -215,6 +215,13 @@ def poll_oauth(session_id: str):
         if not pin_login:
             return jsonify({'error': 'Session not found or expired'}), 404
 
+        # Actually poll the Plex servers to see if the user completed the flow
+        try:
+            pin_login.checkLogin()
+        except Exception as e:
+            # checkLogin can sometimes raise an exception if it fails or expires
+            logger.debug(f"Plex OAuth checkLogin check failed: {e}")
+
         if getattr(pin_login, 'token', None):
             auth_token = pin_login.token
 
