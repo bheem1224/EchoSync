@@ -308,80 +308,6 @@ class ConfigManager:
                 output[key] = value
         return output
     
-    def _ensure_database_exists(self):
-        """Ensure database file and metadata table exist"""
-        try:
-            self.database_path.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(str(self.database_path))
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.debug(f"Could not ensure database exists: {e}")
-
-    def _load_from_database(self) -> Optional[Dict[str, Any]]:
-        """Load configuration from database and decrypt secrets."""
-        try:
-            self._ensure_database_exists()
-            conn = sqlite3.connect(str(self.database_path))
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM metadata WHERE key = 'app_config'")
-            row = cursor.fetchone()
-            conn.close()
-
-            if row and row[0]:
-                config_data = json.loads(row[0])
-                logger.debug(f"Encrypted config loaded from database")
-                
-                # Decrypt the data
-                decrypted_data = self._traverse_and_transform(config_data, self._decrypt_value, SECRETS)
-                
-                # Verify decryption worked
-                has_encrypted = self._has_undecrypted_secrets(decrypted_data)
-                if has_encrypted:
-                    logger.warning(f"Data still contains encrypted values after decryption attempt")
-                else:
-                    logger.debug(f"All secrets decrypted successfully")
-                
-                return decrypted_data
-            else:
-                logger.debug("No config found in database")
-                return None
-        except Exception as e:
-            logger.debug(f"Could not load config from database: {e}")
-            return None
-
-    def _save_to_database(self, config_data: Dict[str, Any]) -> bool:
-        """Encrypt secrets and save configuration to database."""
-        try:
-            self._ensure_database_exists()
-            
-            encrypted_data = self._traverse_and_transform(copy.deepcopy(config_data), self._encrypt_value, SECRETS)
-
-            conn = sqlite3.connect(str(self.database_path))
-            cursor = conn.cursor()
-
-            config_json = json.dumps(encrypted_data, indent=2)
-            cursor.execute("""
-                INSERT OR REPLACE INTO metadata (key, value, updated_at)
-                VALUES ('app_config', ?, CURRENT_TIMESTAMP)
-            """, (config_json,))
-
-            conn.commit()
-            conn.close()
-            logger.debug(f"Configuration saved to database")
-            return True
-        except Exception as e:
-            logger.error(f"Could not save config to database: {e}")
-            return False
-
     def _load_from_config_file(self) -> Optional[Dict[str, Any]]:
         """Load configuration from config.json file (for migration)."""
         try:
@@ -486,8 +412,7 @@ class ConfigManager:
         """
         Load configuration with priority:
         1. config.json (non-secrets, user-editable)
-        2. config.db (secrets only, encrypted)
-        3. Defaults (fresh install)
+        2. Defaults (fresh install)
         """
         # Start with defaults as base
         config_data = self._get_default_config()
@@ -497,15 +422,6 @@ class ConfigManager:
         if json_data:
             logger.debug("Loaded non-secrets from config.json")
             config_data = self._deep_merge(config_data, json_data)
-        
-        # Load secrets from database (encrypted)
-        db_data = self._load_from_database()
-        if db_data:
-            logger.debug("Loaded secrets from database")
-            config_data = self._deep_merge(config_data, db_data)
-            # Verify decryption worked
-            if self._has_undecrypted_secrets(config_data):
-                logger.warning("Some encrypted values still encrypted after load - key mismatch?")
         
         self.config_data = config_data
         
@@ -715,8 +631,8 @@ class ConfigManager:
     def set(self, key: str, value: Any):
         """Set a configuration value and persist it.
         
-        Secrets are saved to encrypted config.db.
         Non-secrets are saved to plaintext config.json.
+        Legacy secrets handled here are dropped. Use database/config_database.py instead.
         """
         keys = key.split('.')
         config_level = self.config_data
@@ -725,15 +641,8 @@ class ConfigManager:
         
         config_level[keys[-1]] = value
         
-        # Determine where to persist this value
-        if self._is_secret_path(key):
-            # Save secrets to encrypted database
-            secrets_only = self._extract_secrets(self.config_data)
-            encrypted_secrets = self._traverse_and_transform(secrets_only, self._encrypt_value, SECRETS)
-            self._save_to_database(encrypted_secrets)
-        else:
-            # Save non-secrets to plaintext JSON
-            self._save_non_secrets_to_json()
+        # Save non-secrets to plaintext JSON
+        self._save_non_secrets_to_json()
 
     # ... (rest of the getter methods remain the same) ...
     def get_spotify_config(self) -> Dict[str, str]:
@@ -1023,13 +932,21 @@ class ConfigManager:
         spotify_configured = bool(spotify_creds.get('client_id')) and bool(spotify_creds.get('client_secret')) and bool(spotify_creds.get('redirect_uri'))
         
         active_server = self.get_active_media_server()
-        soulseek = self.get_soulseek_config()
+
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+
+        slskd_id = config_db.get_or_create_service_id('soulseek')
+        slskd_url = config_db.get_service_config(slskd_id, 'slskd_url') or config_db.get_service_config(slskd_id, 'server_url')
+        slskd_api_key = config_db.get_service_config(slskd_id, 'api_key')
 
         # Check active media server configuration
         media_server_configured = False
         if active_server == 'plex':
-            plex = self.get_plex_config()
-            media_server_configured = bool(plex.get('base_url')) and bool(plex.get('token'))
+            plex_id = config_db.get_or_create_service_id('plex')
+            plex_url = config_db.get_service_config(plex_id, 'base_url') or config_db.get_service_config(plex_id, 'server_url')
+            plex_token = config_db.get_service_config(plex_id, 'token')
+            media_server_configured = bool(plex_url) and bool(plex_token)
         elif active_server == 'jellyfin':
             jellyfin = self.get_jellyfin_config()
             media_server_configured = bool(jellyfin.get('base_url')) and bool(jellyfin.get('api_key'))

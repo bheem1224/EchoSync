@@ -64,8 +64,13 @@ def get_system_health() -> Dict[str, Any]:
 
     # Check Plex
     if 'plex' not in disabled_providers:
-        conf = config_manager.get_plex_config()
-        if conf.get('base_url') and conf.get('token'):
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+        plex_id = config_db.get_or_create_service_id('plex')
+        plex_url = config_db.get_service_config(plex_id, 'base_url') or config_db.get_service_config(plex_id, 'server_url')
+        plex_token = config_db.get_service_config(plex_id, 'token')
+
+        if plex_url and plex_token:
             enabled_providers_count += 1
 
     # Check Jellyfin
@@ -82,8 +87,13 @@ def get_system_health() -> Dict[str, Any]:
 
     # Check Soulseek (slskd)
     if 'soulseek' not in disabled_providers and 'slskd' not in disabled_providers:
-        conf = config_manager.get_soulseek_config()
-        if conf.get('slskd_url') and conf.get('api_key'):
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+        slskd_id = config_db.get_or_create_service_id('soulseek')
+        slskd_url = config_db.get_service_config(slskd_id, 'slskd_url') or config_db.get_service_config(slskd_id, 'server_url')
+        api_key = config_db.get_service_config(slskd_id, 'api_key')
+
+        if slskd_url and api_key:
             enabled_providers_count += 1
 
     # Check LRClib (bundled, usually enabled unless explicitly disabled)

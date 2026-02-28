@@ -14,7 +14,15 @@ def get_settings():
     try:
         slskd_url = config_manager.get('soulseek.slskd_url', '')
         server_name = config_manager.get('soulseek.server_name', '')
-        api_key = config_manager.get('soulseek.api_key', '')
+        # api_key is sensitive; prefer the storage helper which persists to DB
+        from core.storage import get_storage_service
+        storage = get_storage_service()
+        api_key = storage.get_service_config('soulseek', 'api_key') or ''
+        
+        # also update in-memory config in case UI reads it
+        # (key is filtered out on save but may still exist transiently)
+        if api_key:
+            config_manager.set('soulseek.api_key', api_key)
         
         # Return masked API key if it exists
         masked_api_key = '****' if api_key else ''
@@ -53,6 +61,11 @@ def save_settings():
         
         # Only update API key if provided (don't overwrite with empty string)
         if api_key:
+            # write secret via storage service to ensure DB persistence
+            from core.storage import get_storage_service
+            storage = get_storage_service()
+            storage.set_service_config('soulseek', 'api_key', api_key, is_sensitive=True)
+            # mirror to config_manager so GET requests can see it immediately
             config_manager.set('soulseek.api_key', api_key)
         
         logger.info(f"Saved slskd settings: {slskd_url}")

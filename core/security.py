@@ -43,3 +43,27 @@ def get_cipher() -> Fernet:
     
     _cipher_instance = Fernet(key_bytes)
     return _cipher_instance
+
+def encrypt_string(plaintext: str) -> str:
+    """Encrypt a string and return the encrypted payload prefixed with 'enc:'."""
+    if plaintext is None:
+        return None
+    if str(plaintext).startswith('enc:'):
+        return plaintext
+    cipher = get_cipher()
+    encrypted_bytes = cipher.encrypt(str(plaintext).encode('utf-8'))
+    return f"enc:{encrypted_bytes.decode('utf-8')}"
+
+def decrypt_string(ciphertext: str) -> str:
+    """Decrypt a string if it is prefixed with 'enc:', otherwise return as-is."""
+    if ciphertext is None:
+        return None
+    if not str(ciphertext).startswith('enc:'):
+        return ciphertext
+    cipher = get_cipher()
+    try:
+        decrypted_bytes = cipher.decrypt(ciphertext[4:].encode('utf-8'))
+        return decrypted_bytes.decode('utf-8')
+    except Exception:
+        # Fallback to returning original string on decryption failure
+        return ciphertext

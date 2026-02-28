@@ -69,8 +69,12 @@ class PlexClient(ProviderBase):
     
     def is_configured(self) -> bool:
         """Check if Plex is configured (has credentials)."""
-        config = config_manager.get_plex_config()
-        return bool(config.get('base_url') and config.get('token'))
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+        service_id = config_db.get_or_create_service_id('plex')
+        base_url = config_db.get_service_config(service_id, 'base_url') or config_db.get_service_config(service_id, 'server_url')
+        token = config_db.get_service_config(service_id, 'token')
+        return bool(base_url and token)
     
     def get_logo_url(self) -> str:
         """Return Plex logo URL."""
@@ -119,9 +123,11 @@ class PlexClient(ProviderBase):
 
     def delete_track(self, rating_key: str) -> bool:
         """Delete a track from Plex server by ratingKey."""
-        config = config_manager.get_plex_config()
-        base_url = config.get('base_url')
-        token = config.get('token')
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+        service_id = config_db.get_or_create_service_id('plex')
+        base_url = config_db.get_service_config(service_id, 'base_url') or config_db.get_service_config(service_id, 'server_url')
+        token = config_db.get_service_config(service_id, 'token')
 
         if not base_url or not token:
             logger.error("Plex not configured, cannot delete track")
@@ -751,22 +757,34 @@ class PlexClient(ProviderBase):
     
     def _setup_connection(self):
         """Establish connection to Plex server."""
-        config = config_manager.get_plex_config()
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+        service_id = config_db.get_or_create_service_id('plex')
+        base_url = config_db.get_service_config(service_id, 'base_url') or config_db.get_service_config(service_id, 'server_url')
+        token = config_db.get_service_config(service_id, 'token')
         
         # Initialize PathMapper
-        self.path_mapper = PathMapper(config.get('path_mappings', []))
+        import json
+        mappings_str = config_db.get_service_config(service_id, 'path_mappings')
+        mappings = []
+        if mappings_str:
+            try:
+                mappings = json.loads(mappings_str) if isinstance(mappings_str, str) else mappings_str
+            except Exception:
+                mappings = []
+        self.path_mapper = PathMapper(mappings)
 
-        if not config.get('base_url'):
+        if not base_url:
             logger.warning("Plex server URL not configured")
             return
         
-        if not config.get('token'):
+        if not token:
             logger.error("Plex token not configured")
             return
         
         try:
             # 15 second timeout to prevent hangs on slow servers
-            self.server = PlexServer(config['base_url'], config['token'], timeout=15)
+            self.server = PlexServer(base_url, token, timeout=15)
             self._find_music_library()
             logger.debug(f"Connected to Plex: {self.server.friendlyName}")
         
