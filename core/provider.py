@@ -220,125 +220,20 @@ class ProviderCapabilities:
     supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
 
 
-# Central registry of known provider capabilities
-CAPABILITY_REGISTRY: Dict[str, ProviderCapabilities] = {
-    'spotify': ProviderCapabilities(
-        name='spotify',
-        supports_playlists=PlaylistSupport.READ_WRITE,
-        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
-        metadata=MetadataRichness.HIGH,
-        supports_cover_art=True,
-        supports_lyrics=False,
-        supports_user_auth=True,
-        supports_library_scan=False,
-        supports_streaming=True,
-        supports_downloads=False,
-        playlist_algorithms=['spotify_mood', 'spotify_energy', 'spotify_newness'],
-    ),
-    'tidal': ProviderCapabilities(
-        name='tidal',
-        supports_playlists=PlaylistSupport.READ,
-        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
-        metadata=MetadataRichness.HIGH,
-        supports_cover_art=True,
-        supports_lyrics=False,
-        supports_user_auth=True,
-        supports_library_scan=False,
-        supports_streaming=True,
-        supports_downloads=False,
-    ),
-    'plex': ProviderCapabilities(
-        name='plex',
-        supports_playlists=PlaylistSupport.READ_WRITE,
-        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
-        metadata=MetadataRichness.HIGH,
-        supports_cover_art=True,
-        supports_lyrics=False,
-        supports_user_auth=True,
-        supports_library_scan=True,
-        supports_streaming=False,
-        supports_downloads=False,
-    ),
-    'jellyfin': ProviderCapabilities(
-        name='jellyfin',
-        supports_playlists=PlaylistSupport.READ_WRITE,
-        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
-        metadata=MetadataRichness.MEDIUM,
-        supports_cover_art=True,
-        supports_lyrics=False,
-        supports_user_auth=True,
-        supports_library_scan=True,
-        supports_streaming=False,
-        supports_downloads=False,
-    ),
-    'navidrome': ProviderCapabilities(
-        name='navidrome',
-        supports_playlists=PlaylistSupport.READ_WRITE,
-        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
-        metadata=MetadataRichness.MEDIUM,
-        supports_cover_art=True,
-        supports_lyrics=False,
-        supports_user_auth=True,
-        supports_library_scan=True,
-        supports_streaming=False,
-        supports_downloads=False,
-    ),
-    'slskd': ProviderCapabilities(
-        name='slskd',
-        supports_playlists=PlaylistSupport.NONE,
-        search=SearchCapabilities(tracks=True, artists=False, albums=False, playlists=False),
-        metadata=MetadataRichness.LOW,
-        supports_cover_art=False,
-        supports_lyrics=False,
-        supports_user_auth=True,
-        supports_library_scan=False,
-        supports_streaming=False,
-        supports_downloads=True,
-    ),
-    'listenbrainz': ProviderCapabilities(
-        name='listenbrainz',
-        supports_playlists=PlaylistSupport.READ,
-        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=True),
-        metadata=MetadataRichness.MEDIUM,
-        supports_cover_art=False,
-        supports_lyrics=False,
-        supports_user_auth=False,
-        supports_library_scan=False,
-        supports_streaming=False,
-        supports_downloads=False,
-    ),
-    'acoustid': ProviderCapabilities(
-        name='acoustid',
-        supports_playlists=PlaylistSupport.NONE,
-        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
-        metadata=MetadataRichness.LOW,
-        supports_cover_art=False,
-        supports_lyrics=False,
-        supports_user_auth=False,
-        supports_library_scan=False,
-        supports_streaming=False,
-        supports_downloads=False,
-        supports_fingerprinting=True,  # Special capability for fingerprinting
-    ),
-    'musicbrainz': ProviderCapabilities(
-        name='musicbrainz',
-        supports_playlists=PlaylistSupport.NONE,
-        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
-        metadata=MetadataRichness.HIGH,
-        supports_cover_art=True,
-        supports_lyrics=False,
-        supports_user_auth=False,
-        supports_library_scan=False,
-        supports_streaming=False,
-        supports_downloads=False,
-        supports_metadata_fetch=True,  # Special capability for metadata fetching
-    ),
-}
-
-
 def get_provider_capabilities(provider: str) -> ProviderCapabilities:
-    """Return capabilities for a provider key, raising KeyError if unknown."""
-    return CAPABILITY_REGISTRY[provider]
+    """
+    Return capabilities for a provider by looking up the provider class dynamically.
+    Raises KeyError if the provider is unknown or lacks capabilities.
+    """
+    provider_cls = ProviderRegistry.get_provider_class(provider)
+    if not provider_cls:
+        raise KeyError(f"Provider '{provider}' not found in registry.")
+
+    caps = getattr(provider_cls, 'capabilities', None)
+    if not caps:
+        raise KeyError(f"Provider '{provider}' does not declare capabilities.")
+
+    return caps
 
 
 # ==============================================================================

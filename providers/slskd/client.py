@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from core.tiered_logger import get_logger
 from core.settings import config_manager
-from core.provider import get_provider_capabilities, DownloaderProvider, ProviderRegistry
+from core.provider import DownloaderProvider, ProviderRegistry, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.request_manager import RequestManager, RateLimitConfig
 
@@ -134,14 +134,24 @@ class SlskdProvider(DownloaderProvider):
     name = "slskd"
     supports_downloads = True
     rate_limit = 5.0 # High throughput allowed
+    capabilities = ProviderCapabilities(
+        name='slskd',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=True, artists=False, albums=False, playlists=False),
+        metadata=MetadataRichness.LOW,
+        supports_cover_art=False,
+        supports_lyrics=False,
+        supports_user_auth=True,
+        supports_library_scan=False,
+        supports_streaming=False,
+        supports_downloads=True,
+    )
 
     def __init__(self):
         super().__init__() # Initialize rate-limited http client
         self.base_url: Optional[str] = None
         self.api_key: Optional[str] = None
         self.download_path: Path = Path("./downloads")
-        # Capability flags
-        self.capabilities = get_provider_capabilities('slskd')
         # Concurrency limiter: Slskd can only handle 5 concurrent searches (IP ban protection)
         self._search_semaphore = asyncio.Semaphore(5)
         self._setup_client()

@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from core.tiered_logger import get_logger
 from core.provider_base import ProviderBase
-from core.provider import SyncServiceProvider, get_provider_capabilities, ProviderRegistry
+from core.provider import SyncServiceProvider, get_provider_capabilities, ProviderRegistry, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 
@@ -124,6 +124,19 @@ class SpotifyClient(SyncServiceProvider):
     category = "provider"
     supports_downloads = False
     rate_limit = 5.0  # 5 requests/second rate limit
+    capabilities = ProviderCapabilities(
+        name='spotify',
+        supports_playlists=PlaylistSupport.READ_WRITE,
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
+        metadata=MetadataRichness.HIGH,
+        supports_cover_art=True,
+        supports_lyrics=False,
+        supports_user_auth=True,
+        supports_library_scan=False,
+        supports_streaming=True,
+        supports_downloads=False,
+        playlist_algorithms=['spotify_mood', 'spotify_energy', 'spotify_newness'],
+    )
 
     def __init__(self, account_id: Optional[int] = None):
         super().__init__()  # Initialize ProviderBase which sets up rate-limited HTTP client

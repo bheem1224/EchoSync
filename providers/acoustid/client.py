@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 from core.provider_base import ProviderBase
+from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.settings import config_manager
 from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -10,7 +11,19 @@ logger = get_logger("provider.acoustid")
 class AcoustIDProvider(ProviderBase):
     name = "acoustid"
     service_type = "metadata"
-    capabilities = [Capability.RESOLVE_FINGERPRINT]
+    capabilities = ProviderCapabilities(
+        name='acoustid',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
+        metadata=MetadataRichness.LOW,
+        supports_cover_art=False,
+        supports_lyrics=False,
+        supports_user_auth=False,
+        supports_library_scan=False,
+        supports_streaming=False,
+        supports_downloads=False,
+        supports_fingerprinting=True,  # Special capability for fingerprinting
+    )
 
     def __init__(self):
         super().__init__()

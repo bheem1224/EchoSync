@@ -5,7 +5,7 @@ import json
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
-from core.provider import get_provider_capabilities
+from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
 logger = get_logger("jellyfin_client")
 
@@ -138,6 +138,18 @@ from core.provider import MediaServerProvider
 
 class JellyfinClient(MediaServerProvider):
     name = "jellyfin"
+    capabilities = ProviderCapabilities(
+        name='jellyfin',
+        supports_playlists=PlaylistSupport.READ_WRITE,
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
+        metadata=MetadataRichness.MEDIUM,
+        supports_cover_art=True,
+        supports_lyrics=False,
+        supports_user_auth=True,
+        supports_library_scan=True,
+        supports_streaming=False,
+        supports_downloads=False,
+    )
 
     def create_playlist(self, name: str, tracks: list) -> bool:
         # Implements playlist creation with batching for large playlists (test compliance)
@@ -314,9 +326,6 @@ class JellyfinClient(MediaServerProvider):
             retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
             rate=RateLimitConfig(requests_per_second=10.0)
         )
-        # Capability flags
-        self.capabilities = get_provider_capabilities('jellyfin')
-        
         # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration
     
     def set_progress_callback(self, callback):

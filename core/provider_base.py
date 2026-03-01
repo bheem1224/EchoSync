@@ -1,10 +1,13 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from core.enums import Capability
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.matching_engine import text_utils
 from core.request_manager import RequestManager
+
+if TYPE_CHECKING:
+    from core.provider import ProviderCapabilities
 
 
 class ProviderBase(ABC):
@@ -24,7 +27,9 @@ class ProviderBase(ABC):
     category: str = 'provider'  # 'provider' (bundled, stable) or 'plugin' (community, unstable)
     supports_downloads: bool = False  # Indicates if provider supports downloads
     enabled: bool = True  # Flag to enable/disable provider without deleting files
-    capabilities: List[Capability] = []  # List of capabilities this provider supports
+
+    # Typed capability class for registry detection
+    capabilities: 'ProviderCapabilities' = None
 
     # Default rate limit (requests per second). Can be overridden by subclasses.
     # None = unlimited/config driven.
@@ -33,7 +38,6 @@ class ProviderBase(ABC):
     def __init__(self):
         """Initialize provider with HTTP client."""
         from core.request_manager import RequestManager, RateLimitConfig
-        from core.oauth.manager import OAuthManager
 
         # Configure rate limiting if specified by subclass
         rate_config = None
@@ -41,9 +45,6 @@ class ProviderBase(ABC):
             rate_config = RateLimitConfig(requests_per_second=self.rate_limit)
 
         self.http = RequestManager(self.name, rate=rate_config)
-
-        # Register for OAuth callbacks with the sidecar
-        OAuthManager.register_provider(self.name, self)
 
     def get_oauth_redirect_uri(self) -> str:
         """

@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 from core.provider_base import ProviderBase
+from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.request_manager import RateLimitConfig
 from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -10,7 +11,19 @@ logger = get_logger("provider.musicbrainz")
 class MusicBrainzProvider(ProviderBase):
     name = "musicbrainz"
     service_type = "metadata"
-    capabilities = [Capability.FETCH_METADATA]
+    capabilities = ProviderCapabilities(
+        name='musicbrainz',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
+        metadata=MetadataRichness.HIGH,
+        supports_cover_art=True,
+        supports_lyrics=False,
+        supports_user_auth=False,
+        supports_library_scan=False,
+        supports_streaming=False,
+        supports_downloads=False,
+        supports_metadata_fetch=True,  # Special capability for metadata fetching
+    )
 
     def __init__(self):
         super().__init__()

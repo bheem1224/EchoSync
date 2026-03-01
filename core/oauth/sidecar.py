@@ -6,7 +6,6 @@ from flask import Flask, request
 from werkzeug.serving import make_server
 
 from core.tiered_logger import get_logger
-from core.oauth.manager import OAuthManager
 from core.oauth.cert_manager import ensure_ssl_certs
 
 logger = get_logger("oauth_sidecar")
@@ -16,10 +15,13 @@ app = Flask("oauth_sidecar")
 @app.route("/api/oauth/callback/<provider_id>")
 def oauth_callback(provider_id: str):
     """
-    Universal callback route for OAuth. Looks up the provider instance from OAuthManager
+    Universal callback route for OAuth. Looks up the provider instance from ProviderRegistry
     and invokes its `handle_oauth_callback` method with request arguments.
     """
-    provider = OAuthManager.get_provider(provider_id)
+    from core.provider import ProviderRegistry
+
+    # Try to get an existing instance or create one if it doesn't exist
+    provider = ProviderRegistry.create_instance(provider_id)
     if not provider:
          logger.error(f"Received OAuth callback for unknown or uninitialized provider: {provider_id}")
          return "Provider not found or not initialized", 404

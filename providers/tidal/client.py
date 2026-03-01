@@ -9,7 +9,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Optional, Any
 from core.tiered_logger import get_logger
 from core.settings import config_manager
-from core.provider import SyncServiceProvider, get_provider_capabilities
+from core.provider import SyncServiceProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 
 logger = get_logger("tidal_client")
@@ -31,6 +31,18 @@ class Playlist:
 class TidalClient(SyncServiceProvider):
     """Tidal API client for fetching user playlists and track data"""
     name = "tidal"
+    capabilities = ProviderCapabilities(
+        name='tidal',
+        supports_playlists=PlaylistSupport.READ,
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
+        metadata=MetadataRichness.HIGH,
+        supports_cover_art=True,
+        supports_lyrics=False,
+        supports_user_auth=True,
+        supports_library_scan=False,
+        supports_streaming=True,
+        supports_downloads=False,
+    )
 
     def generate_pkce(self):
         """Generate PKCE code verifier and code challenge, set on instance, and return as tuple."""
@@ -69,7 +81,6 @@ class TidalClient(SyncServiceProvider):
         )
 
         # Capability flags
-        self.capabilities = get_provider_capabilities('tidal')
         self.auth_server = None
         self.auth_code = None
         self.code_verifier = None
