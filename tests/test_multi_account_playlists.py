@@ -43,7 +43,9 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
         settings = data.get('settings', {})
         assert settings.get('client_id') == 'db1'
         assert settings.get('client_secret') == 'db2'
-        assert settings.get('redirect_uri') == 'db3'
+        # The new dynamic routing ensures redirect_uri contains the sidecar proxy format
+        assert 'https://' in settings.get('redirect_uri')
+        assert ':5001/api/oauth/callback/spotify' in settings.get('redirect_uri')
 
 
 def test_providers_playlist_route_includes_account_id(client, monkeypatch):

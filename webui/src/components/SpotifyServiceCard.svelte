@@ -202,12 +202,14 @@
             />
           </label>
           <label>
-            <span class="label-text">Redirect URI</span>
+            <span class="label-text">Redirect URI (Auto-generated & Immutable)</span>
             <input
               type="text"
               bind:value={redirectUri}
-              placeholder="http://127.0.0.1:8008/api/spotify/callback"
-              class="input"
+              placeholder="Loading dynamic redirect URI..."
+              class="input readonly-input"
+              readonly={true}
+              disabled={true}
             />
           </label>
           <button 
@@ -368,6 +370,13 @@
   .input:focus {
     outline: none;
     border-color: #1db954;
+  }
+
+  .readonly-input {
+    opacity: 0.7;
+    cursor: not-allowed;
+    background: rgba(0, 0, 0, 0.2);
+    user-select: all;
   }
 
   .btn-primary, .btn-secondary, .btn-link, .btn-toggle, .btn-delete {

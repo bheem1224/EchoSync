@@ -207,7 +207,7 @@
     <!-- Global Redirect URI -->
     <div class="section">
       <div class="section-header">
-        <h3>Global Redirect URI</h3>
+        <h3>Global Redirect URI (Auto-generated & Immutable)</h3>
         <button class="btn-secondary" on:click={() => redirectCollapsed = !redirectCollapsed}>
           {redirectCollapsed ? 'Expand' : 'Collapse'}
         </button>
@@ -217,17 +217,13 @@
           <input
             type="text"
             bind:value={redirectUri}
-            placeholder="http://127.0.0.1:8000/api/tidal/callback"
-            class="input"
+            placeholder="Loading dynamic redirect URI..."
+            class="input readonly-input"
+            readonly={true}
+            disabled={true}
           />
-          <button 
-            class="btn-primary" 
-            on:click={saveRedirectUri}
-            disabled={savingRedirectUri}
-          >
-            {savingRedirectUri ? 'Saving...' : 'Save'}
-          </button>
         </div>
+        <p class="help-text" style="margin-top: 8px;">This auto-generated URI must be registered in all of your Tidal Developer Applications.</p>
       {/if}
     </div>
 
@@ -434,6 +430,13 @@
   .input:focus {
     outline: none;
     border-color: #00b4ff;
+  }
+
+  .readonly-input {
+    opacity: 0.7;
+    cursor: not-allowed;
+    background: rgba(0, 0, 0, 0.2);
+    user-select: all;
   }
 
   .btn-primary, .btn-secondary, .btn-link, .btn-toggle, .btn-delete {

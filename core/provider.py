@@ -338,6 +338,9 @@ class ProviderRegistry:
 
         # Check global disabled list
         disabled = config_manager.get_disabled_providers()
+        if disabled is None:
+            disabled = []
+
         if name.lower() in [d.lower() for d in disabled]:
              raise ValueError(f"Provider '{name}' is disabled via config")
 
@@ -375,10 +378,14 @@ class ProviderRegistry:
 
     @classmethod
     def is_provider_disabled(cls, name: str) -> bool:
+        if getattr(cls, '_disabled_providers', None) is None:
+            cls._disabled_providers = set()
         return name.lower() in cls._disabled_providers
 
     @classmethod
     def set_disabled_providers(cls, disabled_list: List[str]) -> None:
+        if disabled_list is None:
+            disabled_list = []
         cls._disabled_providers = set(name.lower() for name in disabled_list)
         if disabled_list:
             logger.info(f"Disabled providers: {', '.join(disabled_list)}")

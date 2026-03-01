@@ -2,39 +2,35 @@ import os
 import sys
 import threading
 from typing import Optional
-from flask import Flask, request
+import urllib.parse
+from flask import Flask, request, redirect
 from werkzeug.serving import make_server
 
 from core.tiered_logger import get_logger
 from core.oauth.cert_manager import ensure_ssl_certs
+from core.network_utils import get_lan_ip, get_main_app_port
 
 logger = get_logger("oauth_sidecar")
 
 app = Flask("oauth_sidecar")
 
-@app.route("/api/oauth/callback/<provider_id>")
-def oauth_callback(provider_id: str):
+@app.route("/api/oauth/callback/<provider_name>")
+def oauth_callback(provider_name: str):
     """
-    Universal callback route for OAuth. Looks up the provider instance from ProviderRegistry
-    and invokes its `handle_oauth_callback` method with request arguments.
+    Universal callback route for OAuth. Acts as a dumb proxy,
+    redirecting to the main application via 302 redirect.
     """
-    from core.provider import ProviderRegistry
+    lan_ip = get_lan_ip()
+    main_port = get_main_app_port()
 
-    # Try to get an existing instance or create one if it doesn't exist
-    provider = ProviderRegistry.create_instance(provider_id)
-    if not provider:
-         logger.error(f"Received OAuth callback for unknown or uninitialized provider: {provider_id}")
-         return "Provider not found or not initialized", 404
+    # Construct redirect URL
+    query_string = request.query_string.decode('utf-8')
+    redirect_url = f"http://{lan_ip}:{main_port}/api/{provider_name}/callback"
+    if query_string:
+        redirect_url += f"?{query_string}"
 
-    try:
-         # Pass request.args (dict-like) down to the provider
-         return provider.handle_oauth_callback(request.args)
-    except NotImplementedError:
-         logger.error(f"Provider '{provider_id}' does not implement handle_oauth_callback")
-         return "Callback handling not implemented for this provider", 501
-    except Exception as e:
-         logger.error(f"Error handling OAuth callback for '{provider_id}': {e}", exc_info=True)
-         return f"Error processing callback: {e}", 500
+    logger.info(f"OAuth sidecar proxying callback for {provider_name} to {redirect_url}")
+    return redirect(redirect_url, code=302)
 
 
 class SidecarServerThread(threading.Thread):

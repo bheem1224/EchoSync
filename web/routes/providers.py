@@ -260,13 +260,18 @@ def get_provider_settings(provider_name):
 
         # Retrieve a known set of provider config keys
         # The new config_db automatically handles decryption
-        keys_of_interest = ['client_id', 'client_secret', 'redirect_uri', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
+        keys_of_interest = ['client_id', 'client_secret', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
         config = {}
         for key in keys_of_interest:
             val = config_db.get_service_config(service_id, key)
             if val is not None:
                 config[key] = val
         
+        # Dynamically inject immutable redirect URI for OAuth providers
+        from core.network_utils import get_lan_ip
+        lan_ip = get_lan_ip()
+        config['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/{provider_name}"
+
         # Mock schema for dynamic UI generation (should eventually come from provider class)
         schema = _get_mock_schema(provider_name)
         
@@ -306,6 +311,11 @@ def update_provider_settings(provider_name):
             sensitive_keys = ['client_secret', 'access_token', 'refresh_token', 'password', 'token', 'api_key']
 
             all_ok = True
+
+            # Explicitly strip redirect_uri to prevent database persistence of dynamic urls
+            if 'redirect_uri' in payload:
+                del payload['redirect_uri']
+
             for k, v in payload.items():
                 is_sensitive = k in sensitive_keys or any(s in k.lower() for s in ['secret', 'token', 'password', 'key'])
                 ok = config_db.set_service_config(service_id, k, (v or '').strip() if isinstance(v, str) else v, is_sensitive=is_sensitive)
@@ -452,12 +462,17 @@ def get_provider_credentials(provider_name):
         service_id = config_db.get_or_create_service_id(provider_name)
         # Fetch directly since config_manager might be deprecated for these
         # But we don't have a get_all_service_config endpoint natively, so we fetch keys of interest
-        keys_of_interest = ['client_id', 'client_secret', 'redirect_uri', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
+        keys_of_interest = ['client_id', 'client_secret', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
         credentials = {}
         for key in keys_of_interest:
             val = config_db.get_service_config(service_id, key)
             if val is not None:
                 credentials[key] = val
+
+        # Dynamically inject immutable redirect URI
+        from core.network_utils import get_lan_ip
+        lan_ip = get_lan_ip()
+        credentials['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/{provider_name}"
         
         return jsonify({
             'provider': provider_name,
@@ -483,6 +498,10 @@ def set_provider_credentials(provider_name):
         config_db = get_config_database()
         service_id = config_db.get_or_create_service_id(provider_name)
         
+        # Strip redirect_uri from payload
+        if 'redirect_uri' in credentials:
+            del credentials['redirect_uri']
+
         # Store each credential
         for key, value in credentials.items():
             # Mark sensitive keys (like api_key, token, password, secret) as sensitive

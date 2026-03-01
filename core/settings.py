@@ -906,10 +906,18 @@ class ConfigManager:
         
     def get_disabled_providers(self) -> list:
         """Get list of disabled providers/plugins from config"""
-        return self.get('disabled_providers', [])
+        val = self.get('disabled_providers', [])
+        if val is None:
+             val = self.get('providers.disabled', [])
+        if val is None:
+             val = []
+        return val if isinstance(val, list) else []
 
     def set_disabled_providers(self, disabled_list: list) -> None:
         """Set list of disabled providers/plugins"""
+        if disabled_list is None:
+            disabled_list = []
+        self.set('providers.disabled', disabled_list)
         self.set('disabled_providers', disabled_list)
 
     def disable_provider(self, name: str) -> None:
