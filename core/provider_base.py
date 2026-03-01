@@ -33,6 +33,7 @@ class ProviderBase(ABC):
     def __init__(self):
         """Initialize provider with HTTP client."""
         from core.request_manager import RequestManager, RateLimitConfig
+        from core.oauth.manager import OAuthManager
 
         # Configure rate limiting if specified by subclass
         rate_config = None
@@ -40,6 +41,60 @@ class ProviderBase(ABC):
             rate_config = RateLimitConfig(requests_per_second=self.rate_limit)
 
         self.http = RequestManager(self.name, rate=rate_config)
+
+        # Register for OAuth callbacks with the sidecar
+        OAuthManager.register_provider(self.name, self)
+
+    def get_oauth_redirect_uri(self) -> str:
+        """
+        Calculates the standardized redirect URI for this provider using the OAuth sidecar.
+        Falls back to detecting primary local IP if not explicitly set in config.
+        """
+        from core.settings import config_manager
+
+        # Determine the base host to use. Try server_url, then base_ip.
+        host = config_manager.get('server_url')
+        if not host:
+             host = config_manager.get('base_ip')
+
+        # If we still don't have a valid host, attempt dynamic IP detection
+        if not host:
+             import socket
+             try:
+                 # Create a dummy socket connection to a public DNS to determine the primary interface IP
+                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                 # Doesn't have to be reachable, just needs to route correctly
+                 s.connect(("8.8.8.8", 80))
+                 host = s.getsockname()[0]
+                 s.close()
+             except Exception:
+                 host = "localhost" # Last resort fallback
+
+        # Ensure scheme is present (strip if mistakenly entered)
+        if host.startswith("http://") or host.startswith("https://"):
+            host = host.split("://")[-1]
+
+        # Ensure no trailing slashes or paths
+        host = host.split("/")[0]
+
+        # Strip existing port if present
+        host = host.split(":")[0]
+
+        # The OAuth sidecar runs securely on port 5001
+        return f"https://{host}:5001/api/oauth/callback/{self.name}"
+
+    def handle_oauth_callback(self, args: Dict[str, str]) -> Any:
+        """
+        Handle an OAuth callback from the sidecar.
+        Providers must override this if they support OAuth.
+
+        Args:
+            args: The query parameters from the callback request.
+
+        Returns:
+            A Flask response (string, tuple, or redirect)
+        """
+        raise NotImplementedError("This provider does not implement handle_oauth_callback")
 
     @abstractmethod
     def authenticate(self, **kwargs) -> bool:

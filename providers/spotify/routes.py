@@ -44,6 +44,7 @@ def begin_auth():
     Query params: account_id (required)
     """
     from core.provider import ProviderRegistry
+    from providers.spotify.client import SpotifyClient
     if ProviderRegistry.is_provider_disabled('spotify'):
         return jsonify({'error': 'Spotify provider is disabled'}), 403
     try:
@@ -59,28 +60,25 @@ def begin_auth():
 
         client_id = storage.get_service_config('spotify', 'client_id')
         client_secret = storage.get_service_config('spotify', 'client_secret')
-        redirect_uri = storage.get_service_config('spotify', 'redirect_uri') or None
 
-        # Fallback to legacy config.json via config_manager and seed into storage
-        if not client_id or not client_secret or not redirect_uri:
-            try:
-                spotify_conf = config_manager.get_spotify_config()
-                client_id = client_id or spotify_conf.get('client_id')
-                client_secret = client_secret or spotify_conf.get('client_secret')
-                redirect_uri = redirect_uri or spotify_conf.get('redirect_uri') or None
-                _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_uri)
-            except Exception:
-                pass
+        # We now use the sidecar's redirect URI systematically, ignoring what is in config
+        sp_client = ProviderRegistry.create_instance('spotify') or SpotifyClient(account_id=int(account_id))
+        redirect_uri = sp_client.get_oauth_redirect_uri()
 
-        if not client_id or not client_secret or not redirect_uri:
-            return jsonify({'error': 'Spotify client_id, client_secret, or redirect_uri not configured'}), 400
+        # Seed into storage if we have app credentials
+        if client_id and client_secret:
+            _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_uri)
 
-        scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email"
+        if not client_id or not client_secret:
+            return jsonify({'error': 'Spotify client_id or client_secret not configured'}), 400
+
+        scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
         # Use account_id as state so callback knows which account to save tokens under
         state = str(account_id)
+
         sp_oauth = SpotifyOAuth(client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri, scope=scope, state=state, show_dialog=True)
         auth_url = sp_oauth.get_authorize_url()
-        logger.info(f"Generated Spotify authorize URL for account {account_id}")
+        logger.info(f"Generated Spotify authorize URL for account {account_id} with redirect_uri {redirect_uri}")
         return jsonify({'auth_url': auth_url}), 200
     except Exception as e:
         logger.error(f"Error creating Spotify auth URL: {e}")

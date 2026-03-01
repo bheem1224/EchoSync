@@ -347,6 +347,92 @@ class SpotifyClient(SyncServiceProvider):
             logger.debug(f"Error checking Spotify authentication: {e}")
             return False
 
+    def handle_oauth_callback(self, args: Dict[str, str]) -> Any:
+        """Handle the OAuth callback redirect from the Spotify authorization page."""
+        from flask import jsonify, redirect
+        import time
+        from core.storage import get_storage_service
+        from spotipy.oauth2 import SpotifyOAuth
+
+        try:
+            code = args.get('code')
+            state = args.get('state')  # account_id
+            error = args.get('error')
+
+            if error:
+                error_description = args.get('error_description', error)
+                logger.error(f"Spotify OAuth error: {error_description}")
+                html = f"<html><body style='font-family: Arial, sans-serif;'><h2>Spotify Authentication Failed</h2><p><strong>Error:</strong> {error_description}</p><p>Please try again or check your Spotify app settings.</p></body></html>"
+                return html, 400, {"Content-Type": "text/html"}
+
+            if not code:
+                logger.error("OAuth callback missing code parameter")
+                return jsonify({"error": "Missing authorization code"}), 400
+
+            if not state:
+                logger.error("OAuth callback missing state parameter (account id)")
+                return jsonify({"error": "Missing state parameter (account ID)"}), 400
+
+            try:
+                account_id = int(state)
+            except (ValueError, TypeError):
+                account_id = None
+
+            storage = get_storage_service()
+            client_id = storage.get_service_config('spotify', 'client_id')
+            client_secret = storage.get_service_config('spotify', 'client_secret')
+            redirect_uri = self.get_oauth_redirect_uri()
+
+            if not client_id or not client_secret:
+                return jsonify({"error": "Spotify client_id/client_secret not configured"}), 400
+
+            auth_manager = SpotifyOAuth(
+                client_id=client_id,
+                client_secret=client_secret,
+                redirect_uri=redirect_uri,
+                scope="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private",
+                cache_handler=ConfigCacheHandler(account_id)
+            )
+
+            try:
+                token_info = auth_manager.get_access_token(code, as_dict=True)
+            except TypeError:
+                token_info = auth_manager.get_access_token(code)
+
+            if not token_info:
+                return jsonify({"error": "Failed to exchange code for token"}), 400
+
+            access_token = token_info.get('access_token')
+            refresh_token = token_info.get('refresh_token')
+            expires_at = token_info.get('expires_at')
+            scope = token_info.get('scope') or "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
+
+            if not account_id:
+                account_id = storage.ensure_account('spotify', account_name=f"spotify_{int(time.time())}")
+
+            try:
+                storage.save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at, scope)
+                storage.mark_account_authenticated(account_id)
+            except Exception as e:
+                logger.error(f"Failed to persist tokens to config.db: {e}")
+
+            try:
+                storage.toggle_account_active(account_id, True)
+            except Exception:
+                pass
+
+            ui_base = storage.get_service_config('webui', 'base_url')
+            if ui_base:
+                ui_redirect = ui_base.rstrip('/') + '/settings/music-services'
+            else:
+                ui_redirect = 'http://localhost:5173/settings/music-services'
+            return redirect(ui_redirect)
+
+        except Exception as e:
+            logger.error(f"Spotify callback error: {e}", exc_info=True)
+            error_html = f"<html><body style='font-family: Arial, sans-serif;'><h2>Spotify Authentication Failed</h2><p>{str(e)}</p></body></html>"
+            return error_html, 500, {"Content-Type": "text/html"}
+
     def is_configured(self) -> bool:
         if self.sp is not None:
              return True

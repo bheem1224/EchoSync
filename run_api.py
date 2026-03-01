@@ -35,6 +35,10 @@ run_migrations()
 
 from web.api_app import create_app
 
+# Ensure SSL certs exist and start OAuth sidecar
+from core.oauth.sidecar import start_oauth_sidecar
+start_oauth_sidecar()
+
 if __name__ == "__main__":
     if dev_mode:
         print("[DEV] Development mode enabled - Log Level: DEBUG, CORS: *")
