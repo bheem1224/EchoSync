@@ -58,6 +58,7 @@ def begin_auth():
         from core.storage import get_storage_service
         storage = get_storage_service()
 
+        from core.security import decrypt_string
         client_id = storage.get_service_config('spotify', 'client_id')
         client_secret = storage.get_service_config('spotify', 'client_secret')
 
@@ -76,7 +77,14 @@ def begin_auth():
         # Use account_id as state so callback knows which account to save tokens under
         state = str(account_id)
 
-        sp_oauth = SpotifyOAuth(client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri, scope=scope, state=state, show_dialog=True)
+        sp_oauth = SpotifyOAuth(
+            client_id=client_id,
+            client_secret=decrypt_string(client_secret),
+            redirect_uri=redirect_uri,
+            scope=scope,
+            state=state,
+            show_dialog=True
+        )
         auth_url = sp_oauth.get_authorize_url()
         logger.info(f"Generated Spotify authorize URL for account {account_id} with redirect_uri {redirect_uri}")
         return jsonify({'auth_url': auth_url}), 200
@@ -122,6 +130,7 @@ def oauth_callback():
         from core.storage import get_storage_service
         storage = get_storage_service()
 
+        from core.security import decrypt_string
         client_id = storage.get_service_config('spotify', 'client_id')
         client_secret = storage.get_service_config('spotify', 'client_secret')
         redirect_uri = storage.get_service_config('spotify', 'redirect_uri') or None
@@ -142,7 +151,13 @@ def oauth_callback():
 
         # Use ConfigCacheHandler so tokens are persisted via StorageService
         from providers.spotify.client import ConfigCacheHandler
-        auth_manager = SpotifyOAuth(client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri, scope="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email", cache_handler=ConfigCacheHandler(account_id))
+        auth_manager = SpotifyOAuth(
+            client_id=client_id,
+            client_secret=decrypt_string(client_secret),
+            redirect_uri=redirect_uri,
+            scope="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email",
+            cache_handler=ConfigCacheHandler(account_id)
+        )
 
         # Exchange code for tokens
         try:

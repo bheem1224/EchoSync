@@ -161,9 +161,11 @@ def oauth_callback():
             return jsonify({"error": "Incomplete PKCE session data"}), 400
 
         # Load client_secret from account config
+        from core.security import decrypt_string
         client_secret = storage.get_account_config(account_id, 'client_secret')
         if not client_secret:
             return jsonify({"error": "Account missing client_secret"}), 400
+        client_secret = decrypt_string(client_secret)
 
         # Exchange authorization code for tokens
         from sdk.http_client import HttpClient
@@ -194,9 +196,17 @@ def oauth_callback():
         if not access_token:
             return jsonify({"error": "No access token in response"}), 400
 
+        from core.security import encrypt_string
         # Persist tokens to storage
         try:
-            storage.save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at, scope)
+            storage.save_account_token(
+                account_id,
+                encrypt_string(access_token),
+                encrypt_string(refresh_token) if refresh_token else None,
+                'Bearer',
+                expires_at,
+                scope
+            )
             storage.mark_account_authenticated(account_id)
             logger.info(f"Tokens saved for Tidal account {account_id}")
         except Exception as e:

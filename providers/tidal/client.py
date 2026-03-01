@@ -112,11 +112,12 @@ class TidalClient(SyncServiceProvider):
                 try:
                     if self.account_id and self.access_token:
                         from core.storage import get_storage_service
+                        from core.security import encrypt_string
                         storage = get_storage_service()
                         storage.save_account_token(
                             account_id=int(self.account_id),
-                            access_token=self.access_token,
-                            refresh_token=self.refresh_token,
+                            access_token=encrypt_string(self.access_token),
+                            refresh_token=encrypt_string(self.refresh_token) if self.refresh_token else None,
                             token_type='Bearer',
                             expires_at=int(self.token_expires_at),
                             scope=None,
@@ -277,12 +278,16 @@ class TidalClient(SyncServiceProvider):
         """Load Tidal configuration from database using centralized config_manager helper"""
         try:
             from core.storage import get_storage_service
+            from core.security import decrypt_string
             storage = get_storage_service()
             storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
             
             # Ensure client_id and client_secret are retrieved from service_config
             self.client_id = storage.get_service_config('tidal', 'client_id') or None
             self.client_secret = storage.get_service_config('tidal', 'client_secret') or None
+
+            if self.client_secret:
+                self.client_secret = decrypt_string(self.client_secret)
 
             # Log a warning if they are missing
             if not self.client_id or not self.client_secret:
@@ -301,11 +306,12 @@ class TidalClient(SyncServiceProvider):
                 logger.warning("No account_id specified for Tidal client")
                 return
             from core.storage import get_storage_service
+            from core.security import decrypt_string
             storage = get_storage_service()
             token_data = storage.get_account_token(int(self.account_id))
             if token_data:
-                self.access_token = token_data.get('access_token')
-                self.refresh_token = token_data.get('refresh_token')
+                self.access_token = decrypt_string(token_data.get('access_token'))
+                self.refresh_token = decrypt_string(token_data.get('refresh_token'))
                 self.token_expires_at = token_data.get('expires_at', 0)
         except Exception as e:
             logger.error(f"Error loading Tidal tokens: {e}")

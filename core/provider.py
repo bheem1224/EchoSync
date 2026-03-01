@@ -219,6 +219,21 @@ class ProviderCapabilities:
     supports_fingerprinting: bool = False  # Audio fingerprinting (AcoustID)
     supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
 
+    def to_enum_list(self) -> List[Capability]:
+        """Adapter pattern to translate ProviderCapabilities dataclass back to legacy Enums."""
+        caps = []
+        if self.supports_playlists in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
+            caps.append(Capability.PLAYLISTS)
+        if self.supports_downloads:
+            caps.append(Capability.DOWNLOAD)
+        if self.supports_streaming:
+            caps.append(Capability.STREAMING)
+        if self.supports_library_scan:
+            caps.append(Capability.LIBRARY_SCAN)
+        if self.search.tracks or self.search.artists or self.search.albums:
+            caps.append(Capability.SEARCH)
+        return caps
+
 
 def get_provider_capabilities(provider: str) -> ProviderCapabilities:
     """
@@ -261,6 +276,9 @@ class ProviderRegistry:
 
             # Check if class has capabilities attribute and if it contains the capability
             caps = getattr(provider_cls, 'capabilities', [])
+            if hasattr(caps, 'to_enum_list'):
+                caps = caps.to_enum_list()
+
             if capability in caps:
                 try:
                     providers.append(cls.create_instance(name))
