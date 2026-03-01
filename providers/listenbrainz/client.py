@@ -2,13 +2,25 @@ from typing import Dict, List, Optional, Any
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
-from core.provider import get_provider_capabilities
+from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 import time
 
 logger = get_logger("listenbrainz_client")
 
 class ListenBrainzClient:
     """Client for interacting with ListenBrainz API"""
+    capabilities = ProviderCapabilities(
+        name='listenbrainz',
+        supports_playlists=PlaylistSupport.READ,
+        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=True),
+        metadata=MetadataRichness.MEDIUM,
+        supports_cover_art=False,
+        supports_lyrics=False,
+        supports_user_auth=False,
+        supports_library_scan=False,
+        supports_streaming=False,
+        supports_downloads=False,
+    )
 
     def __init__(self):
         self.base_url = "https://api.listenbrainz.org/1"
@@ -25,9 +37,6 @@ class ListenBrainzClient:
             'User-Agent': 'SoulSync/1.0'
         })
 
-        # Capability flags
-        self.capabilities = get_provider_capabilities('listenbrainz')
-        
         # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration
 
         if self.token:

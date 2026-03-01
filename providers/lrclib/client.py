@@ -2,6 +2,7 @@
 
 import os
 from core.tiered_logger import get_logger
+from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
 logger = get_logger("lrclib_client")
 
@@ -17,6 +18,18 @@ class LRCLibClient:
     LRClib API client for fetching synchronized lyrics.
     Creates .lrc sidecar files during post-processing.
     """
+    capabilities = ProviderCapabilities(
+        name='lrclib',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
+        metadata=MetadataRichness.LOW,
+        supports_cover_art=False,
+        supports_lyrics=True,
+        supports_user_auth=False,
+        supports_library_scan=False,
+        supports_streaming=False,
+        supports_downloads=False,
+    )
 
     def __init__(self):
         self.api = None

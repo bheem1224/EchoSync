@@ -4,6 +4,7 @@ Simplified implementation using SoulSyncTrack and new core features.
 """
 
 from core.provider_base import ProviderBase
+from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.settings import config_manager
 from core.path_mapper import PathMapper
@@ -26,6 +27,18 @@ class PlexClient(ProviderBase):
     name = "plex"
     category = "provider"
     supports_downloads = False
+    capabilities = ProviderCapabilities(
+        name='plex',
+        supports_playlists=PlaylistSupport.READ_WRITE,
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
+        metadata=MetadataRichness.HIGH,
+        supports_cover_art=True,
+        supports_lyrics=False,
+        supports_user_auth=True,
+        supports_library_scan=True,
+        supports_streaming=False,
+        supports_downloads=False,
+    )
     
     def __init__(self):
         """Initialize Plex provider."""

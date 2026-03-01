@@ -7,7 +7,7 @@ import json
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
-from core.provider import get_provider_capabilities
+from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
 logger = get_logger("navidrome_client")
 
@@ -141,6 +141,18 @@ from core.provider import MediaServerProvider
 
 class NavidromeClient(MediaServerProvider):
     name = "navidrome"
+    capabilities = ProviderCapabilities(
+        name='navidrome',
+        supports_playlists=PlaylistSupport.READ_WRITE,
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
+        metadata=MetadataRichness.MEDIUM,
+        supports_cover_art=True,
+        supports_lyrics=False,
+        supports_user_auth=True,
+        supports_library_scan=True,
+        supports_streaming=False,
+        supports_downloads=False,
+    )
     def authenticate(self, **kwargs) -> bool:
         return self.ensure_connection()
 
@@ -214,9 +226,6 @@ class NavidromeClient(MediaServerProvider):
             rate=RateLimitConfig(requests_per_second=10.0)
         )
 
-        # Capability flags
-        self.capabilities = get_provider_capabilities('navidrome')
-        
         self._register_health_check()
         
         # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration
