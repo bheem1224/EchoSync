@@ -93,22 +93,31 @@
         pollInterval = setInterval(async () => {
           try {
             const pollResp = await apiClient.get(`/plex/auth/poll/${oauthSession}`);
-            if (pollResp.data?.completed && pollResp.data?.token) {
-              // OAuth completed - save token
+            if (pollResp.data?.completed) {
+              // OAuth completed (backend already saved token to account_tokens)
               clearInterval(pollInterval);
               pollInterval = null;
-              
-              await apiClient.post('/plex/settings', {
-                token: pollResp.data.token
-              });
               
               feedback.addToast('Plex authentication successful', 'success');
               authenticating = false;
               oauthSession = null;
+
+              // Remove old localStorage stale PIN (if it was used by a previous version)
+              localStorage.removeItem('plex_oauth_session');
+
               await loadSettings();
             }
           } catch (pollError) {
             console.error('OAuth poll error:', pollError);
+            // If the session is missing or server restarted (404 Not Found), stop zombie polling
+            if (pollError.response && pollError.response.status === 404) {
+              clearInterval(pollInterval);
+              pollInterval = null;
+              authenticating = false;
+              oauthSession = null;
+              localStorage.removeItem('plex_oauth_session');
+              feedback.addToast('Authentication session expired or server restarted', 'error');
+            }
           }
         }, 2000); // Poll every 2 seconds
         
