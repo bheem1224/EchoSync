@@ -1,3 +1,4 @@
+import re
 """
 WeightedMatchingEngine - Core scoring logic with 5-step gating
 
@@ -47,6 +48,16 @@ class WeightedMatchingEngine:
     """
     Core weighted matching engine implementing 5-step gating logic
     """
+
+    @staticmethod
+    def is_valid_isrc(isrc_string: str) -> bool:
+        if not isrc_string:
+            return False
+        cleaned_isrc = str(isrc_string).replace("-", "").strip().upper()
+        if cleaned_isrc in ["0", "NULL", "NONE", "N/A", "UNKNOWN"]:
+            return False
+        isrc_pattern = re.compile(r'^[A-Z]{2}[A-Z0-9]{3}\d{2}\d{5}$')
+        return bool(isrc_pattern.match(cleaned_isrc))
 
     VERSION_KEYWORDS = {
         'remix', 'rmx', 'mix', 'edit', 'extended', 'instrumental',
@@ -100,10 +111,15 @@ class WeightedMatchingEngine:
         fingerprint_score = 0.0
         reasoning_parts = []
 
-        # ===== STEP 0a: ISRC INSTANT MATCH (highest confidence) =====
-        # If both tracks have ISRC and they match exactly, instant 100% confidence
-        if source.isrc and candidate.isrc:
-            if source.isrc.strip().upper() == candidate.isrc.strip().upper():
+        # ===== STEP 0a: ISRC INSTANT MATCH or AUTO-FAIL (highest confidence) =====
+        # If both tracks have valid ISRCs and they match exactly, instant 100% confidence
+        # If both have valid ISRCs and they differ, auto-fail (score 0)
+        src_isrc = getattr(source, "isrc", None)
+        cand_isrc = getattr(candidate, "isrc", None)
+        src_valid = self.is_valid_isrc(src_isrc)
+        cand_valid = self.is_valid_isrc(cand_isrc)
+        if src_valid and cand_valid:
+            if src_isrc.strip().upper() == cand_isrc.strip().upper():
                 return self._attach_target_context(MatchResult(
                     confidence_score=100.0,
                     passed_version_check=True,
@@ -116,7 +132,18 @@ class WeightedMatchingEngine:
                     reasoning="ISRC match (identical recording - instant 100% confidence)"
                 ), target_source, target_identifier)
             else:
-                reasoning_parts.append("ISRC available but no match (different recordings)")
+                reasoning_parts.append("ISRC mismatch (both present, different codes) - auto-fail")
+                return self._attach_target_context(MatchResult(
+                    confidence_score=0.0,
+                    passed_version_check=False,
+                    passed_edition_check=False,
+                    fuzzy_text_score=0.0,
+                    duration_match_score=0.0,
+                    quality_bonus_applied=0.0,
+                    version_penalty_applied=0.0,
+                    edition_penalty_applied=0.0,
+                    reasoning=" | ".join(reasoning_parts)
+                ), target_source, target_identifier)
 
         # Continue with standard matching...
         return self._attach_target_context(

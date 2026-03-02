@@ -69,11 +69,26 @@ class LibraryManager:
             artist = session.execute(stmt).scalar_one()
             return artist
 
-        # Check DB
+        # Check DB using case-insensitive lookup (may not strip accents)
         stmt = select(Artist).where(
             func.lower(Artist.name) == norm_name
         )
         artist = session.execute(stmt).scalar_one_or_none()
+        # Additional fallback: try Python normalization to catch accent variants
+        if artist is None:
+            # since artist_cache may already contain normalized values from DB,
+            # we can leverage it here to avoid another query
+            if norm_name in self.artist_cache:
+                uid = self.artist_cache[norm_name]
+                stmt2 = select(Artist).where(Artist.id == uid)
+                artist = session.execute(stmt2).scalar_one_or_none()
+            else:
+                # final brute-force scan (should be rare after cache prepopulate)
+                stmt2 = select(Artist)
+                for a in session.execute(stmt2).scalars().all():
+                    if self._normalize_name(a.name) == norm_name:
+                        artist = a
+                        break
 
         if artist is None:
             # Create new artist
@@ -134,12 +149,25 @@ class LibraryManager:
                 album.original_release_date = original_release_date
             return album
 
-        # Check DB
+        # Check DB using case-insensitive lookup (may not strip accents)
         stmt = select(Album).where(
             func.lower(Album.title) == norm_title,
             Album.artist_id == artist.id,
         )
         album = session.execute(stmt).scalar_one_or_none()
+        # Fallback via normalization similar to artists
+        if album is None:
+            cache_key = (norm_title, artist.id)
+            if cache_key in self.album_cache:
+                aid = self.album_cache[cache_key]
+                stmt2 = select(Album).where(Album.id == aid)
+                album = session.execute(stmt2).scalar_one_or_none()
+            else:
+                stmt2 = select(Album).where(Album.artist_id == artist.id)
+                for alb in session.execute(stmt2).scalars().all():
+                    if self._normalize_name(alb.title) == norm_title:
+                        album = alb
+                        break
 
         release_date = date(release_year, 1, 1) if release_year else None
 
@@ -303,6 +331,22 @@ class LibraryManager:
                 track_number=track_data.track_number,
                 file_path=track_data.file_path,
             )
+            # If we matched via metadata but the incoming identifier for this provider
+            # is not already linked to the returned track then we should treat
+            # the record as a *new* track rather than merging. This prevents
+            # distinct Plex items (different ratingKeys) with identical
+            # metadata from collapsing into one row.
+            if track is not None and track_data.identifiers:
+                # build set of (source, id) currently attached to track
+                existing_ids = { (e.provider_source, e.provider_item_id) for e in track.external_identifiers }
+                mismatch = True
+                for src, pid in track_data.identifiers.items():
+                    if src and pid and (src, str(pid)) in existing_ids:
+                        mismatch = False
+                        break
+                if mismatch:
+                    # nullify track so creation path runs
+                    track = None
 
         if track is None:
             # Create new track
@@ -516,6 +560,57 @@ class LibraryManager:
         # Progress tracking (unique artists/albums encountered)
         seen_artist_ids: set[int] = set()
         seen_album_ids: set[int] = set()
+
+        # === prepopulate caches with existing database entries ===
+        # This avoids creating duplicates due to normalization mismatch (e.g. accents)
+        if not self.artist_cache:
+            try:
+                stmt = select(Artist)
+                for a in session.execute(stmt).scalars().all():
+                    norm = self._normalize_name(a.name)
+                    if norm in self.artist_cache:
+                        # existing artist with same normalized name -> merge
+                        primary_id = self.artist_cache[norm]
+                        primary = session.get(Artist, primary_id)
+                        if primary and primary.id != a.id:
+                            # reassign albums and tracks to primary
+                            for alb in list(a.albums):
+                                alb.artist = primary
+                            for tr in list(a.tracks):
+                                tr.artist = primary
+                            # delete duplicate artist
+                            try:
+                                session.delete(a)
+                                logger.info(f"Merged duplicate artist '{a.name}' into '{primary.name}'")
+                            except Exception:
+                                logger.debug(f"Failed to delete duplicate artist {a.name}")
+                            continue  # skip caching this one
+                    # cache valid id
+                    self.artist_cache[norm] = a.id
+            except Exception:
+                pass
+        if not self.album_cache:
+            try:
+                stmt = select(Album)
+                for alb in session.execute(stmt).scalars().all():
+                    norm = self._normalize_name(alb.title)
+                    key = (norm, alb.artist_id)
+                    if key in self.album_cache:
+                        # merge duplicate album into primary
+                        primary_id = self.album_cache[key]
+                        primary = session.get(Album, primary_id)
+                        if primary and primary.id != alb.id:
+                            for tr in list(alb.tracks):
+                                tr.album = primary
+                            try:
+                                session.delete(alb)
+                                logger.info(f"Merged duplicate album '{alb.title}' into '{primary.title}'")
+                            except Exception:
+                                logger.debug(f"Failed to delete duplicate album {alb.title}")
+                            continue
+                    self.album_cache[key] = alb.id
+            except Exception:
+                pass
 
         try:
             for idx, track_data in enumerate(tracks):

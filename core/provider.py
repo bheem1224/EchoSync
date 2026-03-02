@@ -275,11 +275,22 @@ class ProviderRegistry:
                 continue
 
             # Check if class has capabilities attribute and if it contains the capability
-            caps = getattr(provider_cls, 'capabilities', [])
-            if hasattr(caps, 'to_enum_list'):
-                caps = caps.to_enum_list()
+            caps = getattr(provider_cls, 'capabilities', None)
+            # Normalize None -> empty iterable to avoid TypeError when doing 'in' checks
+            if caps is None:
+                caps = []
 
-            if capability in caps:
+            # Some providers expose a helper to convert to a list of Capability enums
+            if hasattr(caps, 'to_enum_list'):
+                caps = caps.to_enum_list() or []
+
+            # Defensive: if caps is not iterable, skip this provider
+            try:
+                contains = capability in caps
+            except TypeError:
+                contains = False
+
+            if contains:
                 try:
                     providers.append(cls.create_instance(name))
                 except Exception as e:

@@ -539,6 +539,12 @@ def analyze_playlists():
                         "target_source": target_source,
                         "target_identifier": best_match_target_id,
                         "target_exists": bool(best_match_target_id),
+                        # Preserve original source identifier if available (e.g., spotify_id)
+                        "source_identifier": (None if not getattr(source_track, 'identifiers', None) else (
+                            source_track.identifiers.get(source) if isinstance(source_track.identifiers, dict) and source in source_track.identifiers
+                            else next(iter(source_track.identifiers.values()), None) if isinstance(source_track.identifiers, dict) and source_track.identifiers
+                            else None
+                        )),
                     })
                     
             except Exception as e:
@@ -555,6 +561,31 @@ def analyze_playlists():
                 })
         
         total_tracks = len(all_tracks)
+        # Detect duplicate matches where multiple source tracks matched the same SoulSync DB track
+        try:
+            matched_map = {}
+            for t in all_tracks:
+                mid = t.get("matched_track_id")
+                if not mid:
+                    continue
+                matched_map.setdefault(mid, []).append(t)
+
+            duplicate_matches = {k: v for k, v in matched_map.items() if len(v) > 1}
+            if duplicate_matches and logger.isEnabledFor(logging.DEBUG):
+                logger.debug("[system] - Duplicate match analysis: found %d SoulSync tracks matched by multiple source tracks", len(duplicate_matches))
+                for soul_id, entries in duplicate_matches.items():
+                    # Build a concise single-line report per duplicate SoulSync track
+                    try:
+                        lines = []
+                        for e in entries:
+                            src_id = e.get("source_identifier") or "<unknown_source_id>"
+                            lines.append(f"{src_id} ('{e.get('title')}' by '{e.get('artist')}')")
+                        # Example log: Duplicate match, Spotify track A matched SoulSyncTrack 123, Spotify track B matched SoulSyncTrack 123
+                        logger.debug(f"[system] - Duplicate match: {', '.join([f'{l} matched SoulSyncTrack {soul_id}' for l in lines])}")
+                    except Exception as dup_err:
+                        logger.debug(f"[system] - Duplicate match formatting failed for SoulSyncTrack {soul_id}: {dup_err}")
+        except Exception as dup_all_err:
+            logger.debug(f"[system] - Duplicate match analysis failed: {dup_all_err}")
         
         # Build sync-ready payload with matched pairs
         matched_pairs = []

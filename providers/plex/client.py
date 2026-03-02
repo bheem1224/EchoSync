@@ -299,7 +299,18 @@ class PlexClient(ProviderBase):
             playlist = self._find_managed_playlist(playlist_name, marker=marker, management_tag=management_tag)
 
             items = []
+            # Deduplicate rating keys while preserving order to avoid redundant fetches
+            seen_rks = set()
+            deduped_rating_keys = []
             for rk in rating_keys:
+                if not rk:
+                    continue
+                if rk in seen_rks:
+                    continue
+                seen_rks.add(rk)
+                deduped_rating_keys.append(rk)
+
+            for rk in deduped_rating_keys:
                 try:
                     # Ensure ratingKey is an integer
                     try:
@@ -321,8 +332,7 @@ class PlexClient(ProviderBase):
                         logger.warning(f"fetchItem returned None or falsy value for ratingKey {rk_int}")
                 except Exception as fe:
                     logger.error(f"Exception fetching item for ratingKey {rk}: {fe}", exc_info=True)
-
-            logger.info(f"Fetched {len(items)} valid items from {len(rating_keys)} rating keys")
+            logger.info(f"Fetched {len(items)} valid items from {len(deduped_rating_keys)} unique rating keys (requested {len(rating_keys)})")
             
             if not items:
                 logger.error(f"No valid Plex items resolved for playlist sync - all {len(rating_keys)} ratingKeys failed to fetch")
@@ -346,7 +356,18 @@ class PlexClient(ProviderBase):
                 except Exception as create_err:
                     logger.error(f"Playlist.create() failed: {create_err}", exc_info=True)
                     raise
-                logger.info(f"Created Plex playlist '{create_name}' with {len(items)} tracks")
+                # Verify created playlist contents against requested rating keys
+                try:
+                    created_items = list(created_playlist.items()) if created_playlist else []
+                    created_rks = set(str(getattr(i, 'ratingKey', '')) for i in created_items)
+                    requested_rks = set(str(rk) for rk in deduped_rating_keys)
+                    missing = requested_rks - created_rks
+                    if missing:
+                        sample_missing = list(missing)[:10]
+                        logger.warning(f"Playlist created but {len(missing)} requested items are missing from Plex playlist (showing up to 10): {sample_missing}")
+                    logger.info(f"Created Plex playlist '{create_name}' with {len(created_items)} tracks (requested {len(deduped_rating_keys)})")
+                except Exception as verify_err:
+                    logger.debug(f"Failed to verify created playlist contents: {verify_err}")
                 return True
 
             if overwrite:
@@ -364,6 +385,18 @@ class PlexClient(ProviderBase):
                     playlist.editSummary(management_tag)
             except Exception:
                 pass
+            # Post-update verification: re-fetch playlist and compare rating keys
+            try:
+                refreshed = self.server.playlist(playlist.title)
+                refreshed_items = list(refreshed.items()) if refreshed else []
+                refreshed_rks = set(str(getattr(i, 'ratingKey', '')) for i in refreshed_items)
+                requested_rks = set(str(rk) for rk in deduped_rating_keys)
+                missing = requested_rks - refreshed_rks
+                if missing:
+                    sample_missing = list(missing)[:10]
+                    logger.warning(f"After update, {len(missing)} requested items are missing from Plex playlist (showing up to 10): {sample_missing}")
+            except Exception as verify_err:
+                logger.debug(f"Failed to verify updated playlist contents: {verify_err}")
             return True
         except Exception as e:
             logger.error(f"Error syncing Plex playlist '{playlist_name}': {e}")
@@ -667,7 +700,15 @@ class PlexClient(ProviderBase):
                 artist = getattr(artist_obj, 'title', None) if artist_obj else None
                 logger.debug(f"Extracted artist for '{title}': artist_obj={artist_obj}, artist_title={artist}")
             except (NotFound, AttributeError, Exception) as e:
-                logger.warning(f"Failed to get artist for track '{title}': {e}")
+                logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
+            
+            # Fallback to grandparentTitle attribute if artist() method failed
+            if not artist:
+                artist = getattr(plex_track, 'grandparentTitle', None)
+                if artist:
+                    logger.debug(f"Using grandparentTitle fallback for '{title}': artist={artist}")
+                else:
+                    logger.warning(f"Failed to extract artist for track '{title}' via both artist() and grandparentTitle")
             
             album = None
             try:
@@ -675,13 +716,15 @@ class PlexClient(ProviderBase):
                 album = getattr(album_obj, 'title', None) or "Unknown Album"
             except (NotFound, AttributeError, Exception) as e:
                 logger.debug(f"Failed to get album for track '{title}': {e}")
+                # Fallback to parentTitle (album name in Plex XML structure)
+                album = getattr(plex_track, 'parentTitle', None) or "Unknown Album"
             
             if not title:
                 logger.warning("Skipping track - missing title")
                 return None
             
             if not artist:
-                logger.warning(f"Skipping track '{title}' - missing artist (artist_obj extraction failed)")
+                logger.warning(f"Skipping track '{title}' - missing artist (both artist() and grandparentTitle failed)")
                 return None
             
             # Remove version suffix from title if it matches album version
