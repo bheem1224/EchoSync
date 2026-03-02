@@ -238,7 +238,7 @@ class ProviderCapabilities:
 def get_provider_capabilities(provider: str) -> ProviderCapabilities:
     """
     Return capabilities for a provider by looking up the provider class dynamically.
-    Raises KeyError if the provider is unknown or lacks capabilities.
+    Gracefully handles providers that don't declare explicit capabilities.
     """
     provider_cls = ProviderRegistry.get_provider_class(provider)
     if not provider_cls:
@@ -246,7 +246,13 @@ def get_provider_capabilities(provider: str) -> ProviderCapabilities:
 
     caps = getattr(provider_cls, 'capabilities', None)
     if not caps:
-        raise KeyError(f"Provider '{provider}' does not declare capabilities.")
+        logger.warning(f"Provider '{provider}' does not declare capabilities. Using default minimal capabilities.")
+        return ProviderCapabilities(
+            name=provider,
+            supports_playlists=PlaylistSupport.NONE,
+            search=SearchCapabilities(),
+            metadata=MetadataRichness.LOW
+        )
 
     return caps
 

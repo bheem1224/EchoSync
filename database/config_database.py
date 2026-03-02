@@ -358,6 +358,26 @@ class ConfigDatabase:
             logger.error(f"Error saving account token: {e}")
             return False
 
+    def get_account_config(self, account_id: int, key: str = None) -> Any:
+        """Get account configuration from the details JSON blob."""
+        try:
+            import json
+            import contextlib
+            with contextlib.closing(self._get_connection()) as conn:
+                c = conn.cursor()
+                c.execute("SELECT details FROM accounts WHERE id = ?", (account_id,))
+                row = c.fetchone()
+                if not row or not row[0]:
+                    return None if key else {}
+
+                details = json.loads(row[0])
+                if key:
+                    return details.get(key)
+                return details
+        except Exception as e:
+            logger.error(f"Error getting account config for {account_id}: {e}")
+            return None if key else {}
+
     def get_account_token(self, account_id: int) -> Optional[Dict[str, Any]]:
         try:
             import contextlib
