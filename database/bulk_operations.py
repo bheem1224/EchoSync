@@ -217,19 +217,31 @@ class LibraryManager:
         title: str,
         artist_id: int,
         album_id: Optional[int],
+        track_number: Optional[int] = None,
+        file_path: Optional[str] = None,
     ) -> Optional[Track]:
         """
-        Fallback: find track by title + artist + album.
+        Fallback: find track by file_path OR (title + artist + album + track_number).
 
         Args:
             session: SQLAlchemy session
             title: Track title
             artist_id: Artist ID
             album_id: Album ID (optional)
+            track_number: Track number (optional)
+            file_path: File path (optional)
 
         Returns:
             Track object or None
         """
+        # Highest confidence: if file_path matches, it's definitely the same physical file/track
+        if file_path:
+            stmt = select(Track).where(Track.file_path == file_path)
+            track = session.execute(stmt).scalar_one_or_none()
+            if track:
+                return track
+
+        # Otherwise, match strictly on title + artist + album + track_number
         norm_title = self._normalize_name(title)
         conditions = [
             func.lower(Track.title) == norm_title,
@@ -237,9 +249,12 @@ class LibraryManager:
         ]
         if album_id:
             conditions.append(Track.album_id == album_id)
+        if track_number is not None:
+            conditions.append(Track.track_number == track_number)
 
         stmt = select(Track).where(*conditions)
-        return session.execute(stmt).scalar_one_or_none()
+        # Using first() to handle edge cases gracefully, but ideally this composite is unique
+        return session.execute(stmt).scalars().first()
 
     def _upsert_track(
         self, session: Session, track_data: SoulSyncTrack, artist: Artist, album: Optional[Album]
@@ -285,6 +300,8 @@ class LibraryManager:
                 track_data.title,
                 artist.id,
                 album.id if album else None,
+                track_number=track_data.track_number,
+                file_path=track_data.file_path,
             )
 
         if track is None:

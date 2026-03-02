@@ -222,14 +222,10 @@ class ProviderCapabilities:
     def to_enum_list(self) -> List[Capability]:
         """Adapter pattern to translate ProviderCapabilities dataclass back to legacy Enums."""
         caps = []
-        if self.supports_downloads:
-            caps.append(Capability.DOWNLOAD)
-        if self.supports_streaming:
-            caps.append(Capability.STREAMING)
-        if self.supports_library_scan:
-            caps.append(Capability.LIBRARY_SCAN)
-        if self.search.tracks or self.search.artists or self.search.albums:
-            caps.append(Capability.SEARCH)
+        if getattr(self, 'supports_fingerprinting', False):
+            caps.append(Capability.RESOLVE_FINGERPRINT)
+        if getattr(self, 'supports_metadata_fetch', False):
+            caps.append(Capability.FETCH_METADATA)
         return caps
 
 
