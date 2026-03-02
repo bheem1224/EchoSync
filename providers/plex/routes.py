@@ -166,11 +166,15 @@ def start_oauth():
         with plex_oauth_lock:
             plex_oauth_sessions[session_id] = pin_login
 
-        # Timeout of 600 seconds (10 minutes)
-        pin_login.run(timeout=600)
-        oauth_url = pin_login.oauthUrl()
+        # We don't want to use pin_login.run() because it blocks the thread
+        # and starts an internal polling loop. Instead we initialize the code
+        # and let the frontend do the polling.
+        pin_login._getCode()
 
-        logger.info(f"Plex OAuth session started: {session_id}")
+        # We need a dummy forward URL to satisfy OAuth, even though Plex uses PINs
+        oauth_url = pin_login.oauthUrl('http://127.0.0.1:5173/settings/music-services')
+
+        logger.info(f"Plex OAuth session started: {session_id} with pin id: {pin_login._id}")
 
         def cleanup_session():
             time.sleep(900)  # 15 minutes
@@ -208,16 +212,29 @@ def poll_oauth(session_id: str):
         if not pin_login:
             return jsonify({'error': 'Session not found or expired'}), 404
 
-        # Call checkLogin to actively poll Plex. It returns True when authenticated.
+        # We manually query the Plex PIN API to check if the user authorized it.
+        # `pin_login._checkLogin()` handles this cleanly without starting a background thread.
+        import requests
         is_logged_in = False
+        auth_token = None
+
         try:
-            is_logged_in = pin_login.checkLogin()
-        except Exception as check_e:
-            logger.debug(f"Plex poll checkLogin still waiting: {check_e}")
+            headers = {
+                'Accept': 'application/json',
+                'X-Plex-Client-Identifier': pin_login._headers().get('X-Plex-Client-Identifier', 'SoulSync')
+            }
+            # Explicitly request the PIN status from Plex
+            resp = requests.get(f"https://plex.tv/api/v2/pins/{pin_login._id}", headers=headers, timeout=5)
+            resp_data = resp.json()
+            logger.debug(f"Plex PIN status response: {resp_data}")
 
-        if is_logged_in and getattr(pin_login, 'token', None):
-            auth_token = pin_login.token
+            if resp_data.get('authToken'):
+                is_logged_in = True
+                auth_token = resp_data.get('authToken')
+        except Exception as e:
+            logger.debug(f"Plex poll API check failed: {e}")
 
+        if is_logged_in and auth_token:
             # Fetch user details to name the account properly
             from plexapi.myplex import MyPlexAccount
             account_name = f"plex_user_{int(time.time())}"
