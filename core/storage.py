@@ -67,43 +67,7 @@ class StorageService:
     # ----- account management ---------------------------------------------------
 
     def list_accounts(self, service_name: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Return account lists for a given service.
-
-        Historically Spotify and Tidal accounts were stored in ``config.json``
-        (via :meth:`ConfigManager.get_spotify_accounts`/``get_tidal_accounts``),
-        but the modern implementation persists them in the configuration
-        database's ``accounts`` table.  Most callers (routes, clients) create
-        accounts via :meth:`ensure_account`, which writes to the database, so
-        reading from config_manager now returns stale/empty lists.
-
-        To support both legacy and current data we prefer the database when
-        possible and fall back to the old config entry only if *no* records are
-        found.  This mirrors the behaviour of the original
-        ``sdk.storage_service`` stub and keeps tests working.
-        """
-        # For spotify/tidal try the database first
-        if service_name in ('spotify', 'tidal'):
-            try:
-                from database.config_database import get_config_database
-                db = get_config_database()
-                service_id = db.get_or_create_service_id(service_name)
-                accounts = db.get_accounts(service_id=service_id)
-                if accounts:
-                    return accounts
-            except Exception:
-                # ignore and fall back to config manager below
-                pass
-
-        # Legacy behaviour: read from config_manager for buckets that still
-        # support it.  This is mostly used by a few tests and ensures that
-        # existing installations which haven't been migrated continue to work
-        # until the UI has had a chance to write the first DB record.
-        if service_name == 'spotify':
-            return config_manager.get_spotify_accounts()
-        if service_name == 'tidal':
-            return config_manager.get_tidal_accounts()
-
-        # Generic providers: query the database directly
+        """Return account lists for a given service."""
         from database.config_database import get_config_database
 
         db = get_config_database()
@@ -117,73 +81,22 @@ class StorageService:
         display_name: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> Optional[int]:
-        if service_name == 'spotify':
-            acc = config_manager.add_spotify_account(
-                {'account_name': account_name, 'display_name': display_name or account_name, 'user_id': user_id}
-            )
-            return acc.get('id')
-        if service_name == 'tidal':
-            # Tidal accounts live in the same place as Spotify accounts
-            acc = config_manager.add_tidal_account(
-                {'account_name': account_name, 'display_name': display_name or account_name, 'user_id': user_id}
-            )
-            return acc.get('id')
-
         from database.config_database import get_config_database
         db = get_config_database()
         service_id = db.get_or_create_service_id(service_name)
         return db.ensure_account(service_id, account_name=account_name, display_name=display_name, user_id=user_id)
 
     def toggle_account_active(self, account_id: int, active: bool) -> bool:
-        # attempt config_manager update for spotify/tidal,
-        # otherwise fall back to db toggle
-        for name, getter, updater in (
-            ('spotify', config_manager.get_spotify_accounts, config_manager.update_spotify_account),
-            ('tidal', config_manager.get_tidal_accounts, config_manager.update_tidal_account),
-        ):
-            accounts = getter() or []
-            for acc in accounts:
-                if acc.get('id') == account_id:
-                    acc = {**acc, 'is_active': bool(active)}
-                    updater(account_id, acc)
-                    return True
-
         from database.config_database import get_config_database
         db = get_config_database()
         return db.toggle_account_active(account_id, active)
 
     def delete_account(self, account_id: int) -> bool:
-        # spotify/tidal stored in config_manager
-        for getter, deleter in (
-            (config_manager.get_spotify_accounts, config_manager.update_spotify_account),
-            (config_manager.get_tidal_accounts, config_manager.update_tidal_account),
-        ):
-            accounts = getter() or []
-            if any(acc.get('id') == account_id for acc in accounts):
-                new_list = [acc for acc in accounts if acc.get('id') != account_id]
-                if getter is config_manager.get_spotify_accounts:
-                    config_manager.set('spotify_accounts', new_list)
-                else:
-                    config_manager.set('tidal_accounts', new_list)
-                return True
-
-        # fallback to config database for others
         from database.config_database import get_config_database
         db = get_config_database()
         return db.delete_account(account_id)
 
     def update_account_name(self, account_id: int, new_name: str) -> bool:
-        # try config_manager first
-        for getter, updater, key in (
-            (config_manager.get_spotify_accounts, config_manager.update_spotify_account, 'spotify_accounts'),
-            (config_manager.get_tidal_accounts, config_manager.update_tidal_account, 'tidal_accounts'),
-        ):
-            accounts = getter() or []
-            for acc in accounts:
-                if acc.get('id') == account_id:
-                    updater(account_id, {'display_name': new_name})
-                    return True
-
         from database.config_database import get_config_database
         db = get_config_database()
         return db.update_account_name(account_id, new_name)

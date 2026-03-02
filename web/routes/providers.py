@@ -28,31 +28,26 @@ def list_download_clients():
     annotated with 'active' status.
     """
     try:
-        from core.provider import ProviderRegistry, CAPABILITY_REGISTRY
+        from core.provider import ProviderRegistry
         from core.settings import config_manager
         
         active_client = config_manager.get_active_download_client()
         download_clients = []
         
         # Get all registered providers
-        all_providers = ProviderRegistry.list_providers()
+        clients = ProviderRegistry.get_download_clients()
         
-        for provider_name in all_providers:
+        for provider_name in clients:
             try:
-                # Check if provider supports downloads
-                if provider_name in CAPABILITY_REGISTRY:
-                    capabilities = CAPABILITY_REGISTRY[provider_name]
-                    if capabilities.supports_downloads:
-                        # Get provider instance
-                        provider_class = ProviderRegistry.get_provider_class(provider_name)
-                        if provider_class:
-                            download_clients.append({
-                                'name': provider_name,
-                                'display_name': provider_name.title(),
-                                'supports_downloads': True,
-                                'description': f'Download music via {provider_name.title()}',
-                                'active': provider_name == active_client
-                            })
+                provider_class = ProviderRegistry.get_provider_class(provider_name)
+                if provider_class:
+                    download_clients.append({
+                        'name': provider_name,
+                        'display_name': provider_name.title(),
+                        'supports_downloads': True,
+                        'description': f'Download music via {provider_name.title()}',
+                        'active': provider_name == active_client
+                    })
             except Exception as e:
                 logger.error(f"Error processing provider {provider_name} for download clients: {e}")
                 continue
