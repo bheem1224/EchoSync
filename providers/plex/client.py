@@ -101,16 +101,20 @@ class PlexClient(ProviderBase):
             return False
 
         from core.storage import get_storage_service
+        from core.settings import config_manager
         storage = get_storage_service()
 
-        # Check token existence
+        # Check token existence (Secure SQLite DB)
         token_data = storage.get_account_token(self.account_id)
         token = token_data.get('access_token') if token_data else None
 
-        # Check base_url existence (fall back to service config for legacy)
-        base_url = storage.get_account_config(self.account_id, 'base_url')
+        # Check base_url existence from config.json (Hybrid approach)
+        plex_config = config_manager.get('plex', {})
+        base_url = plex_config.get('base_url') or plex_config.get('server_url')
+
+        # Fallback to older config format just in case
         if not base_url:
-            base_url = storage.get_service_config('plex', 'base_url') or storage.get_service_config('plex', 'server_url')
+            base_url = config_manager.get('plex.base_url') or config_manager.get('plex.server_url')
 
         return bool(base_url and token)
     
@@ -802,7 +806,7 @@ class PlexClient(ProviderBase):
         from core.storage import get_storage_service
         from core.security import decrypt_string
         storage = get_storage_service()
-        
+
         # Load tokens from account_tokens securely
         token_data = storage.get_account_token(self.account_id)
         if not token_data or not token_data.get('access_token'):
@@ -810,24 +814,33 @@ class PlexClient(ProviderBase):
             return
         token = decrypt_string(token_data.get('access_token'))
 
-        # Retrieve server URL from account config (fallback to global config)
-        base_url = storage.get_account_config(self.account_id, 'base_url')
+        from core.settings import config_manager
+
+        # Fetch Settings from JSON (Hybrid Config approach)
+        plex_config = config_manager.get('plex', {})
+
+        base_url = plex_config.get('base_url') or plex_config.get('server_url')
         if not base_url:
-            base_url = storage.get_service_config('plex', 'base_url') or storage.get_service_config('plex', 'server_url')
+            # Fallback to explicit dot-notation just in case
+            base_url = config_manager.get('plex.base_url') or config_manager.get('plex.server_url')
 
         if not base_url:
             logger.warning("Plex server URL not configured")
             return
 
-        # Initialize PathMapper (legacy global setting supported for now)
+        # Initialize PathMapper from config.json
         import json
-        mappings_str = storage.get_service_config('plex', 'path_mappings')
+        mappings_raw = plex_config.get('path_mappings')
+        if not mappings_raw:
+            mappings_raw = config_manager.get('plex.path_mappings')
+
         mappings = []
-        if mappings_str:
+        if mappings_raw:
             try:
-                mappings = json.loads(mappings_str) if isinstance(mappings_str, str) else mappings_str
+                mappings = json.loads(mappings_raw) if isinstance(mappings_raw, str) else mappings_raw
             except Exception:
                 mappings = []
+
         self.path_mapper = PathMapper(mappings)
         
         try:

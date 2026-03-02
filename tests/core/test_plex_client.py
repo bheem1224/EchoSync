@@ -22,19 +22,21 @@ def test_is_configured_false(plex_client):
 
 def test_is_configured_true(plex_client):
     plex_client.account_id = 1
-    with patch('core.storage.get_storage_service') as mock_get_storage:
+    with patch('core.storage.get_storage_service') as mock_get_storage, \
+         patch('core.settings.config_manager.get') as mock_config_get:
         mock_storage = MagicMock()
 
         def mock_get_account_token(acc_id):
             return {'access_token': 'encrypted_abc'}
 
-        def mock_get_account_config(acc_id, key):
-            if key == 'base_url':
-                return 'http://plex'
-            return None
-
         mock_storage.get_account_token.side_effect = mock_get_account_token
-        mock_storage.get_account_config.side_effect = mock_get_account_config
         mock_get_storage.return_value = mock_storage
+
+        def mock_config(key, default=None):
+            if key == 'plex':
+                return {'base_url': 'http://plex'}
+            return default
+
+        mock_config_get.side_effect = mock_config
 
         assert plex_client.is_configured() is True

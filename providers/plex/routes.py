@@ -21,10 +21,24 @@ def get_settings():
     if ProviderRegistry.is_provider_disabled('plex'):
         return jsonify({'settings': {}}), 200
     try:
-        base_url = config_manager.get('plex.base_url', '')
-        token = config_manager.get('plex.token', '')
-        server_name = config_manager.get('plex.server_name', '')
+        # Load Hybrid Configuration
+        plex_config = config_manager.get('plex', {})
+        base_url = plex_config.get('base_url') or config_manager.get('plex.base_url', '')
+        server_name = plex_config.get('server_name') or config_manager.get('plex.server_name', '')
         
+        # Retrieve token from Singleton Account
+        from core.storage import get_storage_service
+        from core.security import decrypt_string
+        storage = get_storage_service()
+        accounts = storage.list_accounts('plex')
+
+        token = ''
+        if accounts:
+            account_id = accounts[0].get('id')
+            token_data = storage.get_account_token(account_id)
+            if token_data and token_data.get('access_token'):
+                token = decrypt_string(token_data.get('access_token'))
+
         # Check if this is the active media server
         active_media_server = config_manager.get('active_media_server', 'plex')
         is_active = (active_media_server == 'plex')
@@ -43,9 +57,9 @@ def get_settings():
         
         # Get path mappings
         import json
-        path_mappings_str = config_manager.get('plex.path_mappings', '[]')
+        path_mappings_raw = plex_config.get('path_mappings') or config_manager.get('plex.path_mappings', '[]')
         try:
-            path_mappings = json.loads(path_mappings_str)
+            path_mappings = json.loads(path_mappings_raw) if isinstance(path_mappings_raw, str) else path_mappings_raw
         except:
             path_mappings = []
         
@@ -69,28 +83,52 @@ def save_settings():
     """Save Plex server settings."""
     try:
         data = request.get_json(force=True) or {}
+        plex_config = config_manager.get('plex', {})
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
-            config_manager.set('plex.base_url', base_url)
+            plex_config['base_url'] = base_url
+            config_manager.set('plex.base_url', base_url) # Legacy fallback
             logger.info(f"Plex base_url saved: {base_url}")
         
         if 'server_name' in data:
             server_name = data['server_name'].strip()
-            config_manager.set('plex.server_name', server_name)
+            plex_config['server_name'] = server_name
+            config_manager.set('plex.server_name', server_name) # Legacy fallback
             logger.info(f"Plex server_name saved: {server_name}")
         
         if 'token' in data:
+            # We don't save tokens to config_manager anymore. We save them to account_tokens
             token = data['token'].strip()
-            config_manager.set('plex.token', token)
-            logger.info(f"Plex token saved")
+            from core.storage import get_storage_service
+            from core.security import encrypt_string
+            import time
+            storage = get_storage_service()
+
+            accounts = storage.list_accounts('plex')
+            if accounts:
+                account_id = accounts[0].get('id')
+            else:
+                account_id = storage.ensure_account('plex', account_name=f"plex_user_{int(time.time())}")
+
+            storage.save_account_token(
+                account_id=account_id,
+                access_token=encrypt_string(token),
+                refresh_token=None,
+                token_type='Bearer'
+            )
+            storage.mark_account_authenticated(account_id)
+            storage.toggle_account_active(account_id, True)
+            logger.info(f"Plex token saved to SQLite account {account_id}")
         
         if 'path_mappings' in data:
             import json
             path_mappings = data['path_mappings']
-            config_manager.set('plex.path_mappings', json.dumps(path_mappings))
+            plex_config['path_mappings'] = path_mappings
+            config_manager.set('plex.path_mappings', json.dumps(path_mappings)) # Legacy fallback
             logger.info(f"Plex path_mappings saved: {len(path_mappings)} mappings")
-        
+
+        config_manager.set('plex', plex_config)
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error saving Plex settings: {e}", exc_info=True)
