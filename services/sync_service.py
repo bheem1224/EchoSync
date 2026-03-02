@@ -15,6 +15,8 @@ class SpotifyPlaylist:
     id: str
     name: str
     tracks: List[SoulSyncTrack] = field(default_factory=list)
+    account_id: Optional[int] = None
+    account_name: Optional[str] = None
 
 @dataclass
 class SyncResult:
@@ -688,10 +690,14 @@ class PlaylistSyncService:
 
                     # Consume generator
                     for p in client.get_user_playlists() or []:
-                        # Append account name to playlist name
-                        display_name = f"{p['name']} ({account_name})"
-                        # Create generic playlist object (tracks loaded lazily later)
-                        sp_playlist = SpotifyPlaylist(id=p['id'], name=display_name, tracks=[])
+                        # We used to append account name to playlist name, but this is handled by routing now.
+                        # Instead, just pass the clean name. We can keep track of the account in the SpotifyPlaylist
+                        # object if we extend it, or just use the name as is.
+                        # For now, just use the raw name.
+                        sp_playlist = SpotifyPlaylist(id=p['id'], name=p['name'], tracks=[])
+                        # Attach account ID/name to the object to be able to identify source account later
+                        sp_playlist.account_id = account_id
+                        sp_playlist.account_name = account_name
                         all_playlists.append(sp_playlist)
 
                 except Exception as e:

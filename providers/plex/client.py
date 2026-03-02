@@ -241,6 +241,7 @@ class PlexClient(ProviderBase):
         rating_keys: List[str],
         marker: str = "⇄",
         overwrite: bool = True,
+        source_account_name: str = None,
     ) -> bool:
         """Ensure managed playlist exists and overwrite with provided ratingKeys.
 
@@ -250,12 +251,53 @@ class PlexClient(ProviderBase):
         if not self.ensure_connection() or not self.server or not self.music_library:
             return False
 
+        # --- Managed Account Routing Logic ---
+        target_server = self.server
+        if source_account_name:
+            try:
+                # Attempt to find a managed user that matches the source account name
+                source_name_lower = source_account_name.lower()
+                matched_user = None
+
+                # Check MyPlex users if available (this gets home users / managed users)
+                myplex_account = self.server.myPlexAccount()
+                if myplex_account:
+                    users = myplex_account.users()
+
+                    # 1. Exact match
+                    for u in users:
+                        if u.title.lower() == source_name_lower:
+                            matched_user = u
+                            break
+
+                    # 2. Substring match (low-confidence)
+                    if not matched_user:
+                        for u in users:
+                            if u.title.lower() in source_name_lower or source_name_lower in u.title.lower():
+                                matched_user = u
+                                break
+
+                if matched_user:
+                    logger.info(f"Routing playlist '{playlist_name}' to managed user '{matched_user.title}'")
+                    target_server = self.server.switchUser(matched_user.title)
+                else:
+                    logger.info(f"No managed user match found for '{source_account_name}'. Defaulting to main account.")
+            except Exception as routing_err:
+                logger.warning(f"Failed to route to managed account for '{source_account_name}': {routing_err}. Defaulting to main account.")
+
         management_tag = "managed by SoulSync"
+        if source_account_name:
+            management_tag = f"managed by SoulSync. Synced from {source_account_name}."
         create_name = f"{playlist_name} {marker}".strip()
 
-        playlist = self._find_managed_playlist(playlist_name, marker=marker, management_tag=management_tag)
+        original_server = self.server
 
         try:
+            # Update server reference for the rest of the method
+            # We also need to re-find the playlist and library on the target_server
+            self.server = target_server
+            playlist = self._find_managed_playlist(playlist_name, marker=marker, management_tag=management_tag)
+
             items = []
             for rk in rating_keys:
                 try:
@@ -326,6 +368,9 @@ class PlexClient(ProviderBase):
         except Exception as e:
             logger.error(f"Error syncing Plex playlist '{playlist_name}': {e}")
             return False
+        finally:
+            # Restore original server
+            self.server = original_server
 
     # ===== CORE METHODS =====
     

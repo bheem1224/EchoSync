@@ -222,8 +222,6 @@ class ProviderCapabilities:
     def to_enum_list(self) -> List[Capability]:
         """Adapter pattern to translate ProviderCapabilities dataclass back to legacy Enums."""
         caps = []
-        if self.supports_playlists in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
-            caps.append(Capability.PLAYLISTS)
         if self.supports_downloads:
             caps.append(Capability.DOWNLOAD)
         if self.supports_streaming:

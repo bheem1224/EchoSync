@@ -80,8 +80,11 @@ def analyze_playlists():
             return jsonify({"error": f"Provider {source} is disabled or not available"}), 400
         
         # Check if provider has playlist support
-        if not hasattr(source_provider, 'get_playlist_tracks'):
-            return jsonify({"error": f"Provider {source} does not support playlist fetching"}), 400
+        caps = getattr(source_provider, 'capabilities', None)
+        from core.provider import PlaylistSupport
+
+        if not caps or caps.supports_playlists not in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
+            return jsonify({"error": f"Provider {source} does not support reading playlists"}), 400
         
         # Initialize database for track lookups
         db = MusicDatabase()
@@ -606,6 +609,21 @@ def trigger_sync():
     if not playlist_name:
         return jsonify({"accepted": False, "error": "playlist_name required"}), 400
 
+    from core.provider import ProviderRegistry, PlaylistSupport, get_provider_capabilities
+    try:
+        source_caps = get_provider_capabilities(source)
+        if source_caps.supports_playlists not in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
+            return jsonify({"accepted": False, "error": f"Source provider {source} does not support reading playlists"}), 400
+    except KeyError:
+        return jsonify({"accepted": False, "error": f"Source provider {source} not found"}), 400
+
+    try:
+        target_caps = get_provider_capabilities(target)
+        if target_caps.supports_playlists != PlaylistSupport.READ_WRITE:
+            return jsonify({"accepted": False, "error": f"Target provider {target} does not support writing playlists"}), 400
+    except KeyError:
+        return jsonify({"accepted": False, "error": f"Target provider {target} not found"}), 400
+
     # Detect sync mode: tier-to-tier (streaming↔streaming) vs local-server (streaming→plex)
     tier_to_tier_providers = {"spotify", "tidal", "apple_music"}
     local_server_providers = {"plex", "jellyfin", "navidrome"}
@@ -630,7 +648,8 @@ def trigger_sync():
     # For non-Plex targets, return not implemented
     if target == "plex":
         # Local-server sync: add tracks to managed playlist with overwrite
-        return _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode)
+        source_account_name = payload.get("source_account_name")
+        return _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode, source_account_name)
     elif target in tier_to_tier_providers:
         # Tier-to-tier sync: add tracks to target provider's playlist
         return _sync_to_tier(payload, source, target, playlist_name, matches, download_missing, sync_mode)
@@ -638,7 +657,7 @@ def trigger_sync():
         return jsonify({"accepted": False, "error": f"Sync to {target} not implemented"}), 400
 
 
-def _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode):
+def _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode, source_account_name=None):
     """Sync matched tracks to a Plex managed playlist."""
     # Collect ratingKeys from matches (target_identifier)
     rating_keys = [m.get("target_identifier") for m in matches if m.get("target_identifier")]
@@ -712,6 +731,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
                 valid_keys,
                 marker=marker,
                 overwrite=True,
+                source_account_name=source_account_name,
             )
             event_bus.publish(job_name, "playlist_updated", {
                 "playlist": playlist_name,

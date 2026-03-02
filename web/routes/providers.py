@@ -175,9 +175,11 @@ def get_provider_playlists(provider_name):
                                 else:
                                     continue
 
-                                # Append account name to playlist name and keep id
+                                # Keep the original name for the UI string
                                 original_name = p_dict.get('name', 'Unknown')
-                                p_dict['name'] = f"{original_name} ({account_name})"
+                                p_dict['name'] = original_name
+                                # pass account name as a separate field to render in subtle UI
+                                p_dict['source_account_name'] = account_name
                                 # record which account this playlist came from so clients can target it later
                                 p_dict['account_id'] = account_id
                                 all_playlists.append(p_dict)

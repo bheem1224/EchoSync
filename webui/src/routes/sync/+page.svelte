@@ -176,12 +176,25 @@
     analysisError = '';
     
     try {
+      // If a single playlist is selected, pull its source_account_name
+      let sourceAccountName = undefined;
+      let syncPlaylistName = 'Multi-Playlist Sync';
+
+      if (selectedPlaylists.length === 1) {
+        const p = playlists.find(p => p.id === selectedPlaylists[0]);
+        if (p) {
+          syncPlaylistName = p.name;
+          sourceAccountName = p.source_account_name;
+        } else {
+          syncPlaylistName = 'Synced Playlist';
+        }
+      }
+
       const response = await apiClient.post('/playlists/sync', {
         source: sourceProvider,
         target_source: targetProvider,
-        playlist_name: selectedPlaylists.length === 1 
-          ? playlists.find(p => p.id === selectedPlaylists[0])?.name || 'Synced Playlist'
-          : 'Multi-Playlist Sync',
+        playlist_name: syncPlaylistName,
+        source_account_name: sourceAccountName,
         matches: analysisResult.summary.matched_pairs,
         download_missing: syncDownloadMissing
       });
@@ -471,6 +484,11 @@
                 <strong>{playlist.name}</strong>
                 {#if playlist.track_count !== undefined}
                   <span class="muted small">{playlist.track_count} tracks</span>
+                {/if}
+              </div>
+              <div class="playlist-meta-bottom-right">
+                {#if playlist.source_account_name}
+                  <span class="account-hint muted small">{playlist.source_account_name}</span>
                 {/if}
               </div>
               <div class="checkbox">
@@ -948,6 +966,20 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .playlist-meta-bottom-right {
+    margin-left: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: flex-end;
+  }
+
+  .account-hint {
+    font-size: 0.75rem;
+    opacity: 0.6;
+    margin-right: 8px;
   }
 
   .checkbox {

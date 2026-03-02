@@ -137,7 +137,7 @@ class SlskdProvider(DownloaderProvider):
     capabilities = ProviderCapabilities(
         name='slskd',
         supports_playlists=PlaylistSupport.NONE,
-        search=SearchCapabilities(tracks=True, artists=False, albums=False, playlists=False),
+        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
         metadata=MetadataRichness.LOW,
         supports_cover_art=False,
         supports_lyrics=False,
