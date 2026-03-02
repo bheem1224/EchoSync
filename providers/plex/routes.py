@@ -235,21 +235,31 @@ def poll_oauth(session_id: str):
             logger.debug(f"Plex poll API check failed: {e}")
 
         if is_logged_in and auth_token:
-            # Fetch user details to name the account properly
-            from plexapi.myplex import MyPlexAccount
-            account_name = f"plex_user_{int(time.time())}"
-            try:
-                myplex_acc = MyPlexAccount(token=auth_token)
-                account_name = myplex_acc.username or myplex_acc.email or account_name
-            except Exception as e:
-                logger.warning(f"Failed to fetch Plex username: {e}")
-
             from core.storage import get_storage_service
             from core.security import encrypt_string
             storage = get_storage_service()
 
-            # Ensure the account exists in SQLite accounts table
-            account_id = storage.ensure_account('plex', account_name=account_name)
+            # Plex follows a Singleton Account Pattern. Look for an existing account first.
+            accounts = storage.list_accounts('plex')
+
+            if accounts:
+                # Upsert existing account
+                account_id = accounts[0].get('id')
+                account_name = accounts[0].get('account_name', 'Default Plex Server')
+                logger.info(f"Plex Singleton: Found existing account {account_id}, updating token.")
+            else:
+                # Fallback to fetching user details if we create a new one
+                account_name = storage.get_service_config('plex', 'base_url') or storage.get_service_config('plex', 'server_url') or "Default Plex Server"
+                try:
+                    from plexapi.myplex import MyPlexAccount
+                    myplex_acc = MyPlexAccount(token=auth_token)
+                    account_name = myplex_acc.username or myplex_acc.email or account_name
+                except Exception as e:
+                    logger.warning(f"Failed to fetch Plex username: {e}")
+
+                # Ensure the new singleton account exists
+                account_id = storage.ensure_account('plex', account_name=account_name)
+                logger.info(f"Plex Singleton: Created new account {account_id} ({account_name}).")
 
             # Encrypt and save token to account_tokens
             try:
