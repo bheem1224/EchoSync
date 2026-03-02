@@ -539,6 +539,37 @@ class MusicDatabase:
                 return track.file_path
             return None
 
+    def clear_server_data(self, server_source: str):
+        """Purge all tracks/albums/artists associated with a given provider source.
+
+        This is useful when re-syncing a media server from scratch. It deletes
+        all tracks that have an ExternalIdentifier for the specified ``server_source``
+        (e.g. "plex"), along with orphaned albums and artists.
+        """
+        with self.session_scope() as session:
+            # delete tracks that reference this provider
+            track_ids = (
+                session.query(Track.id)
+                .join(ExternalIdentifier)
+                .filter(ExternalIdentifier.provider_source == server_source)
+                .distinct()
+                .all()
+            )
+            if track_ids:
+                ids = [t[0] for t in track_ids]
+                session.query(Track).filter(Track.id.in_(ids)).delete(synchronize_session=False)
+
+            # remove identifiers themselves
+            session.query(ExternalIdentifier).filter(
+                ExternalIdentifier.provider_source == server_source
+            ).delete(synchronize_session=False)
+
+            # clean up albums with no remaining tracks
+            session.query(Album).filter(~Album.tracks.any()).delete(synchronize_session=False)
+
+            # clean up artists with no remaining tracks
+            session.query(Artist).filter(~Artist.tracks.any()).delete(synchronize_session=False)
+
     def dispose(self) -> None:
         self.engine.dispose()
 

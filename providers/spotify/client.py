@@ -188,10 +188,18 @@ class SpotifyClient(SyncServiceProvider):
                 # Check authentication status WITHOUT triggering browser popup
                 # Use token cache check instead of API call
                 if not self.is_authenticated():
+                    # Check if it failed because the refresh token was missing or revoked
+                    auth_manager = self.sp.auth_manager
+                    cached_token = auth_manager.cache_handler.get_cached_token() if auth_manager else None
+                    if cached_token and cached_token.get('refresh_token'):
+                        msg = "Spotify refresh token failed - please re-authenticate"
+                    else:
+                        msg = "Spotify token missing - please authenticate"
+
                     return HealthCheckResult(
                         service_name="spotify",
                         status="unhealthy",
-                        message="Spotify token expired or missing - re-authentication required"
+                        message=msg
                     )
                     
                 return HealthCheckResult(
@@ -359,8 +367,23 @@ class SpotifyClient(SyncServiceProvider):
             # Check if token is expired (with 60 second buffer)
             import time
             if time.time() > (expires_at - 60):
-                logger.debug(f"Spotify token expired for account {self.account_id}")
-                return False
+                logger.debug(f"Spotify token expired or expiring soon for account {self.account_id}. Attempting auto-refresh...")
+                refresh_token = cached_token.get('refresh_token')
+                if refresh_token:
+                    try:
+                        new_token = auth_manager.refresh_access_token(refresh_token)
+                        if new_token and new_token.get('access_token'):
+                            logger.info(f"Silently refreshed Spotify token for account {self.account_id}")
+                            return True
+                        else:
+                            logger.warning(f"Auto-refresh failed for account {self.account_id}: no access token returned")
+                            return False
+                    except Exception as e:
+                        logger.warning(f"Auto-refresh failed for account {self.account_id}: {e}")
+                        return False
+                else:
+                    logger.debug(f"No refresh token available for account {self.account_id}")
+                    return False
                 
             return True
         except Exception as e:

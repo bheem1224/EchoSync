@@ -222,16 +222,10 @@ class ProviderCapabilities:
     def to_enum_list(self) -> List[Capability]:
         """Adapter pattern to translate ProviderCapabilities dataclass back to legacy Enums."""
         caps = []
-        if self.supports_playlists in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
-            caps.append(Capability.PLAYLISTS)
-        if self.supports_downloads:
-            caps.append(Capability.DOWNLOAD)
-        if self.supports_streaming:
-            caps.append(Capability.STREAMING)
-        if self.supports_library_scan:
-            caps.append(Capability.LIBRARY_SCAN)
-        if self.search.tracks or self.search.artists or self.search.albums:
-            caps.append(Capability.SEARCH)
+        if getattr(self, 'supports_fingerprinting', False):
+            caps.append(Capability.RESOLVE_FINGERPRINT)
+        if getattr(self, 'supports_metadata_fetch', False):
+            caps.append(Capability.FETCH_METADATA)
         return caps
 
 
@@ -281,11 +275,22 @@ class ProviderRegistry:
                 continue
 
             # Check if class has capabilities attribute and if it contains the capability
-            caps = getattr(provider_cls, 'capabilities', [])
-            if hasattr(caps, 'to_enum_list'):
-                caps = caps.to_enum_list()
+            caps = getattr(provider_cls, 'capabilities', None)
+            # Normalize None -> empty iterable to avoid TypeError when doing 'in' checks
+            if caps is None:
+                caps = []
 
-            if capability in caps:
+            # Some providers expose a helper to convert to a list of Capability enums
+            if hasattr(caps, 'to_enum_list'):
+                caps = caps.to_enum_list() or []
+
+            # Defensive: if caps is not iterable, skip this provider
+            try:
+                contains = capability in caps
+            except TypeError:
+                contains = False
+
+            if contains:
                 try:
                     providers.append(cls.create_instance(name))
                 except Exception as e:

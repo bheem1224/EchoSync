@@ -28,7 +28,7 @@ from core.matching_engine.text_utils import normalize_artist, normalize_title
 from core.settings import config_manager
 from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
-from database.music_database import get_database, Download, Track, Artist
+from database.music_database import get_database, Download, Track, Artist, Album
 
 logger = logging.getLogger("download_manager")
 
@@ -85,8 +85,10 @@ class DownloadManager:
         """
         logger.info(f"Queueing download: {track.artist_name} - {track.title}")
 
-        # Check if track already exists in library
-        if self._track_exists_in_library(track.artist_name, track.title):
+        # Check if track already exists in library (use album + duration when available)
+        album_name = getattr(track, 'album_title', None) or getattr(track, 'album', None)
+        duration_ms = getattr(track, 'duration', None) or getattr(track, 'duration_ms', None)
+        if self._track_exists_in_library(track.artist_name, track.title, album=album_name, duration=duration_ms):
             logger.info(f"Skipping download: Track '{track.title}' by '{track.artist_name}' already exists in library")
             return 0  # 0 indicates no download created
 
@@ -106,8 +108,8 @@ class DownloadManager:
             download = Download(
                 soul_sync_track=track_json,
                 status="queued",
-                created_at=datetime.now(datetime.UTC),
-                updated_at=datetime.now(datetime.UTC)
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
             )
             session.add(download)
             session.flush() # Populate ID
@@ -184,7 +186,7 @@ class DownloadManager:
                 logger.warning(f"Found {len(stuck_items)} stuck downloads. Resetting to 'queued'.")
                 for item in stuck_items:
                     item.status = "queued"
-                    item.updated_at = datetime.now(datetime.UTC)
+                    item.updated_at = datetime.utcnow()
             
             # Also clean up legacy downloads with invalid provider_id format
             # These are from before the compound ID (username|filename) format was implemented
@@ -199,7 +201,7 @@ class DownloadManager:
                     # Legacy format without username prefix - mark as failed
                     logger.debug(f"Cleaning up legacy download entry: {item.id}")
                     item.status = "failed_legacy_format"
-                    item.updated_at = datetime.now(datetime.UTC)
+                    item.updated_at = datetime.utcnow()
                     cleaned += 1
             
             if cleaned > 0:
@@ -253,7 +255,7 @@ class DownloadManager:
             for item in items:
                 # Mark as processing so other workers (if any) don't grab it
                 item.status = "searching"
-                item.updated_at = datetime.now(datetime.UTC)
+                item.updated_at = datetime.utcnow()
                 queued_ids.append(item.id)
 
         if not queued_ids:
@@ -841,7 +843,7 @@ class DownloadManager:
             download = session.query(Download).get(download_id)
             if download:
                 download.status = status
-                download.updated_at = datetime.now(datetime.UTC)
+                download.updated_at = datetime.utcnow()
                 if provider_id:
                     download.provider_id = provider_id
 
@@ -860,10 +862,18 @@ class DownloadManager:
                     return item.id, item.status
         return None
 
-    def _normalize_track_signature(self, track_json: Dict[str, Any]) -> Tuple[str, str, Optional[int]]:
+    def _normalize_track_signature(self, track_json: Dict[str, Any]) -> Tuple[str, str, str, Optional[int]]:
         """Build a normalized signature for duplicate detection."""
         artist = normalize_artist(track_json.get("artist_name") or track_json.get("artist") or "")
         title = normalize_title(track_json.get("title") or track_json.get("raw_title") or "")
+
+        # Album may be present under several keys
+        album_raw = track_json.get("album_title") or track_json.get("album") or track_json.get("album_title_raw") or ""
+        try:
+            from core.matching_engine.text_utils import normalize_album
+            album = normalize_album(album_raw)
+        except Exception:
+            album = (album_raw or "").strip()
 
         duration = track_json.get("duration")
         if duration is None:
@@ -871,7 +881,8 @@ class DownloadManager:
         if isinstance(duration, float):
             duration = int(duration)
 
-        return artist or "", title or "", duration
+        # Return full signature: artist, title, album, duration
+        return artist or "", title or "", album or "", duration
 
     def get_status(self, download_id: int) -> Optional[Dict]:
         """Get status for UI"""
@@ -887,7 +898,7 @@ class DownloadManager:
                 }
         return None
 
-    def _track_exists_in_library(self, artist_name: str, title: str) -> bool:
+    def _track_exists_in_library(self, artist_name: str, title: str, album: Optional[str] = None, duration: Optional[int] = None) -> bool:
         """
         Check if a track already exists in the library (database).
 
@@ -903,13 +914,29 @@ class DownloadManager:
 
         try:
             with self.db.session_scope() as session:
-                # Perform strict match on title and artist
-                # We join Track and Artist tables
+                # Base filters: artist + title
+                filters = [Artist.name.ilike(artist_name.strip()), Track.title.ilike(title.strip())]
+
+                # If album provided, filter by album title as well
+                if album:
+                    try:
+                        filters.append(Track.album.has(Album.title.ilike(album.strip())))
+                    except Exception:
+                        # Fallback: ignore album constraint if relationship lookup fails
+                        pass
+
+                # If duration provided, allow a small tolerance window (2s) to match
+                if duration is not None:
+                    try:
+                        tol = 2000
+                        min_d = int(duration) - tol
+                        max_d = int(duration) + tol
+                        filters.append(Track.duration.between(min_d, max_d))
+                    except Exception:
+                        pass
+
                 exists = session.query(
-                    session.query(Track).join(Artist).filter(
-                        Artist.name.ilike(artist_name.strip()),
-                        Track.title.ilike(title.strip())
-                    ).exists()
+                    session.query(Track).join(Artist).filter(*filters).exists()
                 ).scalar()
                 return bool(exists)
         except Exception as e:
@@ -942,17 +969,30 @@ class DownloadManager:
 
                         artist = track_data.get('artist_name') or track_data.get('artist')
                         title = track_data.get('title')
+                        album = track_data.get('album_title') or track_data.get('album')
+                        duration = track_data.get('duration') or track_data.get('duration_ms')
 
                         if not artist or not title:
                             continue
 
-                        # Check existence using the same logic as _track_exists_in_library
-                        # Re-implement inline to reuse session
+                        # Check existence using the same logic as _track_exists_in_library (inline to reuse session)
+                        filters = [Artist.name.ilike(artist.strip()), Track.title.ilike(title.strip())]
+                        if album:
+                            try:
+                                filters.append(Track.album.has(Album.title.ilike(album.strip())))
+                            except Exception:
+                                pass
+                        if duration is not None:
+                            try:
+                                tol = 2000
+                                min_d = int(duration) - tol
+                                max_d = int(duration) + tol
+                                filters.append(Track.duration.between(min_d, max_d))
+                            except Exception:
+                                pass
+
                         exists = session.query(
-                            session.query(Track).join(Artist).filter(
-                                Artist.name.ilike(artist.strip()),
-                                Track.title.ilike(title.strip())
-                            ).exists()
+                            session.query(Track).join(Artist).filter(*filters).exists()
                         ).scalar()
 
                         if exists:

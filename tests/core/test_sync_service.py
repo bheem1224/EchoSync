@@ -79,8 +79,18 @@ def test_get_all_spotify_playlists_filters_active(monkeypatch):
     service = PlaylistSyncService()
     # run the async helper
     import asyncio
+
+    # We need to mock ProviderRegistry.create_instance so it doesn't fail trying to instantiate
+    def mock_create_instance(name, account_id=None, **kwargs):
+        class MockClient:
+            def is_configured(self): return True
+            def get_user_playlists(self):
+                return [{'id': f'pl{account_id}', 'name': f'Playlist {account_id}'}]
+        return MockClient()
+    monkeypatch.setattr('core.provider.ProviderRegistry.create_instance', mock_create_instance)
+
     playlists = asyncio.run(service._get_all_spotify_playlists())
-    # since account 2 inactive it should be skipped
-    assert any('First' in p.name for p in playlists)
-    assert not any('Second' in p.name for p in playlists)
-    assert any('Third' in p.name for p in playlists)
+    # The name no longer contains the account name, so we check account_name instead
+    assert any(p.account_name == 'First' for p in playlists)
+    assert not any(p.account_name == 'Second' for p in playlists)
+    assert any(p.account_name == 'Third' for p in playlists)
