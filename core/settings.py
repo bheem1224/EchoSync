@@ -39,6 +39,7 @@ SECRETS = [
     "navidrome.password",
     "soulseek.api_key",
     "listenbrainz.token",
+    "acoustid.api_key",
 ]
 
 
