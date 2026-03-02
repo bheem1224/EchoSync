@@ -66,7 +66,7 @@ RUN mkdir -p /defaults && \
 VOLUME ["/config", "/data"]
 
 # Expose ports for web app and OAuth callbacks
-EXPOSE 5000 8888 8889
+EXPOSE 5000 5001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
