@@ -40,7 +40,7 @@ class PlexClient(ProviderBase):
         supports_downloads=False,
     )
     
-    def __init__(self):
+    def __init__(self, account_id: Optional[int] = None):
         """Initialize Plex provider."""
         super().__init__()
         self.server: Optional[PlexServer] = None
@@ -50,6 +50,20 @@ class PlexClient(ProviderBase):
         self._is_connecting = False
         self._last_connection_attempt = 0
         self._connection_check_interval = 30
+
+        # Auto-detect active account if not provided
+        if account_id is None:
+            try:
+                from core.storage import get_storage_service
+                storage = get_storage_service()
+                accounts = storage.list_accounts('plex')
+                if accounts:
+                    account_id = accounts[0].get('id')
+                    logger.info(f"No Plex account explicitly requested, defaulting to account: {account_id}")
+            except Exception as e:
+                logger.warning(f"Failed to auto-detect Plex account: {e}")
+
+        self.account_id = account_id
         self._register_health_check()
     
     def _register_health_check(self):
@@ -82,11 +96,22 @@ class PlexClient(ProviderBase):
     
     def is_configured(self) -> bool:
         """Check if Plex is configured (has credentials)."""
-        from database.config_database import get_config_database
-        config_db = get_config_database()
-        service_id = config_db.get_or_create_service_id('plex')
-        base_url = config_db.get_service_config(service_id, 'base_url') or config_db.get_service_config(service_id, 'server_url')
-        token = config_db.get_service_config(service_id, 'token')
+        # A Plex account requires an associated access token and a server base_url
+        if not self.account_id:
+            return False
+
+        from core.storage import get_storage_service
+        storage = get_storage_service()
+
+        # Check token existence
+        token_data = storage.get_account_token(self.account_id)
+        token = token_data.get('access_token') if token_data else None
+
+        # Check base_url existence (fall back to service config for legacy)
+        base_url = storage.get_account_config(self.account_id, 'base_url')
+        if not base_url:
+            base_url = storage.get_service_config('plex', 'base_url') or storage.get_service_config('plex', 'server_url')
+
         return bool(base_url and token)
     
     def get_logo_url(self) -> str:
@@ -770,15 +795,33 @@ class PlexClient(ProviderBase):
     
     def _setup_connection(self):
         """Establish connection to Plex server."""
-        from database.config_database import get_config_database
-        config_db = get_config_database()
-        service_id = config_db.get_or_create_service_id('plex')
-        base_url = config_db.get_service_config(service_id, 'base_url') or config_db.get_service_config(service_id, 'server_url')
-        token = config_db.get_service_config(service_id, 'token')
+        if not self.account_id:
+            logger.warning("No Plex account_id provided to setup connection")
+            return
+
+        from core.storage import get_storage_service
+        from core.security import decrypt_string
+        storage = get_storage_service()
         
-        # Initialize PathMapper
+        # Load tokens from account_tokens securely
+        token_data = storage.get_account_token(self.account_id)
+        if not token_data or not token_data.get('access_token'):
+            logger.error(f"Plex token not configured for account {self.account_id}")
+            return
+        token = decrypt_string(token_data.get('access_token'))
+
+        # Retrieve server URL from account config (fallback to global config)
+        base_url = storage.get_account_config(self.account_id, 'base_url')
+        if not base_url:
+            base_url = storage.get_service_config('plex', 'base_url') or storage.get_service_config('plex', 'server_url')
+
+        if not base_url:
+            logger.warning("Plex server URL not configured")
+            return
+
+        # Initialize PathMapper (legacy global setting supported for now)
         import json
-        mappings_str = config_db.get_service_config(service_id, 'path_mappings')
+        mappings_str = storage.get_service_config('plex', 'path_mappings')
         mappings = []
         if mappings_str:
             try:
@@ -786,14 +829,6 @@ class PlexClient(ProviderBase):
             except Exception:
                 mappings = []
         self.path_mapper = PathMapper(mappings)
-
-        if not base_url:
-            logger.warning("Plex server URL not configured")
-            return
-        
-        if not token:
-            logger.error("Plex token not configured")
-            return
         
         try:
             # 15 second timeout to prevent hangs on slow servers

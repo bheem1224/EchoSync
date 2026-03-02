@@ -208,17 +208,55 @@ def poll_oauth(session_id: str):
         if not pin_login:
             return jsonify({'error': 'Session not found or expired'}), 404
 
-        if getattr(pin_login, 'token', None):
+        # Call checkLogin to actively poll Plex. It returns True when authenticated.
+        is_logged_in = False
+        try:
+            is_logged_in = pin_login.checkLogin()
+        except Exception as check_e:
+            logger.debug(f"Plex poll checkLogin still waiting: {check_e}")
+
+        if is_logged_in and getattr(pin_login, 'token', None):
             auth_token = pin_login.token
+
+            # Fetch user details to name the account properly
+            from plexapi.myplex import MyPlexAccount
+            account_name = f"plex_user_{int(time.time())}"
+            try:
+                myplex_acc = MyPlexAccount(token=auth_token)
+                account_name = myplex_acc.username or myplex_acc.email or account_name
+            except Exception as e:
+                logger.warning(f"Failed to fetch Plex username: {e}")
+
+            from core.storage import get_storage_service
+            from core.security import encrypt_string
+            storage = get_storage_service()
+
+            # Ensure the account exists in SQLite accounts table
+            account_id = storage.ensure_account('plex', account_name=account_name)
+
+            # Encrypt and save token to account_tokens
+            try:
+                storage.save_account_token(
+                    account_id=account_id,
+                    access_token=encrypt_string(auth_token),
+                    refresh_token=None,  # Plex tokens do not use standard OAuth refresh tokens
+                    token_type='Bearer',
+                    expires_at=None,
+                    scope=None
+                )
+                storage.mark_account_authenticated(account_id)
+                storage.toggle_account_active(account_id, True)
+                logger.info(f"Plex OAuth completed and token securely saved for account: {account_name}")
+            except Exception as e:
+                logger.error(f"Failed to securely save Plex token: {e}")
+                return jsonify({'error': 'Failed to securely save token'}), 500
 
             with plex_oauth_lock:
                 plex_oauth_sessions.pop(session_id, None)
 
-            logger.info(f"Plex OAuth completed for session: {session_id}")
-
             return jsonify({
                 'completed': True,
-                'token': auth_token
+                'token': auth_token  # For backwards compatibility in UI until UI is updated
             })
         else:
             return jsonify({
