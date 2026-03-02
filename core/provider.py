@@ -219,11 +219,20 @@ class ProviderCapabilities:
     supports_fingerprinting: bool = False  # Audio fingerprinting (AcoustID)
     supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
 
+    def to_enum_list(self) -> List[Capability]:
+        """Adapter pattern to translate ProviderCapabilities dataclass back to legacy Enums."""
+        caps = []
+        if getattr(self, 'supports_fingerprinting', False):
+            caps.append(Capability.RESOLVE_FINGERPRINT)
+        if getattr(self, 'supports_metadata_fetch', False):
+            caps.append(Capability.FETCH_METADATA)
+        return caps
+
 
 def get_provider_capabilities(provider: str) -> ProviderCapabilities:
     """
     Return capabilities for a provider by looking up the provider class dynamically.
-    Raises KeyError if the provider is unknown or lacks capabilities.
+    Gracefully handles providers that don't declare explicit capabilities.
     """
     provider_cls = ProviderRegistry.get_provider_class(provider)
     if not provider_cls:
@@ -231,7 +240,13 @@ def get_provider_capabilities(provider: str) -> ProviderCapabilities:
 
     caps = getattr(provider_cls, 'capabilities', None)
     if not caps:
-        raise KeyError(f"Provider '{provider}' does not declare capabilities.")
+        logger.warning(f"Provider '{provider}' does not declare capabilities. Using default minimal capabilities.")
+        return ProviderCapabilities(
+            name=provider,
+            supports_playlists=PlaylistSupport.NONE,
+            search=SearchCapabilities(),
+            metadata=MetadataRichness.LOW
+        )
 
     return caps
 
@@ -260,8 +275,22 @@ class ProviderRegistry:
                 continue
 
             # Check if class has capabilities attribute and if it contains the capability
-            caps = getattr(provider_cls, 'capabilities', [])
-            if capability in caps:
+            caps = getattr(provider_cls, 'capabilities', None)
+            # Normalize None -> empty iterable to avoid TypeError when doing 'in' checks
+            if caps is None:
+                caps = []
+
+            # Some providers expose a helper to convert to a list of Capability enums
+            if hasattr(caps, 'to_enum_list'):
+                caps = caps.to_enum_list() or []
+
+            # Defensive: if caps is not iterable, skip this provider
+            try:
+                contains = capability in caps
+            except TypeError:
+                contains = False
+
+            if contains:
                 try:
                     providers.append(cls.create_instance(name))
                 except Exception as e:
@@ -338,6 +367,9 @@ class ProviderRegistry:
 
         # Check global disabled list
         disabled = config_manager.get_disabled_providers()
+        if disabled is None:
+            disabled = []
+
         if name.lower() in [d.lower() for d in disabled]:
              raise ValueError(f"Provider '{name}' is disabled via config")
 
@@ -375,10 +407,14 @@ class ProviderRegistry:
 
     @classmethod
     def is_provider_disabled(cls, name: str) -> bool:
+        if getattr(cls, '_disabled_providers', None) is None:
+            cls._disabled_providers = set()
         return name.lower() in cls._disabled_providers
 
     @classmethod
     def set_disabled_providers(cls, disabled_list: List[str]) -> None:
+        if disabled_list is None:
+            disabled_list = []
         cls._disabled_providers = set(name.lower() for name in disabled_list)
         if disabled_list:
             logger.info(f"Disabled providers: {', '.join(disabled_list)}")

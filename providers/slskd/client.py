@@ -137,7 +137,7 @@ class SlskdProvider(DownloaderProvider):
     capabilities = ProviderCapabilities(
         name='slskd',
         supports_playlists=PlaylistSupport.NONE,
-        search=SearchCapabilities(tracks=True, artists=False, albums=False, playlists=False),
+        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
         metadata=MetadataRichness.LOW,
         supports_cover_art=False,
         supports_lyrics=False,
@@ -208,6 +208,16 @@ class SlskdProvider(DownloaderProvider):
 
         slskd_url = config_db.get_service_config(service_id, 'slskd_url') or config_db.get_service_config(service_id, 'server_url')
         api_key = config_db.get_service_config(service_id, 'api_key') or ''
+
+        # Fallback: if URL isn't stored in config DB (e.g., saved only to config.json via config_manager),
+        # read it from config_manager so the provider can initialize when UI saved the URL there.
+        if not slskd_url:
+            try:
+                slskd_url = config_manager.get('soulseek.slskd_url', '')
+                if slskd_url:
+                    logger.debug("Using slskd_url from config_manager as fallback")
+            except Exception:
+                slskd_url = None
 
         if not slskd_url:
             logger.warning("Slskd URL not configured")

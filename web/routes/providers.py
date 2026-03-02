@@ -28,31 +28,26 @@ def list_download_clients():
     annotated with 'active' status.
     """
     try:
-        from core.provider import ProviderRegistry, CAPABILITY_REGISTRY
+        from core.provider import ProviderRegistry
         from core.settings import config_manager
         
         active_client = config_manager.get_active_download_client()
         download_clients = []
         
         # Get all registered providers
-        all_providers = ProviderRegistry.list_providers()
+        clients = ProviderRegistry.get_download_clients()
         
-        for provider_name in all_providers:
+        for provider_name in clients:
             try:
-                # Check if provider supports downloads
-                if provider_name in CAPABILITY_REGISTRY:
-                    capabilities = CAPABILITY_REGISTRY[provider_name]
-                    if capabilities.supports_downloads:
-                        # Get provider instance
-                        provider_class = ProviderRegistry.get_provider_class(provider_name)
-                        if provider_class:
-                            download_clients.append({
-                                'name': provider_name,
-                                'display_name': provider_name.title(),
-                                'supports_downloads': True,
-                                'description': f'Download music via {provider_name.title()}',
-                                'active': provider_name == active_client
-                            })
+                provider_class = ProviderRegistry.get_provider_class(provider_name)
+                if provider_class:
+                    download_clients.append({
+                        'name': provider_name,
+                        'display_name': provider_name.title(),
+                        'supports_downloads': True,
+                        'description': f'Download music via {provider_name.title()}',
+                        'active': provider_name == active_client
+                    })
             except Exception as e:
                 logger.error(f"Error processing provider {provider_name} for download clients: {e}")
                 continue
@@ -180,9 +175,11 @@ def get_provider_playlists(provider_name):
                                 else:
                                     continue
 
-                                # Append account name to playlist name and keep id
+                                # Keep the original name for the UI string
                                 original_name = p_dict.get('name', 'Unknown')
-                                p_dict['name'] = f"{original_name} ({account_name})"
+                                p_dict['name'] = original_name
+                                # pass account name as a separate field to render in subtle UI
+                                p_dict['source_account_name'] = account_name
                                 # record which account this playlist came from so clients can target it later
                                 p_dict['account_id'] = account_id
                                 all_playlists.append(p_dict)
@@ -260,13 +257,18 @@ def get_provider_settings(provider_name):
 
         # Retrieve a known set of provider config keys
         # The new config_db automatically handles decryption
-        keys_of_interest = ['client_id', 'client_secret', 'redirect_uri', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
+        keys_of_interest = ['client_id', 'client_secret', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
         config = {}
         for key in keys_of_interest:
             val = config_db.get_service_config(service_id, key)
             if val is not None:
                 config[key] = val
         
+        # Dynamically inject immutable redirect URI for OAuth providers
+        from core.network_utils import get_lan_ip
+        lan_ip = get_lan_ip()
+        config['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/{provider_name}"
+
         # Mock schema for dynamic UI generation (should eventually come from provider class)
         schema = _get_mock_schema(provider_name)
         
@@ -306,6 +308,11 @@ def update_provider_settings(provider_name):
             sensitive_keys = ['client_secret', 'access_token', 'refresh_token', 'password', 'token', 'api_key']
 
             all_ok = True
+
+            # Explicitly strip redirect_uri to prevent database persistence of dynamic urls
+            if 'redirect_uri' in payload:
+                del payload['redirect_uri']
+
             for k, v in payload.items():
                 is_sensitive = k in sensitive_keys or any(s in k.lower() for s in ['secret', 'token', 'password', 'key'])
                 ok = config_db.set_service_config(service_id, k, (v or '').strip() if isinstance(v, str) else v, is_sensitive=is_sensitive)
@@ -452,12 +459,17 @@ def get_provider_credentials(provider_name):
         service_id = config_db.get_or_create_service_id(provider_name)
         # Fetch directly since config_manager might be deprecated for these
         # But we don't have a get_all_service_config endpoint natively, so we fetch keys of interest
-        keys_of_interest = ['client_id', 'client_secret', 'redirect_uri', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
+        keys_of_interest = ['client_id', 'client_secret', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
         credentials = {}
         for key in keys_of_interest:
             val = config_db.get_service_config(service_id, key)
             if val is not None:
                 credentials[key] = val
+
+        # Dynamically inject immutable redirect URI
+        from core.network_utils import get_lan_ip
+        lan_ip = get_lan_ip()
+        credentials['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/{provider_name}"
         
         return jsonify({
             'provider': provider_name,
@@ -483,6 +495,10 @@ def set_provider_credentials(provider_name):
         config_db = get_config_database()
         service_id = config_db.get_or_create_service_id(provider_name)
         
+        # Strip redirect_uri from payload
+        if 'redirect_uri' in credentials:
+            del credentials['redirect_uri']
+
         # Store each credential
         for key, value in credentials.items():
             # Mark sensitive keys (like api_key, token, password, secret) as sensitive

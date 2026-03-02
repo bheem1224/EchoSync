@@ -14,7 +14,7 @@ class MusicBrainzProvider(ProviderBase):
     capabilities = ProviderCapabilities(
         name='musicbrainz',
         supports_playlists=PlaylistSupport.NONE,
-        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
+        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
         metadata=MetadataRichness.HIGH,
         supports_cover_art=True,
         supports_lyrics=False,

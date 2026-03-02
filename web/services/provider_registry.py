@@ -73,6 +73,8 @@ def list_providers() -> List[Dict]:
                 # Provider not in capability registry, check class-level capabilities
                 from core.enums import Capability
                 class_caps = getattr(cls, 'capabilities', [])
+                if class_caps is None:
+                    class_caps = []
                 
                 default_search = {'tracks': False, 'artists': False, 'albums': False, 'playlists': False}
                 provider_dict['capabilities'] = {

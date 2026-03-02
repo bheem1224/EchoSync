@@ -43,7 +43,9 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
         settings = data.get('settings', {})
         assert settings.get('client_id') == 'db1'
         assert settings.get('client_secret') == 'db2'
-        assert settings.get('redirect_uri') == 'db3'
+        # The new dynamic routing ensures redirect_uri contains the sidecar proxy format
+        assert 'https://' in settings.get('redirect_uri')
+        assert ':5001/api/oauth/callback/spotify' in settings.get('redirect_uri')
 
 
 def test_providers_playlist_route_includes_account_id(client, monkeypatch):
@@ -80,8 +82,8 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
     # each item should include account_id field
     assert any(item.get('account_id') == 1 for item in items)
     assert any(item.get('account_id') == 2 for item in items)
-    # names should contain account name suffix
-    assert 'First' in items[0]['name'] or 'Second' in items[0]['name']
+    # Since we removed account name suffix from the UI string, we check source_account_name instead
+    assert items[0]['source_account_name'] in ['First', 'Second']
 
 
 def test_analyze_playlists_honors_account_id(client, monkeypatch):
@@ -93,6 +95,15 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
     called = []
 
     class FakeSpotifyClient:
+        # Add capabilities to bypass strict capability check in analyze route
+        from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+        capabilities = ProviderCapabilities(
+            name='spotify',
+            supports_playlists=PlaylistSupport.READ_WRITE,
+            search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
+            metadata=MetadataRichness.HIGH
+        )
+
         def __init__(self, account_id=None):
             self.account_id = account_id
         def is_configured(self):

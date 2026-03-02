@@ -93,7 +93,8 @@ class TestSyncServiceConsumption:
                 playlists = asyncio_run(service._get_all_spotify_playlists())
 
             assert len(playlists) == 3
-            assert playlists[0].name == "P1 (Test)"
+            assert playlists[0].name == "P1"
+            assert playlists[0].account_name == "Test"
             assert playlists[2].id == "3"
 
 def asyncio_run(coro):

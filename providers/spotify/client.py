@@ -34,6 +34,7 @@ class ConfigCacheHandler(CacheHandler):
                 return None
             
             from core.storage import get_storage_service
+            from core.security import decrypt_string
             storage = get_storage_service()
             token_data = storage.get_account_token(self.account_id)
             
@@ -41,8 +42,8 @@ class ConfigCacheHandler(CacheHandler):
                 logger.debug(f"No token data found in storage for account {self.account_id}")
                 return None
             
-            access_token = token_data.get('access_token')
-            refresh_token = token_data.get('refresh_token')
+            access_token = decrypt_string(token_data.get('access_token'))
+            refresh_token = decrypt_string(token_data.get('refresh_token'))
             expires_at = token_data.get('expires_at')
             scope = token_data.get('scope', "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private")
             
@@ -90,19 +91,20 @@ class ConfigCacheHandler(CacheHandler):
                 logger.warning(f"No access_token in token_info for account {self.account_id}")
                 return
             
+            from core.security import encrypt_string, decrypt_string
             # If no refresh token provided, try to preserve existing one
             if not refresh_token:
                 existing_token = storage.get_account_token(self.account_id)
                 if existing_token and existing_token.get('refresh_token'):
-                    refresh_token = existing_token.get('refresh_token')
+                    refresh_token = decrypt_string(existing_token.get('refresh_token'))
                     logger.debug(f"Preserving existing refresh_token for account {self.account_id}")
-            
+
             logger.debug(f"Saving token for account {self.account_id}: access={bool(access_token)}, refresh={bool(refresh_token)}, expires={expires_at}")
             
             success = storage.save_account_token(
                 account_id=self.account_id,
-                access_token=access_token,
-                refresh_token=refresh_token,
+                access_token=encrypt_string(access_token),
+                refresh_token=encrypt_string(refresh_token) if refresh_token else None,
                 token_type='Bearer',
                 expires_at=expires_at,
                 scope=scope
@@ -186,10 +188,18 @@ class SpotifyClient(SyncServiceProvider):
                 # Check authentication status WITHOUT triggering browser popup
                 # Use token cache check instead of API call
                 if not self.is_authenticated():
+                    # Check if it failed because the refresh token was missing or revoked
+                    auth_manager = self.sp.auth_manager
+                    cached_token = auth_manager.cache_handler.get_cached_token() if auth_manager else None
+                    if cached_token and cached_token.get('refresh_token'):
+                        msg = "Spotify refresh token failed - please re-authenticate"
+                    else:
+                        msg = "Spotify token missing - please authenticate"
+
                     return HealthCheckResult(
                         service_name="spotify",
                         status="unhealthy",
-                        message="Spotify token expired or missing - re-authentication required"
+                        message=msg
                     )
                     
                 return HealthCheckResult(
@@ -226,6 +236,7 @@ class SpotifyClient(SyncServiceProvider):
                     pass
 
             from core.storage import get_storage_service
+            from core.security import decrypt_string
             storage = get_storage_service()
             # if we still haven't obtained values from the account, read global
             # service configuration (old single‑account path).
@@ -235,6 +246,10 @@ class SpotifyClient(SyncServiceProvider):
                 creds['client_secret'] = storage.get_service_config('spotify', 'client_secret')
             if not creds['redirect_uri']:
                 creds['redirect_uri'] = storage.get_service_config('spotify', 'redirect_uri')
+
+            # Always ensure the secrets passed to the SDK are decrypted
+            if creds['client_secret']:
+                creds['client_secret'] = decrypt_string(creds['client_secret'])
 
             if not creds['client_id'] or not creds['client_secret']:
                 # do not log secrets, include account id for diagnostics
@@ -352,8 +367,23 @@ class SpotifyClient(SyncServiceProvider):
             # Check if token is expired (with 60 second buffer)
             import time
             if time.time() > (expires_at - 60):
-                logger.debug(f"Spotify token expired for account {self.account_id}")
-                return False
+                logger.debug(f"Spotify token expired or expiring soon for account {self.account_id}. Attempting auto-refresh...")
+                refresh_token = cached_token.get('refresh_token')
+                if refresh_token:
+                    try:
+                        new_token = auth_manager.refresh_access_token(refresh_token)
+                        if new_token and new_token.get('access_token'):
+                            logger.info(f"Silently refreshed Spotify token for account {self.account_id}")
+                            return True
+                        else:
+                            logger.warning(f"Auto-refresh failed for account {self.account_id}: no access token returned")
+                            return False
+                    except Exception as e:
+                        logger.warning(f"Auto-refresh failed for account {self.account_id}: {e}")
+                        return False
+                else:
+                    logger.debug(f"No refresh token available for account {self.account_id}")
+                    return False
                 
             return True
         except Exception as e:
@@ -391,6 +421,7 @@ class SpotifyClient(SyncServiceProvider):
             except (ValueError, TypeError):
                 account_id = None
 
+            from core.security import decrypt_string
             storage = get_storage_service()
             client_id = storage.get_service_config('spotify', 'client_id')
             client_secret = storage.get_service_config('spotify', 'client_secret')
@@ -401,7 +432,7 @@ class SpotifyClient(SyncServiceProvider):
 
             auth_manager = SpotifyOAuth(
                 client_id=client_id,
-                client_secret=client_secret,
+                client_secret=decrypt_string(client_secret),
                 redirect_uri=redirect_uri,
                 scope="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private",
                 cache_handler=ConfigCacheHandler(account_id)

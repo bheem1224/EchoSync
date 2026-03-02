@@ -21,10 +21,24 @@ def get_settings():
     if ProviderRegistry.is_provider_disabled('plex'):
         return jsonify({'settings': {}}), 200
     try:
-        base_url = config_manager.get('plex.base_url', '')
-        token = config_manager.get('plex.token', '')
-        server_name = config_manager.get('plex.server_name', '')
+        # Load Hybrid Configuration
+        plex_config = config_manager.get('plex', {})
+        base_url = plex_config.get('base_url') or config_manager.get('plex.base_url', '')
+        server_name = plex_config.get('server_name') or config_manager.get('plex.server_name', '')
         
+        # Retrieve token from Singleton Account
+        from core.storage import get_storage_service
+        from core.security import decrypt_string
+        storage = get_storage_service()
+        accounts = storage.list_accounts('plex')
+
+        token = ''
+        if accounts:
+            account_id = accounts[0].get('id')
+            token_data = storage.get_account_token(account_id)
+            if token_data and token_data.get('access_token'):
+                token = decrypt_string(token_data.get('access_token'))
+
         # Check if this is the active media server
         active_media_server = config_manager.get('active_media_server', 'plex')
         is_active = (active_media_server == 'plex')
@@ -43,9 +57,9 @@ def get_settings():
         
         # Get path mappings
         import json
-        path_mappings_str = config_manager.get('plex.path_mappings', '[]')
+        path_mappings_raw = plex_config.get('path_mappings') or config_manager.get('plex.path_mappings', '[]')
         try:
-            path_mappings = json.loads(path_mappings_str)
+            path_mappings = json.loads(path_mappings_raw) if isinstance(path_mappings_raw, str) else path_mappings_raw
         except:
             path_mappings = []
         
@@ -69,28 +83,52 @@ def save_settings():
     """Save Plex server settings."""
     try:
         data = request.get_json(force=True) or {}
+        plex_config = config_manager.get('plex', {})
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
-            config_manager.set('plex.base_url', base_url)
+            plex_config['base_url'] = base_url
+            config_manager.set('plex.base_url', base_url) # Legacy fallback
             logger.info(f"Plex base_url saved: {base_url}")
         
         if 'server_name' in data:
             server_name = data['server_name'].strip()
-            config_manager.set('plex.server_name', server_name)
+            plex_config['server_name'] = server_name
+            config_manager.set('plex.server_name', server_name) # Legacy fallback
             logger.info(f"Plex server_name saved: {server_name}")
         
         if 'token' in data:
+            # We don't save tokens to config_manager anymore. We save them to account_tokens
             token = data['token'].strip()
-            config_manager.set('plex.token', token)
-            logger.info(f"Plex token saved")
+            from core.storage import get_storage_service
+            from core.security import encrypt_string
+            import time
+            storage = get_storage_service()
+
+            accounts = storage.list_accounts('plex')
+            if accounts:
+                account_id = accounts[0].get('id')
+            else:
+                account_id = storage.ensure_account('plex', account_name=f"plex_user_{int(time.time())}")
+
+            storage.save_account_token(
+                account_id=account_id,
+                access_token=encrypt_string(token),
+                refresh_token=None,
+                token_type='Bearer'
+            )
+            storage.mark_account_authenticated(account_id)
+            storage.toggle_account_active(account_id, True)
+            logger.info(f"Plex token saved to SQLite account {account_id}")
         
         if 'path_mappings' in data:
             import json
             path_mappings = data['path_mappings']
-            config_manager.set('plex.path_mappings', json.dumps(path_mappings))
+            plex_config['path_mappings'] = path_mappings
+            config_manager.set('plex.path_mappings', json.dumps(path_mappings)) # Legacy fallback
             logger.info(f"Plex path_mappings saved: {len(path_mappings)} mappings")
-        
+
+        config_manager.set('plex', plex_config)
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error saving Plex settings: {e}", exc_info=True)
@@ -166,11 +204,15 @@ def start_oauth():
         with plex_oauth_lock:
             plex_oauth_sessions[session_id] = pin_login
 
-        # Timeout of 600 seconds (10 minutes)
-        pin_login.run(timeout=600)
-        oauth_url = pin_login.oauthUrl()
+        # We don't want to use pin_login.run() because it blocks the thread
+        # and starts an internal polling loop. Instead we initialize the code
+        # and let the frontend do the polling.
+        pin_login._getCode()
 
-        logger.info(f"Plex OAuth session started: {session_id}")
+        # We need a dummy forward URL to satisfy OAuth, even though Plex uses PINs
+        oauth_url = pin_login.oauthUrl('http://127.0.0.1:5173/settings/music-services')
+
+        logger.info(f"Plex OAuth session started: {session_id} with pin id: {pin_login._id}")
 
         def cleanup_session():
             time.sleep(900)  # 15 minutes
@@ -208,17 +250,78 @@ def poll_oauth(session_id: str):
         if not pin_login:
             return jsonify({'error': 'Session not found or expired'}), 404
 
-        if getattr(pin_login, 'token', None):
-            auth_token = pin_login.token
+        # We manually query the Plex PIN API to check if the user authorized it.
+        # `pin_login._checkLogin()` handles this cleanly without starting a background thread.
+        import requests
+        is_logged_in = False
+        auth_token = None
+
+        try:
+            headers = {
+                'Accept': 'application/json',
+                'X-Plex-Client-Identifier': pin_login._headers().get('X-Plex-Client-Identifier', 'SoulSync')
+            }
+            # Explicitly request the PIN status from Plex
+            resp = requests.get(f"https://plex.tv/api/v2/pins/{pin_login._id}", headers=headers, timeout=5)
+            resp_data = resp.json()
+            logger.debug(f"Plex PIN status response: {resp_data}")
+
+            if resp_data.get('authToken'):
+                is_logged_in = True
+                auth_token = resp_data.get('authToken')
+        except Exception as e:
+            logger.debug(f"Plex poll API check failed: {e}")
+
+        if is_logged_in and auth_token:
+            from core.storage import get_storage_service
+            from core.security import encrypt_string
+            storage = get_storage_service()
+
+            # Plex follows a Singleton Account Pattern. Look for an existing account first.
+            accounts = storage.list_accounts('plex')
+
+            if accounts:
+                # Upsert existing account
+                account_id = accounts[0].get('id')
+                account_name = accounts[0].get('account_name', 'Default Plex Server')
+                logger.info(f"Plex Singleton: Found existing account {account_id}, updating token.")
+            else:
+                # Fallback to fetching user details if we create a new one
+                account_name = storage.get_service_config('plex', 'base_url') or storage.get_service_config('plex', 'server_url') or "Default Plex Server"
+                try:
+                    from plexapi.myplex import MyPlexAccount
+                    myplex_acc = MyPlexAccount(token=auth_token)
+                    account_name = myplex_acc.username or myplex_acc.email or account_name
+                except Exception as e:
+                    logger.warning(f"Failed to fetch Plex username: {e}")
+
+                # Ensure the new singleton account exists
+                account_id = storage.ensure_account('plex', account_name=account_name)
+                logger.info(f"Plex Singleton: Created new account {account_id} ({account_name}).")
+
+            # Encrypt and save token to account_tokens
+            try:
+                storage.save_account_token(
+                    account_id=account_id,
+                    access_token=encrypt_string(auth_token),
+                    refresh_token=None,  # Plex tokens do not use standard OAuth refresh tokens
+                    token_type='Bearer',
+                    expires_at=None,
+                    scope=None
+                )
+                storage.mark_account_authenticated(account_id)
+                storage.toggle_account_active(account_id, True)
+                logger.info(f"Plex OAuth completed and token securely saved for account: {account_name}")
+            except Exception as e:
+                logger.error(f"Failed to securely save Plex token: {e}")
+                return jsonify({'error': 'Failed to securely save token'}), 500
 
             with plex_oauth_lock:
                 plex_oauth_sessions.pop(session_id, None)
 
-            logger.info(f"Plex OAuth completed for session: {session_id}")
-
             return jsonify({
                 'completed': True,
-                'token': auth_token
+                'token': auth_token  # For backwards compatibility in UI until UI is updated
             })
         else:
             return jsonify({
