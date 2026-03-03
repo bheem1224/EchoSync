@@ -534,7 +534,7 @@ class SpotifyClient(SyncServiceProvider):
             
             # Album handling
             album = spotify_track_data.get('album', {})
-            album_title = album.get('name')
+            album_title = album.get('name') or ''
             release_date = album.get('release_date', '')
             release_year = int(release_date[:4]) if release_date and len(release_date) >= 4 else None
 

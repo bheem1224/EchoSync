@@ -303,11 +303,12 @@ class SlskdProvider(DownloaderProvider):
     def _convert_to_soulsync_track(self, result: TrackResult) -> SoulSyncTrack:
         """Convert TrackResult to SoulSyncTrack with injected technical stats"""
         # Create base track
+        # result.duration is stored as milliseconds by the JSON parser
         soul_track = self.create_soul_sync_track(
             title=result.title or result.filename,
             artist=result.artist or "Unknown Artist",
-            album=result.album or "Unknown Album",
-            duration_ms=(result.duration * 1000) if result.duration else None,
+            album=result.album or "",
+            duration_ms=result.duration if result.duration else None,
             track_number=result.track_number,
             bitrate=result.bitrate,
             file_format=result.quality,
@@ -367,13 +368,24 @@ class SlskdProvider(DownloaderProvider):
                 else:
                     quality = 'unknown'
 
-                # Create TrackResult
+                # Safely extract length (seconds) and convert to milliseconds
+                length_val = file_data.get('length')
+                duration_ms = None
+                try:
+                    if length_val is not None and length_val != '':
+                        # Allow strings or numeric values (e.g. "245", 245.0)
+                        duration_seconds = int(float(length_val))
+                        duration_ms = duration_seconds * 1000
+                except Exception:
+                    duration_ms = None
+
+                # Create TrackResult (duration stored in milliseconds)
                 track = TrackResult(
                     username=username,
                     filename=filename,
                     size=size,
                     bitrate=file_data.get('bitRate'),
-                    duration=file_data.get('length'),
+                    duration=duration_ms,
                     quality=quality,
                     free_upload_slots=response_data.get('freeUploadSlots', 0),
                     upload_speed=response_data.get('uploadSpeed', 0),
@@ -523,8 +535,9 @@ class SlskdProvider(DownloaderProvider):
                     continue
                 
                 # Duration Check - Filter out remixes/live versions by duration
+                # Note: TrackResult.duration is stored in milliseconds
                 if target_duration_ms and tr.duration:
-                    candidate_duration_ms = tr.duration * 1000
+                    candidate_duration_ms = tr.duration
                     duration_diff = abs(candidate_duration_ms - target_duration_ms)
                     if duration_diff > duration_tolerance_ms:
                         continue  # Likely remix/live/extended version

@@ -155,9 +155,10 @@ def analyze_playlists():
                             # Then fall back to fuzzy artist + exact title match
                             # Then fuzzy artist + fuzzy title
                             tier1_query = text("""
-                                SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title
+                                SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
                                 FROM tracks t
                                 JOIN artists a ON t.artist_id = a.id
+                                LEFT JOIN albums al ON t.album_id = al.id
                                 WHERE (
                                     -- Priority 1: Exact artist match + any title containing search term
                                     (LOWER(a.name) = LOWER(:artist_exact) AND LOWER(t.title) LIKE LOWER(:title_pattern))
@@ -201,9 +202,10 @@ def analyze_playlists():
                                     f"Attempting Tier 2 with title='{search_title}', duration={track_duration}ms ±{sql_duration_tolerance_ms}ms"
                                 )
                                 tier2_query = text("""
-                                    SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title
+                                    SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
                                     FROM tracks t
                                     JOIN artists a ON t.artist_id = a.id
+                                    LEFT JOIN albums al ON t.album_id = al.id
                                     WHERE (
                                         LOWER(t.title) = LOWER(:title_exact)
                                                                                 OR LOWER(REPLACE(REPLACE(t.title, '''', ''), '’', '')) = LOWER(REPLACE(REPLACE(:title_exact, '''', ''), '’', ''))
@@ -273,7 +275,7 @@ def analyze_playlists():
                             candidate_track = SoulSyncTrack(
                                 raw_title=raw_title_candidate,
                                 artist_name=candidate_row[4],
-                                album_title="",
+                                album_title=candidate_row[7] or "",
                                 duration=candidate_row[2] if candidate_row[2] else 0,
                                 edition=edition_candidate,
                             )
@@ -363,9 +365,10 @@ def analyze_playlists():
                                 # Create a new connection for Tier 2 to avoid any connection state issues
                                 with db.engine.connect() as tier2_conn:
                                     tier2_query = text("""
-                                        SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title
+                                        SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
                                         FROM tracks t
                                         JOIN artists a ON t.artist_id = a.id
+                                        LEFT JOIN albums al ON t.album_id = al.id
                                         WHERE LOWER(t.title) = LOWER(:title_exact)
                                         AND t.duration IS NOT NULL
                                         AND t.duration BETWEEN :duration_min AND :duration_max
@@ -420,7 +423,7 @@ def analyze_playlists():
                                         candidate_track = SoulSyncTrack(
                                             raw_title=raw_title_candidate,
                                             artist_name=candidate_row[4],
-                                            album_title="",
+                                            album_title=candidate_row[7] or "",
                                             duration=candidate_row[2] if candidate_row[2] else 0,
                                             edition=edition_candidate,
                                         )

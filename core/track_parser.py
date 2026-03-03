@@ -11,11 +11,14 @@ This service handles:
 """
 
 import re
+import logging
 from typing import Optional, List, Dict, Set
 from dataclasses import dataclass
 from pathlib import Path
 from core.matching_engine.soul_sync_track import SoulSyncTrack, QualityTag
 from core.matching_engine.fingerprinting import FingerprintGenerator, FingerprintCache
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -175,9 +178,17 @@ class TrackParser:
 
         # Build SoulSyncTrack
         try:
+            # Validate required fields before construction
+            title = parsed_data.get('title', '').strip()
+            artist = parsed_data.get('artist', '').strip()
+            
+            if not title or not artist:
+                logger.warning(f"Cannot create SoulSyncTrack - missing required fields (title: '{title}', artist: '{artist}')")
+                return None
+            
             track = SoulSyncTrack(
-                raw_title=parsed_data.get('title', ''),
-                artist_name=parsed_data.get('artist', ''),
+                raw_title=title,
+                artist_name=artist,
                 album_title=parsed_data.get('album', ''),
                 edition=None,
                 release_year=year,

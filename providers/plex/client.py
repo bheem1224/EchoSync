@@ -713,11 +713,11 @@ class PlexClient(ProviderBase):
             album = None
             try:
                 album_obj = plex_track.album()
-                album = getattr(album_obj, 'title', None) or "Unknown Album"
+                album = getattr(album_obj, 'title', None) or ""
             except (NotFound, AttributeError, Exception) as e:
                 logger.debug(f"Failed to get album for track '{title}': {e}")
                 # Fallback to parentTitle (album name in Plex XML structure)
-                album = getattr(plex_track, 'parentTitle', None) or "Unknown Album"
+                album = getattr(plex_track, 'parentTitle', None) or ""
             
             if not title:
                 logger.warning("Skipping track - missing title")
