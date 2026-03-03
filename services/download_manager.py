@@ -1171,7 +1171,7 @@ def register_download_manager_job(interval_seconds: int = 21600):
         name="download_manager_status",
         func=process_downloads,
         interval_seconds=interval_seconds,
-        enabled=False,  # Disabled by default since _process_loop runs continuously
+        enabled=True,  # Must be enabled so UI button can trigger manual runs
         tags=["soulsync", "downloads"],
         max_retries=3
     )

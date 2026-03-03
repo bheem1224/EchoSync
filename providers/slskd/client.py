@@ -32,7 +32,7 @@ class TrackResult(SearchResult):
     """Individual track search result"""
     artist: Optional[str] = None
     title: Optional[str] = None
-    album: Optional[str] = None
+    album: str = ""  # Default to empty string instead of None for consistency
     track_number: Optional[int] = None
     bit_depth: Optional[int] = None
     sample_rate: Optional[int] = None

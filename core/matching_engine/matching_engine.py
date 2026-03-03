@@ -397,11 +397,10 @@ class WeightedMatchingEngine:
         if candidate.quality_tags:
             quality_bonus = self.weights.quality_bonus * 100
             score += quality_bonus
+            max_possible_score += self.weights.quality_bonus * 100
             reasoning_parts.append(f"Quality bonus applied: +{quality_bonus:.1f} points")
         else:
             reasoning_parts.append("No quality bonus (candidate has no quality tags)")
-
-        max_possible_score += self.weights.quality_bonus * 100
 
         # ===== APPLY CUMULATIVE PENALTIES =====
         final_penalty = version_penalty + edition_penalty
@@ -505,19 +504,30 @@ class WeightedMatchingEngine:
     def _check_edition_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> Tuple[bool, str]:
         """
         Check if editions match (disc_number, etc)
+        
+        Logic:
+        - Treat blank edition/disc_number as "original" / disc 1
+        - If both resolve to original/disc 1: pass (discount edition check)
+        - If one is remix and other is original: fail (they don't match)
+        - If both have specific editions/disc numbers: they must match exactly
 
         Returns:
             (matches: bool, reasoning: str)
         """
-        # If source has disc_number, check if candidate matches
-        if source.disc_number and candidate.disc_number:
-            if source.disc_number == candidate.disc_number:
-                return True, f"Disc numbers match: disc {source.disc_number}"
-            else:
-                return False, f"Disc number mismatch: disc {source.disc_number} vs {candidate.disc_number}"
-
-        # No strong edition signals
-        return True, "No edition info to compare"
+        # Treat blank/missing disc_number as disc 1 (original/standard)
+        source_disc = source.disc_number or 1
+        candidate_disc = candidate.disc_number or 1
+        
+        # Disc numbers must match
+        if source_disc != candidate_disc:
+            return False, f"Disc number mismatch: disc {source_disc} vs {candidate_disc}"
+        
+        # If both resolve to disc 1 (both original), pass
+        if source_disc == 1 and candidate_disc == 1:
+            return True, "Remaster/edition okay (both original)"
+        
+        # If both have same disc number > 1, pass
+        return True, f"Edition match: both disc {source_disc}"
 
     def _tokenize_artists(self, artist_string: str) -> set:
         """
