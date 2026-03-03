@@ -183,6 +183,10 @@ class ConfigManager:
         If no key exists, a new one is generated and automatically written to .env file.
         There is no backup file - only the ENV variable and .env persistence.
         """
+        # Track if we auto-generated a key for WebUI warning
+        self._auto_generated_key = False
+        self._generated_key_value = None
+        
         # First, try to get key from environment variable
         key = os.getenv("MASTER_KEY")
         
@@ -197,15 +201,19 @@ class ConfigManager:
                 raise
         
         # No key in environment - generate new one and persist to .env
-        logger.debug("No MASTER_KEY found. Generating new encryption key...")
+        logger.warning("No MASTER_KEY found. Auto-generating encryption key...")
         new_key = Fernet.generate_key().decode('utf-8')
+        
+        # Track that we generated this key
+        self._auto_generated_key = True
+        self._generated_key_value = new_key
         
         # Save to .env file for persistence
         self._persist_key_to_env(new_key)
         
         # Set in current environment so initialization completes
         os.environ['MASTER_KEY'] = new_key
-        logger.debug(f"New encryption key generated and will persist to .env")
+        logger.warning(f"Encryption key auto-generated. Pass MASTER_KEY as env variable to persist across restarts.")
         
         self.cipher = Fernet(new_key.encode())
     
@@ -1006,14 +1014,16 @@ class ConfigManager:
             if not service_id:
                 return {}
             
-            # Get all config values for this service
+            # Get all keys, then read each value through ConfigDatabase.get_service_config
+            # so sensitive values are properly decrypted.
             result = {}
             with config_db._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT config_key, config_value FROM service_config WHERE service_id = ?", (service_id,))
+                c.execute("SELECT config_key FROM service_config WHERE service_id = ?", (service_id,))
                 rows = c.fetchall()
                 for row in rows:
-                    result[row[0]] = row[1]
+                    key = row[0]
+                    result[key] = config_db.get_service_config(service_id, key)
             
             return result
         except Exception as e:
@@ -1060,6 +1070,16 @@ class ConfigManager:
     def get_plugins_dir(self) -> Path:
         """Get the plugins directory path."""
         return self.plugins_path
+
+    def was_encryption_key_auto_generated(self) -> bool:
+        """Check if the encryption key was auto-generated on this startup."""
+        return getattr(self, '_auto_generated_key', False)
+
+    def get_generated_encryption_key(self) -> Optional[str]:
+        """Get the auto-generated encryption key value (only if auto-generated)."""
+        if self.was_encryption_key_auto_generated():
+            return getattr(self, '_generated_key_value', None)
+        return None
 
 config_manager = ConfigManager()
 

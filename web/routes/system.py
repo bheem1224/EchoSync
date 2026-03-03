@@ -83,6 +83,26 @@ def get_settings():
         return jsonify({"error": "Failed to get settings"}), 500
 
 
+@bp.get("/encryption-key-warning")
+def get_encryption_key_warning():
+    """Check if encryption key was auto-generated and return warning info."""
+    try:
+        if config_manager.was_encryption_key_auto_generated():
+            key_value = config_manager.get_generated_encryption_key()
+            return jsonify({
+                "auto_generated": True,
+                "key_value": key_value,
+                "message": "Encryption key was auto-generated. Pass MASTER_KEY as environment variable to persist settings across container restarts."
+            }), 200
+        else:
+            return jsonify({
+                "auto_generated": False
+            }), 200
+    except Exception as e:
+        logger.error(f"Error checking encryption key status: {e}")
+        return jsonify({"error": "Failed to check encryption key status"}), 500
+
+
 @bp.post("/settings")
 def update_settings():
     """Update application settings (partial update).

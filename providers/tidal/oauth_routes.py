@@ -220,7 +220,10 @@ def oauth_callback():
         if ui_base:
             ui_redirect = ui_base.rstrip('/') + '/settings/music-services'
         else:
-            ui_redirect = 'http://localhost:5173/settings/music-services'
+            # Use actual request host instead of hardcoded localhost
+            scheme = request.scheme
+            host = request.host
+            ui_redirect = f'{scheme}://{host}/settings/music-services'
             
         return redirect(ui_redirect)
 

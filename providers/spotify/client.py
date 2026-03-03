@@ -479,11 +479,16 @@ class SpotifyClient(SyncServiceProvider):
             except Exception:
                 pass
 
+            # Generate redirect URL using Flask request context
+            from flask import request as flask_request
             ui_base = storage.get_service_config('webui', 'base_url')
             if ui_base:
                 ui_redirect = ui_base.rstrip('/') + '/settings/music-services'
             else:
-                ui_redirect = 'http://localhost:5173/settings/music-services'
+                # Use actual request host instead of hardcoded localhost
+                scheme = flask_request.scheme
+                host = flask_request.host
+                ui_redirect = f'{scheme}://{host}/settings/music-services'
             return redirect(ui_redirect)
 
         except Exception as e:

@@ -4,14 +4,33 @@
   import BottomNav from '../components/BottomNav.svelte';
   import Toast from '../components/Toast.svelte';
   import AudioPlayer from '../components/AudioPlayer.svelte';
+  import EncryptionKeyWarning from '../components/EncryptionKeyWarning.svelte';
   import { providers } from '../stores/providers';
+  import apiClient from '../api/client';
   import '../app.css';
 
   let innerWidth;
+  let showEncryptionWarning = false;
+  let encryptionKeyValue = '';
 
-  onMount(() => {
+  onMount(async () => {
     providers.load();
+    
+    // Check for encryption key auto-generation warning
+    try {
+      const response = await apiClient.get('/encryption-key-warning');
+      if (response.data?.auto_generated) {
+        showEncryptionWarning = true;
+        encryptionKeyValue = response.data.key_value || '';
+      }
+    } catch (error) {
+      console.error('Failed to check encryption key status:', error);
+    }
   });
+
+  function dismissEncryptionWarning() {
+    showEncryptionWarning = false;
+  }
 </script>
 
 <svelte:window bind:innerWidth />
@@ -30,6 +49,13 @@
   {/if}
   <AudioPlayer />
   <Toast />
+  
+  {#if showEncryptionWarning}
+    <EncryptionKeyWarning 
+      keyValue={encryptionKeyValue} 
+      on:dismiss={dismissEncryptionWarning}
+    />
+  {/if}
 </div>
 
 <style>

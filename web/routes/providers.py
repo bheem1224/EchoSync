@@ -5,6 +5,31 @@ from core.tiered_logger import get_logger
 logger = get_logger("providers_route")
 bp = Blueprint("providers", __name__, url_prefix="/api/providers")
 
+
+def _normalize_sensitive_value_for_ui(key, value):
+    """Ensure sensitive values returned to UI are plaintext (or empty on failure)."""
+    if value is None:
+        return value
+    sensitive = {'client_secret', 'access_token', 'refresh_token', 'password', 'token', 'api_key'}
+    if key in sensitive and isinstance(value, str) and value.startswith('enc:'):
+        from core.security import decrypt_string
+        decrypted = decrypt_string(value)
+        if isinstance(decrypted, str) and decrypted.startswith('enc:'):
+            return ''
+        return decrypted
+    return value
+
+
+def _normalize_sensitive_value_for_save(key, value):
+    """If UI posted an encrypted blob for a sensitive field, decrypt before re-saving."""
+    sensitive = {'client_secret', 'access_token', 'refresh_token', 'password', 'token', 'api_key'}
+    if key in sensitive and isinstance(value, str) and value.startswith('enc:'):
+        from core.security import decrypt_string
+        decrypted = decrypt_string(value)
+        if isinstance(decrypted, str) and not decrypted.startswith('enc:'):
+            return decrypted
+    return value
+
 @bp.get("")
 @bp.get("/")
 def list_all_providers():
@@ -262,7 +287,7 @@ def get_provider_settings(provider_name):
         for key in keys_of_interest:
             val = config_db.get_service_config(service_id, key)
             if val is not None:
-                config[key] = val
+                config[key] = _normalize_sensitive_value_for_ui(key, val)
         
         # Dynamically inject immutable redirect URI for OAuth providers
         from core.network_utils import get_lan_ip
@@ -315,7 +340,10 @@ def update_provider_settings(provider_name):
 
             for k, v in payload.items():
                 is_sensitive = k in sensitive_keys or any(s in k.lower() for s in ['secret', 'token', 'password', 'key'])
-                ok = config_db.set_service_config(service_id, k, (v or '').strip() if isinstance(v, str) else v, is_sensitive=is_sensitive)
+                value = (v or '').strip() if isinstance(v, str) else v
+                if is_sensitive:
+                    value = _normalize_sensitive_value_for_save(k, value)
+                ok = config_db.set_service_config(service_id, k, value, is_sensitive=is_sensitive)
                 if not ok:
                     all_ok = False
 
@@ -464,7 +492,7 @@ def get_provider_credentials(provider_name):
         for key in keys_of_interest:
             val = config_db.get_service_config(service_id, key)
             if val is not None:
-                credentials[key] = val
+                credentials[key] = _normalize_sensitive_value_for_ui(key, val)
 
         # Dynamically inject immutable redirect URI
         from core.network_utils import get_lan_ip
@@ -503,6 +531,8 @@ def set_provider_credentials(provider_name):
         for key, value in credentials.items():
             # Mark sensitive keys (like api_key, token, password, secret) as sensitive
             is_sensitive = any(sensitive_word in key.lower() for sensitive_word in ['key', 'token', 'password', 'secret'])
+            if is_sensitive:
+                value = _normalize_sensitive_value_for_save(key, value)
             config_db.set_service_config(service_id, key, value, is_sensitive=is_sensitive)
         
         logger.info(f"Credentials saved for {provider_name}")

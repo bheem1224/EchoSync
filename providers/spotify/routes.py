@@ -193,13 +193,15 @@ def oauth_callback():
 
         # Redirect back to the web UI settings.
         # If a `webui.base_url` is configured in storage, use that as the base.
-        # Otherwise default to the local dev frontend URL so the browser returns
-        # to the Svelte app instead of the Flask backend (which would 404).
+        # Otherwise use the actual request host/scheme to avoid hardcoded localhost.
         ui_base = storage.get_service_config('webui', 'base_url')
         if ui_base:
             ui_redirect = ui_base.rstrip('/') + '/settings/music-services'
         else:
-            ui_redirect = 'http://localhost:5173/settings/music-services'
+            # Use the actual request host and scheme to construct redirect
+            scheme = request.scheme
+            host = request.host
+            ui_redirect = f'{scheme}://{host}/settings/music-services'
         return redirect(ui_redirect)
     except Exception as e:
         logger.error(f"Spotify callback error: {e}", exc_info=True)
