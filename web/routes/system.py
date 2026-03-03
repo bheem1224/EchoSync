@@ -61,9 +61,18 @@ from services.metadata_enhancer import get_metadata_enhancer
 
 @bp.get("/settings")
 def get_settings():
-    """Get current application settings (Svelte expects settings/schema/version)."""
+    """Get current application settings (Svelte expects settings/schema/version).
+
+    We inject the current console log level so the UI can populate the dropdown.
+    """
     try:
         data = config_manager.get_all() if hasattr(config_manager, "get_all") else {}
+        # add live log level to payload (may differ from stored value)
+        try:
+            from core.tiered_logger import get_current_log_level
+            data["log_level"] = get_current_log_level()
+        except Exception:
+            pass
         return jsonify({
             "settings": data,
             "schema": None,
@@ -76,9 +85,30 @@ def get_settings():
 
 @bp.post("/settings")
 def update_settings():
-    """Update application settings (partial update)."""
+    """Update application settings (partial update).
+
+    Handles the special `log_level` key by updating the live console logger
+    in addition to persisting the value via config_manager.
+    """
     try:
         payload = request.get_json(silent=True) or {}
+
+        # adjust log level immediately if requested
+        if "log_level" in payload:
+            lvl = payload.get("log_level") or ""
+            normalized = lvl.strip().lower()
+            if normalized == "normal":
+                normalized = "INFO"
+            elif normalized == "verbose":
+                normalized = "NOTSET"
+            elif normalized == "debug":
+                normalized = "DEBUG"
+            try:
+                from core.tiered_logger import set_log_level
+                set_log_level(normalized.upper())
+            except Exception:
+                pass
+
         for key, value in payload.items():
             config_manager.set(key, value)
         return jsonify({"success": True}), 200

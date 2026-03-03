@@ -11,6 +11,13 @@
   let loadError = '';
   let storageRef;
   let libImportRef;
+  // console log level for dropdown (INFO/DEBUG/NOTSET)
+  let logLevel = 'INFO';
+
+  // when settings are loaded or change, update our local logLevel
+  $: if (userSettings && userSettings.log_level) {
+    logLevel = userSettings.log_level;
+  }
 
   import { feedback } from '../../../stores/feedback';
 
@@ -108,6 +115,23 @@
               </label>
             </div>
           </section>
+
+          <!-- Logging preferences -->
+          <section class="logging card">
+            <div class="section-heading">
+              <h2>Logging</h2>
+            </div>
+            <div class="logging-content">
+              <label>
+                <span class="label-text">Console level</span>
+                <select class="log-select" bind:value={logLevel} on:change={() => updateSetting('log_level', logLevel)}>
+                  <option value="INFO">Normal</option>
+                  <option value="DEBUG">Debug</option>
+                  <option value="NOTSET">Verbose</option>
+                </select>
+              </label>
+            </div>
+          </section>
         </div>
       {/if}
     </div>
@@ -170,6 +194,21 @@
   .appearance-content label { display: flex; flex-direction: column; gap: 6px; }
   .appearance-content .label-text { font-size: 14px; color: var(--text); }
   .appearance-content .theme-select {
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color, rgba(255,255,255,0.1));
+    color: var(--text);
+    font-size: 14px;
+  }
+  /* Logging card styles mirror appearance for consistency */
+  .logging { padding: 12px; margin-top: 0; }
+  .logging .section-heading { margin-bottom: 12px; }
+  .logging .section-heading h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  .logging-content { display: flex; flex-direction: column; gap: 12px; }
+  .logging-content label { display: flex; flex-direction: column; gap: 6px; }
+  .logging-content .label-text { font-size: 14px; color: var(--text); }
+  .logging-content .log-select {
     padding: 8px 12px;
     border-radius: 6px;
     background: var(--card-bg);
