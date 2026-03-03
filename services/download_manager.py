@@ -319,33 +319,42 @@ class DownloadManager:
             
             logger.info(f"Quality profile allows: {allowed_formats}")
 
-            # Generate multiple query variations (fallback strategies)
-            queries = self._generate_search_queries(target_track)
-            logger.info(f"Generated {len(queries)} search query variations")
+            # Generate explicit fallback strategies (artist+title, album+title, title+strict duration)
+            strategies = self._generate_search_strategies(target_track, duration_tolerance_ms)
+            logger.info(f"Generated {len(strategies)} search strategies")
 
             candidates = []
-            for idx, query in enumerate(queries, 1):
-                logger.info(f"Trying search strategy {idx}/{len(queries)}: '{query}'")
+            for idx, strategy in enumerate(strategies, 1):
+                query = strategy["query"]
+                strategy_tolerance = strategy["duration_tolerance_ms"]
+                strategy_name = strategy["name"]
+
+                strategy_filters = dict(basic_filters)
+                strategy_filters["duration_tolerance_ms"] = strategy_tolerance
+
+                logger.info(
+                    f"Trying search strategy {idx}/{len(strategies)} [{strategy_name}] "
+                    f"query='{query}' duration_tolerance_ms={strategy_tolerance}"
+                )
                 
                 # Call provider search
                 search_results = []
                 if hasattr(provider, '_async_search'):
                     logger.debug(f"Invoking _async_search on {provider.name}")
-                    search_results = await provider._async_search(query, basic_filters)
+                    search_results = await provider._async_search(query, strategy_filters)
                 else:
                     logger.debug(f"Invoking sync search on {provider.name}")
                     # Fallback to sync call in executor
                     loop = asyncio.get_running_loop()
-                    search_results = await loop.run_in_executor(None, provider.search, query, basic_filters)
+                    search_results = await loop.run_in_executor(None, provider.search, query, strategy_filters)
 
                 logger.info(f"Strategy {idx} returned {len(search_results)} candidates")
                 
                 if search_results:
                     candidates.extend(search_results)
-                    # If we got good results, we can stop trying more strategies
-                    if len(candidates) >= 20:
-                        logger.info(f"Found sufficient candidates ({len(candidates)}), stopping search strategies")
-                        break
+
+            # Deduplicate merged candidates from all fallback strategies
+            candidates = self._deduplicate_candidates(candidates)
 
             logger.info(f"Total candidates from all strategies: {len(candidates)}")
 
@@ -382,7 +391,7 @@ class DownloadManager:
                     logger.warning(f"Priority {priority_num} yielded {len(tier_candidates)} candidates but all failed matching")
             
             if not best_candidate:
-                logger.warning(f"No suitable candidate matched across all quality priorities (tried {len(queries)} strategies, got {len(candidates)} candidates)")
+                logger.warning(f"No suitable candidate matched across all quality priorities (tried {len(strategies)} strategies, got {len(candidates)} candidates)")
                 self._update_status(download_id, "failed_no_match")
                 return
 
@@ -525,6 +534,105 @@ class DownloadManager:
                 seen.add(q_lower)
         
         return unique_queries
+
+    def _generate_search_strategies(self, track: SoulSyncTrack, base_duration_tolerance_ms: int) -> List[Dict[str, Any]]:
+        """Generate ordered search fallback strategies with per-strategy duration tolerance.
+
+        Strategy order:
+        1) artist + title
+        2) album + title
+        3) title only with stricter duration tolerance
+        """
+        strategies: List[Dict[str, Any]] = []
+
+        # Use matching engine normalization for consistency
+        search_title = normalize_title(track.title) if track.title else track.title
+        if search_title != track.title:
+            logger.info(f"Normalized title for search: '{track.title}' -> '{search_title}'")
+
+        # Strategy 1: Artist + Title
+        if track.artist_name and search_title:
+            normalized_artist = normalize_artist(track.artist_name)
+            strategies.append({
+                "name": "artist+title",
+                "query": f"{normalized_artist} {search_title}",
+                "duration_tolerance_ms": int(base_duration_tolerance_ms),
+            })
+
+        # Strategy 2: Album + Title
+        if track.album_title and search_title:
+            from core.matching_engine.text_utils import normalize_album
+            normalized_album = normalize_album(track.album_title)
+            if normalized_album and normalized_album != search_title:
+                strategies.append({
+                    "name": "album+title",
+                    "query": f"{normalized_album} {search_title}",
+                    "duration_tolerance_ms": int(base_duration_tolerance_ms),
+                })
+
+        # Strategy 3: Title only + stricter duration window
+        if search_title:
+            stricter_tolerance = max(1000, int(base_duration_tolerance_ms * 0.5))
+            strategies.append({
+                "name": "title+strict-duration",
+                "query": search_title,
+                "duration_tolerance_ms": stricter_tolerance,
+            })
+
+        # De-duplicate by normalized query while preserving order and strategy metadata
+        unique: List[Dict[str, Any]] = []
+        seen_queries = set()
+        for strategy in strategies:
+            key = (strategy.get("query") or "").strip().lower()
+            if key and key not in seen_queries:
+                unique.append(strategy)
+                seen_queries.add(key)
+
+        return unique
+
+    def _deduplicate_candidates(self, candidates: List[SoulSyncTrack]) -> List[SoulSyncTrack]:
+        """Deduplicate candidates collected from multiple fallback strategies.
+
+        Only removes true duplicates (same peer, same file path, and same core
+        technical metadata). This preserves meaningful variants of the same track
+        that may differ by bitrate/size/sample-rate/bit-depth.
+        """
+        unique: List[SoulSyncTrack] = []
+        seen = set()
+
+        for candidate in candidates:
+            identifiers = getattr(candidate, 'identifiers', None) or {}
+            username = identifiers.get('username') if isinstance(identifiers, dict) else None
+            provider_item_id = identifiers.get('provider_item_id') if isinstance(identifiers, dict) else None
+
+            # Include quality-relevant fields so we only collapse exact duplicate
+            # observations of the same file result across fallback strategies.
+            size = identifiers.get('size') if isinstance(identifiers, dict) else None
+            bitrate = identifiers.get('bitrate') if isinstance(identifiers, dict) else None
+            duration = getattr(candidate, 'duration', None)
+            file_format = getattr(candidate, 'file_format', None)
+            sample_rate = getattr(candidate, 'sample_rate', None)
+            bit_depth = getattr(candidate, 'bit_depth', None)
+
+            dedupe_key = (
+                username,
+                provider_item_id,
+                size,
+                bitrate,
+                duration,
+                file_format,
+                sample_rate,
+                bit_depth,
+            )
+
+            if provider_item_id and username and dedupe_key in seen:
+                continue
+
+            if provider_item_id and username:
+                seen.add(dedupe_key)
+            unique.append(candidate)
+
+        return unique
 
     def _get_quality_profile(self) -> Optional[Dict[str, Any]]:
         """Get the active quality profile from config."""

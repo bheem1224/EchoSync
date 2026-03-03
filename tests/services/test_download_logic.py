@@ -96,6 +96,39 @@ class TestDownloadManagerLogic:
             count = session.query(Download).count()
             assert count == 0
 
+    def test_generate_search_strategies_includes_all_fallbacks(self):
+        """Verify fallback methods include artist+title, album+title, and title+strict-duration."""
+        manager = DownloadManager()
+        track = SoulSyncTrack(
+            raw_title="Track A",
+            artist_name="The Artist",
+            album_title="The Album"
+        )
+
+        strategies = manager._generate_search_strategies(track, base_duration_tolerance_ms=5000)
+        names = [s["name"] for s in strategies]
+
+        assert "artist+title" in names
+        assert "album+title" in names
+        assert "title+strict-duration" in names
+
+        strict = next(s for s in strategies if s["name"] == "title+strict-duration")
+        assert strict["duration_tolerance_ms"] == 2500
+
+    def test_generate_search_strategies_strict_duration_floor(self):
+        """Strict duration fallback should never go below 1000ms tolerance."""
+        manager = DownloadManager()
+        track = SoulSyncTrack(
+            raw_title="Track B",
+            artist_name="The Artist",
+            album_title="Another Album"
+        )
+
+        strategies = manager._generate_search_strategies(track, base_duration_tolerance_ms=1500)
+        strict = next(s for s in strategies if s["name"] == "title+strict-duration")
+
+        assert strict["duration_tolerance_ms"] == 1000
+
 class TestAutoImportLogic:
     """Task 2 Verification: Memory Leak Fix"""
 
