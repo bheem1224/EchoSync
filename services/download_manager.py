@@ -482,6 +482,12 @@ class DownloadManager:
                             logger.info(f"Download completed, removing {db_id} from queue")
                             self._remove_from_queue(db_id)
                             logger.info(f"Download {db_id} completed. TODO: Trigger Auto Import/Post-Processing.")
+                else:
+                    # Download not found in active transfers (likely completed and auto-removed by Slskd)
+                    # Mark as completed to prevent repeated status checks
+                    logger.info(f"Download {db_id} not found in active transfers - marking as completed")
+                    self._update_status(db_id, "completed")
+                    self._remove_from_queue(db_id)
 
             except Exception as e:
                 logger.error(f"Error checking status for {db_id}: {e}")
