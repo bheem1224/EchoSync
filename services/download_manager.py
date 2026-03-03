@@ -1116,6 +1116,35 @@ class DownloadManager:
         except Exception as e:
             logger.error(f"Error purging existing tracks from queue: {e}")
 
+    def process_downloads_now(self):
+        """
+        Manually trigger download processing (called from job queue).
+        This submits processing tasks to the existing event loop without blocking.
+        """
+        if not self._loop:
+            logger.warning("Download manager loop not running; starting background task")
+            self.ensure_background_task()
+            return
+        
+        # Submit the async processing to the running loop
+        try:
+            # Create a coroutine for processing queued items and checking active downloads
+            async def manual_process():
+                provider = self._get_provider()
+                if provider:
+                    await self._process_queued_items()
+                    await self._check_active_downloads()
+                    logger.info("Manual download processing completed")
+                else:
+                    logger.warning("Cannot process downloads: no active provider")
+            
+            # Schedule the coroutine on the existing loop
+            future = asyncio.run_coroutine_threadsafe(manual_process(), self._loop)
+            # Don't wait - let it process in background
+            logger.info("Download processing triggered (will run in background)")
+        except Exception as e:
+            logger.error(f"Failed to trigger download processing: {e}", exc_info=True)
+
 # Global Accessor
 def get_download_manager():
     return DownloadManager.get_instance()
@@ -1124,17 +1153,19 @@ def get_download_manager():
 def register_download_manager_job(interval_seconds: int = 21600):
     """
     Register download manager processing as a periodic job with the global job_queue.
-    Note: The download manager already runs a continuous processing loop when started.
-    This job is mainly for visibility in the jobs UI.
+    The download manager runs a continuous processing loop, but this job allows manual
+    triggering from the Jobs UI to process queued downloads immediately.
     
     Args:
-        interval_seconds: Interval placeholder (default 6 hours = 21600s)
+        interval_seconds: Interval between automatic job runs (default 6 hours = 21600s)
     """
     from core.job_queue import job_queue
     
     def process_downloads():
-        """Status check placeholder for job visibility"""
-        logger.debug("Download manager status check (continuous processing active)")
+        """Trigger manual download processing"""
+        dm = get_download_manager()
+        dm.ensure_background_task()  # Ensure the loop is running
+        dm.process_downloads_now()    # Trigger processing immediately
     
     job_queue.register_job(
         name="download_manager_status",
@@ -1145,4 +1176,4 @@ def register_download_manager_job(interval_seconds: int = 21600):
         max_retries=3
     )
     
-    logger.info(f"Download manager status job registered (interval: {interval_seconds}s, disabled by default)")
+    logger.info(f"Download manager job registered (interval: {interval_seconds}s, disabled by default)")

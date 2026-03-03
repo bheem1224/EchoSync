@@ -736,13 +736,18 @@ class WeightedMatchingEngine:
             return None
 
         ranked_candidates = []
+        rejected_count = 0
 
         for candidate in candidates:
             # --- Duration Gating (if enabled) ---
             if self.weights.enforce_duration_match and target_track.duration and candidate.duration:
                 diff_ms = abs(target_track.duration - candidate.duration)
                 if diff_ms > self.weights.duration_tolerance_ms:
-                    continue  # Skip strictly
+                    rejected_count += 1
+                    logger.debug(
+                        f"Rejected '{candidate.title}' - Duration mismatch: {diff_ms}ms > {self.weights.duration_tolerance_ms}ms"
+                    )
+                    continue
 
             # Calculate match score
             match_result = self.calculate_match(target_track, candidate)
@@ -756,6 +761,12 @@ class WeightedMatchingEngine:
 
             # Only consider candidates that pass the minimum confidence threshold for metadata
             if final_score < self.weights.min_confidence_to_accept:
+                rejected_count += 1
+                logger.debug(
+                    f"Rejected '{candidate.title}' by '{candidate.artist_name}' - "
+                    f"Score {final_score:.1f} < {self.weights.min_confidence_to_accept}. "
+                    f"Reason: {match_result.reasoning}"
+                )
                 continue
 
             # --- Secondary Download Quality Scoring ---
@@ -790,7 +801,16 @@ class WeightedMatchingEngine:
 
             ranked_candidates.append((final_score, candidate))
 
+        logger.info(
+            f"Download candidate filtering: {len(candidates)} candidates, "
+            f"{rejected_count} rejected, {len(ranked_candidates)} accepted"
+        )
+
         if not ranked_candidates:
+            logger.warning(
+                f"No candidates passed minimum confidence threshold ({self.weights.min_confidence_to_accept}%). "
+                f"Target: '{target_track.title}' by '{target_track.artist_name}'"
+            )
             return None
 
         # --- Size Sorting ---

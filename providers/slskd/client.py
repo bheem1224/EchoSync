@@ -47,11 +47,18 @@ class TrackResult(SearchResult):
         import re
         import os
 
+        # Normalize path separators (handle both / and \ from Soulseek)
+        normalized_path = self.filename.replace('\\', '/')
+        
         # Get just the filename without extension and path
-        base_name = os.path.splitext(os.path.basename(self.filename))[0]
+        # Split by / to get path components, take the last one, then remove extension
+        path_parts = normalized_path.split('/')
+        file_with_ext = path_parts[-1] if path_parts else self.filename
+        base_name = os.path.splitext(file_with_ext)[0]
 
         # 1. Parse Technical Metadata (Bit Depth / Sample Rate)
         # Look for patterns like "24bit", "24-bit", "24b", "96kHz", "44.1kHz", "44100Hz"
+        # Search in the full filename/path in case metadata is in directory structure
 
         # Bit Depth
         bit_depth_match = re.search(r'(\d+)\s*[-_]?(?:bit|b)(?![a-zA-Z])', self.filename, re.IGNORECASE)
@@ -77,54 +84,62 @@ class TrackResult(SearchResult):
 
         # 2. Parse Artist/Title/Album if missing
         if not self.title or not self.artist:
-            # Common patterns for track naming
+            # Common patterns for track naming (in order of specificity)
+            # Strategy: Try to extract only when confident
+            # Pattern 1: Track number + full title (e.g., "01 - All Remaining Content Here")
+            # Pattern 2: Artist - Title split (e.g., "Artist Name - Song Title")
             patterns = [
-                r'^(\d+)\s*[-\.]\s*(.+?)\s*[-–]\s*(.+)$',  # "01 - Artist - Title" or "01. Artist - Title"
-                r'^(.+?)\s*[-–]\s*(.+)$',  # "Artist - Title"
-                r'^(\d+)\s*[-\.]\s*(.+)$',  # "01 - Title" or "01. Title"
+                (r'^(\d+)\s*[-\.]\s*(.+)$', 'track_and_title'),     # "01 - Title" (keep everything after number)
+                (r'^(.+?)\s*[-–]\s*(.+)$', 'artist_and_title'),      # "Artist - Title"
             ]
 
-            for pattern in patterns:
+            for pattern, pattern_type in patterns:
                 match = re.match(pattern, base_name)
                 if match:
                     groups = match.groups()
-                    if len(groups) == 3:  # Track number, artist, title
+                    if pattern_type == 'track_and_title':
+                        # Pattern 1: Track number followed by everything else is the title
                         try:
                             self.track_number = int(groups[0])
-                            self.artist = self.artist or groups[1].strip()
-                            self.title = self.title or groups[2].strip()
-                        except ValueError:
-                            # First group might not be a number
-                            self.artist = self.artist or groups[0].strip()
-                            self.title = self.title or f"{groups[1]} - {groups[2]}".strip()
-                    elif len(groups) == 2:
-                        if groups[0].isdigit():  # Track number and title
-                            try:
-                                self.track_number = int(groups[0])
-                                self.title = self.title or groups[1].strip()
-                            except ValueError:
-                                pass
-                        else:  # Artist and title
+                            self.title = self.title or groups[1].strip()
+                        except (ValueError, IndexError):
+                            pass
+                    elif pattern_type == 'artist_and_title':
+                        # Pattern 2: Split by first dash - artist and title
+                        # Only set if we don't have either artist or title
+                        if len(groups) == 2:
                             self.artist = self.artist or groups[0].strip()
                             self.title = self.title or groups[1].strip()
                     break
 
-        # Fallback: use filename as title if nothing was extracted
+        # Fallback: use the extracted filename (not full path) as title if nothing was extracted
         if not self.title:
             self.title = base_name
 
-        # Try to extract album from directory path
-        if not self.album and '/' in self.filename:
-            path_parts = self.filename.split('/')
-            if len(path_parts) >= 2:
-                # Look for album-like directory names
-                for part in reversed(path_parts[:-1]):  # Exclude filename
-                    if part and not part.startswith('@'):  # Skip system directories
-                        # Clean up common patterns
-                        cleaned = re.sub(r'^\d+\s*[-\.]\s*', '', part)  # Remove leading numbers
-                        if len(cleaned) > 3:  # Must be substantial
-                            self.album = cleaned
-                            break
+        # Try to extract artist and album from directory path
+        if ('/' in self.filename or '\\' in self.filename):
+            path_parts = self.filename.replace('\\', '/').split('/')
+            
+            # Get meaningful directory parts (skip filename which is last)
+            dir_parts = [p for p in path_parts[:-1] if p and not p.startswith('@')]
+            
+            # Skip generic/system folder patterns
+            generic_folders_pattern = r'^(music|downloads?|library|media|my music|users?|documents?|desktop|lossless|flac|mp3|high.*quality|lossy|\d{4}|\d{2,})$'
+            meaningful_dirs = [
+                d for d in dir_parts
+                if d and not re.match(generic_folders_pattern, d, re.IGNORECASE)
+            ]
+            
+            # Extract artist and album from remaining folder hierarchy
+            # Typically: Artist/Album/Song or just Album/Song
+            if meaningful_dirs:
+                # Last meaningful folder (closest to filename) is likely album
+                if not self.album:
+                    self.album = meaningful_dirs[-1]
+                
+                # Second-to-last is likely artist (if we have at least 2)
+                if not self.artist and len(meaningful_dirs) >= 2:
+                    self.artist = meaningful_dirs[-2]
 
 class SlskdProvider(DownloaderProvider):
     """
