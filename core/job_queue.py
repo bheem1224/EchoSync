@@ -174,6 +174,13 @@ class JobQueue:
                 job.enabled = False
                 logger.info(f"Disabled job '{name}'")
 
+    def unregister_job(self, name: str):
+        with self._lock:
+            if name in self._jobs:
+                self._remove_from_heap(name)
+                del self._jobs[name]
+                logger.info(f"Unregistered job '{name}'")
+
     def run_now(self, name: str):
         with self._lock:
             job = self._jobs.get(name)
@@ -334,6 +341,10 @@ def enable_job(name: str):
 
 def disable_job(name: str):
     job_queue.disable_job(name)
+
+
+def unregister_job(name: str):
+    job_queue.unregister_job(name)
 
 
 def run_job_now(name: str):

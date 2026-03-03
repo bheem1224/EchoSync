@@ -71,6 +71,9 @@ def run_job():
     
     if not job_name:
         return Response(json.dumps({"error": "job name required"}), status=400, mimetype="application/json")
+
+    if job_name == "download_manager_status":
+        job_name = "download_manager"
     
     try:
         run_job_now(job_name)

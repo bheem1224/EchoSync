@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -181,7 +182,7 @@ class DownloadManager:
     async def _recover_stuck_items(self):
         """Reset items stuck in 'searching' state back to 'queued' on startup."""
         with self.db.session_scope() as session:
-            stuck_items = session.query(Download).filter(Download.status == "searching").all()
+            stuck_items = session.query(Download).filter(Download.status.ilike("searching")).all()
             if stuck_items:
                 logger.warning(f"Found {len(stuck_items)} stuck downloads. Resetting to 'queued'.")
                 for item in stuck_items:
@@ -191,7 +192,7 @@ class DownloadManager:
             # Also clean up legacy downloads with invalid provider_id format
             # These are from before the compound ID (username|filename) format was implemented
             legacy_items = session.query(Download).filter(
-                Download.status == "downloading",
+                Download.status.ilike("downloading"),
                 Download.provider_id.isnot(None)
             ).all()
             
@@ -248,7 +249,7 @@ class DownloadManager:
             # Get up to 30 queued items to enable 10 concurrent searches
             # Note: SlskdProvider internally limits to 5 concurrent searches (Soulseek IP ban protection)
             # Download manager can scale to 10 if other clients (e.g., non-Soulseek) are added later
-            items = session.query(Download).filter(Download.status == "queued").limit(30).all()
+            items = session.query(Download).filter(Download.status.ilike("queued")).limit(30).all()
             if items:
                 logger.info(f"Found {len(items)} queued items for processing.")
 
@@ -438,7 +439,7 @@ class DownloadManager:
         active_downloads = []
         with self.db.session_scope() as session:
             # Find items marked 'downloading'
-            items = session.query(Download).filter(Download.status == "downloading").all()
+            items = session.query(Download).filter(Download.status.ilike("downloading")).all()
             for item in items:
                 active_downloads.append((item.id, item.provider_id))
 
@@ -956,7 +957,7 @@ class DownloadManager:
         with self.db.session_scope() as session:
             download = session.query(Download).get(download_id)
             if download:
-                download.status = status
+                download.status = (status or "").lower()
                 download.updated_at = datetime.utcnow()
                 if provider_id:
                     download.provider_id = provider_id
@@ -967,7 +968,7 @@ class DownloadManager:
         if not any(signature):
             return None
 
-        active_states = {"queued", "searching", "downloading"}
+        active_states = {"queued", "searching", "downloading", "QUEUED", "SEARCHING", "DOWNLOADING"}
         with self.db.session_scope() as session:
             items = session.query(Download).filter(Download.status.in_(active_states)).all()
             for item in items:
@@ -1128,14 +1129,30 @@ class DownloadManager:
         This submits processing tasks to the existing event loop without blocking.
         """
         if not self._loop:
-            logger.warning("Download manager loop not running; starting background task")
+            logger.info("Download manager loop not running; starting background task")
             self.ensure_background_task()
-            return
+            for _ in range(20):
+                if self._loop:
+                    break
+                time.sleep(0.05)
+
+            if not self._loop:
+                logger.warning("Download manager loop not ready yet; processing will start on next cycle")
+                return
         
         # Submit the async processing to the running loop
         try:
             # Create a coroutine for processing queued items and checking active downloads
             async def manual_process():
+                queued_count = 0
+                with self.db.session_scope() as session:
+                    queued_count = session.query(Download).filter(Download.status.ilike("queued")).count()
+
+                if queued_count == 0:
+                    requeued = self._requeue_retryable_failed_items(limit=50)
+                    if requeued > 0:
+                        logger.info(f"Manual run: re-queued {requeued} retryable failed items")
+
                 provider = self._get_provider()
                 if provider:
                     await self._process_queued_items()
@@ -1145,11 +1162,41 @@ class DownloadManager:
                     logger.warning("Cannot process downloads: no active provider")
             
             # Schedule the coroutine on the existing loop
-            future = asyncio.run_coroutine_threadsafe(manual_process(), self._loop)
+            asyncio.run_coroutine_threadsafe(manual_process(), self._loop)
             # Don't wait - let it process in background
             logger.info("Download processing triggered (will run in background)")
         except Exception as e:
             logger.error(f"Failed to trigger download processing: {e}", exc_info=True)
+
+    def _requeue_retryable_failed_items(self, limit: int = 50) -> int:
+        """Move retryable failed items back to queued so manual runs can re-attempt them."""
+        retryable_statuses = {
+            "failed_no_results",
+            "failed_no_match",
+            "failed_start_download",
+            "failed_error",
+            "failed_no_username",
+            "failed_no_filename",
+            "failed",
+        }
+
+        requeued = 0
+        with self.db.session_scope() as session:
+            items = (
+                session.query(Download)
+                .filter(Download.status.in_(retryable_statuses))
+                .order_by(Download.updated_at.asc())
+                .limit(limit)
+                .all()
+            )
+
+            for item in items:
+                item.status = "queued"
+                item.provider_id = None
+                item.updated_at = datetime.utcnow()
+                requeued += 1
+
+        return requeued
 
 # Global Accessor
 def get_download_manager():
@@ -1165,7 +1212,7 @@ def register_download_manager_job(interval_seconds: int = 21600):
     Args:
         interval_seconds: Interval between automatic job runs (default 6 hours = 21600s)
     """
-    from core.job_queue import job_queue
+    from core.job_queue import job_queue, unregister_job
     
     def process_downloads():
         """Trigger manual download processing"""
@@ -1173,13 +1220,18 @@ def register_download_manager_job(interval_seconds: int = 21600):
         dm.ensure_background_task()  # Ensure the loop is running
         dm.process_downloads_now()    # Trigger processing immediately
     
+    unregister_job("download_manager_status")
+
     job_queue.register_job(
-        name="download_manager_status",
+        name="download_manager",
         func=process_downloads,
         interval_seconds=interval_seconds,
-        enabled=True,  # Must be enabled so UI button can trigger manual runs
+        start_after=interval_seconds,
+        enabled=True,
         tags=["soulsync", "downloads"],
         max_retries=3
     )
-    
-    logger.info(f"Download manager job registered (interval: {interval_seconds}s, disabled by default)")
+
+    logger.info(
+        f"Download manager job registered (name: download_manager, interval: {interval_seconds}s, first run after startup: {interval_seconds}s)"
+    )

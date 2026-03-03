@@ -2,19 +2,34 @@ from flask import Blueprint, Response, request
 import json
 from core.tiered_logger import get_logger
 from services.download_manager import get_download_manager
-from database.music_database import get_session
-from database.music_database import Download
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from database.music_database import get_database, Download
 
 logger = get_logger("downloads_route")
 bp = Blueprint("downloads", __name__, url_prefix="/api/downloads")
+
+
+def _to_ui_status(raw_status: str) -> str:
+    status = (raw_status or "").lower()
+    if status == "queued":
+        return "QUEUED"
+    if status == "searching":
+        return "SEARCHING"
+    if status == "downloading":
+        return "DOWNLOADING"
+    if status == "completed":
+        return "COMPLETED"
+    if status in {"failed_no_results", "not_found"}:
+        return "NOT_FOUND"
+    if status.startswith("failed"):
+        return "FAILED"
+    return (raw_status or "UNKNOWN").upper()
 
 
 @bp.get("/queue")
 def get_queue():
     """Return all downloads in the queue with their current status."""
     try:
-        with get_session() as session:
+        with get_database().session_scope() as session:
             downloads = session.query(Download).all()
             
             queue_items = []
@@ -27,7 +42,7 @@ def get_queue():
                     "title": track_data.get("title", "Unknown"),
                     "artist": track_data.get("artist_name", "Unknown"),
                     "album": track_data.get("album_name", ""),
-                    "status": download.status.upper(),  # QUEUED, DOWNLOADING, COMPLETED, FAILED
+                    "status": _to_ui_status(download.status),
                     "provider_id": download.provider_id,
                     "retry_count": download.retry_count,
                     "created_at": download.created_at.isoformat() if download.created_at else None,
@@ -74,7 +89,7 @@ def run_downloads():
 def delete_download(download_id: int):
     """Remove a specific download from the queue."""
     try:
-        with get_session() as session:
+        with get_database().session_scope() as session:
             download = session.query(Download).filter(Download.id == download_id).first()
             
             if not download:
@@ -106,7 +121,7 @@ def delete_download(download_id: int):
 def clear_queue():
     """Clear all downloads from the queue."""
     try:
-        with get_session() as session:
+        with get_database().session_scope() as session:
             count = session.query(Download).delete()
             session.commit()
             
@@ -139,7 +154,7 @@ def delete_batch():
                 mimetype="application/json"
             )
         
-        with get_session() as session:
+        with get_database().session_scope() as session:
             count = session.query(Download).filter(Download.id.in_(ids)).delete(synchronize_session=False)
             session.commit()
             
