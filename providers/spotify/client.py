@@ -121,6 +121,20 @@ class ConfigCacheHandler(CacheHandler):
         except Exception as e:
             logger.error(f"Error saving Spotify token to cache for account {self.account_id}: {e}")
 
+
+class CallbackBypassCacheHandler(CacheHandler):
+    """Cache handler used only during OAuth callback code exchange.
+
+    It intentionally bypasses normal cached-token retrieval so Spotipy is forced
+    to exchange the incoming authorization code and return fresh token_info.
+    """
+
+    def get_cached_token(self):
+        return None
+
+    def save_token_to_cache(self, token_info):
+        return
+
 class SpotifyClient(SyncServiceProvider):
     name = "spotify"
     category = "provider"
@@ -435,7 +449,7 @@ class SpotifyClient(SyncServiceProvider):
                 client_secret=decrypt_string(client_secret),
                 redirect_uri=redirect_uri,
                 scope="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private",
-                cache_handler=ConfigCacheHandler(account_id)
+                cache_handler=CallbackBypassCacheHandler()
             )
 
             try:

@@ -150,13 +150,13 @@ def oauth_callback():
             return jsonify({"error": "Spotify client_id/client_secret not configured"}), 400
 
         # Use ConfigCacheHandler so tokens are persisted via StorageService
-        from providers.spotify.client import ConfigCacheHandler
+        from providers.spotify.client import CallbackBypassCacheHandler
         auth_manager = SpotifyOAuth(
             client_id=client_id,
             client_secret=decrypt_string(client_secret),
             redirect_uri=redirect_uri,
             scope="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email",
-            cache_handler=ConfigCacheHandler(account_id)
+            cache_handler=CallbackBypassCacheHandler()
         )
 
         # Exchange code for tokens
