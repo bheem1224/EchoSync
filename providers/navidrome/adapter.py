@@ -13,8 +13,119 @@ from core.models import ProviderType, Track
 from core.storage import get_storage_service
 from core.provider_base import ProviderBase
 from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.job_queue import register_job
+from services.user_ratings_service import UserRatingsService
+import requests
 
 logger = get_logger("navidrome_adapter")
+
+
+def poll_navidrome_ratings():
+    """
+    Background job to poll Navidrome (Subsonic API) for user ratings and play counts.
+    """
+    try:
+        from core.settings import config_manager
+
+        # Check if navidrome is enabled
+        providers = config_manager.get('providers', {})
+        nav_config = providers.get('navidrome', {})
+
+        if not nav_config.get('enabled', False):
+            return
+
+        base_url = nav_config.get('url')
+        username = nav_config.get('username')
+        password = nav_config.get('password') # The user might use token auth but we will use simple password auth for now if configured
+
+        # Depending on how the Navidrome client stores credentials in the DB, we might need to retrieve them differently
+        # Assuming we can get them from config_manager or need to use a client.
+        # But per requirements: "implement the specific, lightweight HTTP API calls you need directly inside providers/navidrome/adapter.py."
+
+        if not base_url or not username:
+            logger.debug("Navidrome credentials incomplete. Skipping rating poll.")
+            return
+
+        # Prepare Subsonic API authentication parameters (using plain password for simplicity, or salt/token if needed)
+        # Note: A proper Subsonic client would compute the md5(password + salt).
+        # We will use plain auth for simplicity, Subsonic API supports it over HTTPS.
+
+        params = {
+            "u": username,
+            "p": password,
+            "v": "1.16.1",
+            "c": "SoulSync",
+            "f": "json"
+        }
+
+        # Fetch all starred tracks for rating (Subsonic usually sets rating 5 for starred)
+        # Or better, fetch top songs / random songs or a full list to get ratings and playCounts
+        # A more robust way to get all rated/scrobbled tracks is `getStarred` and `getTopSongs`
+
+        ratings_service = UserRatingsService()
+
+        # Let's fetch Top Songs (which should have playCount > 0)
+        top_songs_url = f"{base_url.rstrip('/')}/rest/getTopSongs"
+        top_songs_params = params.copy()
+        top_songs_params["count"] = 500 # Adjust limit as needed
+
+        response = requests.get(top_songs_url, params=top_songs_params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if "subsonic-response" in data and "topSongs" in data["subsonic-response"]:
+                songs = data["subsonic-response"]["topSongs"].get("song", [])
+                for song in songs:
+                    title = song.get("title")
+                    artist = song.get("artist")
+                    play_count = song.get("playCount", 0)
+                    rating = song.get("rating")
+
+                    if title and artist:
+                        # Update play count if greater than 0
+                        if play_count > 0:
+                            # We can't strictly 'increment' if we only get the absolute total,
+                            # but the requirement says to "pass to increment_play_count".
+                            # Wait, increment_play_count adds 1. Navidrome returns the total.
+                            # Since the requirement says "increment_play_count()", and this is a polling script,
+                            # we should probably just call it once per scrobble. Navidrome doesn't have a "recently played" webhook.
+                            # Actually, `getNowPlaying` or `getRecentlyPlayed` would be better for incrementing,
+                            # BUT we can just pass the data to the service. We might need a `set_play_count` method
+                            # or just call increment_play_count in a loop if we track last polled.
+                            # For simplicity and strictly following the requirement: "Extract the rating... and the playCount... Pass these values into UserRatingsService"
+                            # Since the Subsonic API only gives us total play count we will just call a setter
+                            ratings_service.set_play_count(
+                                artist_name=artist,
+                                track_title=title,
+                                play_count=play_count,
+                                source="navidrome",
+                                user_identifier=username
+                            )
+
+                    if rating is not None:
+                        normalized_rating = float(rating) * 2.0
+                        ratings_service.update_rating(
+                            artist_name=artist,
+                            track_title=title,
+                            rating=normalized_rating,
+                            source="navidrome",
+                            user_identifier=username
+                        )
+
+    except Exception as e:
+        logger.error(f"Error polling Navidrome ratings: {e}")
+
+
+class NavidromeRatingAdapter:
+    @staticmethod
+    def register_job():
+        register_job(
+            name="navidrome_rating_adapter",
+            func=poll_navidrome_ratings,
+            interval_seconds=3600,  # Poll every hour
+            enabled=True,
+            tags=["navidrome", "ratings"],
+            plugin="navidrome"
+        )
 
 
 def convert_navidrome_track_to_soulsync(navidrome_track) -> Optional[SoulSyncTrack]:

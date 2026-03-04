@@ -154,15 +154,17 @@ class ExternalIdentifier(Base):
 class UserRating(Base):
     __tablename__ = "user_ratings"
     __table_args__ = (
-        UniqueConstraint("user_id", "track_id", name="uq_user_track"),
+        UniqueConstraint("user_identifier", "track_id", "source", name="uq_user_track_source"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    user_identifier: Mapped[str] = mapped_column(String, nullable=False, index=True)
     track_id: Mapped[int] = mapped_column(
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    rating: Mapped[float] = mapped_column(Float)  # 1-5, or system flags 0.1, 2.1, 3.1
+    source: Mapped[str] = mapped_column(String, nullable=False, default="local")
+    rating: Mapped[Optional[float]] = mapped_column(Float)  # 0.0-10.0 scale
+    play_count: Mapped[int] = mapped_column(Integer, default=0)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     track: Mapped[Track] = relationship(back_populates="user_ratings")

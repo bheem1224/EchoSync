@@ -42,6 +42,7 @@ from web.routes.library import bp as library_bp
 from web.routes.metadata import bp as metadata_bp
 from web.routes.manager import bp as manager_bp
 from web.routes.downloads import bp as downloads_bp
+from web.routes.webhooks import bp as webhooks_bp
 
 from core.plugin_loader import PluginLoader
 from core.settings import config_manager
@@ -103,6 +104,7 @@ def create_app() -> Flask:
     app.register_blueprint(metadata_bp)
     app.register_blueprint(manager_bp)
     app.register_blueprint(downloads_bp)
+    app.register_blueprint(webhooks_bp)
     
     # Initialize Plugin Loader
     # Determine app root (parent of 'web/')
