@@ -76,6 +76,22 @@ def run_job():
         job_name = "download_manager"
     
     try:
+        # Get current job status
+        items = jq_list_jobs()
+        job = next((j for j in items if j.get("name") == job_name), None)
+        
+        if not job:
+            return Response(json.dumps({"error": f"job '{job_name}' not found"}), status=404, mimetype="application/json")
+        
+        # Check if job is already running
+        if job.get("running"):
+            return Response(json.dumps({
+                "error": f"job '{job_name}' is already running",
+                "reason": "Job is currently executing. Please wait for it to complete.",
+                "job": job_name,
+                "started_at": job.get("last_started"),
+            }), status=409, mimetype="application/json")
+        
         run_job_now(job_name)
         logger.info(f"Job triggered: {job_name}")
         return Response(json.dumps({"accepted": True, "job": job_name}), status=200, mimetype="application/json")

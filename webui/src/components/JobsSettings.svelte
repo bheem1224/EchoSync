@@ -116,7 +116,16 @@
       await loadJobs(); // Refresh to show updated status
     } catch (error) {
       console.error(`Failed to run job ${jobName}:`, error);
-      feedback.addToast(`Failed to run job: ${error.response?.data?.error || error.message}`, 'error');
+      const errorMsg = error.response?.data?.error || error.message;
+      const reason = error.response?.data?.reason;
+      
+      // Show user-friendly error message
+      if (error.response?.status === 409) {
+        // Job is already running
+        feedback.addToast(`Job is already running. ${reason || 'Please wait for it to complete.'}`, 'warning');
+      } else {
+        feedback.addToast(`Failed to run job: ${errorMsg}`, 'error');
+      }
     }
   }
 
@@ -286,12 +295,12 @@
                         class="btn-action"
                         on:click={() => runJob(job.name)}
                         disabled={job.running}
-                        title="Run now"
+                        title={job.running ? 'Job is already running' : 'Run now'}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                           <polygon points="5 3 19 12 5 21 5 3"></polygon>
                         </svg>
-                        Run
+                        {job.running ? 'Running...' : 'Run'}
                       </button>
                       
                       {#if job.interval_seconds}

@@ -967,7 +967,8 @@ def sync_history_endpoint():
 def download_missing_tracks():
     """Trigger downloads for missing tracks identified during analysis.
     
-    Accepts a list of missing track metadata and enqueues download jobs.
+    Directly queues tracks to the download_manager's queue.
+    No separate job is created - the main download_manager job handles processing.
     """
     payload = request.get_json(silent=True) or {}
     missing = payload.get("missing") or []
@@ -975,89 +976,52 @@ def download_missing_tracks():
     if not missing:
         return jsonify({"accepted": False, "error": "missing tracks list required"}), 400
     
-    job_name = f"download:missing:{int(time.time())}"
-    
-    def _run_downloads():
+    try:
         from services.download_manager import get_download_manager
         from core.matching_engine.soul_sync_track import SoulSyncTrack
         
-        event_bus.publish(job_name, "download_started", {
-            "total": len(missing),
-        })
+        download_manager = get_download_manager()
+        download_manager.ensure_background_task()  # kick off processing loop
         
-        try:
-            download_manager = get_download_manager()
-            download_manager.ensure_background_task()  # kick off processing loop when user triggers downloads
-            success_count = 0
-            
-            for idx, track_info in enumerate(missing):
-                event_bus.publish(job_name, "download_started_track", {
-                    "index": idx,
-                    "title": track_info.get("title"),
-                    "artist": track_info.get("artist"),
-                })
-                
-                try:
-                    # Create SoulSyncTrack from metadata
-                    track = SoulSyncTrack(
-                        raw_title=track_info.get("title"),
-                        artist_name=track_info.get("artist"),
-                        album_title=track_info.get("album") or "",
-                        duration=track_info.get("duration_ms")
-                    )
+        success_count = 0
+        failed_count = 0
+        
+        # Queue all tracks directly to the download manager
+        # The existing download_manager job will process them
+        for track_info in missing:
+            try:
+                # Create SoulSyncTrack from metadata
+                track = SoulSyncTrack(
+                    raw_title=track_info.get("title"),
+                    artist_name=track_info.get("artist"),
+                    album_title=track_info.get("album") or "",
+                    duration=track_info.get("duration_ms")
+                )
 
-                    # Queue the download
-                    download_id = download_manager.queue_download(track)
+                # Queue the download (no separate job needed)
+                download_id = download_manager.queue_download(track)
 
-                    if download_id:
-                        success_count += 1
-                        event_bus.publish(job_name, "download_queued_track", {
-                            "index": idx,
-                            "title": track_info.get("title"),
-                            "download_id": download_id
-                        })
-                    else:
-                        event_bus.publish(job_name, "download_failed_track", {
-                            "index": idx,
-                            "title": track_info.get("title"),
-                            "reason": "Failed to queue",
-                        })
-                except Exception as e:
-                    event_bus.publish(job_name, "download_failed_track", {
-                        "index": idx,
-                        "title": track_info.get("title"),
-                        "error": str(e),
-                    })
-            
-            event_bus.publish(job_name, "download_complete", {
-                "total": len(missing),
-                "success": success_count,
-                "failed": len(missing) - success_count,
-            })
-        except Exception as e:
-            event_bus.publish(job_name, "download_error", {"message": str(e)})
-            raise
+                if download_id:
+                    success_count += 1
+                    logger.info(f"Queued for download: {track.title} by {track.artist_name} (ID: {download_id})")
+                else:
+                    failed_count += 1
+                    logger.warning(f"Failed to queue: {track.title} by {track.artist_name}")
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Error queuing track: {e}")
+        
+        return jsonify({
+            "accepted": True,
+            "track_count": len(missing),
+            "queued": success_count,
+            "failed": failed_count,
+            "message": f"Queued {success_count} tracks to download_manager (failed: {failed_count})",
+        }), 200
     
-    try:
-        job_queue.register_job(
-            name=job_name,
-            func=_run_downloads,
-            interval_seconds=None,
-            enabled=True,
-            max_retries=1,
-            backoff_base=5.0,
-        )
-        job_queue.run_now(job_name)
     except Exception as e:
-        logger.error(f"Failed to schedule download job '{job_name}': {e}")
-        return jsonify({"accepted": False, "error": f"Failed to schedule downloads: {e}"}), 500
-    
-    return jsonify({
-        "accepted": True,
-        "job": job_name,
-        "track_count": len(missing),
-        "events_path": f"/api/playlists/sync/events?job={quote(job_name, safe='')}",
-    }), 202
+        logger.error(f"Failed to queue downloads: {e}")
+        return jsonify({"accepted": False, "error": f"Failed to queue downloads: {e}"}), 500
 
 
 # ========================================
