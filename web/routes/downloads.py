@@ -140,6 +140,45 @@ def clear_queue():
         )
 
 
+@bp.post("/<int:download_id>/search")
+def search_download(download_id: int):
+    """Trigger search and download for a specific queue item."""
+    try:
+        with get_database().session_scope() as session:
+            download = session.query(Download).filter(Download.id == download_id).first()
+            
+            if not download:
+                return Response(
+                    json.dumps({"success": False, "error": "Download not found"}),
+                    status=404,
+                    mimetype="application/json"
+                )
+            
+            # Mark as queued (in case it's in failed state) and trigger processing
+            download.status = "queued"
+            download.updated_at = __import__('datetime').datetime.utcnow()
+            session.commit()
+        
+        # Trigger the download manager to process immediately
+        dm = get_download_manager()
+        dm.ensure_background_task()
+        dm.process_downloads_now()
+        
+        logger.info(f"Triggered search for download {download_id}")
+        return Response(
+            json.dumps({"success": True, "message": f"Search triggered for download {download_id}"}),
+            status=200,
+            mimetype="application/json"
+        )
+    except Exception as e:
+        logger.error(f"Error triggering search for download {download_id}: {e}")
+        return Response(
+            json.dumps({"success": False, "error": str(e)}),
+            status=500,
+            mimetype="application/json"
+        )
+
+
 @bp.delete("/batch")
 def delete_batch():
     """Delete multiple downloads by IDs."""

@@ -27,6 +27,7 @@
     { label: 'Music Services', href: '/settings/music-services' },
     { label: 'Servers', href: '/settings/servers' },
     { label: 'Download Clients', href: '/settings/download-clients' },
+    { label: 'Download Queue', href: '/settings/downloads' },
     { label: 'Metadata', href: '/settings/metadata', badge: $metadataQueue.count },
     { label: 'Search', href: '/settings/search' },
     { label: 'Misc', href: '/settings/misc' },
