@@ -766,14 +766,21 @@ class DownloadManager:
                     bit_depths = fmt.get('bit_depths', [])
                     sample_rates = fmt.get('sample_rates', [])
                     
-                    if bit_depths and track.bit_depth:
-                        if str(track.bit_depth) not in bit_depths:
+                    # Only enforce bit depth if profile has it configured (non-empty list)
+                    if bit_depths:  # Profile has bit depth requirements
+                        if not track.bit_depth or str(track.bit_depth) not in bit_depths:
+                            # Reject: either no bit depth metadata or not in allowed list
                             continue
                     
-                    if sample_rates and track.sample_rate:
+                    # Only enforce sample rate if profile has it configured (non-empty list)
+                    if sample_rates:  # Profile has sample rate requirements
+                        if not track.sample_rate:
+                            # Reject: no sample rate metadata
+                            continue
                         # Convert to kHz string for comparison
                         sample_rate_khz = str(int(track.sample_rate / 1000))
                         if sample_rate_khz not in sample_rates:
+                            # Reject: sample rate not in allowed list
                             continue
                 
                 matching.append(track)
@@ -857,13 +864,20 @@ class DownloadManager:
                 bit_depths = fmt_config.get('bit_depths', [])
                 sample_rates = fmt_config.get('sample_rates', [])
                 
-                if bit_depths and track.bit_depth:
-                    if str(track.bit_depth) not in bit_depths:
+                # Only enforce bit depth if profile has it configured (non-empty list)
+                if bit_depths:  # Profile has bit depth requirements
+                    if not track.bit_depth or str(track.bit_depth) not in bit_depths:
+                        # Reject: either no bit depth metadata or not in allowed list
                         continue
                 
-                if sample_rates and track.sample_rate:
+                # Only enforce sample rate if profile has it configured (non-empty list)
+                if sample_rates:  # Profile has sample rate requirements
+                    if not track.sample_rate:
+                        # Reject: no sample rate metadata
+                        continue
                     sample_rate_khz = str(int(track.sample_rate / 1000))
                     if sample_rate_khz not in sample_rates:
+                        # Reject: sample rate not in allowed list
                         continue
             
             # For lossy formats (MP3, AAC, OGG, etc.), check bitrate

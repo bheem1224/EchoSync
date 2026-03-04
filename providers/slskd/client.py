@@ -50,11 +50,12 @@ class TrackResult(SearchResult):
         # Normalize path separators (handle both / and \ from Soulseek)
         normalized_path = self.filename.replace('\\', '/')
         
-        # Get just the filename without extension and path
-        # Split by / to get path components, take the last one, then remove extension
+        # Split path into components for heuristic extraction
         path_parts = normalized_path.split('/')
+        
+        # Get just the filename (last component) without extension
         file_with_ext = path_parts[-1] if path_parts else self.filename
-        base_name = os.path.splitext(file_with_ext)[0]
+        clean_filename = os.path.splitext(file_with_ext)[0]
 
         # 1. Parse Technical Metadata (Bit Depth / Sample Rate)
         # Look for patterns like "24bit", "24-bit", "24b", "96kHz", "44.1kHz", "44100Hz"
@@ -94,7 +95,7 @@ class TrackResult(SearchResult):
             ]
 
             for pattern, pattern_type in patterns:
-                match = re.match(pattern, base_name)
+                match = re.match(pattern, clean_filename)
                 if match:
                     groups = match.groups()
                     if pattern_type == 'track_and_title':
@@ -112,14 +113,12 @@ class TrackResult(SearchResult):
                             self.title = self.title or groups[1].strip()
                     break
 
-        # Fallback: use the extracted filename (not full path) as title if nothing was extracted
+        # Fallback: use the clean filename (not full path) as title if nothing was extracted
         if not self.title:
-            self.title = base_name
+            self.title = clean_filename
 
-        # Try to extract artist and album from directory path
-        if ('/' in self.filename or '\\' in self.filename):
-            path_parts = self.filename.replace('\\', '/').split('/')
-            
+        # Heuristic Path Extraction: Extract artist/album from directory structure
+        if len(path_parts) > 1:  # Has directory structure
             # Get meaningful directory parts (skip filename which is last)
             dir_parts = [p for p in path_parts[:-1] if p and not p.startswith('@')]
             
@@ -131,15 +130,22 @@ class TrackResult(SearchResult):
             ]
             
             # Extract artist and album from remaining folder hierarchy
-            # Typically: Artist/Album/Song or just Album/Song
+            # If we have at least 2 meaningful directories: Artist/Album structure
+            # If we have at least 1: likely Album
             if meaningful_dirs:
-                # Last meaningful folder (closest to filename) is likely album
-                if not self.album:
-                    self.album = meaningful_dirs[-1]
+                # Parent folder (closest to file) is likely the album
+                parent_folder = meaningful_dirs[-1] if meaningful_dirs else None
+                # Grandparent folder (one level up) is likely the artist
+                grandparent_folder = meaningful_dirs[-2] if len(meaningful_dirs) >= 2 else None
                 
-                # Second-to-last is likely artist (if we have at least 2)
-                if not self.artist and len(meaningful_dirs) >= 2:
-                    self.artist = meaningful_dirs[-2]
+                # Use heuristic extraction ONLY if parsed values are missing or "Unknown"
+                if not self.artist or self.artist.lower() in ["unknown artist", "unknown", ""]:
+                    if grandparent_folder:
+                        self.artist = grandparent_folder
+                
+                if not self.album or self.album.lower() in ["unknown album", "unknown", ""]:
+                    if parent_folder:
+                        self.album = parent_folder
 
 class SlskdProvider(DownloaderProvider):
     """

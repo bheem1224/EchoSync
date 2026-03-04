@@ -360,6 +360,11 @@ class WeightedMatchingEngine:
 
         reasoning_parts.append(f"Text match: {fuzzy_score:.1%} × {self.weights.text_weight:.1%} = {text_contribution:.1f} points")
 
+        # Store individual component scores for later use (e.g., duration bonus)
+        artist_fuzzy_score = 0.0
+        if source.artist_name and candidate.artist_name:
+            artist_fuzzy_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
+
         if fuzzy_score < self.weights.fuzzy_match_threshold:
             # If fuzzy match is below threshold, fail this match
             reasoning_parts.append(
@@ -411,6 +416,21 @@ class WeightedMatchingEngine:
             normalized_score = (score / max_possible_score) * 100
         else:
             normalized_score = 0.0
+
+        # ===== SAFE DURATION BONUS =====
+        # If duration is near-perfect match (<= 1500ms) AND artist fuzzy score >= 60%,
+        # apply a bonus to help messy filenames pass the threshold.
+        # CRITICAL: Only apply if artist match is strong (prevents false positives).
+        duration_bonus = 0.0
+        if source.duration and candidate.duration:
+            duration_diff_ms = abs(source.duration - candidate.duration)
+            if duration_diff_ms <= 1500:  # Near-perfect duration match
+                if artist_fuzzy_score >= 0.60:  # Artist match is strong enough
+                    duration_bonus = 15.0
+                    normalized_score += duration_bonus
+                    reasoning_parts.append(f"Safe duration bonus: +{duration_bonus:.1f} (duration_diff={duration_diff_ms}ms, artist_score={artist_fuzzy_score:.1%})")
+                else:
+                    reasoning_parts.append(f"Duration bonus NOT applied (artist_score={artist_fuzzy_score:.1%} < 60%)")
 
         # Clamp to 0-100 range
         final_score = max(0.0, min(100.0, normalized_score))

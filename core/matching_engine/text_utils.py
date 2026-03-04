@@ -47,6 +47,8 @@ def normalize_title(title: Optional[str]) -> str:
     """
     Normalize track title for matching.
     
+    - Replace underscores and periods with spaces
+    - Strip technical audio terms (flac, mp3, kbps, hz, bit depth, etc.)
     - Lowercase
     - Remove accents
     - Remove extra spaces
@@ -57,7 +59,20 @@ def normalize_title(title: Optional[str]) -> str:
     if not title:
         return ""
     
+    # STEP 1: Replace underscores and periods with spaces BEFORE other normalization
+    # This helps with filenames like "Artist_Name-Song.Title.mp3"
+    title = title.replace('_', ' ').replace('.', ' ')
+    
     normalized = normalize_text(title)
+    
+    # STEP 2: Strip technical audio terms that pollute fuzzy matching
+    # Pattern covers: flac, mp3, aac, ogg, wav, m4a, 320kbps, 192kbps, 44.1khz, 96khz, 16bit, 24bit, etc.
+    audio_terms_pattern = r'\b(?:flac|mp3|aac|ogg|wav|m4a|opus|alac|ape|dsd|dsf|dff|wma|' \
+                          r'\d+kbps|\d+k|' \
+                          r'\d+(?:\.\d+)?k?hz|' \
+                          r'\d+bit|' \
+                          r'\d+b)\b'
+    normalized = re.sub(audio_terms_pattern, '', normalized, flags=re.IGNORECASE)
     
     # Remove OST/Soundtrack/Movie metadata (must be done before other cleanup)
     # Patterns cover: (From "Movie"), [From Movie], - from "X", (OST), (Original Motion Picture Soundtrack), etc.
@@ -82,6 +97,9 @@ def normalize_title(title: Optional[str]) -> str:
     
     # Keep alphanumeric, spaces, hyphens, parentheses, quotes
     normalized = re.sub(r'[^\w\s\-\(\)\'\"]', '', normalized)
+    
+    # STEP 3: Compress multiple consecutive spaces into single space
+    normalized = re.sub(r'\s+', ' ', normalized)
     
     return normalized.strip()
 
