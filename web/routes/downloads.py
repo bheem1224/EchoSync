@@ -3,6 +3,7 @@ import json
 from core.tiered_logger import get_logger
 from services.download_manager import get_download_manager
 from database.music_database import get_database, Download
+from core.job_queue import list_jobs as jq_list_jobs
 
 logger = get_logger("downloads_route")
 bp = Blueprint("downloads", __name__, url_prefix="/api/downloads")
@@ -67,6 +68,22 @@ def get_queue():
 def run_downloads():
     """Trigger the download manager to process queued downloads immediately."""
     try:
+        # Check if download_manager job is already running
+        jobs = jq_list_jobs()
+        download_job = next((j for j in jobs if j.get("name") == "download_manager"), None)
+        
+        if download_job and download_job.get("running"):
+            return Response(
+                json.dumps({
+                    "error": "Download manager is already running",
+                    "reason": "A download operation is in progress. Please wait for it to complete.",
+                    "job": "download_manager",
+                    "started_at": download_job.get("last_started")
+                }),
+                status=409,
+                mimetype="application/json"
+            )
+        
         dm = get_download_manager()
         dm.ensure_background_task()
         dm.process_downloads_now()

@@ -9,6 +9,7 @@
   let selectedTrackIds = [];
   let isLoading = false;
   let pollingInterval = null;
+  let downloadManagerRunning = false;
 
   $: totalTracks = queueItems.length;
   $: completedCount = queueItems.filter(t => t.status === 'COMPLETED').length;
@@ -19,15 +20,27 @@
   $: allSelected = queueItems.length > 0 && selectedTrackIds.length === queueItems.length;
   $: hasSelection = selectedTrackIds.length > 0;
 
-  // Fetch queue from backend
+  // Fetch queue and job status from backend
   async function fetchQueue() {
     if (isLoading) return;
     isLoading = true;
 
     try {
+      // Fetch queue
       const response = await apiClient.get('/downloads/queue');
       if (response.data && response.data.items) {
         queueItems = response.data.items;
+      }
+
+      // Fetch job status
+      try {
+        const jobsResponse = await apiClient.get('/jobs');
+        if (jobsResponse.data && jobsResponse.data.items) {
+          const downloadJob = jobsResponse.data.items.find(j => j.name === 'download_manager');
+          downloadManagerRunning = downloadJob ? downloadJob.running : false;
+        }
+      } catch (e) {
+        console.debug('Failed to fetch job status:', e);
       }
     } catch (error) {
       console.error('Failed to fetch download queue:', error);
@@ -40,12 +53,24 @@
   // Run download manager
   async function startDownloadManager() {
     try {
-      await apiClient.post('/downloads/run');
+      const response = await apiClient.post('/downloads/run');
+      
+      if (response.status === 409) {
+        // Job is already running
+        feedback.warning(response.data?.reason || 'Download manager is already running');
+        return;
+      }
+      
       feedback.success('Download processing started');
       await fetchQueue(); // Refresh immediately after starting
     } catch (error) {
-      console.error('Failed to start download manager:', error);
-      feedback.error('Failed to start download manager');
+      // Check if it's a 409 conflict
+      if (error.response?.status === 409) {
+        feedback.warning(error.response?.data?.reason || 'Download manager is already running');
+      } else {
+        console.error('Failed to start download manager:', error);
+        feedback.error('Failed to start download manager');
+      }
     }
   }
 
@@ -226,11 +251,12 @@
   <div class="flex gap-2 px-4 py-3 bg-gray-850 border-b border-gray-700">
     <button
       on:click={startDownloadManager}
-      class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium"
-      disabled={isLoading}
+      class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+      disabled={isLoading || downloadManagerRunning}
+      title={downloadManagerRunning ? 'Download manager is already running' : 'Start download processing'}
     >
-      <span>▶️</span>
-      <span>Run Queue</span>
+      <span>{downloadManagerRunning ? '⏱️' : '▶️'}</span>
+      <span>{downloadManagerRunning ? 'Running...' : 'Run Queue'}</span>
     </button>
 
     <button

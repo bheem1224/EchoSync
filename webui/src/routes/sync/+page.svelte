@@ -78,6 +78,7 @@
     loadingPlaylists = true;
     error = '';
     playlists = [];
+    selectedPlaylists = []; // Clear selections when loading new playlists
 
     try {
       console.log(`[Sync] Loading playlists for provider: ${sourceProvider}`);
@@ -110,7 +111,8 @@
 
     try {
       const selectedDetails = playlists
-        .filter(p => selectedPlaylists.includes(p.id))
+        .map((p, index) => ({ ...p, index }))
+        .filter(p => selectedPlaylists.includes(p.index))
         .map(p => {
           const detail = { id: p.id, name: p.name, track_count: p.track_count };
           if (p.account_id !== undefined) {
@@ -181,7 +183,8 @@
       let syncPlaylistName = 'Multi-Playlist Sync';
 
       if (selectedPlaylists.length === 1) {
-        const p = playlists.find(p => p.id === selectedPlaylists[0]);
+        const playlistIndex = selectedPlaylists[0];
+        const p = playlists[playlistIndex];
         if (p) {
           syncPlaylistName = p.name;
           sourceAccountName = p.source_account_name;
@@ -304,10 +307,21 @@
   }
   
   function openScheduleModal() {
+    // Convert indices back to playlist details
+    const playlistDetails = playlists
+      .map((p, index) => ({ ...p, index }))
+      .filter(p => selectedPlaylists.includes(p.index))
+      .map(p => ({
+        id: p.id,
+        name: p.name,
+        track_count: p.track_count,
+        ...(p.account_id !== undefined && { account_id: p.account_id })
+      }));
+
     scheduleForm = {
       source: sourceProvider,
       target: targetProvider,
-      playlists: selectedPlaylists,
+      playlists: playlistDetails,
       interval: 3600,
       download_missing: false,
     };
@@ -370,11 +384,11 @@
     return openAnalysisModal();
   }
 
-  function togglePlaylist(id) {
-    if (selectedPlaylists.includes(id)) {
-      selectedPlaylists = selectedPlaylists.filter(i => i !== id);
+  function togglePlaylist(index) {
+    if (selectedPlaylists.includes(index)) {
+      selectedPlaylists = selectedPlaylists.filter(i => i !== index);
     } else {
-      selectedPlaylists = [...selectedPlaylists, id];
+      selectedPlaylists = [...selectedPlaylists, index];
     }
   }
 
@@ -476,10 +490,10 @@
         </div>
       {:else}
         <div class="playlists-grid">
-          {#each playlists as playlist}
+          {#each playlists as playlist, index}
             <button class="playlist-item" 
-                    class:selected={selectedPlaylists.includes(playlist.id)}
-                    on:click={() => togglePlaylist(playlist.id)}>
+                    class:selected={selectedPlaylists.includes(index)}
+                    on:click={() => togglePlaylist(index)}>
               <div class="playlist-info">
                 <strong>{playlist.name}</strong>
                 {#if playlist.track_count !== undefined}
@@ -492,7 +506,7 @@
                 {/if}
               </div>
               <div class="checkbox">
-                {#if selectedPlaylists.includes(playlist.id)}
+                {#if selectedPlaylists.includes(index)}
                   <svg viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
                   </svg>
