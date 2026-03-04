@@ -1,6 +1,7 @@
 """Metadata API endpoints."""
 
-from flask import Blueprint, jsonify, request
+import mimetypes
+from flask import Blueprint, jsonify, request, send_file
 from pathlib import Path
 from services.metadata_enhancer import get_metadata_enhancer
 from database import get_database, ReviewTask
@@ -15,6 +16,54 @@ def _get_provider(capability: Capability):
     """Get the first available provider with the given capability."""
     from core.plugin_loader import get_provider
     return get_provider(capability)
+
+
+def _extract_source_metadata(file_path: Path):
+    """Extract best-effort source metadata from local file tags/audio headers."""
+    metadata = {
+        "title": None,
+        "artist": None,
+        "album": None,
+        "duration_seconds": None,
+        "bitrate_kbps": None,
+        "sample_rate_hz": None,
+        "channels": None,
+        "file_format": file_path.suffix.lower().lstrip('.'),
+    }
+
+    try:
+        import mutagen
+    except Exception:
+        return metadata
+
+    try:
+        audio = mutagen.File(str(file_path), easy=True)
+        if not audio:
+            return metadata
+
+        tags = getattr(audio, "tags", None) or {}
+        metadata["title"] = (tags.get("title") or [None])[0]
+        metadata["artist"] = (tags.get("artist") or [None])[0]
+        metadata["album"] = (tags.get("album") or [None])[0]
+
+        info = getattr(audio, "info", None)
+        if info:
+            length = getattr(info, "length", None)
+            bitrate = getattr(info, "bitrate", None)
+            sample_rate = getattr(info, "sample_rate", None)
+            channels = getattr(info, "channels", None)
+            if length is not None:
+                metadata["duration_seconds"] = int(length)
+            if bitrate is not None:
+                metadata["bitrate_kbps"] = int(bitrate / 1000)
+            if sample_rate is not None:
+                metadata["sample_rate_hz"] = int(sample_rate)
+            if channels is not None:
+                metadata["channels"] = int(channels)
+    except Exception as e:
+        logger.debug(f"Failed to extract source metadata for {file_path}: {e}")
+
+    return metadata
 
 @bp.get("/queue")
 def get_queue():
@@ -46,6 +95,56 @@ def get_queue():
     except Exception as e:
         logger.error(f"Error getting queue: {e}")
         return jsonify({"error": f"Failed to get queue: {str(e)}"}), 500
+
+
+@bp.get("/queue/<int:task_id>")
+def get_queue_item(task_id: int):
+    """Get full details for one review queue item, including source metadata."""
+    try:
+        db = get_database()
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task or task.status != 'pending':
+                return jsonify({"error": "Task not found"}), 404
+
+            file_path = Path(task.file_path)
+            source_metadata = _extract_source_metadata(file_path) if file_path.exists() else None
+
+            item = {
+                "id": task.id,
+                "file_path": task.file_path,
+                "filename": file_path.name,
+                "detected_metadata": task.detected_metadata,
+                "confidence_score": task.confidence_score,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "source_metadata": source_metadata,
+                "file_exists": file_path.exists(),
+            }
+            return jsonify({"item": item}), 200
+    except Exception as e:
+        logger.error(f"Error getting queue item {task_id}: {e}")
+        return jsonify({"error": f"Failed to get queue item: {str(e)}"}), 500
+
+
+@bp.get("/queue/<int:task_id>/audio")
+def stream_queue_audio(task_id: int):
+    """Stream audio file for a review queue item."""
+    try:
+        db = get_database()
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task or task.status != 'pending':
+                return jsonify({"error": "Task not found"}), 404
+            file_path = Path(task.file_path)
+
+        if not file_path.exists() or not file_path.is_file():
+            return jsonify({"error": "File no longer exists"}), 404
+
+        guessed_type, _ = mimetypes.guess_type(str(file_path))
+        return send_file(str(file_path), mimetype=guessed_type or "application/octet-stream", as_attachment=False)
+    except Exception as e:
+        logger.error(f"Error streaming queue audio for task {task_id}: {e}")
+        return jsonify({"error": "Failed to stream audio"}), 500
 
 @bp.post("/queue/approve")
 def approve_match():
