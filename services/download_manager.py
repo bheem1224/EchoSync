@@ -248,7 +248,7 @@ class DownloadManager:
         queued_ids = []
         with self.db.session_scope() as session:
             # Get up to 30 queued items to enable 10 concurrent searches
-            # Note: SlskdProvider internally limits to 5 concurrent searches (Soulseek IP ban protection)
+            # Note: SlskdProvider internally limits to 3 concurrent searches (Soulseek IP ban protection)
             # Download manager can scale to 10 if other clients (e.g., non-Soulseek) are added later
             items = session.query(Download).filter(Download.status.ilike("queued")).limit(30).all()
             if items:
@@ -264,7 +264,7 @@ class DownloadManager:
             return
 
         # Create all search tasks concurrently (don't await sequentially)
-        # Slskd will throttle to 5 concurrent via semaphore
+        # Slskd will throttle to 3 concurrent via semaphore
         tasks = []
         for download_id in queued_ids:
             logger.debug(f"Queuing download for processing: {download_id}")
@@ -273,7 +273,7 @@ class DownloadManager:
         
         # Wait for all searches to complete (with semaphore limiting concurrent execution)
         if tasks:
-            logger.info(f"Started {len(tasks)} search tasks (Slskd will limit to 5 concurrent)")
+            logger.info(f"Started {len(tasks)} search tasks (Slskd will limit to 3 concurrent)")
             results = await asyncio.gather(*tasks, return_exceptions=True)
             failed = sum(1 for r in results if isinstance(r, Exception))
             if failed > 0:

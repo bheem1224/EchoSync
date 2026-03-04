@@ -173,8 +173,8 @@ class SlskdProvider(DownloaderProvider):
         self.base_url: Optional[str] = None
         self.api_key: Optional[str] = None
         self.download_path: Path = Path("./downloads")
-        # Concurrency limiter: Slskd can only handle 5 concurrent searches (IP ban protection)
-        self._search_semaphore = asyncio.Semaphore(5)
+        # Concurrency limiter: Slskd can only handle 3 concurrent searches (IP ban protection)
+        self._search_semaphore = asyncio.Semaphore(3)
         self._setup_client()
         self._register_health_check()
     
@@ -442,7 +442,7 @@ class SlskdProvider(DownloaderProvider):
         
         Default timeout: 180 seconds (3 minutes) to allow extended waiting for slskd responses.
         """
-        # Acquire semaphore slot (max 5 concurrent searches for IP ban protection)
+        # Acquire semaphore slot (max 3 concurrent searches for IP ban protection)
         async with self._search_semaphore:
             return await self._do_async_search(query, basic_filters, timeout)
 
