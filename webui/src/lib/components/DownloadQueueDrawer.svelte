@@ -66,6 +66,24 @@
     }
   }
 
+  // Search selected tracks
+  async function searchSelected() {
+    if (selectedTrackIds.length === 0) return;
+
+    try {
+      // Trigger search for each selected track
+      for (const trackId of selectedTrackIds) {
+        await apiClient.post(`/downloads/${trackId}/search`);
+      }
+      feedback.success(`Searching ${selectedTrackIds.length} track(s)`);
+      selectedTrackIds = [];
+      await fetchQueue(); // Refresh to show updated status
+    } catch (error) {
+      console.error('Failed to search selected tracks:', error);
+      feedback.error('Failed to search selected tracks');
+    }
+  }
+
   // Clear entire queue
   async function clearQueue() {
     if (!confirm('Are you sure you want to clear the entire download queue?')) {
@@ -213,6 +231,16 @@
     >
       <span>▶️</span>
       <span>Run Queue</span>
+    </button>
+
+    <button
+      on:click={searchSelected}
+      class="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+      disabled={!hasSelection || isLoading}
+      title="Search for selected items"
+    >
+      <span>🔍</span>
+      <span>Search Selected</span>
     </button>
 
     <button
