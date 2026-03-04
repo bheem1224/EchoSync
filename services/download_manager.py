@@ -1179,14 +1179,10 @@ class DownloadManager:
         try:
             # Create a coroutine for processing queued items and checking active downloads
             async def manual_process():
-                queued_count = 0
-                with self.db.session_scope() as session:
-                    queued_count = session.query(Download).filter(Download.status.ilike("queued")).count()
-
-                if queued_count == 0:
-                    requeued = self._requeue_retryable_failed_items(limit=50)
-                    if requeued > 0:
-                        logger.info(f"Manual run: re-queued {requeued} retryable failed items")
+                # Always requeue failed items when user manually runs the queue
+                requeued = self._requeue_retryable_failed_items(limit=50)
+                if requeued > 0:
+                    logger.info(f"Manual run: re-queued {requeued} retryable failed items")
 
                 provider = self._get_provider()
                 if provider:
