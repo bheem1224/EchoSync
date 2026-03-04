@@ -27,6 +27,10 @@ def normalize_text(text: Optional[str]) -> str:
     
     # Normalize unicode characters (é -> e, ñ -> n, etc.)
     text = remove_accents(text)
+
+    # Unify featured-artist separators so "feat/ft/featuring/x" become "&"
+    # and compare consistently against strings that already use '&'.
+    text = re.sub(r'\b(feat\.?|ft\.?|featuring|x)\b', '&', text, flags=re.IGNORECASE)
     
     # Remove extra whitespace
     text = re.sub(r'\s+', ' ', text)
@@ -110,7 +114,7 @@ def normalize_artist(artist: Optional[str]) -> str:
     
     - Lowercase
     - Remove accents
-    - Remove "feat.", "ft.", "featuring" markers (keep artist names)
+    - Standardize featured artist connectors to '&'
     - Remove extra spaces
     """
     if not artist:
@@ -118,9 +122,11 @@ def normalize_artist(artist: Optional[str]) -> str:
     
     normalized = normalize_text(artist)
     
-    # Remove common feat/ft markers and everything after
-    # e.g., "Artist feat. Another" -> "Artist"
-    normalized = re.sub(r'\s*(?:feat\.|featuring|ft\.?|with).*$', '', normalized, flags=re.IGNORECASE)
+    # normalize_text already unifies feat/ft/featuring/x to '&'.
+    # Keep collaborator names so forms like "Artist feat. Guest" and
+    # "Artist & Guest" normalize to the same canonical string.
+    normalized = re.sub(r'\s*&\s*', ' & ', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized)
     
     return normalized.strip()
 

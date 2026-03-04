@@ -17,6 +17,7 @@ Design Principle: "Central Control"
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime
@@ -505,9 +506,9 @@ class DownloadManager:
         """
         queries = []
         
-        # Use matching engine's normalize_title which strips OST/featured artists/etc.
-        # This ensures consistency with how the matching engine will compare results
-        search_title = normalize_title(track.title) if track.title else track.title
+        # Build a core title for provider search by stripping bracketed/parenthetical
+        # qualifiers, then applying standard normalization.
+        search_title = self._build_core_search_title(track.title)
         
         if search_title != track.title:
             logger.info(f"Normalized title for search: '{track.title}' -> '{search_title}'")
@@ -552,8 +553,9 @@ class DownloadManager:
         """
         strategies: List[Dict[str, Any]] = []
 
-        # Use matching engine normalization for consistency
-        search_title = normalize_title(track.title) if track.title else track.title
+        # Build a core title for provider search by stripping bracketed/parenthetical
+        # qualifiers, then applying standard normalization.
+        search_title = self._build_core_search_title(track.title)
         if search_title != track.title:
             logger.info(f"Normalized title for search: '{track.title}' -> '{search_title}'")
 
@@ -596,6 +598,25 @@ class DownloadManager:
                 seen_queries.add(key)
 
         return unique
+
+    def _build_core_search_title(self, title: Optional[str]) -> str:
+        """Build core query title by stripping bracketed qualifiers before normalization.
+
+        Example:
+            "Song Name (2011 Remaster) [Deluxe]" -> "song name"
+        """
+        if not title:
+            return ""
+
+        # Strip anything in parentheses/brackets before constructing provider query.
+        core_title = re.sub(r"\s*[\(\[][^(\)\]]*[\)\]]", "", title)
+        core_title = re.sub(r"\s+", " ", core_title).strip()
+
+        # Fall back to original title if stripping removed too much.
+        if not core_title:
+            core_title = title
+
+        return normalize_title(core_title)
 
     def _deduplicate_candidates(self, candidates: List[SoulSyncTrack]) -> List[SoulSyncTrack]:
         """Deduplicate candidates collected from multiple fallback strategies.

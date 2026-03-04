@@ -400,6 +400,18 @@ class SlskdProvider(DownloaderProvider):
                 except Exception:
                     duration_ms = None
 
+                # Mathematical size gating for FLAC to reduce fake/transcoded files.
+                # If approximate bytes-per-second is too low, skip candidate.
+                if quality == 'flac' and duration_ms and duration_ms > 0 and size and size > 0:
+                    duration_seconds = duration_ms / 1000.0
+                    approx_bytes_per_second = size / duration_seconds
+                    if approx_bytes_per_second < 70000:
+                        logger.debug(
+                            f"Skipping suspicious FLAC (likely transcode): {filename} "
+                            f"bps={approx_bytes_per_second:.0f} < 70000"
+                        )
+                        continue
+
                 # Create TrackResult (duration stored in milliseconds)
                 track = TrackResult(
                     username=username,
