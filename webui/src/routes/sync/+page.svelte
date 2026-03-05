@@ -121,12 +121,18 @@
           return detail;
         });
 
-      const response = await apiClient.post('/playlists/analyze', {
-        source: sourceProvider,
-        target: targetProvider,
-        quality_profile: selectedQuality,
-        playlists: selectedDetails
-      });
+      // Increase timeout proportional to number of selected playlists
+      const analysisTimeoutMs = Math.max(10000, selectedPlaylists.length * 10000);
+      const response = await apiClient.post(
+        '/playlists/analyze',
+        {
+          source: sourceProvider,
+          target: targetProvider,
+          quality_profile: selectedQuality,
+          playlists: selectedDetails,
+        },
+        { timeout: analysisTimeoutMs }
+      );
       analysisResult = response.data;
     } catch (err) {
       console.error('[Sync] Analysis error:', err);
@@ -193,14 +199,20 @@
         }
       }
 
-      const response = await apiClient.post('/playlists/sync', {
-        source: sourceProvider,
-        target_source: targetProvider,
-        playlist_name: syncPlaylistName,
-        source_account_name: sourceAccountName,
-        matches: analysisResult.summary.matched_pairs,
-        download_missing: syncDownloadMissing
-      });
+      // Increase timeout proportional to number of selected playlists
+      const syncTimeoutMs = Math.max(10000, selectedPlaylists.length * 10000);
+      const response = await apiClient.post(
+        '/playlists/sync',
+        {
+          source: sourceProvider,
+          target_source: targetProvider,
+          playlist_name: syncPlaylistName,
+          source_account_name: sourceAccountName,
+          matches: analysisResult.summary.matched_pairs,
+          download_missing: syncDownloadMissing,
+        },
+        { timeout: syncTimeoutMs }
+      );
       
       if (response.data.accepted) {
         syncConfigModalOpen = false;
