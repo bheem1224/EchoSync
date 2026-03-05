@@ -250,7 +250,8 @@ class DownloadManager:
             # Get up to 30 queued items to enable 10 concurrent searches
             # Note: SlskdProvider internally limits to 3 concurrent searches (Soulseek IP ban protection)
             # Download manager can scale to 10 if other clients (e.g., non-Soulseek) are added later
-            items = session.query(Download).filter(Download.status.ilike("queued")).limit(30).all()
+            # Order by created_at DESC to prioritize newer tracks first
+            items = session.query(Download).filter(Download.status.ilike("queued")).order_by(Download.created_at.desc()).limit(30).all()
             if items:
                 logger.info(f"Found {len(items)} queued items for processing.")
 
@@ -1200,7 +1201,11 @@ class DownloadManager:
             logger.error(f"Failed to trigger download processing: {e}", exc_info=True)
 
     def _requeue_retryable_failed_items(self, limit: int = 50) -> int:
-        """Move retryable failed items back to queued so manual runs can re-attempt them."""
+        """Move retryable failed items back to queued so manual runs can re-attempt them.
+        
+        Prioritizes NEWEST tracks first (DESC by created_at) so most recent failures are retried first.
+        Also increments retry_count to track retry attempts.
+        """
         retryable_statuses = {
             "failed_no_results",
             "failed_no_match",
@@ -1216,7 +1221,7 @@ class DownloadManager:
             items = (
                 session.query(Download)
                 .filter(Download.status.in_(retryable_statuses))
-                .order_by(Download.updated_at.asc())
+                .order_by(Download.created_at.desc())  # Newest first
                 .limit(limit)
                 .all()
             )
@@ -1224,9 +1229,11 @@ class DownloadManager:
             for item in items:
                 item.status = "queued"
                 item.provider_id = None
+                item.retry_count = (item.retry_count or 0) + 1
                 item.updated_at = datetime.utcnow()
                 requeued += 1
 
+        logger.info(f"Re-queued {requeued} failed items for retry (prioritizing newest first)")
         return requeued
 
 # Global Accessor
