@@ -100,6 +100,9 @@ class Track(Base):
     artist_id: Mapped[int] = mapped_column(
         ForeignKey("artists.id", ondelete="CASCADE"), nullable=False
     )
+    sponsor_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
 
     duration: Mapped[Optional[int]] = mapped_column()  # milliseconds
     track_number: Mapped[Optional[int]] = mapped_column()
@@ -154,11 +157,13 @@ class ExternalIdentifier(Base):
 class UserRating(Base):
     __tablename__ = "user_ratings"
     __table_args__ = (
-        UniqueConstraint("user_identifier", "track_id", "source", name="uq_user_track_source"),
+        UniqueConstraint("user_id", "track_id", "source", name="uq_user_track_source"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_identifier: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     track_id: Mapped[int] = mapped_column(
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -168,6 +173,62 @@ class UserRating(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     track: Mapped[Track] = relationship(back_populates="user_ratings")
+
+
+class UserAlbumRating(Base):
+    __tablename__ = "user_album_ratings"
+    __table_args__ = (
+        UniqueConstraint("user_id", "album_id", "source", name="uq_user_album_source"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    album_id: Mapped[int] = mapped_column(
+        ForeignKey("albums.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(String, nullable=False, default="local")
+    rating: Mapped[Optional[float]] = mapped_column(Float)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class UserArtistRating(Base):
+    """Also acts as user_artist_tracking for Lidarr-style artist tracking."""
+    __tablename__ = "user_artist_ratings"
+    __table_args__ = (
+        UniqueConstraint("user_id", "artist_id", "source", name="uq_user_artist_source"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    artist_id: Mapped[int] = mapped_column(
+        ForeignKey("artists.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(String, nullable=False, default="local")
+    rating: Mapped[Optional[float]] = mapped_column(Float)
+    is_tracked: Mapped[bool] = mapped_column(default=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class UserTrackState(Base):
+    """Tracks physical state intent per user (e.g., soft deletes)."""
+    __tablename__ = "user_track_states"
+    __table_args__ = (
+        UniqueConstraint("user_id", "track_id", name="uq_user_track_state"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    track_id: Mapped[int] = mapped_column(
+        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    is_unlinked: Mapped[bool] = mapped_column(default=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class AudioFingerprint(Base):
@@ -233,6 +294,9 @@ class Download(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    sponsor_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

@@ -187,7 +187,7 @@ def override_track(track_id):
             # Check if rating exists
             existing = session.query(UserRating).filter(
                 UserRating.track_id == track_id,
-                UserRating.user_identifier == str(system_user_id)
+                UserRating.user_id == system_user_id
             ).first()
 
             if existing:
@@ -196,7 +196,7 @@ def override_track(track_id):
             else:
                 new_rating = UserRating(
                     track_id=track_id,
-                    user_identifier=str(system_user_id),
+                    user_id=system_user_id,
                     rating=rating_value
                 )
                 session.add(new_rating)

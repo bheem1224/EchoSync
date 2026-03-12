@@ -6,7 +6,7 @@ Upserts data into the `user_ratings` table, mapped correctly per source and user
 from typing import Optional
 from sqlalchemy import select, and_
 from sqlalchemy.orm import Session
-from database.music_database import get_database, Track, Artist, UserRating
+from database.music_database import get_database, Track, Artist, User, UserRating
 from core.tiered_logger import get_logger
 from datetime import datetime
 
@@ -15,6 +15,29 @@ logger = get_logger("user_ratings_service")
 class UserRatingsService:
     def __init__(self):
         self.db = get_database()
+
+    def _get_or_create_user(self, session: Session, user_identifier: str, source: str) -> int:
+        """
+        Get or create a User entry for the given external user_identifier and source.
+        This ensures that we can use user_id (int) in the UserRating table while storing
+        the provider's identifier in `username` for mapping.
+        """
+        internal_username = f"{source}_{user_identifier}"
+
+        user = session.scalars(
+            select(User).where(User.username == internal_username)
+        ).first()
+
+        if user:
+            return user.id
+
+        new_user = User(
+            username=internal_username,
+            provider=source
+        )
+        session.add(new_user)
+        session.flush() # flush to get the ID
+        return new_user.id
 
     def _get_track_id(self, session: Session, artist_name: str, track_title: str) -> Optional[int]:
         """Look up internal track_id by artist name and track title."""
@@ -36,11 +59,13 @@ class UserRatingsService:
                 logger.debug(f"Track not found locally: {artist_name} - {track_title}. Ignoring rating payload.")
                 return
 
+            user_id = self._get_or_create_user(session, user_identifier, source)
+
             user_rating = session.scalars(
                 select(UserRating).where(
                     and_(
                         UserRating.track_id == track_id,
-                        UserRating.user_identifier == user_identifier,
+                        UserRating.user_id == user_id,
                         UserRating.source == source
                     )
                 )
@@ -51,7 +76,7 @@ class UserRatingsService:
                 user_rating.timestamp = datetime.utcnow()
             else:
                 user_rating = UserRating(
-                    user_identifier=user_identifier,
+                    user_id=user_id,
                     track_id=track_id,
                     source=source,
                     rating=float(rating),
@@ -71,11 +96,13 @@ class UserRatingsService:
                 logger.debug(f"Track not found locally: {artist_name} - {track_title}. Ignoring scrobble payload.")
                 return
 
+            user_id = self._get_or_create_user(session, user_identifier, source)
+
             user_rating = session.scalars(
                 select(UserRating).where(
                     and_(
                         UserRating.track_id == track_id,
-                        UserRating.user_identifier == user_identifier,
+                        UserRating.user_id == user_id,
                         UserRating.source == source
                     )
                 )
@@ -86,7 +113,7 @@ class UserRatingsService:
                 user_rating.timestamp = datetime.utcnow()
             else:
                 user_rating = UserRating(
-                    user_identifier=user_identifier,
+                    user_id=user_id,
                     track_id=track_id,
                     source=source,
                     play_count=1,
@@ -107,11 +134,13 @@ class UserRatingsService:
                 logger.debug(f"Track not found locally: {artist_name} - {track_title}. Ignoring play_count payload.")
                 return
 
+            user_id = self._get_or_create_user(session, user_identifier, source)
+
             user_rating = session.scalars(
                 select(UserRating).where(
                     and_(
                         UserRating.track_id == track_id,
-                        UserRating.user_identifier == user_identifier,
+                        UserRating.user_id == user_id,
                         UserRating.source == source
                     )
                 )
@@ -122,7 +151,7 @@ class UserRatingsService:
                 user_rating.timestamp = datetime.utcnow()
             else:
                 user_rating = UserRating(
-                    user_identifier=user_identifier,
+                    user_id=user_id,
                     track_id=track_id,
                     source=source,
                     play_count=play_count,
