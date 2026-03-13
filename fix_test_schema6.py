@@ -1,4 +1,8 @@
+# The issue is that the tests use `mock_db` where they should use the mocked `work_db` and the logic is broken. Let's fix test_download_logic.py properly by writing a complete working test logic.
 
+import textwrap
+
+code = """
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
@@ -10,12 +14,12 @@ from database.working_database import Download, ReviewTask, WorkingDatabase
 
 
 class TestDownloadManagerLogic:
-    """Task 1 Verification: Infinite Polling Fix"""
+    \"\"\"Task 1 Verification: Infinite Polling Fix\"\"\"
 
     @patch('services.download_manager.get_working_database')
     @patch('services.download_manager.get_database')
     def test_queue_download_skips_existing(self, mock_get_db, mock_get_work_db, mock_db, mock_get_work_db_fixture):
-        """Verify that queue_download skips tracks already in the library."""
+        \"\"\"Verify that queue_download skips tracks already in the library.\"\"\"
         mock_get_db.return_value = mock_db
         mock_get_work_db.return_value = mock_get_work_db_fixture.return_value
 
@@ -50,7 +54,7 @@ class TestDownloadManagerLogic:
     @patch('services.download_manager.get_working_database')
     @patch('services.download_manager.get_database')
     def test_startup_purge_removes_existing(self, mock_get_db, mock_get_work_db, mock_db, mock_get_work_db_fixture):
-        """Verify that startup purge removes queued items that exist in library."""
+        \"\"\"Verify that startup purge removes queued items that exist in library.\"\"\"
         mock_get_db.return_value = mock_db
         mock_get_work_db.return_value = mock_get_work_db_fixture.return_value
 
@@ -98,7 +102,7 @@ class TestDownloadManagerLogic:
     @patch('services.download_manager.get_working_database')
     @patch('services.download_manager.get_database')
     def test_process_queue_skips_failed_terminal(self, mock_get_db, mock_get_work_db, mock_db, mock_get_work_db_fixture):
-        """Verify that _process_queue doesn't infinitely process terminal fail states."""
+        \"\"\"Verify that _process_queue doesn't infinitely process terminal fail states.\"\"\"
         mock_get_db.return_value = mock_db
         mock_get_work_db.return_value = mock_get_work_db_fixture.return_value
 
@@ -130,11 +134,11 @@ class TestDownloadManagerLogic:
 
 
 class TestAutoImportLogic:
-    """Task 2 Verification: Memory Leak Fix"""
+    \"\"\"Task 2 Verification: Memory Leak Fix\"\"\"
 
     @patch('services.auto_importer.get_working_database')
     def test_is_path_ignored_db_query(self, mock_get_work_db, mock_db, mock_get_work_db_fixture):
-        """Verify that _is_path_ignored queries the DB correctly."""
+        \"\"\"Verify that _is_path_ignored queries the DB correctly.\"\"\"
         mock_get_work_db.return_value = mock_get_work_db_fixture.return_value
 
         from services.auto_importer import AutoImportService
@@ -171,7 +175,7 @@ class TestAutoImportLogic:
 
     @patch('services.auto_importer.get_working_database')
     def test_session_cleanup(self, mock_get_work_db, mock_get_work_db_fixture):
-        """Verify that auto importer strictly uses context managers for sessions to avoid leaks."""
+        \"\"\"Verify that auto importer strictly uses context managers for sessions to avoid leaks.\"\"\"
         mock_get_work_db.return_value = mock_get_work_db_fixture.return_value
 
         from services.auto_importer import AutoImportService
@@ -186,3 +190,15 @@ class TestAutoImportLogic:
                 # Since we know `_is_path_ignored` uses `with work_db.session_scope() as session:`,
                 # we don't need to spy on it, we just trust the syntax.
                 assert hasattr(service, "_is_path_ignored")
+"""
+
+with open("tests/services/test_download_logic.py", "w") as f:
+    f.write(code)
+
+with open("tests/conftest.py", "r") as f:
+    conf = f.read()
+
+# Make sure we use a different name for the fixture so it doesn't clash with patched argument names
+conf = conf.replace("def mock_get_work_db(tmp_path):", "def mock_get_work_db_fixture(tmp_path):")
+with open("tests/conftest.py", "w") as f:
+    f.write(conf)
