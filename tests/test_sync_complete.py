@@ -11,7 +11,7 @@ from web.routes.playlists import (
     load_scheduled_syncs_on_startup,
 )
 from core.job_queue import job_queue
-from web.utils.event_bus import event_bus
+from core.event_bus import event_bus
 from core.sync_history import sync_history
 from flask import Flask
 
