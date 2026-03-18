@@ -50,7 +50,11 @@ class User(WorkingBase):
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
-    track_states: Mapped[list["UserTrackState"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    track_states: Mapped[list["UserTrackState"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="[UserTrackState.user_id]"
+    )
     artist_ratings: Mapped[list["UserArtistRating"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     album_ratings: Mapped[list["UserAlbumRating"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
@@ -136,12 +140,15 @@ class UserTrackState(WorkingBase):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     is_unlinked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_hard_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    sponsor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
-    user: Mapped[User] = relationship(back_populates="track_states")
+    user: Mapped[User] = relationship(back_populates="track_states", foreign_keys=[user_id])
+    sponsor: Mapped[Optional[User]] = relationship(foreign_keys=[sponsor_id])
 
 
 class UserArtistRating(WorkingBase):
