@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import Column, Integer, MetaData, String, create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
-from core.models import SoulSyncTrack
+from core.matching_engine import SoulSyncTrack
 from database.working_database import ProviderStorageBox, UserRating, WorkingBase
 
 
