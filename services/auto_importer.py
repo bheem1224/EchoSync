@@ -21,7 +21,7 @@ from core.job_queue import register_job
 from core.tiered_logger import get_logger
 from services.metadata_enhancer import get_metadata_enhancer
 from database import get_database
-from database.music_database import ReviewTask
+from database.working_database import get_working_database, ReviewTask
 
 logger = get_logger("services.auto_importer")
 
@@ -115,13 +115,10 @@ class AutoImportService:
             self._scan_lock.release()
 
     def _is_path_ignored(self, file_path: str) -> bool:
-        """Check if a file path is explicitly ignored in the database.
-        
-        Uses a fast existence query on the indexed file_path column.
-        """
+        """Check if a file was explicitly ignored in a previous review."""
+        work_db = get_working_database()
         try:
-            db = get_database()
-            with db.session_scope() as session:
+            with work_db.session_scope() as session:
                 # Use query().exists() for efficiency
                 # Note: ReviewTask.file_path is indexed
                 exists = session.query(session.query(ReviewTask).filter(

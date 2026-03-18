@@ -103,16 +103,12 @@ def mock_config_manager(monkeypatch):
 pytest.ANY = ANY
 
 @pytest.fixture
-def mock_get_work_db_fixture(tmp_path):
+def mock_work_db(tmp_path):
     from database.working_database import WorkingDatabase
     db_path = tmp_path / "working.db"
     work_db = WorkingDatabase(str(db_path))
     work_db.create_all()
-    # We yield a MagicMock that returns work_db when called
-    from unittest.mock import MagicMock
-    mock = MagicMock()
-    mock.return_value = work_db
-    yield mock
+    yield work_db
     work_db.dispose()
 
 @pytest.fixture
