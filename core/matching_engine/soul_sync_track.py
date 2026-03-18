@@ -100,10 +100,24 @@ class SoulSyncTrack:
     quality_tags: Optional[List[str]] = None
     is_compilation: Optional[bool] = None
     
+
     # External Provider Links
     identifiers: Dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def sync_id(self) -> str:
+        import base64
+        if self.musicbrainz_id:
+            return f"ss:track:mbid:{self.musicbrainz_id}"
+
+        artist = (self.artist_name or "").lower()
+        title = (getattr(self, 'title', None) or self.raw_title or "").lower()
+        meta_string = f"{artist}|{title}"
+        b64_string = base64.b64encode(meta_string.encode("utf-8")).decode("utf-8")
+        return f"ss:track:meta:{b64_string}"
+
     def __post_init__(self):
+
         """
         Auto-clean and normalize data upon instantiation.
         """
@@ -223,6 +237,7 @@ class SoulSyncTrack:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage."""
         return {
+            'sync_id': self.sync_id,
             'title': self.title,
             'raw_title': self.raw_title,
             'display_title': self.display_title,
