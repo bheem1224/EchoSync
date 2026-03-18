@@ -5,8 +5,9 @@ from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
-from datetime import datetime, timedelta
+from datetime import timedelta
 
+from time_utils import utc_now
 from core.tiered_logger import get_logger
 
 logger = get_logger("cert_manager")
@@ -55,10 +56,10 @@ def ensure_ssl_certs(data_dir: str = "data") -> tuple[str, str]:
         ).serial_number(
             x509.random_serial_number()
         ).not_valid_before(
-            datetime.utcnow()
+            utc_now()
         ).not_valid_after(
             # Certificate valid for 10 years
-            datetime.utcnow() + timedelta(days=3650)
+            utc_now() + timedelta(days=3650)
         ).add_extension(
             x509.SubjectAlternativeName([x509.DNSName("localhost")]),
             critical=False,

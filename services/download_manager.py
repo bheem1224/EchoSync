@@ -15,12 +15,10 @@ Design Principle: "Central Control"
 """
 
 import asyncio
-import json
 import logging
 import re
 import threading
 import time
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -28,6 +26,7 @@ from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 from core.matching_engine.text_utils import normalize_artist, normalize_title
 from core.settings import config_manager
+from time_utils import utc_now
 from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
 from database.music_database import get_database, Track, Artist, Album
@@ -113,8 +112,8 @@ class DownloadManager:
                 sync_id=track.sync_id,
                 soul_sync_track=track_json,
                 status="queued",
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                created_at=utc_now(),
+                updated_at=utc_now()
             )
             session.add(download)
             session.flush() # Populate ID
@@ -191,7 +190,7 @@ class DownloadManager:
                 logger.warning(f"Found {len(stuck_items)} stuck downloads. Resetting to 'queued'.")
                 for item in stuck_items:
                     item.status = "queued"
-                    item.updated_at = datetime.utcnow()
+                    item.updated_at = utc_now()
             
             # Also clean up legacy downloads with invalid provider_id format
             # These are from before the compound ID (username|filename) format was implemented
@@ -206,7 +205,7 @@ class DownloadManager:
                     # Legacy format without username prefix - mark as failed
                     logger.debug(f"Cleaning up legacy download entry: {item.id}")
                     item.status = "failed_legacy_format"
-                    item.updated_at = datetime.utcnow()
+                    item.updated_at = utc_now()
                     cleaned += 1
             
             if cleaned > 0:
@@ -261,7 +260,7 @@ class DownloadManager:
             for item in items:
                 # Mark as processing so other workers (if any) don't grab it
                 item.status = "searching"
-                item.updated_at = datetime.utcnow()
+                item.updated_at = utc_now()
                 queued_ids.append(item.id)
 
         if not queued_ids:
@@ -997,7 +996,7 @@ class DownloadManager:
             download = session.query(Download).get(download_id)
             if download:
                 download.status = (status or "").lower()
-                download.updated_at = datetime.utcnow()
+                download.updated_at = utc_now()
                 if provider_id:
                     download.provider_id = provider_id
 
@@ -1228,7 +1227,7 @@ class DownloadManager:
                 item.status = "queued"
                 item.provider_id = None
                 item.retry_count = (item.retry_count or 0) + 1
-                item.updated_at = datetime.utcnow()
+                item.updated_at = utc_now()
                 requeued += 1
 
         logger.info(f"Re-queued {requeued} failed items for retry (prioritizing newest first)")

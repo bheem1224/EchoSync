@@ -11,13 +11,14 @@ This module provides:
 import functools
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Callable, Optional, TypeVar, cast
 from pathlib import Path
 import hashlib
 
+from time_utils import utc_now
 from sqlalchemy import text
-from database import MusicDatabase
+from database.music_database import MusicDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,7 @@ class ProviderCache:
             json_value = json.dumps(value, default=str)
 
             # Calculate expiration time
-            expires_at = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+            expires_at = utc_now() + timedelta(seconds=ttl_seconds)
 
             query = text("""
                 INSERT OR REPLACE INTO parsed_tracks

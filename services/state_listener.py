@@ -1,7 +1,7 @@
 from core.event_bus import event_bus as default_event_bus
+from time_utils import utc_now
 from core.tiered_logger import get_logger
 from database.working_database import get_working_database, UserRating, UserTrackState, User
-from datetime import datetime
 
 logger = get_logger("state_listener")
 
@@ -55,13 +55,13 @@ class StateListenerService:
 
                 if existing:
                     existing.rating = float(rating)
-                    existing.timestamp = datetime.utcnow()
+                    existing.timestamp = utc_now()
                 else:
                     new_rating = UserRating(
                         user_id=internal_user_id,
                         sync_id=sync_id,
                         rating=float(rating),
-                        timestamp=datetime.utcnow()
+                        timestamp=utc_now()
                     )
                     session.add(new_rating)
                 session.commit()

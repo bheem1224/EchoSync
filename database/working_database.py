@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
+from time_utils import UTCDateTime, utc_now
+
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -46,7 +48,7 @@ class User(WorkingBase):
     plex_id: Mapped[Optional[str]] = mapped_column(String, unique=True)
     provider: Mapped[Optional[str]] = mapped_column(String)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
     track_states: Mapped[list["UserTrackState"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     artist_ratings: Mapped[list["UserArtistRating"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -63,7 +65,7 @@ class UserRating(WorkingBase):
     user_id: Mapped[int] = mapped_column(nullable=False, index=True)
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rating: Mapped[float] = mapped_column(Float)  # 1-5, or system flags 0.1, 2.1, 3.1
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 
 class Wishlist(WorkingBase):
@@ -73,9 +75,9 @@ class Wishlist(WorkingBase):
     query_string: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
 
@@ -86,12 +88,12 @@ class WatchlistArtist(WorkingBase):
     id: Mapped[int] = mapped_column(primary_key=True)
     spotify_artist_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
     artist_name: Mapped[str] = mapped_column(String, nullable=False)
-    last_scan_timestamp: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_scan_timestamp: Mapped[Optional[datetime]] = mapped_column(UTCDateTime())
     image_url: Mapped[Optional[str]] = mapped_column(String)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
 
@@ -104,7 +106,7 @@ class ReviewTask(WorkingBase):
     status: Mapped[str] = mapped_column(String, default="pending", nullable=False)  # pending, approved, ignored
     detected_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
     confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 
 class Download(WorkingBase):
@@ -118,9 +120,9 @@ class Download(WorkingBase):
     provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
 
@@ -136,7 +138,7 @@ class UserTrackState(WorkingBase):
     is_unlinked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
     user: Mapped[User] = relationship(back_populates="track_states")

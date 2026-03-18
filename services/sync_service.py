@@ -7,6 +7,7 @@ from core.provider import ProviderRegistry
 from services.download_manager import get_download_manager
 from services.match_service import MatchService, MatchContext
 from core.matching_engine import SoulSyncTrack, MatchResult
+from time_utils import utc_isoformat, utc_now
 
 logger = get_logger("sync_service")
 
@@ -200,7 +201,7 @@ class PlaylistSyncService:
                 synced_tracks=0,
                 downloaded_tracks=0,
                 failed_tracks=0,
-                sync_time=datetime.now(),
+                sync_time=utc_now(),
                 errors=[f"Sync already in progress for playlist: {playlist.name}"]
             )
         
@@ -372,7 +373,7 @@ class PlaylistSyncService:
                                 'playlist_name': playlist.name,
                                 'playlist_id': playlist.id,
                                 'sync_type': 'automatic_sync',
-                                'timestamp': datetime.now().isoformat()
+                                'timestamp': utc_isoformat(utc_now())
                             }
                         )
 
@@ -392,7 +393,7 @@ class PlaylistSyncService:
                 synced_tracks=synced_tracks,
                 downloaded_tracks=downloaded_tracks,
                 failed_tracks=failed_tracks,
-                sync_time=datetime.now(),
+                sync_time=utc_now(),
                 errors=errors,
                 wishlist_added_count=wishlist_added_count
             )
@@ -581,7 +582,7 @@ class PlaylistSyncService:
             synced_tracks=0,
             downloaded_tracks=0,
             failed_tracks=0,
-            sync_time=datetime.now(),
+            sync_time=utc_now(),
             errors=errors,
             wishlist_added_count=0
         )

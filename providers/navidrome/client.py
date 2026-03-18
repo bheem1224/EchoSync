@@ -8,6 +8,7 @@ from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
 from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from time_utils import utc_now
 
 logger = get_logger("navidrome_client")
 
@@ -794,7 +795,7 @@ class NavidromeClient(MediaServerProvider):
                 albums=[],  # Will be fetched per-artist during processing
                 tracks=[],  # Will be fetched per-album during processing
                 full_refresh=True,
-                last_checked=datetime.now()
+                last_checked=utc_now()
             )
         
         try:
@@ -805,7 +806,7 @@ class NavidromeClient(MediaServerProvider):
             all_artists = self.get_all_artists()
             if not all_artists:
                 logger.info("No artists found")
-                return ContentChanges(last_checked=datetime.now())
+                return ContentChanges(last_checked=utc_now())
             
             # Sample first 200 artists to get recent albums
             sample_artists = all_artists[:200]
@@ -821,7 +822,7 @@ class NavidromeClient(MediaServerProvider):
             
             if not all_albums:
                 logger.info("No albums found")
-                return ContentChanges(last_checked=datetime.now())
+                return ContentChanges(last_checked=utc_now())
             
             # Sort by addedAt date (newest first) and take recent ones
             try:
@@ -862,7 +863,7 @@ class NavidromeClient(MediaServerProvider):
                 albums=recent_albums,
                 tracks=[],  # Will be fetched per-album during processing
                 full_refresh=False,
-                last_checked=datetime.now(),
+                last_checked=utc_now(),
                 metadata={'recent_albums_checked': len(recent_albums), 'sample_artists': len(sample_artists)}
             )
             

@@ -8,9 +8,12 @@ Providers never own data - they only create stubs, enrich fields, or attach refe
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Union
 from enum import Enum
+import base64
 import uuid
 from datetime import datetime
 import re
+
+from time_utils import parse_utc_datetime, utc_isoformat, utc_now
 
 
 class DownloadStatus(Enum):
@@ -43,7 +46,7 @@ class ProviderRef:
     provider_id: str                    # Provider's native ID
     provider_url: Optional[str] = None  # Direct URL if available
     metadata: Dict[str, Any] = field(default_factory=dict)  # Provider-specific extras
-    last_updated: datetime = field(default_factory=datetime.now)
+    last_updated: datetime = field(default_factory=utc_now)
 
     def validate(self) -> None:
         """Validate the provider reference fields."""
@@ -110,8 +113,20 @@ class SoulSyncTrack:
     fingerprint_confidence: Optional[float] = None
     
     # === System Fields ===
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+    @property
+    def sync_id(self) -> str:
+        """Return the stable URN used by working database tables."""
+        if self.musicbrainz_recording_id:
+            return f"ss:track:mbid:{self.musicbrainz_recording_id}"
+
+        primary_artist = (self.artists[0] if self.artists else "").strip().lower()
+        track_title = (self.title or "").strip().lower()
+        payload = f"{primary_artist}|{track_title}"
+        encoded_payload = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+        return f"ss:track:meta:{encoded_payload}"
     
     def add_provider_ref(self, provider: ProviderType, provider_id: str, 
                         provider_url: Optional[str] = None, 
@@ -123,7 +138,7 @@ class SoulSyncTrack:
             provider_url=provider_url,
             metadata=metadata or {}
         )
-        self.updated_at = datetime.now()
+        self.updated_at = utc_now()
     
     def get_provider_ref(self, provider: ProviderType) -> Optional[ProviderRef]:
         """Get reference for a specific provider"""
@@ -146,7 +161,7 @@ class SoulSyncTrack:
                 if current is None or (isinstance(current, list) and len(current) == 0):
                     setattr(self, key, value)
 
-        self.updated_at = datetime.now()
+        self.updated_at = utc_now()
         self._calculate_confidence()
     
     def _calculate_confidence(self) -> None:
@@ -188,7 +203,7 @@ class SoulSyncTrack:
                 'provider_id': v.provider_id,
                 'provider_url': v.provider_url,
                 'metadata': v.metadata,
-                'last_updated': v.last_updated.isoformat()
+                'last_updated': utc_isoformat(v.last_updated)
             } for k, v in self.provider_refs.items()},
             'download_status': self.download_status.value,
             'file_path': self.file_path,
@@ -200,8 +215,8 @@ class SoulSyncTrack:
             'disc_number': self.disc_number,
             'release_year': self.release_year,
             'genres': self.genres,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'created_at': utc_isoformat(self.created_at),
+            'updated_at': utc_isoformat(self.updated_at)
         }
     
     @classmethod
@@ -215,7 +230,7 @@ class SoulSyncTrack:
                 provider_id=ref_data['provider_id'],
                 provider_url=ref_data.get('provider_url'),
                 metadata=ref_data.get('metadata', {}),
-                last_updated=datetime.fromisoformat(ref_data.get('last_updated', datetime.now().isoformat()))
+                last_updated=parse_utc_datetime(ref_data.get('last_updated')) or utc_now()
             )
         
         track = cls(
@@ -238,8 +253,8 @@ class SoulSyncTrack:
             disc_number=data.get('disc_number'),
             release_year=data.get('release_year'),
             genres=data.get('genres', []),
-            created_at=datetime.fromisoformat(data.get('created_at', datetime.now().isoformat())),
-            updated_at=datetime.fromisoformat(data.get('updated_at', datetime.now().isoformat()))
+            created_at=parse_utc_datetime(data.get('created_at')) or utc_now(),
+            updated_at=parse_utc_datetime(data.get('updated_at')) or utc_now()
         )
         return track
     

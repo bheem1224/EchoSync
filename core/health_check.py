@@ -10,6 +10,7 @@ from typing import Dict, Callable, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 from core.tiered_logger import get_logger
+from time_utils import utc_now
 
 logger = get_logger("health_check")
 
@@ -21,7 +22,7 @@ class HealthCheckResult:
     status: str  # "healthy", "degraded", "unhealthy"
     message: str
     details: Dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=utc_now)
     response_time_ms: float = 0.0
 
 
@@ -72,7 +73,7 @@ class HealthCheckRegistry:
             start_time = time.time()
             result = self._checks[service_name]()
             result.response_time_ms = (time.time() - start_time) * 1000
-            result.timestamp = datetime.now()
+            result.timestamp = utc_now()
             
             # Cache the result
             self._last_results[service_name] = result
@@ -87,7 +88,7 @@ class HealthCheckRegistry:
                 service_name=service_name,
                 status="unhealthy",
                 message=f"Health check exception: {str(e)}",
-                timestamp=datetime.now()
+                timestamp=utc_now()
             )
             self._last_results[service_name] = result
             return result
