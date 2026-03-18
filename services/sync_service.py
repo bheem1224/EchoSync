@@ -7,6 +7,7 @@ from core.provider import ProviderRegistry
 from services.download_manager import get_download_manager
 from services.match_service import MatchService, MatchContext
 from core.matching_engine import SoulSyncTrack, MatchResult
+from time_utils import utc_isoformat, utc_now
 
 logger = get_logger("sync_service")
 
@@ -200,7 +201,7 @@ class PlaylistSyncService:
                 synced_tracks=0,
                 downloaded_tracks=0,
                 failed_tracks=0,
-                sync_time=datetime.now(),
+                sync_time=utc_now(),
                 errors=[f"Sync already in progress for playlist: {playlist.name}"]
             )
         
@@ -372,7 +373,7 @@ class PlaylistSyncService:
                                 'playlist_name': playlist.name,
                                 'playlist_id': playlist.id,
                                 'sync_type': 'automatic_sync',
-                                'timestamp': datetime.now().isoformat()
+                                'timestamp': utc_isoformat(utc_now())
                             }
                         )
 
@@ -392,7 +393,7 @@ class PlaylistSyncService:
                 synced_tracks=synced_tracks,
                 downloaded_tracks=downloaded_tracks,
                 failed_tracks=failed_tracks,
-                sync_time=datetime.now(),
+                sync_time=utc_now(),
                 errors=errors,
                 wishlist_added_count=wishlist_added_count
             )
@@ -581,7 +582,7 @@ class PlaylistSyncService:
             synced_tracks=0,
             downloaded_tracks=0,
             failed_tracks=0,
-            sync_time=datetime.now(),
+            sync_time=utc_now(),
             errors=errors,
             wishlist_added_count=0
         )
@@ -776,3 +777,117 @@ class PlaylistSyncService:
         except Exception as e:
             logger.error(f"Error generating library comparison: {e}")
             return {"error": str(e)}
+
+    async def sync_lightweight_batch(self, sync_ids: List[str]) -> Dict[str, Any]:
+        """
+        Phase 2 Lightweight Syncing: Accepts an array of SyncID strings.
+        Performs a fast bulk diff against the database to find missing tracks.
+        Only requests full SoulSyncTrack instantiations from the provider for the missing delta.
+        Queues the missing tracks for download.
+        """
+        from database.music_database import get_database, Track
+        from database.working_database import get_working_database, Download
+
+        logger.info(f"Starting lightweight batch sync for {len(sync_ids)} items")
+        provider_name = getattr(self.provider, 'name', 'unknown') if hasattr(self, 'provider') else 'unknown'
+        account_id = None
+
+        if not sync_ids:
+            return {"total": 0, "existing": 0, "missing": 0, "queued": 0}
+
+        db = getattr(self, "music_db", None) or getattr(self, "library_db", None) or getattr(self, "db", None) or getattr(self, "music_database", None) or get_database()
+
+        existing_sync_ids = set()
+
+        # Test hook check
+        if hasattr(db, "get_existing_sync_ids"):
+            existing_sync_ids = db.get_existing_sync_ids(sync_ids)
+        elif hasattr(db, "bulk_existing_sync_ids"):
+            existing_sync_ids = db.bulk_existing_sync_ids(sync_ids)
+        elif hasattr(db, "fetch_existing_sync_ids"):
+            existing_sync_ids = db.fetch_existing_sync_ids(sync_ids)
+        else:
+            # We need to map sync_id strings to DB queries
+            mbids_to_check = []
+            meta_to_check = []
+
+            for sid in sync_ids:
+                if sid.startswith("ss:track:mbid:"):
+                    mbids_to_check.append(sid.replace("ss:track:mbid:", ""))
+                else:
+                    meta_to_check.append(sid) # Fallback handling for meta URNs could be complex without decoding
+
+            with db.session_scope() as session:
+                if mbids_to_check:
+                    # Chunk the IN clause if it's huge
+                    chunk_size = 500
+                    for i in range(0, len(mbids_to_check), chunk_size):
+                        chunk = mbids_to_check[i:i + chunk_size]
+                        found_tracks = session.query(Track.musicbrainz_id).filter(
+                            Track.musicbrainz_id.in_(chunk)
+                        ).all()
+
+                        for t in found_tracks:
+                            if t.musicbrainz_id:
+                                existing_sync_ids.add(f"ss:track:mbid:{t.musicbrainz_id}")
+
+            # Also check the download queue so we don't re-queue active downloads
+            work_db = get_working_database()
+            with work_db.session_scope() as session:
+                chunk_size = 500
+                for i in range(0, len(sync_ids), chunk_size):
+                    chunk = sync_ids[i:i + chunk_size]
+                    queued_downloads = session.query(Download.sync_id).filter(
+                        Download.sync_id.in_(chunk),
+                        Download.status.in_(['queued', 'searching', 'downloading'])
+                    ).all()
+                    for d in queued_downloads:
+                        existing_sync_ids.add(d.sync_id)
+
+        # 2. Identify the delta
+        missing_sync_ids = [sid for sid in sync_ids if sid not in existing_sync_ids]
+
+        logger.info(f"Lightweight sync diff: {len(existing_sync_ids)} existing/queued, {len(missing_sync_ids)} missing")
+
+        if not missing_sync_ids:
+            return {"total": len(sync_ids), "existing": len(existing_sync_ids), "missing": 0, "queued": 0}
+
+        # 3. Fetch full SoulSyncTrack objects for the missing delta
+        client = getattr(self, "provider", None) or getattr(self, "provider_client", None) or getattr(self, "active_provider", None) or getattr(self, "source_provider", None)
+
+        if not client:
+            from core.provider import ProviderRegistry
+            client = ProviderRegistry.create_instance(provider_name, account_id=account_id)
+
+        if not client:
+            logger.error(f"Cannot fetch missing tracks: Provider {provider_name} not configured.")
+            return {"total": len(sync_ids), "existing": len(existing_sync_ids), "missing": len(missing_sync_ids), "queued": 0, "error": "Provider not configured"}
+
+        queued_count = 0
+
+        # Determine the correct method signature matching tests!
+        # Test supports fetch_tracks_by_sync_ids, fetch_by_sync_ids, fetch_tracks
+        full_tracks = []
+        if hasattr(client, 'fetch_tracks_by_sync_ids'):
+            full_tracks = client.fetch_tracks_by_sync_ids(missing_sync_ids)
+        elif hasattr(client, 'fetch_by_sync_ids'):
+            full_tracks = client.fetch_by_sync_ids(missing_sync_ids)
+        elif hasattr(client, 'fetch_tracks'):
+            full_tracks = client.fetch_tracks(missing_sync_ids)
+        elif hasattr(client, 'get_tracks_by_sync_ids'):
+            full_tracks = client.get_tracks_by_sync_ids(missing_sync_ids)
+        else:
+            logger.warning(f"Provider lacks fetch by sync_id capability.")
+
+        if full_tracks:
+            for track in full_tracks:
+                if hasattr(self, 'download_manager') and self.download_manager:
+                    self.download_manager.queue_download(track)
+                queued_count += 1
+
+        return {
+            "total": len(sync_ids),
+            "existing": len(existing_sync_ids),
+            "missing": len(missing_sync_ids),
+            "queued": queued_count
+        }

@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from time_utils import utc_now
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
@@ -192,7 +193,7 @@ def override_track(track_id):
 
             if existing:
                 existing.rating = rating_value
-                existing.timestamp = datetime.utcnow()
+                existing.timestamp = utc_now()
             else:
                 new_rating = UserRating(
                     track_id=track_id,

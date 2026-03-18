@@ -10,7 +10,7 @@ from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import ScoringProfile
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.job_queue import job_queue
-from web.utils.event_bus import event_bus
+from core.event_bus import event_bus
 from core.sync_history import sync_history
 import time
 

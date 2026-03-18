@@ -6,6 +6,7 @@ from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
 from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from time_utils import ensure_utc, utc_now
 
 logger = get_logger("jellyfin_client")
 
@@ -1447,7 +1448,7 @@ class JellyfinClient(MediaServerProvider):
                 albums=[],  # Will be fetched per-artist during processing
                 tracks=[],  # Will be fetched per-album during processing
                 full_refresh=True,
-                last_checked=datetime.now()
+                last_checked=utc_now()
             )
         
         try:
@@ -1477,7 +1478,7 @@ class JellyfinClient(MediaServerProvider):
             
             if not all_recent_tracks:
                 logger.info("No recent tracks found")
-                return ContentChanges(last_checked=datetime.now())
+                return ContentChanges(last_checked=utc_now())
             
             # Check which tracks are actually new (early stopping after 100 consecutive existing)
             new_tracks = []
@@ -1497,7 +1498,7 @@ class JellyfinClient(MediaServerProvider):
             
             if not new_tracks:
                 logger.info("All recent tracks already exist")
-                return ContentChanges(last_checked=datetime.now())
+                return ContentChanges(last_checked=utc_now())
             
             # Extract unique artists from new tracks
             processed_artist_ids = set()
@@ -1530,7 +1531,7 @@ class JellyfinClient(MediaServerProvider):
                 albums=albums_to_return,
                 tracks=new_tracks,
                 full_refresh=False,
-                last_checked=datetime.now(),
+                last_checked=utc_now(),
                 metadata={'new_tracks_found': len(new_tracks)}
             )
             
@@ -1654,8 +1655,7 @@ class JellyfinClient(MediaServerProvider):
                 return True
 
             # Calculate days since last update
-            from datetime import datetime
-            days_since_update = (datetime.now() - last_update).days
+            days_since_update = (utc_now() - ensure_utc(last_update)).days
 
             # Use same logic as Plex client
             needs_update = days_since_update >= refresh_interval_days

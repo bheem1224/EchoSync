@@ -144,7 +144,7 @@ class WatchlistScanner:
 
             # OPTIMIZATION: Select up to 50 artists to scan
             # 1. Must scan: Artists not scanned in 7+ days (or never scanned)
-            seven_days_ago = datetime.now() - timedelta(days=7)
+            seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
             must_scan = []
             can_skip = []
 
@@ -639,7 +639,7 @@ class WatchlistScanner:
                     'watchlist_artist_name': watchlist_artist.artist_name,
                     'watchlist_artist_id': watchlist_artist.spotify_artist_id,
                     'album_name': album_name,
-                    'scan_timestamp': datetime.now().isoformat()
+                    'scan_timestamp': datetime.now(timezone.utc).isoformat()
                 }
             )
             
@@ -935,8 +935,8 @@ class WatchlistScanner:
                                 release_date_str = album_data.get('release_date', '')
                                 if release_date_str:
                                     if len(release_date_str) == 10:  # Full date
-                                        release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
-                                        days_old = (datetime.now() - release_date).days
+                                        release_date = datetime.strptime(release_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                                        days_old = (datetime.now(timezone.utc) - release_date).days
                                         is_new = days_old <= 30
                             except:
                                 pass
@@ -1047,8 +1047,8 @@ class WatchlistScanner:
                                     try:
                                         release_date_str = album_data.get('release_date', '')
                                         if release_date_str and len(release_date_str) == 10:
-                                            release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
-                                            days_old = (datetime.now() - release_date).days
+                                            release_date = datetime.strptime(release_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                                            days_old = (datetime.now(timezone.utc) - release_date).days
                                             is_new = days_old <= 30
                                     except:
                                         pass
@@ -1156,7 +1156,7 @@ class WatchlistScanner:
                 logger.info("No watchlist artists to check for incremental update")
                 return
 
-            cutoff_date = datetime.now() - timedelta(days=7)  # Only last week's releases
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=7)  # Only last week's releases
             total_tracks_added = 0
 
             for artist_idx, artist in enumerate(watchlist_artists, 1):
@@ -1201,8 +1201,8 @@ class WatchlistScanner:
                             try:
                                 release_date_str = album_data.get('release_date', '')
                                 if release_date_str and len(release_date_str) == 10:
-                                    release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
-                                    days_old = (datetime.now() - release_date).days
+                                    release_date = datetime.strptime(release_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                                    days_old = (datetime.now(timezone.utc) - release_date).days
                                     is_new = days_old <= 30
                             except:
                                 pass
@@ -1293,7 +1293,7 @@ class WatchlistScanner:
             self.database.clear_discovery_recent_albums()
 
             # IMPROVED: 30-day window for better content variety while staying recent
-            cutoff_date = datetime.now() - timedelta(days=30)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
             cached_count = 0
             albums_checked = 0
 
@@ -1438,8 +1438,8 @@ class WatchlistScanner:
                                 try:
                                     release_date_str = album.get('release_date', '')
                                     if release_date_str and len(release_date_str) >= 10:
-                                        release_date = datetime.strptime(release_date_str[:10], "%Y-%m-%d")
-                                        days_old = (datetime.now() - release_date).days
+                                        release_date = datetime.strptime(release_date_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                                        days_old = (datetime.now(timezone.utc) - release_date).days
                                 except:
                                     pass
 

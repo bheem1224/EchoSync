@@ -1,4 +1,6 @@
 from flask import Blueprint, Response, request
+
+from time_utils import utc_now
 import json
 from core.tiered_logger import get_logger
 from services.download_manager import get_download_manager
@@ -173,7 +175,7 @@ def search_download(download_id: int):
             
             # Mark as queued (in case it's in failed state) and trigger processing
             download.status = "queued"
-            download.updated_at = __import__('datetime').datetime.utcnow()
+            download.updated_at = utc_now()
             session.commit()
         
         # Trigger the download manager to process immediately

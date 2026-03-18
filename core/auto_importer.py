@@ -31,6 +31,8 @@ from typing import List, Optional, Dict
 from datetime import datetime
 import logging  # Add this import for logging levels
 
+from time_utils import utc_isoformat, utc_now
+
 from .matching_engine import parse_file, SoulSyncTrack
 from services.match_service import MatchService, MatchContext
 from .post_processor import PostProcessor
@@ -126,7 +128,7 @@ class AutoImporter:
             Dictionary with import statistics
         """
         stats = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": utc_isoformat(utc_now()),
             "files_found": 0,
             "files_imported": 0,
             "files_skipped": 0,

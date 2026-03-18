@@ -15,12 +15,10 @@ Design Principle: "Central Control"
 """
 
 import asyncio
-import json
 import logging
 import re
 import threading
 import time
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -28,9 +26,11 @@ from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 from core.matching_engine.text_utils import normalize_artist, normalize_title
 from core.settings import config_manager
+from time_utils import utc_now
 from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
-from database.music_database import get_database, Download, Track, Artist, Album
+from database.music_database import get_database, Track, Artist, Album
+from database.working_database import get_working_database, Download
 
 logger = logging.getLogger("download_manager")
 
@@ -43,6 +43,7 @@ class DownloadManager:
 
     def __init__(self):
         self.db = get_database()
+        self.work_db = get_working_database()
         self.matcher = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
         self._shutdown = False
         self._loop_task = None
@@ -94,7 +95,7 @@ class DownloadManager:
             logger.info(f"Skipping download: Track '{track.title}' by '{track.artist_name}' already exists in library")
             return 0  # 0 indicates no download created
 
-        with self.db.session_scope() as session:
+        with self.work_db.session_scope() as session:
             # Serialize track to JSON for storage
             track_json = track.to_dict()
 
@@ -108,10 +109,11 @@ class DownloadManager:
                 return existing_id
 
             download = Download(
+                sync_id=track.sync_id,
                 soul_sync_track=track_json,
                 status="queued",
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                created_at=utc_now(),
+                updated_at=utc_now()
             )
             session.add(download)
             session.flush() # Populate ID
@@ -182,13 +184,13 @@ class DownloadManager:
 
     async def _recover_stuck_items(self):
         """Reset items stuck in 'searching' state back to 'queued' on startup."""
-        with self.db.session_scope() as session:
+        with self.work_db.session_scope() as session:
             stuck_items = session.query(Download).filter(Download.status.ilike("searching")).all()
             if stuck_items:
                 logger.warning(f"Found {len(stuck_items)} stuck downloads. Resetting to 'queued'.")
                 for item in stuck_items:
                     item.status = "queued"
-                    item.updated_at = datetime.utcnow()
+                    item.updated_at = utc_now()
             
             # Also clean up legacy downloads with invalid provider_id format
             # These are from before the compound ID (username|filename) format was implemented
@@ -203,7 +205,7 @@ class DownloadManager:
                     # Legacy format without username prefix - mark as failed
                     logger.debug(f"Cleaning up legacy download entry: {item.id}")
                     item.status = "failed_legacy_format"
-                    item.updated_at = datetime.utcnow()
+                    item.updated_at = utc_now()
                     cleaned += 1
             
             if cleaned > 0:
@@ -246,7 +248,7 @@ class DownloadManager:
         # But given Python's GIL and standard threading, simple sync DB access is usually fine for low throughput.
 
         queued_ids = []
-        with self.db.session_scope() as session:
+        with self.work_db.session_scope() as session:
             # Get up to 30 queued items to enable 10 concurrent searches
             # Note: SlskdProvider internally limits to 3 concurrent searches (Soulseek IP ban protection)
             # Download manager can scale to 10 if other clients (e.g., non-Soulseek) are added later
@@ -258,7 +260,7 @@ class DownloadManager:
             for item in items:
                 # Mark as processing so other workers (if any) don't grab it
                 item.status = "searching"
-                item.updated_at = datetime.utcnow()
+                item.updated_at = utc_now()
                 queued_ids.append(item.id)
 
         if not queued_ids:
@@ -285,7 +287,7 @@ class DownloadManager:
         target_track = None
 
         # Reload fresh state
-        with self.db.session_scope() as session:
+        with self.work_db.session_scope() as session:
             download = session.query(Download).get(download_id)
             if not download:
                 logger.error(f"Download ID {download_id} not found in DB.")
@@ -439,7 +441,7 @@ class DownloadManager:
             return
 
         active_downloads = []
-        with self.db.session_scope() as session:
+        with self.work_db.session_scope() as session:
             # Find items marked 'downloading'
             items = session.query(Download).filter(Download.status.ilike("downloading")).all()
             for item in items:
@@ -933,7 +935,7 @@ class DownloadManager:
     def _remove_from_queue(self, download_id: int):
         """CLEANUP TASK 1: Remove a download from the queue after successful completion."""
         try:
-            with self.db.session_scope() as session:
+            with self.work_db.session_scope() as session:
                 download = session.query(Download).get(download_id)
                 if download:
                     session.delete(download)
@@ -947,7 +949,7 @@ class DownloadManager:
         Detects if items were added via other means (auto-import, manual import, etc.)
         """
         try:
-            with self.db.session_scope() as session:
+            with self.work_db.session_scope() as session:
                 # Get all queued items
                 queued_items = session.query(Download).filter(
                     Download.status.in_(['queued', 'searching', 'downloading', 'failed_no_match'])
@@ -990,11 +992,11 @@ class DownloadManager:
 
     def _update_status(self, download_id: int, status: str, provider_id: Optional[str] = None):
         """Helper to update DB status"""
-        with self.db.session_scope() as session:
+        with self.work_db.session_scope() as session:
             download = session.query(Download).get(download_id)
             if download:
                 download.status = (status or "").lower()
-                download.updated_at = datetime.utcnow()
+                download.updated_at = utc_now()
                 if provider_id:
                     download.provider_id = provider_id
 
@@ -1005,7 +1007,7 @@ class DownloadManager:
             return None
 
         active_states = {"queued", "searching", "downloading", "QUEUED", "SEARCHING", "DOWNLOADING"}
-        with self.db.session_scope() as session:
+        with self.work_db.session_scope() as session:
             items = session.query(Download).filter(Download.status.in_(active_states)).all()
             for item in items:
                 other_sig = self._normalize_track_signature(item.soul_sync_track or {})
@@ -1037,7 +1039,7 @@ class DownloadManager:
 
     def get_status(self, download_id: int) -> Optional[Dict]:
         """Get status for UI"""
-        with self.db.session_scope() as session:
+        with self.work_db.session_scope() as session:
             download = session.query(Download).get(download_id)
             if download:
                 return {
@@ -1052,13 +1054,6 @@ class DownloadManager:
     def _track_exists_in_library(self, artist_name: str, title: str, album: Optional[str] = None, duration: Optional[int] = None) -> bool:
         """
         Check if a track already exists in the library (database).
-
-        Args:
-            artist_name: Artist name
-            title: Track title
-
-        Returns:
-            True if track exists, False otherwise
         """
         if not artist_name or not title:
             return False
@@ -1100,7 +1095,7 @@ class DownloadManager:
         Prevents re-downloading tracks that were imported while the queue was active/stalled.
         """
         try:
-            with self.db.session_scope() as session:
+            with self.work_db.session_scope() as session:
                 # Get all queued items
                 queued_items = session.query(Download).filter(
                     Download.status.in_(['queued', 'searching', 'failed_no_match'])
@@ -1142,9 +1137,11 @@ class DownloadManager:
                             except Exception:
                                 pass
 
-                        exists = session.query(
-                            session.query(Track).join(Artist).filter(*filters).exists()
-                        ).scalar()
+                        db = get_database()
+                        with db.session_scope() as music_session:
+                            exists = music_session.query(
+                                music_session.query(Track).join(Artist).filter(*filters).exists()
+                            ).scalar()
 
                         if exists:
                             logger.info(f"Removing redundant download {item.id}: '{title}' by '{artist}' is already in library")
@@ -1217,7 +1214,7 @@ class DownloadManager:
         }
 
         requeued = 0
-        with self.db.session_scope() as session:
+        with self.work_db.session_scope() as session:
             items = (
                 session.query(Download)
                 .filter(Download.status.in_(retryable_statuses))
@@ -1230,7 +1227,7 @@ class DownloadManager:
                 item.status = "queued"
                 item.provider_id = None
                 item.retry_count = (item.retry_count or 0) + 1
-                item.updated_at = datetime.utcnow()
+                item.updated_at = utc_now()
                 requeued += 1
 
         logger.info(f"Re-queued {requeued} failed items for retry (prioritizing newest first)")

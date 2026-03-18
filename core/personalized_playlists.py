@@ -6,7 +6,7 @@ from user's library and discovery pool with pluggable algorithms
 """
 
 from typing import List, Dict, Any, Optional, Tuple, Protocol
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import Counter
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -200,7 +200,7 @@ class SeasonalPlaylistAlgorithm(PlaylistAlgorithm):
     
     def get_current_season(self) -> Optional[str]:
         """Detect current season based on current month"""
-        current_month = datetime.now().month
+        current_month = datetime.now(timezone.utc).month
         
         # Check each season to find active ones
         active_seasons = []
