@@ -104,17 +104,20 @@ class SoulSyncTrack:
     # External Provider Links
     identifiers: Dict[str, Any] = field(default_factory=dict)
 
+
+
     @property
     def sync_id(self) -> str:
         import base64
-        if self.musicbrainz_id:
-            return f"ss:track:mbid:{self.musicbrainz_id}"
+        if getattr(self, "musicbrainz_recording_id", None):
+            return f"ss:track:mbid:{self.musicbrainz_recording_id}"
 
-        artist = (self.artist_name or "").lower()
-        title = (getattr(self, 'title', None) or self.raw_title or "").lower()
-        meta_string = f"{artist}|{title}"
-        b64_string = base64.b64encode(meta_string.encode("utf-8")).decode("utf-8")
-        return f"ss:track:meta:{b64_string}"
+        artist = self.artists[0].lower() if getattr(self, "artists", None) else "unknown"
+        title = self.title.lower() if getattr(self, "title", None) else "unknown"
+        payload = f"{artist}|{title}"
+
+        encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+        return f"ss:track:meta:{encoded}"
 
     def __post_init__(self):
 

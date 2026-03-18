@@ -1,7 +1,7 @@
 """Integration test verifying sync feature end-to-end."""
 import pytest
 import time
-from web.utils.event_bus import event_bus
+from core.event_bus import event_bus
 from core.sync_history import sync_history
 
 
