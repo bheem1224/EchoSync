@@ -54,32 +54,37 @@ class TestSoulSyncTrackSyncId:
 
     def test_soulsync_track_sync_id_mbid(self):
         """
-        When musicbrainz_recording_id is present, sync_id must return a URN
-        in the form  ss:track:mbid:{musicbrainz_recording_id}.
+        When musicbrainz_id is present, it must be appended as a query parameter ?mbid=
+        to the base meta sync_id. The MBID branch is removed.
         """
         mbid = "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d"
         track = SoulSyncTrack(
-            title="Bohemian Rhapsody",
-            artists=["Queen"],
-            musicbrainz_recording_id=mbid,
+            raw_title="Bohemian Rhapsody",
+            artist_name="Queen",
+            album_title="A Night at the Opera",
+            musicbrainz_id=mbid,
         )
 
-        assert track.sync_id == f"ss:track:mbid:{mbid}"
+        base_payload = "queen|bohemian rhapsody".encode("utf-8")
+        base_b64 = base64.b64encode(base_payload).decode("ascii")
+        expected_urn = f"ss:track:meta:{base_b64}?mbid={mbid}"
+        assert track.sync_id == expected_urn
 
     def test_soulsync_track_sync_id_mbid_takes_priority_over_metadata(self):
         """
-        MBID branch must win even when a valid title + artist are also present.
-        Ensures the fallback is never reached when an MBID is available.
+        Legacy MBID test modified for new format.
+        MBID is now a parameter, not the primary namespace.
         """
         mbid = "3d9a8f4e-b12c-4567-a890-fedcba098765"
         track = SoulSyncTrack(
-            title="Some Other Song",
-            artists=["Some Artist"],
-            musicbrainz_recording_id=mbid,
+            raw_title="Some Other Song",
+            artist_name="Some Artist",
+            album_title="Album",
+            musicbrainz_id=mbid,
         )
 
-        assert track.sync_id.startswith("ss:track:mbid:")
-        assert not track.sync_id.startswith("ss:track:meta:")
+        assert track.sync_id.startswith("ss:track:meta:")
+        assert f"?mbid={mbid}" in track.sync_id
 
     # ---------------------------------------------------------------------------
     # SoulSyncTrack.sync_id – base64 fallback path
@@ -87,16 +92,17 @@ class TestSoulSyncTrackSyncId:
 
     def test_soulsync_track_sync_id_fallback(self):
         """
-        When musicbrainz_recording_id is absent, sync_id must return a URN
+        When musicbrainz_id is absent, sync_id must return a URN
         in the form  ss:track:meta:{base64(lowercase_artist|lowercase_title)}.
 
-        The base64 payload is: f"{artists[0].lower()}|{title.lower()}"
+        The base64 payload is: f"{artist.lower()}|{title.lower()}"
         encoded as UTF-8 and returned as a standard (padded) base64 string.
         """
         track = SoulSyncTrack(
-            title="Bohemian Rhapsody",
-            artists=["Queen"],
-            musicbrainz_recording_id=None,
+            raw_title="Bohemian Rhapsody",
+            artist_name="Queen",
+            album_title="A Night at the Opera",
+            musicbrainz_id=None,
         )
 
         expected_payload = "queen|bohemian rhapsody"
@@ -111,14 +117,16 @@ class TestSoulSyncTrackSyncId:
         regardless of how the caller supplied the metadata.
         """
         track_upper = SoulSyncTrack(
-            title="STAIRWAY TO HEAVEN",
-            artists=["LED ZEPPELIN"],
-            musicbrainz_recording_id=None,
+            raw_title="STAIRWAY TO HEAVEN",
+            artist_name="LED ZEPPELIN",
+            album_title="IV",
+            musicbrainz_id=None,
         )
         track_lower = SoulSyncTrack(
-            title="stairway to heaven",
-            artists=["led zeppelin"],
-            musicbrainz_recording_id=None,
+            raw_title="stairway to heaven",
+            artist_name="led zeppelin",
+            album_title="iv",
+            musicbrainz_id=None,
         )
 
         assert track_upper.sync_id == track_lower.sync_id
@@ -130,15 +138,17 @@ class TestSoulSyncTrackSyncId:
         """
         artist, title = "radiohead", "creep"
         track = SoulSyncTrack(
-            title=title.title(),   # "Creep"  — to confirm lowercasing
-            artists=[artist.title()],  # "Radiohead"
-            musicbrainz_recording_id=None,
+            raw_title=title.title(),   # "Creep"  — to confirm lowercasing
+            artist_name=artist.title(),  # "Radiohead"
+            album_title="Pablo Honey",
+            musicbrainz_id=None,
         )
 
         prefix = "ss:track:meta:"
         assert track.sync_id.startswith(prefix)
 
-        encoded_segment = track.sync_id[len(prefix):]
+        base_id = track.sync_id.split("?")[0]
+        encoded_segment = base_id[len(prefix):]
         decoded = base64.b64decode(encoded_segment.encode("ascii")).decode("utf-8")
         assert decoded == f"{artist}|{title}"
 

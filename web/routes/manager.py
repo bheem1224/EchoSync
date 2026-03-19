@@ -5,7 +5,7 @@ from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
 from services.metadata_enhancer import get_metadata_enhancer
 from database.music_database import get_database, Track, UserRating
-from core.consensus import ConsensusEngine, SYSTEM_DELETE, SYSTEM_UPGRADE, SYSTEM_LOCK
+from core.suggestion_engine.consensus import calculate_consensus
 from pathlib import Path
 from sqlalchemy import func
 from datetime import datetime
@@ -71,76 +71,16 @@ def get_duplicates():
 
 @bp.route("/queue/actions", methods=["GET"])
 def get_action_queue():
-    """Get items pending action (delete/upgrade)."""
-    db = get_database()
-    try:
-        # Get settings to determine thresholds
-        manager_config = config_manager.get('manager', {
-            'enabled': True,
-            'delete_threshold': 1,
-            'upgrade_threshold': 2
-        })
-
-        if not manager_config.get('enabled', True):
-             return jsonify({"success": True, "queue": [], "message": "Manager disabled"}), 200
-
-        delete_threshold = manager_config.get('delete_threshold', 1)
-        upgrade_threshold = manager_config.get('upgrade_threshold', 2)
-
-        with db.session_scope() as session:
-            # We want tracks where the *Consensus* would be DELETE or UPGRADE.
-            # Querying tracks with ratings <= max(delete, upgrade) is a good filter,
-            # but we need to check if they are *not yet* system flagged (locked/deleted/upgraded).
-            # And we need to aggregate user ratings.
-
-            # Simplified approach: Find tracks with user ratings <= thresholds
-            # AND exclude tracks that already have a system flag.
-
-            # 1. Get tracks with ratings in range
-            max_thresh = max(delete_threshold, upgrade_threshold)
-
-            query = (
-                session.query(Track, UserRating.rating)
-                .join(UserRating)
-                .filter(UserRating.rating <= max_thresh)
-                .filter(UserRating.rating.isnot(None))
-                # Exclude system flags (floats) from the *triggering* rating check
-                # But we also need to ensure the track doesn't HAVE a system flag.
-                .all()
-            )
-
-            results = []
-            seen_tracks = set()
-
-            for track, rating_val in query:
-                if track.id in seen_tracks:
-                    continue
-
-                # Check for system flags on this track
-                # This causes N+1 query, but strictly safer for logic.
-                # Optimization: Load all ratings for these tracks or use a subquery.
-                # Given dashboard context, N+1 for visible queue (usually small) might be acceptable or we optimize later.
-
-                all_ratings = [r.rating for r in track.user_ratings]
-
-                # Check Consensus
-                action = ConsensusEngine.determine_action(all_ratings)
-
-                if action in (ConsensusEngine.ConsensusAction.DELETE, ConsensusEngine.ConsensusAction.UPGRADE):
-                    results.append({
-                        "id": track.id,
-                        "title": track.title,
-                        "artist": track.artist.name,
-                        "album": track.album.title if track.album else "",
-                        "current_rating": track.get_consensus_rating, # This property might just be max(rating), let's use the triggering value or calculated max
-                        "action_needed": "delete" if action == ConsensusEngine.ConsensusAction.DELETE else "upgrade"
-                    })
-                    seen_tracks.add(track.id)
-
-            return jsonify({"success": True, "queue": results}), 200
-    except Exception as e:
-        logger.error(f"Error getting action queue: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    """Get items pending action (determined by consensus rules).
+    
+    NOTE: Phase 3 Suggestion Engine uses event-driven deletion instead of manual overrides.
+    This endpoint is deprecated. Consensus is now evaluated asynchronously in the suggestion engine.
+    """
+    return jsonify({
+        "success": True,
+        "queue": [],
+        "message": "Action queue deprecated. Use Phase 3 Suggestion Engine for consensus evaluation."
+    }), 200
 
 @bp.route("/track/<int:track_id>/fetch_metadata", methods=["POST"])
 def fetch_metadata(track_id):
@@ -165,52 +105,19 @@ def fetch_metadata(track_id):
 
 @bp.route("/track/<int:track_id>/override", methods=["POST"])
 def override_track(track_id):
-    """Accepts { action: 'lock' | 'delete' | 'upgrade' } and sets system flag."""
-    payload = request.get_json() or {}
-    action = payload.get("action")
-
-    mapping = {
-        "lock": SYSTEM_LOCK,
-        "delete": SYSTEM_DELETE,
-        "upgrade": SYSTEM_UPGRADE
-    }
-
-    if action not in mapping:
-        return jsonify({"error": "Invalid action. Must be lock, delete, or upgrade"}), 400
-
-    rating_value = mapping[action]
-
-    db = get_database()
-    try:
-        system_user_id = db.get_system_user_id()
-
-        with db.session_scope() as session:
-            # Check if rating exists
-            existing = session.query(UserRating).filter(
-                UserRating.track_id == track_id,
-                UserRating.user_id == system_user_id
-            ).first()
-
-            if existing:
-                existing.rating = rating_value
-                existing.timestamp = utc_now()
-            else:
-                new_rating = UserRating(
-                    track_id=track_id,
-                    user_id=system_user_id,
-                    rating=rating_value
-                )
-                session.add(new_rating)
-
-        return jsonify({
-            "success": True,
-            "track_id": track_id,
-            "action": action,
-            "rating": rating_value
-        }), 200
-    except Exception as e:
-        logger.error(f"Error setting override for track {track_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    """DEPRECATED: Manual overrides removed in Phase 3.
+    
+    Phase 3 Suggestion Engine uses event-driven consensus, not system flags.
+    Deletion decisions are now made by the Deletion Gate based on:
+    - Global consensus (>= 2 ratings AND avg < 4.0)
+    - Sponsor rating (from user_track_states)
+    
+    Manual track management should happen through the auto_importer or library hygiene service.
+    """
+    return jsonify({
+        "success": False,
+        "error": "Manual track overrides are deprecated. Use Phase 3 Suggestion Engine consensus rules."
+    }), 410
 
 @bp.route("/conflicts/resolve", methods=["POST"])
 def resolve_conflict():
@@ -243,7 +150,6 @@ def get_trends():
             distribution_query = (
                 session.query(func.round(UserRating.rating), func.count(UserRating.id))
                 .filter(UserRating.rating.isnot(None))
-                .filter(UserRating.rating.notin_([SYSTEM_DELETE, SYSTEM_UPGRADE, SYSTEM_LOCK]))
                 .group_by(func.round(UserRating.rating))
                 .all()
             )

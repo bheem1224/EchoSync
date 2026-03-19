@@ -109,15 +109,50 @@ class SoulSyncTrack:
     @property
     def sync_id(self) -> str:
         import base64
-        if getattr(self, "musicbrainz_recording_id", None):
-            return f"ss:track:mbid:{self.musicbrainz_recording_id}"
+        import urllib.parse
 
-        artist = self.artists[0].lower() if getattr(self, "artists", None) else "unknown"
+        # Base identity: ss:track:meta:{base64(lowercase_artist|lowercase_title)}
+        # Ensure we safely access artist_name instead of artists[0] since artists doesn't exist on SoulSyncTrack
+        artist = self.artist_name.lower() if getattr(self, "artist_name", None) else "unknown"
         title = self.title.lower() if getattr(self, "title", None) else "unknown"
         payload = f"{artist}|{title}"
 
         encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-        return f"ss:track:meta:{encoded}"
+        base_sync_id = f"ss:track:meta:{encoded}"
+
+        # Append available attributes as query parameters
+        params = {}
+        if self.duration:
+            params['dur'] = str(self.duration)
+        if self.isrc:
+            params['isrc'] = self.isrc
+        if self.musicbrainz_id:
+            params['mbid'] = self.musicbrainz_id
+
+        # Get external_id if any identifier is present
+        ext_id = None
+        if self.identifiers:
+            # Prefer some specific ones if multiple, but we can just grab the first available value
+            # Since identifiers is a dict, we can grab the first value
+            # Let's check for specific ones first: spotify_id, plex_guid, etc.
+            if 'spotify_id' in self.identifiers:
+                ext_id = self.identifiers['spotify_id']
+            elif 'plex_guid' in self.identifiers:
+                ext_id = self.identifiers['plex_guid']
+            elif 'musicbrainz_recording_id' in self.identifiers and not self.musicbrainz_id:
+                 params['mbid'] = self.identifiers['musicbrainz_recording_id']
+            elif len(self.identifiers) > 0:
+                 # Just take the first value
+                 ext_id = list(self.identifiers.values())[0]
+
+        if ext_id:
+            params['ext'] = ext_id
+
+        if params:
+            query_string = urllib.parse.urlencode(params)
+            return f"{base_sync_id}?{query_string}"
+
+        return base_sync_id
 
     def __post_init__(self):
 
