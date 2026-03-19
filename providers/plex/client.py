@@ -264,16 +264,17 @@ class PlexClient(ProviderBase):
                 if myplex_account:
                     users = myplex_account.users()
 
-                    # 1. Exact match
+                    # 1. Exact match (highest confidence)
                     for u in users:
                         if u.title.lower() == source_name_lower:
                             matched_user = u
                             break
 
-                    # 2. Substring match (low-confidence)
+                    # 2. Case-insensitive substring match: if managed_account.name.lower() in source_account_name.lower()
                     if not matched_user:
                         for u in users:
-                            if u.title.lower() in source_name_lower or source_name_lower in u.title.lower():
+                            managed_name_lower = u.title.lower()
+                            if managed_name_lower in source_name_lower:
                                 matched_user = u
                                 break
 

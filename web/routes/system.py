@@ -103,6 +103,34 @@ def get_encryption_key_warning():
         return jsonify({"error": "Failed to check encryption key status"}), 500
 
 
+@bp.get("/migration-status")
+def get_migration_status():
+    """Check if v2.1.0 migration was triggered and notify frontend."""
+    try:
+        from core.migrations import was_v2_1_migration_triggered
+        is_migrated = was_v2_1_migration_triggered()
+        return jsonify({
+            "v2_1_migration_triggered": is_migrated,
+            "message": "SoulSync has been upgraded to v2.1.0! The database schema has undergone a massive structural upgrade to support the new Matching Engine. Your configuration is safe, but your media library database has been wiped and is currently being rebuilt from scratch in the background."
+        }), 200
+    except Exception as e:
+        logger.error(f"Error checking migration status: {e}")
+        return jsonify({"error": "Failed to check migration status"}), 500
+
+
+@bp.post("/migration-acknowledge")
+def acknowledge_migration():
+    """Acknowledge the v2.1.0 migration notification."""
+    try:
+        from core.migrations import acknowledge_v2_1_migration
+        acknowledge_v2_1_migration()
+        logger.info("v2.1.0 migration notification acknowledged by user")
+        return jsonify({"success": True}), 200
+    except Exception as e:
+        logger.error(f"Error acknowledging migration: {e}")
+        return jsonify({"error": "Failed to acknowledge migration"}), 500
+
+
 @bp.post("/settings")
 def update_settings():
     """Update application settings (partial update).

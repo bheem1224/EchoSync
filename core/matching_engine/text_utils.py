@@ -7,6 +7,8 @@ to normalize track data before creating SoulSyncTrack objects.
 
 import re
 from typing import Optional, Tuple
+import base64
+
 
 
 def normalize_text(text: Optional[str]) -> str:
@@ -395,3 +397,22 @@ def extract_edition(title: Optional[str]) -> Tuple[str, Optional[str]]:
     edition = detected_editions[0] if detected_editions else None
 
     return (cleaned_title, edition)
+
+def generate_deterministic_id(artist: Optional[str], title: Optional[str]) -> str:
+    """
+    Generate a deterministic, base64-encoded cache ID for a track.
+    
+    Utilizes advanced text normalization to ensure consistent cache hits 
+    despite 'feat', '&', or special character variations.
+    """
+    # Use the existing robust normalization
+    norm_artist = normalize_artist(artist)
+    norm_title = normalize_title(title)
+    
+    # Fallbacks in case normalization returns empty strings
+    safe_artist = norm_artist if norm_artist else "unknown"
+    safe_title = norm_title if norm_title else "unknown"
+    
+    # Format string matching the cache_manager requirement
+    raw_id = f"{safe_artist}|{safe_title}"
+    return base64.b64encode(raw_id.encode('utf-8')).decode('utf-8')

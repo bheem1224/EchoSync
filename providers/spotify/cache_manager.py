@@ -1,10 +1,9 @@
 import json
-import base64
 from datetime import datetime, timezone
-import sqlalchemy
-from sqlalchemy import Column, String, JSON, DateTime, Table
+from sqlalchemy import Column, String, JSON, DateTime
 from core.tiered_logger import get_logger
 from core.event_bus import event_bus
+from core.matching_engine.text_utils import generate_deterministic_id
 from database.working_database import get_working_database
 
 logger = get_logger("spotify_cache_manager")
@@ -47,16 +46,10 @@ class SpotifyCacheManager:
 
     def _generate_base_sync_id(self, artist: str, title: str) -> str:
         """Deterministically generate the base sync_id for a track."""
-        if not artist:
-            artist = "unknown"
-        if not title:
-            title = "unknown"
-
-        payload = f"{artist.lower()}|{title.lower()}"
-        encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+        encoded = generate_deterministic_id(artist, title)
         return f"ss:track:meta:{encoded}"
 
-    def _on_track_downloaded(self, event_type: str, payload: dict):
+    def _on_track_downloaded(self, payload: dict):
         """Handle TRACK_DOWNLOADED event to trigger syncing if track belongs to a cached playlist."""
         sync_id = payload.get("sync_id")
         if not sync_id:
@@ -82,7 +75,10 @@ class SpotifyCacheManager:
 
                     if base_sync_id in sync_ids:
                         logger.info(f"Downloaded track {base_sync_id} found in cached playlist {playlist_id}. Triggering sync.")
-                        event_bus.publish("SYNC_PLAYLIST_INTENT", {"playlist_id": playlist_id})
+                        event_bus.publish({
+                            "event": "SYNC_PLAYLIST_INTENT",
+                            "playlist_id": playlist_id,
+                        })
                         # Trigger for all matching playlists
         except Exception as e:
             logger.error(f"Error checking cached playlists for {base_sync_id}: {e}")
@@ -117,8 +113,7 @@ class SpotifyCacheManager:
             base_sync_id = self._generate_base_sync_id(artist, title)
             sync_ids.append(base_sync_id)
 
-        raw_data = json.dumps(playlist_data)
-        sync_ids_json = json.dumps(sync_ids)
+        raw_data = playlist_data
         last_synced = datetime.now(timezone.utc)
 
         try:
@@ -130,7 +125,7 @@ class SpotifyCacheManager:
                 if existing:
                     stmt = self.table.update().where(self.table.c.playlist_id == playlist_id).values(
                         name=name,
-                        sync_ids=sync_ids_json,
+                        sync_ids=sync_ids,
                         raw_data=raw_data,
                         last_synced=last_synced
                     )
@@ -139,7 +134,7 @@ class SpotifyCacheManager:
                     stmt = self.table.insert().values(
                         playlist_id=playlist_id,
                         name=name,
-                        sync_ids=sync_ids_json,
+                        sync_ids=sync_ids,
                         raw_data=raw_data,
                         last_synced=last_synced
                     )

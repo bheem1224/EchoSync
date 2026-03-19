@@ -42,6 +42,7 @@ from web.routes.library import bp as library_bp
 from web.routes.metadata import bp as metadata_bp
 from web.routes.manager import bp as manager_bp
 from web.routes.downloads import bp as downloads_bp
+from web.routes.suggestions import bp as suggestions_bp
 
 from core.plugin_loader import PluginLoader
 from core.settings import config_manager
@@ -103,6 +104,24 @@ def create_app() -> Flask:
     app.register_blueprint(metadata_bp)
     app.register_blueprint(manager_bp)
     app.register_blueprint(downloads_bp)
+    app.register_blueprint(suggestions_bp)
+    
+    # Initialize databases (triggers v2.1.0 migration if needed)
+    try:
+        from database.music_database import get_database
+        from database.working_database import get_working_database
+        get_database()  # Initialize and create music_database
+        get_working_database()  # Initialize and create working_database
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize databases: {e}")
+        raise
+    
+    # Trigger post-migration tasks (e.g., database_update job if v2.1.0 was migrated)
+    try:
+        from core.migrations import trigger_post_migration_database_update
+        trigger_post_migration_database_update()
+    except Exception as e:
+        print(f"[WARN] Failed to trigger post-migration tasks: {e}")
     
     # Initialize Plugin Loader
     # Determine app root (parent of 'web/')
