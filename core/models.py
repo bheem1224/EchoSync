@@ -118,15 +118,36 @@ class SoulSyncTrack:
 
     @property
     def sync_id(self) -> str:
-        """Return the stable URN used by working database tables."""
-        if self.musicbrainz_recording_id:
-            return f"ss:track:mbid:{self.musicbrainz_recording_id}"
-
+        """
+        Return the stable URN used by working database tables.
+        
+        Format: ss:track:meta:{base64(lowercase_artist|lowercase_title)}?dur={duration_ms}&mbid={mbid}
+        
+        The base identity is always the metadata hash. Query parameters are optional and only included
+        if the corresponding fields have values. Database queries MUST strip everything after '?' before lookup.
+        """
+        from urllib.parse import urlencode
+        
+        # Core identity: always use base64 metadata hash
         primary_artist = (self.artists[0] if self.artists else "").strip().lower()
         track_title = (self.title or "").strip().lower()
         payload = f"{primary_artist}|{track_title}"
         encoded_payload = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-        return f"ss:track:meta:{encoded_payload}"
+        base_id = f"ss:track:meta:{encoded_payload}"
+        
+        # Build query parameters from available external attributes
+        params = {}
+        if self.duration_ms is not None:
+            params["dur"] = self.duration_ms
+        if self.musicbrainz_recording_id is not None:
+            params["mbid"] = self.musicbrainz_recording_id
+        
+        # Only append query string if params exist
+        if params:
+            query_string = urlencode(params)
+            return f"{base_id}?{query_string}"
+        
+        return base_id
     
     def add_provider_ref(self, provider: ProviderType, provider_id: str, 
                         provider_url: Optional[str] = None, 
