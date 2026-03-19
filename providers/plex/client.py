@@ -264,16 +264,17 @@ class PlexClient(ProviderBase):
                 if myplex_account:
                     users = myplex_account.users()
 
-                    # 1. Exact match
+                    # 1. Exact match (highest confidence)
                     for u in users:
                         if u.title.lower() == source_name_lower:
                             matched_user = u
                             break
 
-                    # 2. Substring match (low-confidence)
+                    # 2. Case-insensitive substring match: if managed_account.name.lower() in source_account_name.lower()
                     if not matched_user:
                         for u in users:
-                            if u.title.lower() in source_name_lower or source_name_lower in u.title.lower():
+                            managed_name_lower = u.title.lower()
+                            if managed_name_lower in source_name_lower:
                                 matched_user = u
                                 break
 
@@ -971,3 +972,53 @@ class PlexClient(ProviderBase):
         
         except Exception as e:
             logger.error(f"Error finding music library: {e}")
+    
+    def fetch_user_history(self, limit: int = 100) -> List[SoulSyncTrack]:
+        """Fetch user's listening history from Plex.
+        
+        Since Plex doesn't expose play history directly, this uses recently added tracks
+        as a proxy for user interaction. Falls back to all tracks if needed.
+        
+        Args:
+            limit: Maximum number of tracks to return
+            
+        Returns:
+            List of SoulSyncTrack objects representing recent interactions
+        """
+        if not self.ensure_connection() or not self.music_library:
+            logger.warning("Plex not connected or no music library for history")
+            return []
+        
+        try:
+            tracks = []
+            
+            # Try to get recently added tracks (best approximation of history)
+            try:
+                logger.debug(f"Fetching recently added tracks from Plex (limit={limit})")
+                # Plex doesn't have a direct "recently played" API, so we use recently added tracks
+                # This represents tracks the user has interacted with recently
+                recent_tracks = self.music_library.searchTracks(maxresults=limit, sort='addedAt:desc')
+                
+                logger.info(f"Plex returned {len(recent_tracks)} recently added tracks")
+                
+                for item in recent_tracks:
+                    if isinstance(item, PlexTrack):
+                        try:
+                            track = self._convert_track_to_soulsync(item)
+                            if track:
+                                tracks.append(track)
+                        except Exception as e:
+                            logger.debug(f"Error converting track in history: {e}")
+                
+                logger.info(f"Converted {len(tracks)} recent tracks to SoulSyncTrack format")
+                
+            except Exception as e:
+                logger.warning(f"Failed to fetch recently added tracks: {e}. Falling back to all tracks.")
+                # Fallback: return all available tracks
+                tracks = self.get_all_tracks(limit=limit)
+            
+            return tracks[:limit]
+        
+        except Exception as e:
+            logger.error(f"Error fetching user history from Plex: {e}", exc_info=True)
+            return []

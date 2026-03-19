@@ -5,6 +5,7 @@
   import Toast from '../components/Toast.svelte';
   import AudioPlayer from '../components/AudioPlayer.svelte';
   import EncryptionKeyWarning from '../components/EncryptionKeyWarning.svelte';
+  import MigrationModal from '../components/MigrationModal.svelte';
   import { providers } from '../stores/providers';
   import apiClient from '../api/client';
   import '../app.css';
@@ -12,6 +13,8 @@
   let innerWidth;
   let showEncryptionWarning = false;
   let encryptionKeyValue = '';
+  let showMigrationModal = false;
+  let migrationMessage = '';
 
   onMount(async () => {
     providers.load();
@@ -26,10 +29,25 @@
     } catch (error) {
       console.error('Failed to check encryption key status:', error);
     }
+
+    // Check for v2.1.0 migration notification
+    try {
+      const response = await apiClient.get('/migration-status');
+      if (response.data?.v2_1_migration_triggered) {
+        showMigrationModal = true;
+        migrationMessage = response.data.message || 'SoulSync has been upgraded!';
+      }
+    } catch (error) {
+      console.error('Failed to check migration status:', error);
+    }
   });
 
   function dismissEncryptionWarning() {
     showEncryptionWarning = false;
+  }
+
+  function dismissMigrationModal() {
+    showMigrationModal = false;
   }
 </script>
 
@@ -54,6 +72,13 @@
     <EncryptionKeyWarning 
       keyValue={encryptionKeyValue} 
       on:dismiss={dismissEncryptionWarning}
+    />
+  {/if}
+
+  {#if showMigrationModal}
+    <MigrationModal 
+      message={migrationMessage}
+      on:dismiss={dismissMigrationModal}
     />
   {/if}
 </div>

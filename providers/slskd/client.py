@@ -553,9 +553,6 @@ class SlskdProvider(DownloaderProvider):
             valid_tracks = []
             allowed_extensions = basic_filters.get('allowed_extensions') if basic_filters else None
             min_bitrate = basic_filters.get('min_bitrate', 0) if basic_filters else 0
-            target_duration_ms = basic_filters.get('target_duration_ms') if basic_filters else None
-            duration_tolerance_ms = basic_filters.get('duration_tolerance_ms', 5000) if basic_filters else 5000
-
             for tr in track_results:
                 # Extension Check
                 if allowed_extensions:
@@ -567,14 +564,6 @@ class SlskdProvider(DownloaderProvider):
                 if min_bitrate > 0 and tr.bitrate and tr.bitrate < min_bitrate:
                     continue
                 
-                # Duration Check - Filter out remixes/live versions by duration
-                # Note: TrackResult.duration is stored in milliseconds
-                if target_duration_ms and tr.duration:
-                    candidate_duration_ms = tr.duration
-                    duration_diff = abs(candidate_duration_ms - target_duration_ms)
-                    if duration_diff > duration_tolerance_ms:
-                        continue  # Likely remix/live/extended version
-
                 # Convert to SoulSyncTrack
                 soul_track = self._convert_to_soulsync_track(tr)
                 if soul_track:
