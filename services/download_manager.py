@@ -299,6 +299,24 @@ class DownloadManager:
             self._update_status(download_id, "failed")
             return
 
+        # Extract duration from sync_id if available
+        import urllib.parse
+        target_duration_ms = None
+        if download and download.sync_id:
+            try:
+                parsed_url = urllib.parse.urlparse(download.sync_id)
+                query_params = urllib.parse.parse_qs(parsed_url.query)
+                if 'dur' in query_params:
+                    dur_str = query_params['dur'][0]
+                    target_duration_ms = int(dur_str)
+                    logger.debug(f"Extracted target_duration_ms={target_duration_ms} from sync_id")
+            except Exception as e:
+                logger.warning(f"Failed to extract duration from sync_id {download.sync_id}: {e}")
+
+        # Fallback to track duration
+        if not target_duration_ms and target_track.duration:
+            target_duration_ms = target_track.duration
+
         try:
             logger.info(f"Searching for: {target_track.artist_name} - {target_track.title} via {provider.name}")
 
@@ -318,7 +336,7 @@ class DownloadManager:
             basic_filters = {
                 "allowed_extensions": allowed_formats,
                 "min_bitrate": self._get_min_bitrate(quality_profile),
-                "target_duration_ms": target_track.duration if target_track.duration else None,
+                "target_duration_ms": target_duration_ms,
                 "duration_tolerance_ms": duration_tolerance_ms  # Read from quality profile
             }
             

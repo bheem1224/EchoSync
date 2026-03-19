@@ -360,7 +360,7 @@ class SlskdProvider(DownloaderProvider):
 
         return soul_track
 
-    def _process_search_responses(self, responses_data: List[Dict[str, Any]]) -> List[TrackResult]:
+    def _process_search_responses(self, responses_data: List[Dict[str, Any]], target_duration_ms: Optional[int] = None) -> List[TrackResult]:
         """Process search response data into TrackResult objects"""
         all_tracks = []
 
@@ -399,6 +399,14 @@ class SlskdProvider(DownloaderProvider):
                         duration_ms = duration_seconds * 1000
                 except Exception:
                     duration_ms = None
+
+                # Optimization Phase 4: apply early filtering using dur parameter (+/- 4s tolerance)
+                if target_duration_ms is not None and duration_ms is not None:
+                    # Convert to seconds to do the +/- 4 seconds check, as length comes in seconds
+                    target_duration_seconds = target_duration_ms / 1000.0
+                    duration_seconds = duration_ms / 1000.0
+                    if abs(duration_seconds - target_duration_seconds) > 4:
+                        continue
 
                 # Mathematical size gating for FLAC to reduce fake/transcoded files.
                 # If approximate bytes-per-second is too low, skip candidate.
@@ -546,14 +554,14 @@ class SlskdProvider(DownloaderProvider):
                 logger.info(f"Search complete but no responses received")
                 
             # 3. Parse Results
-            track_results = self._process_search_responses(all_responses)
+            target_duration_ms = basic_filters.get('target_duration_ms') if basic_filters else None
+            track_results = self._process_search_responses(all_responses, target_duration_ms=target_duration_ms)
             logger.info(f"Search yielded {len(track_results)} raw candidates")
 
             # 4. Apply Coarse Filters (Extensions, Min Bitrate, Duration)
             valid_tracks = []
             allowed_extensions = basic_filters.get('allowed_extensions') if basic_filters else None
             min_bitrate = basic_filters.get('min_bitrate', 0) if basic_filters else 0
-            target_duration_ms = basic_filters.get('target_duration_ms') if basic_filters else None
             duration_tolerance_ms = basic_filters.get('duration_tolerance_ms', 5000) if basic_filters else 5000
 
             for tr in track_results:

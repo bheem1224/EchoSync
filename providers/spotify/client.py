@@ -179,6 +179,14 @@ class SpotifyClient(SyncServiceProvider):
 
         self.account_id: Optional[int] = account_id
 
+        # Initialize the cache manager
+        try:
+            from providers.spotify.cache_manager import SpotifyCacheManager
+            self.cache_manager = SpotifyCacheManager()
+        except Exception as e:
+            logger.error(f"Failed to initialize SpotifyCacheManager: {e}")
+            self.cache_manager = None
+
         self._setup_client()
         ProviderRegistry.register(SpotifyClient)
         self._register_health_check()
@@ -668,6 +676,11 @@ class SpotifyClient(SyncServiceProvider):
 
         tracks = []
         try:
+            # First fetch the full playlist details to cache it
+            playlist_details = self.sp.playlist(playlist_id)
+            if playlist_details and self.cache_manager:
+                self.cache_manager.save_playlist(playlist_details)
+
             results = self.sp.playlist_tracks(playlist_id, limit=100)
             while results:
                 for item in results['items']:
