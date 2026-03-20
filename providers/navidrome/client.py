@@ -720,7 +720,10 @@ class NavidromeClient(MediaServerProvider):
             return []
 
     def update_playlist(self, playlist_name: str, tracks) -> bool:
-        """Update an existing playlist or create it if it doesn't exist"""
+        """
+        DEPRECATED: Use add_tracks_to_playlist() instead.
+        Update an existing playlist or create it if it doesn't exist
+        """
         if not self.ensure_connection():
             return False
 
@@ -755,7 +758,46 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error updating Navidrome playlist '{playlist_name}': {e}")
             return False
 
-    def _trigger_scan_api(self, path: Optional[str] = None) -> bool:
+    def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: List[str]) -> bool:
+        """
+        Add tracks to an existing Navidrome playlist using provider-specific track IDs.
+        
+        Args:
+            playlist_id: The Navidrome playlist ID (string UUID)
+            provider_track_ids: List of Navidrome track IDs (string UUIDs)
+            
+        Returns:
+            bool: True if tracks were successfully added, False otherwise
+        """
+        if not self.ensure_connection():
+            return False
+        
+        if not provider_track_ids:
+            logger.warning("add_tracks_to_playlist called with empty track list")
+            return False
+        
+        try:
+            # Navidrome uses Subsonic API - addSongsToPlaylist endpoint
+            # POST /rest/addSongsToPlaylist.view?playlistId=xxx&songId=id1&songId=id2...
+            params = {
+                'playlistId': playlist_id,
+                'songId': provider_track_ids  # Subsonic API accepts multiple songId parameters
+            }
+            
+            response = self._make_request('addSongsToPlaylist', params)
+            
+            if response and response.get('status') == 'ok':
+                logger.info(f"✅ Added {len(provider_track_ids)} tracks to Navidrome playlist {playlist_id}")
+                return True
+            else:
+                logger.error(f"Failed to add tracks to Navidrome playlist {playlist_id}: {response}")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Error adding tracks to Navidrome playlist {playlist_id}: {e}")
+            return False
+
+    def _trigger_library_scan_api(self, path: Optional[str] = None) -> bool:
         """
         Navidrome-specific: Trigger library scan.
         Navidrome doesn't require explicit scans - library is always current.

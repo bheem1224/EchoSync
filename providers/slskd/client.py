@@ -154,6 +154,7 @@ class SlskdProvider(DownloaderProvider):
     """
     name = "slskd"
     supports_downloads = True
+    supports_pre_filtering = True
     rate_limit = 5.0 # High throughput allowed
     capabilities = ProviderCapabilities(
         name='slskd',
@@ -166,6 +167,7 @@ class SlskdProvider(DownloaderProvider):
         supports_library_scan=False,
         supports_streaming=False,
         supports_downloads=True,
+        supports_pre_filtering=True,
     )
 
     def __init__(self):
@@ -360,12 +362,26 @@ class SlskdProvider(DownloaderProvider):
 
         return soul_track
 
-    def _process_search_responses(self, responses_data: List[Dict[str, Any]]) -> List[TrackResult]:
-        """Process search response data into TrackResult objects"""
+    def _process_search_responses(
+        self,
+        responses_data: List[Dict[str, Any]],
+        quality_profile: Optional[Dict[str, Any]] = None,
+    ) -> List[TrackResult]:
+        """Process search responses into TrackResult objects with provider-side pre-filtering.
+
+        Provider-side pre-filtering is intentionally coarse and cheap. It rejects obviously
+        bad candidates (for example fake/transcoded FLACs) before they reach the Download
+        Manager and Matching Engine, reducing scoring overhead without moving orchestration
+        logic into the provider.
+        """
         all_tracks = []
 
         # Audio file extensions to filter for
         audio_extensions = {'.mp3', '.flac', '.ogg', '.aac', '.wma', '.wav', '.m4a', '.dsf', '.dff'}
+
+        advanced_filters = (quality_profile or {}).get('advanced_filters', {}) if quality_profile else {}
+        fake_flac_min_bytes_per_second = int(advanced_filters.get('fake_flac_min_bytes_per_second', 70000))
+        fake_flac_min_kbps = int(advanced_filters.get('fake_flac_min_kbps', 500))
 
         for response_data in responses_data:
             username = response_data.get('username', '')
@@ -400,15 +416,21 @@ class SlskdProvider(DownloaderProvider):
                 except Exception:
                     duration_ms = None
 
-                # Mathematical size gating for FLAC to reduce fake/transcoded files.
-                # If approximate bytes-per-second is too low, skip candidate.
+                # Provider-side FLAC authenticity heuristic:
+                # Use simple size/duration bitrate math to reject likely fake transcodes.
                 if quality == 'flac' and duration_ms and duration_ms > 0 and size and size > 0:
                     duration_seconds = duration_ms / 1000.0
                     approx_bytes_per_second = size / duration_seconds
-                    if approx_bytes_per_second < 70000:
+                    approx_kbps = (size * 8.0) / (duration_seconds * 1000.0)
+                    if approx_bytes_per_second < fake_flac_min_bytes_per_second or approx_kbps < fake_flac_min_kbps:
                         logger.debug(
-                            f"Skipping suspicious FLAC (likely transcode): {filename} "
-                            f"bps={approx_bytes_per_second:.0f} < 70000"
+                            "Pre-filter rejected suspicious FLAC (likely transcode): %s "
+                            "bytes_per_second=%.0f threshold=%d approx_kbps=%.0f threshold=%d",
+                            filename,
+                            approx_bytes_per_second,
+                            fake_flac_min_bytes_per_second,
+                            approx_kbps,
+                            fake_flac_min_kbps,
                         )
                         continue
 
@@ -428,7 +450,13 @@ class SlskdProvider(DownloaderProvider):
 
         return all_tracks
 
-    async def _async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 180) -> List[SoulSyncTrack]:
+    async def _async_search(
+        self,
+        query: str,
+        basic_filters: Dict[str, Any] = None,
+        timeout: int = 180,
+        quality_profile: Optional[Dict[str, Any]] = None,
+    ) -> List[SoulSyncTrack]:
         """
         Atomic Search: Post -> Poll -> Parse -> Delete.
         Applies coarse filtering (basic_filters) before returning.
@@ -444,9 +472,15 @@ class SlskdProvider(DownloaderProvider):
         """
         # Acquire semaphore slot (max 3 concurrent searches for IP ban protection)
         async with self._search_semaphore:
-            return await self._do_async_search(query, basic_filters, timeout)
+            return await self._do_async_search(query, basic_filters, timeout, quality_profile)
 
-    async def _do_async_search(self, query: str, basic_filters: Dict[str, Any] = None, timeout: int = 180) -> List[SoulSyncTrack]:
+    async def _do_async_search(
+        self,
+        query: str,
+        basic_filters: Dict[str, Any] = None,
+        timeout: int = 180,
+        quality_profile: Optional[Dict[str, Any]] = None,
+    ) -> List[SoulSyncTrack]:
         """Internal async search implementation (called under semaphore lock)."""
         if not self.base_url:
             logger.error("Slskd client not configured")
@@ -546,7 +580,7 @@ class SlskdProvider(DownloaderProvider):
                 logger.info(f"Search complete but no responses received")
                 
             # 3. Parse Results
-            track_results = self._process_search_responses(all_responses)
+            track_results = self._process_search_responses(all_responses, quality_profile=quality_profile)
             logger.info(f"Search yielded {len(track_results)} raw candidates")
 
             # 4. Apply Coarse Filters (Extensions, Min Bitrate, Duration)
@@ -686,13 +720,21 @@ class SlskdProvider(DownloaderProvider):
 
     # Public Sync Wrappers for Provider Interface
 
-    def search(self, query: str, basic_filters: Dict[str, Any] = None, limit: int = 10) -> List[SoulSyncTrack]:
+    def search(
+        self,
+        query: str,
+        basic_filters: Dict[str, Any] = None,
+        limit: int = 10,
+        quality_profile: Optional[Dict[str, Any]] = None,
+    ) -> List[SoulSyncTrack]:
         """Synchronous wrapper for atomic search"""
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                results = loop.run_until_complete(self._async_search(query, basic_filters))
+                results = loop.run_until_complete(
+                    self._async_search(query, basic_filters, quality_profile=quality_profile)
+                )
                 return results[:limit]
             finally:
                 loop.close()

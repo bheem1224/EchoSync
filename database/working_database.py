@@ -142,6 +142,8 @@ class UserTrackState(WorkingBase):
     is_unlinked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_hard_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     sponsor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    admin_exempt_deletion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    admin_force_upgrade: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
@@ -259,6 +261,28 @@ class WorkingDatabase:
 
     def create_all(self) -> None:
         WorkingBase.metadata.create_all(self.engine)
+        self._ensure_user_track_state_columns()
+
+    def _ensure_user_track_state_columns(self) -> None:
+        """Best-effort migration for new user_track_states override columns."""
+        required_columns = {
+            "admin_exempt_deletion": "BOOLEAN NOT NULL DEFAULT 0",
+            "admin_force_upgrade": "BOOLEAN NOT NULL DEFAULT 0",
+        }
+
+        try:
+            with self.engine.begin() as conn:
+                existing_rows = conn.exec_driver_sql("PRAGMA table_info('user_track_states')").fetchall()
+                existing = {str(row[1]) for row in existing_rows}
+
+                for column_name, ddl in required_columns.items():
+                    if column_name not in existing:
+                        conn.exec_driver_sql(
+                            f"ALTER TABLE user_track_states ADD COLUMN {column_name} {ddl}"
+                        )
+        except Exception:
+            # Non-fatal; metadata create_all already guarantees fresh schemas include columns.
+            pass
 
     def drop_all(self) -> None:
         WorkingBase.metadata.drop_all(self.engine)

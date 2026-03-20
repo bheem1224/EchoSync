@@ -103,8 +103,18 @@ class ProviderBase(ABC):
         pass
 
     @abstractmethod
-    def search(self, query: str, type: str = "track", limit: int = 10) -> List[SoulSyncTrack]:
-        """Search for tracks. Must return SoulSyncTrack objects."""
+    def search(
+        self,
+        query: str,
+        type: str = "track",
+        limit: int = 10,
+        quality_profile: Optional[Dict[str, Any]] = None,
+    ) -> List[SoulSyncTrack]:
+        """Search for tracks. Must return SoulSyncTrack objects.
+
+        Args:
+            quality_profile: Optional active quality profile for provider-side pre-filtering.
+        """
         pass
 
     @abstractmethod
@@ -131,6 +141,34 @@ class ProviderBase(ABC):
     def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
         """Fetch tracks for a playlist. Must return List[SoulSyncTrack]."""
         pass
+
+    def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: List[str]) -> bool:
+        """Add tracks to a playlist using provider-specific IDs (e.g., Plex ratingKeys, Spotify URIs).
+        
+        This is the RECOMMENDED method for adding tracks to playlists.
+        Providers should override this to accept a list of string IDs instead of track objects.
+        
+        Args:
+            playlist_id: The playlist ID in this provider's system
+            provider_track_ids: List of provider-specific track IDs (e.g., ['1', '2', '3'] for Plex)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Default implementation: not supported by this provider
+        raise NotImplementedError(f"add_tracks_to_playlist not implemented for {self.name} provider")
+
+    def remove_tracks_from_playlist(self, playlist_id: str, provider_track_ids: List[str]) -> bool:
+        """Remove tracks from a playlist using provider-specific IDs.
+
+        Args:
+            playlist_id: The playlist ID in this provider's system
+            provider_track_ids: List of provider-specific track IDs to remove
+
+        Returns:
+            True if successful, False otherwise
+        """
+        raise NotImplementedError(f"remove_tracks_from_playlist not implemented for {self.name} provider")
 
     @abstractmethod
     def is_configured(self) -> bool:

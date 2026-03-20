@@ -56,6 +56,7 @@ class JobQueue:
         self._thread: Optional[threading.Thread] = None
         self._workers = threading.BoundedSemaphore(worker_count)
         self._poll_interval = poll_interval
+        self._is_running: Dict[str, bool] = {}  # Concurrency lock: job_name -> is_currently_running
 
     def _remove_from_heap(self, name: str):
         self._heap = [job for job in self._heap if job.name != name]
@@ -190,6 +191,53 @@ class JobQueue:
                 heapq.heappush(self._heap, job)
                 logger.info(f"Scheduled immediate run for '{name}'")
 
+    def execute_job_now(self, name: str) -> bool:
+        """Execute a job immediately in a background thread without affecting its scheduled interval.
+        
+        This is useful for manual UI triggers that should not reset the APScheduler interval.
+        Returns True if job was executed, False if job not found or already running.
+        """
+        with self._lock:
+            job = self._jobs.get(name)
+            if not job or not job.enabled:
+                logger.warning(f"Cannot execute job '{name}': not found or disabled")
+                return False
+            
+            # Check if already running
+            if self._is_running.get(name, False):
+                logger.warning(f"Job '{name}' is already running, skipping duplicate execution")
+                return False
+            
+            # Mark as running and spawn background thread
+            self._is_running[name] = True
+        
+        # Execute in a background thread outside the lock
+        def _run_job_thread():
+            try:
+                logger.info(f"Starting manual execution of job '{name}'")
+                job.last_started = time.time()
+                job.func()
+                job.last_finished = time.time()
+                job.last_success = job.last_finished
+                job.total_successes += 1
+                job.current_retries = 0
+                job.last_error = None
+                logger.info(f"Manual execution of job '{name}' completed successfully")
+            except Exception as e:
+                job.last_finished = time.time()
+                job.last_error = str(e)
+                job.last_error_time = job.last_finished
+                job.total_failures += 1
+                logger.error(f"Error during manual execution of job '{name}': {e}")
+            finally:
+                with self._lock:
+                    self._is_running[name] = False
+        
+        thread = threading.Thread(target=_run_job_thread, daemon=True)
+        thread.start()
+        logger.info(f"Spawned background thread for manual execution of job '{name}'")
+        return True
+
     def schedule_in(self, name: str, delay_seconds: float):
         with self._lock:
             job = self._jobs.get(name)
@@ -247,6 +295,11 @@ class JobQueue:
             return result
 
     # Internal runner
+    def _is_job_running(self, name: str) -> bool:
+        """Check if a job is currently executing."""
+        with self._lock:
+            return self._is_running.get(name, False) or self._jobs.get(name, ScheduledJob(time.time(), "_dummy", lambda: None)).running
+
     def _run_loop(self):
         while self._running:
             with self._lock:
