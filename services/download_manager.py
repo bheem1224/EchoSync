@@ -15,6 +15,7 @@ Design Principle: "Central Control"
 """
 
 import asyncio
+import inspect
 import logging
 import re
 import threading
@@ -59,7 +60,7 @@ class DownloadManager:
         return cls._instance
 
     def _get_provider(self) -> Optional[ProviderBase]:
-        """Lazy load the active download provider"""
+        """Lazy load the active download provider (legacy single-provider support)"""
         if self._provider:
             return self._provider
 
@@ -80,6 +81,109 @@ class DownloadManager:
         except Exception as e:
             logger.error(f"Failed to load download provider: {e}")
             return None
+
+    async def _invoke_provider_search(
+        self,
+        provider: ProviderBase,
+        query: str,
+        strategy_filters: Dict[str, Any],
+        quality_profile: Optional[Dict[str, Any]],
+    ) -> List[SoulSyncTrack]:
+        """Invoke provider search while passing quality_profile when supported."""
+        if hasattr(provider, '_async_search'):
+            async_search = getattr(provider, '_async_search')
+            try:
+                sig = inspect.signature(async_search)
+                if 'quality_profile' in sig.parameters:
+                    return await async_search(query, strategy_filters, quality_profile=quality_profile)
+            except (TypeError, ValueError):
+                pass
+            return await async_search(query, strategy_filters)
+
+        loop = asyncio.get_running_loop()
+        search_fn = provider.search
+        try:
+            sig = inspect.signature(search_fn)
+            if 'quality_profile' in sig.parameters:
+                return await loop.run_in_executor(
+                    None,
+                    lambda: search_fn(query, basic_filters=strategy_filters, quality_profile=quality_profile),
+                )
+        except (TypeError, ValueError):
+            pass
+
+        try:
+            return await loop.run_in_executor(
+                None,
+                lambda: search_fn(query, basic_filters=strategy_filters),
+            )
+        except TypeError:
+            # Final fallback for providers that do not expose slskd-style search kwargs.
+            return await loop.run_in_executor(None, search_fn, query, strategy_filters)
+
+    def _get_active_download_providers(self) -> List[ProviderBase]:
+        """
+        Get all active download providers sorted by user's defined priority.
+        
+        Returns list of provider instances in priority order (highest priority first).
+        If no user priority is configured, returns all active providers in registry order.
+        Automatically filters out disabled providers.
+        """
+        try:
+            from database.config_database import get_config_database
+            config_db = get_config_database()
+            
+            # Get all providers that support downloads
+            available_providers = ProviderRegistry.get_download_clients()
+            if not available_providers:
+                logger.warning("No download providers available in registry")
+                return []
+            
+            logger.debug(f"Available download providers: {available_providers}")
+            
+            # Get user's defined priority list
+            user_priority = config_db.get_download_provider_priority()
+            logger.debug(f"User-defined provider priority: {user_priority}")
+            
+            # Sort providers by user priority (highest priority first)
+            # Providers not in user list appear at end in registry order
+            sorted_names = []
+            
+            if user_priority:
+                # Add providers in user priority order (only if available)
+                for provider_name in user_priority:
+                    if provider_name.lower() in [p.lower() for p in available_providers]:
+                        sorted_names.append(provider_name.lower())
+                
+                # Add remaining providers not in user list
+                for provider_name in available_providers:
+                    if provider_name.lower() not in sorted_names:
+                        sorted_names.append(provider_name.lower())
+            else:
+                # No user priority defined, use registry order
+                sorted_names = [p.lower() for p in available_providers]
+            
+            logger.info(f"Download provider search order: {sorted_names}")
+            
+            # Instantiate providers in sorted order
+            instances = []
+            for provider_name in sorted_names:
+                try:
+                    instance = ProviderRegistry.create_instance(provider_name)
+                    instances.append(instance)
+                except Exception as e:
+                    logger.warning(f"Failed to instantiate provider '{provider_name}': {e}")
+            
+            if not instances:
+                logger.error("No download providers could be instantiated")
+                return []
+            
+            logger.info(f"Instantiated {len(instances)} download providers in priority order")
+            return instances
+            
+        except Exception as e:
+            logger.error(f"Error getting active download providers: {e}", exc_info=True)
+            return []
 
     def queue_download(self, track: SoulSyncTrack) -> int:
         """
@@ -234,24 +338,16 @@ class DownloadManager:
                 await asyncio.sleep(10) # Backoff on error
 
     async def _process_queued_items(self):
-        """Pick up queued items and attempt to find/start them"""
-        provider = self._get_provider()
-        if not provider:
-            logger.debug("Skipping queue processing: No active provider.")
+        """Pick up queued items and attempt to find/start them using waterfall provider strategy"""
+        providers = self._get_active_download_providers()
+        if not providers:
+            logger.debug("Skipping queue processing: No active download providers.")
             return
 
         # Fetch queued items from DB
-        # We need to do this carefully to avoid holding the DB lock too long
-        # or sharing SA objects across threads if async is involved (though we are in async loop)
-        # Note: SQLAlchemy async support is not used here, so we use sync calls wrapped or directly.
-        # Since this loop effectively blocks, we should be careful.
-        # But given Python's GIL and standard threading, simple sync DB access is usually fine for low throughput.
-
         queued_ids = []
         with self.work_db.session_scope() as session:
-            # Get up to 30 queued items to enable 10 concurrent searches
-            # Note: SlskdProvider internally limits to 3 concurrent searches (Soulseek IP ban protection)
-            # Download manager can scale to 10 if other clients (e.g., non-Soulseek) are added later
+            # Get up to 30 queued items to enable concurrent searches
             # Order by created_at DESC to prioritize newer tracks first
             items = session.query(Download).filter(Download.status.ilike("queued")).order_by(Download.created_at.desc()).limit(30).all()
             if items:
@@ -266,32 +362,44 @@ class DownloadManager:
         if not queued_ids:
             return
 
-        # Create all search tasks concurrently (don't await sequentially)
-        # Slskd will throttle to 3 concurrent via semaphore
+        # Create all search tasks concurrently using waterfall provider strategy
+        # Each task will try providers in priority order until finding a suitable match
         tasks = []
         for download_id in queued_ids:
             logger.debug(f"Queuing download for processing: {download_id}")
-            task = asyncio.create_task(self._execute_search_and_download(download_id, provider))
+            task = asyncio.create_task(self._execute_waterfall_search_and_download(download_id, providers))
             tasks.append(task)
         
-        # Wait for all searches to complete (with semaphore limiting concurrent execution)
+        # Wait for all searches to complete
         if tasks:
-            logger.info(f"Started {len(tasks)} search tasks (Slskd will limit to 3 concurrent)")
+            logger.info(f"Started {len(tasks)} search tasks with {len(providers)} providers in waterfall priority order")
             results = await asyncio.gather(*tasks, return_exceptions=True)
             failed = sum(1 for r in results if isinstance(r, Exception))
             if failed > 0:
                 logger.warning(f"Completed {len(tasks)} searches with {failed} errors")
 
-    async def _execute_search_and_download(self, download_id: int, provider: ProviderBase):
-        """Perform Search -> Match -> Download for a single item"""
+    async def _execute_waterfall_search_and_download(self, download_id: int, providers: List[ProviderBase]):
+        """
+        Perform Waterfall Search -> Match -> Download for a single item.
+        
+        Algorithm:
+        1. For each provider in priority order:
+           - Search with all strategies
+           - Get matching engine candidates
+           - If perfect match (score >= 90), break and download
+           - Otherwise, track best candidate and continue
+        2. Download the best candidate found across all providers
+        """
         target_track = None
 
-        # Reload fresh state
+        # Reload fresh state and reconstruct SoulSyncTrack from queue payload
+        # This ensures no metadata (ISRC, Album, etc) is lost
         with self.work_db.session_scope() as session:
             download = session.query(Download).get(download_id)
             if not download:
                 logger.error(f"Download ID {download_id} not found in DB.")
                 return
+            # Reconstruct from stored JSON to preserve all metadata
             target_track = SoulSyncTrack.from_dict(download.soul_sync_track)
 
         if not target_track:
@@ -303,7 +411,7 @@ class DownloadManager:
         target_duration_ms = target_track.duration if target_track.duration else None
 
         try:
-            logger.info(f"Searching for: {target_track.artist_name} - {target_track.title} via {provider.name}")
+            logger.info(f"Starting waterfall search for: {target_track.artist_name} - {target_track.title}")
 
             # 1. Get quality profile from config to determine allowed formats
             quality_profile = self._get_quality_profile()
@@ -317,12 +425,11 @@ class DownloadManager:
                     duration_tolerance_ms = int(filters['duration_tolerance_seconds'] * 1000)
             
             # Use basic filters for coarse rejection based on quality profile
-            # Include duration filtering to weed out remixes/live versions
             basic_filters = {
                 "allowed_extensions": allowed_formats,
                 "min_bitrate": self._get_min_bitrate(quality_profile),
                 "target_duration_ms": target_duration_ms,
-                "duration_tolerance_ms": duration_tolerance_ms  # Read from quality profile
+                "duration_tolerance_ms": duration_tolerance_ms
             }
             
             logger.info(f"Quality profile allows: {allowed_formats}")
@@ -331,82 +438,124 @@ class DownloadManager:
             strategies = self._generate_search_strategies(target_track, duration_tolerance_ms)
             logger.info(f"Generated {len(strategies)} search strategies")
 
-            candidates = []
-            for idx, strategy in enumerate(strategies, 1):
-                query = strategy["query"]
-                strategy_tolerance = strategy["duration_tolerance_ms"]
-                strategy_name = strategy["name"]
-
-                strategy_filters = dict(basic_filters)
-                strategy_filters["duration_tolerance_ms"] = strategy_tolerance
-
-                logger.info(
-                    f"Trying search strategy {idx}/{len(strategies)} [{strategy_name}] "
-                    f"query='{query}' duration_tolerance_ms={strategy_tolerance}"
-                )
-                
-                # Call provider search
-                search_results = []
-                if hasattr(provider, '_async_search'):
-                    logger.debug(f"Invoking _async_search on {provider.name}")
-                    search_results = await provider._async_search(query, strategy_filters)
-                else:
-                    logger.debug(f"Invoking sync search on {provider.name}")
-                    # Fallback to sync call in executor
-                    loop = asyncio.get_running_loop()
-                    search_results = await loop.run_in_executor(None, provider.search, query, strategy_filters)
-
-                logger.info(f"Strategy {idx} returned {len(search_results)} candidates")
-                
-                if search_results:
-                    candidates.extend(search_results)
-
-            # Deduplicate merged candidates from all fallback strategies
-            candidates = self._deduplicate_candidates(candidates)
-
-            logger.info(f"Total candidates from all strategies: {len(candidates)}")
-
-            if not candidates:
-                logger.warning("No results found for any search strategy")
-                self._update_status(download_id, "failed_no_results")
-                return
-
-            # 1.5. Quality Profile Cascading - Try each priority tier until one succeeds
+            # ============================================================================
+            # WATERFALL PROVIDER SEARCH
+            # ============================================================================
+            # Track best candidate across all providers
             best_candidate = None
-            
-            # Get priority tiers from quality profile (sorted by priority)
-            priority_tiers = self._get_priority_tiers(quality_profile)
-            
-            for priority_num, priority_formats in priority_tiers:
-                logger.info(f"Trying quality profile priority {priority_num}: {priority_formats}")
-                
-                # Filter candidates by this priority tier
-                tier_candidates = self._filter_by_formats(candidates, priority_formats)
-                logger.info(f"Found {len(tier_candidates)} candidates matching priority {priority_num}")
-                
-                if not tier_candidates:
+            best_score = 0.0
+            winning_provider_name = None
+            perfect_match_threshold = 90  # Score >= 90 triggers immediate break
+
+            # Iterate through providers in priority order
+            for provider_idx, provider in enumerate(providers, 1):
+                logger.info(f"\n=== Provider {provider_idx}/{len(providers)}: {provider.name} ===")
+                provider_candidates = []
+
+                # Try all strategies for this provider
+                for strategy_idx, strategy in enumerate(strategies, 1):
+                    query = strategy["query"]
+                    strategy_tolerance = strategy["duration_tolerance_ms"]
+                    strategy_name = strategy["name"]
+
+                    strategy_filters = dict(basic_filters)
+                    strategy_filters["duration_tolerance_ms"] = strategy_tolerance
+
+                    logger.info(
+                        f"  Strategy {strategy_idx}/{len(strategies)} [{strategy_name}] "
+                        f"via {provider.name}: query='{query}'"
+                    )
+                    
+                    # Call provider search
+                    search_results = []
+                    try:
+                        logger.debug(f"    Invoking search on {provider.name} with quality profile")
+                        search_results = await self._invoke_provider_search(
+                            provider,
+                            query,
+                            strategy_filters,
+                            quality_profile,
+                        )
+                    except Exception as e:
+                        logger.warning(f"    Search failed on {provider.name}: {e}")
+                        continue
+
+                    logger.info(f"    Strategy {strategy_idx} returned {len(search_results)} candidates")
+                    
+                    if search_results:
+                        provider_candidates.extend(search_results)
+
+                # Deduplicate candidates for this provider
+                provider_candidates = self._deduplicate_candidates(provider_candidates)
+                logger.info(f"  Total candidates from {provider.name}: {len(provider_candidates)}")
+
+                if not provider_candidates:
+                    logger.info(f"  No candidates found on {provider.name}, trying next provider...")
                     continue
+
+                # Run matching engine on this provider's candidates
+                # Quality Profile Cascading - Try each priority tier
+                priority_tiers = self._get_priority_tiers(quality_profile)
+                provider_best_candidate = None
+                provider_best_score = 0.0
                 
-                # Try to match with this tier
-                logger.debug(f"Running matching engine on priority {priority_num} candidates...")
-                matcher = self._get_matching_engine()
-                best_candidate = matcher.select_best_download_candidate(target_track, tier_candidates)
-                
-                if best_candidate:
-                    logger.info(f"Successfully matched with priority {priority_num} format")
-                    break
+                for priority_num, priority_formats in priority_tiers:
+                    # Filter by priority formats
+                    tier_candidates = self._filter_by_formats(provider_candidates, priority_formats)
+                    logger.debug(f"    Priority {priority_num}: {len(tier_candidates)} candidates match formats")
+                    
+                    if not tier_candidates:
+                        continue
+                    
+                    # Get matching engine and score candidates
+                    matcher = self._get_matching_engine()
+                    candidate = matcher.select_best_download_candidate(target_track, tier_candidates)
+                    
+                    if candidate:
+                        # We need to get the score from the matching engine
+                        # Since select_best_download_candidate doesn't return score,
+                        # we calculate it here
+                        match_result = matcher.calculate_match(target_track, candidate)
+                        provider_best_score = match_result.confidence_score
+                        provider_best_candidate = candidate
+                        logger.info(f"    Got match on priority {priority_num}: score={provider_best_score:.1f}")
+                        break
+
+                if provider_best_candidate and provider_best_score > 0:
+                    logger.info(f"  Best match from {provider.name}: score={provider_best_score:.1f}")
+                    
+                    # Check if this is a perfect match (>= 90)
+                    if provider_best_score >= perfect_match_threshold:
+                        logger.info(f"  ✓ PERFECT MATCH from {provider.name} (score {provider_best_score:.1f} >= {perfect_match_threshold})")
+                        best_candidate = provider_best_candidate
+                        best_score = provider_best_score
+                        winning_provider_name = provider.name
+                        break  # Exit provider loop - we have a perfect match
+                    
+                    # Track best candidate across all providers for fallback
+                    if provider_best_score > best_score:
+                        logger.info(f"  New best candidate: {provider.name} (score {provider_best_score:.1f})")
+                        best_candidate = provider_best_candidate
+                        best_score = provider_best_score
+                        winning_provider_name = provider.name
                 else:
-                    logger.warning(f"Priority {priority_num} yielded {len(tier_candidates)} candidates but all failed matching")
-            
+                    logger.info(f"  No acceptable match from {provider.name}")
+                    continue
+
+            # ============================================================================
+            # DOWNLOAD BEST CANDIDATE
+            # ============================================================================
             if not best_candidate:
-                logger.warning(f"No suitable candidate matched across all quality priorities (tried {len(strategies)} strategies, got {len(candidates)} candidates)")
+                logger.warning(f"No suitable candidate matched across all {len(providers)} providers")
                 self._update_status(download_id, "failed_no_match")
                 return
 
-            # 3. Download
-            logger.info(f"Starting download for {best_candidate.identifiers.get('provider_item_id')}")
+            logger.info("**PROCEEDING WITH DOWNLOAD**")
+            logger.info(f"  Track: {target_track.artist_name} - {target_track.title}")
+            logger.info(f"  Provider: {winning_provider_name}")
+            logger.info(f"  Match Score: {best_score:.1f}")
 
-            # Extract params - username is the peer who has the file
+            # Extract download parameters
             username = best_candidate.identifiers.get('username')
             filename = best_candidate.identifiers.get('provider_item_id')
             size = best_candidate.identifiers.get('size')
@@ -421,26 +570,46 @@ class DownloadManager:
                 self._update_status(download_id, "failed_no_filename")
                 return
 
+            # Find the provider instance to use for download
+            download_provider = None
+            for provider in providers:
+                if provider.name.lower() == winning_provider_name.lower():
+                    download_provider = provider
+                    break
+            
+            if not download_provider:
+                logger.error(f"Cannot find provider instance for {winning_provider_name}")
+                self._update_status(download_id, "failed_no_provider")
+                return
+
+            # Execute download on the winning provider
             provider_id = None
-            if hasattr(provider, '_async_download'):
-                provider_id = await provider._async_download(username, filename, size)
-            else:
-                loop = asyncio.get_running_loop()
-                provider_id = await loop.run_in_executor(None, provider.download, username, filename, size)
+            try:
+                if hasattr(download_provider, '_async_download'):
+                    provider_id = await download_provider._async_download(username, filename, size)
+                else:
+                    loop = asyncio.get_running_loop()
+                    provider_id = await loop.run_in_executor(None, download_provider.download, username, filename, size)
+            except Exception as e:
+                logger.error(f"Error initiating download on {winning_provider_name}: {e}")
+                self._update_status(download_id, "failed_start_download")
+                return
 
             if provider_id:
+                logger.info(f"Download started: {provider_id}")
                 self._update_status(download_id, "downloading", provider_id)
             else:
+                logger.error(f"Download provider {winning_provider_name} returned no provider_id")
                 self._update_status(download_id, "failed_start_download")
 
         except Exception as e:
-            logger.error(f"Error executing download {download_id}: {e}")
+            logger.error(f"Error executing waterfall search and download {download_id}: {e}", exc_info=True)
             self._update_status(download_id, "failed_error")
 
     async def _check_active_downloads(self):
-        """Poll provider for status of active downloads"""
-        provider = self._get_provider()
-        if not provider:
+        """Poll providers for status of active downloads using waterfall strategy"""
+        providers = self._get_active_download_providers()
+        if not providers:
             return
 
         active_downloads = []
@@ -453,47 +622,58 @@ class DownloadManager:
         if not active_downloads:
             return
 
-        logger.debug(f"Checking status for {len(active_downloads)} active downloads...")
+        logger.debug(f"Checking status for {len(active_downloads)} active downloads across {len(providers)} providers...")
 
         for db_id, provider_id in active_downloads:
             if not provider_id:
                 continue
 
             try:
-                # Get status
+                # Try to find which provider has this download
                 status = None
-                if hasattr(provider, '_async_get_download_status'):
-                    status = await provider._async_get_download_status(provider_id)
-                else:
-                    loop = asyncio.get_running_loop()
-                    status = await loop.run_in_executor(None, provider.get_download_status, provider_id)
+                found_provider = None
 
-                if status:
+                for provider in providers:
+                    if not hasattr(provider, '_async_get_download_status') and not hasattr(provider, 'get_download_status'):
+                        continue
+
+                    try:
+                        if hasattr(provider, '_async_get_download_status'):
+                            status = await provider._async_get_download_status(provider_id)
+                        else:
+                            loop = asyncio.get_running_loop()
+                            status = await loop.run_in_executor(None, provider.get_download_status, provider_id)
+
+                        if status:
+                            found_provider = provider.name
+                            logger.debug(f"  Found download {db_id} on {provider.name}")
+                            break
+                    except Exception as e:
+                        logger.debug(f"  {provider.name} doesn't have {provider_id}: {e}")
+                        continue
+
+                if status and found_provider:
                     # Map provider status to DB status
-                    # Slskd returns: queued, downloading, complete, failed
                     remote_state = status.get('status', '').lower()
 
-                    new_status = "downloading" # default
+                    new_status = "downloading"
                     if remote_state == "complete":
                         new_status = "completed"
                     elif remote_state == "failed":
                         new_status = "failed"
                     elif remote_state == "queued":
-                        new_status = "downloading" # We treat remote queue as active downloading phase
+                        new_status = "downloading"
 
                     if new_status != "downloading":
-                        logger.info(f"Download {db_id} (Provider {provider_id}) finished with status: {new_status}")
+                        logger.info(f"Download {db_id} (Provider {found_provider}, ID {provider_id}) finished with status: {new_status}")
                         self._update_status(db_id, new_status)
 
                         if new_status == "completed":
-                            # CLEANUP TASK 1: Remove from queue after download completes
                             logger.info(f"Download completed, removing {db_id} from queue")
                             self._remove_from_queue(db_id)
                             logger.info(f"Download {db_id} completed. TODO: Trigger Auto Import/Post-Processing.")
                 else:
-                    # Download not found in active transfers (likely completed and auto-removed by Slskd)
-                    # Mark as completed to prevent repeated status checks
-                    logger.info(f"Download {db_id} not found in active transfers - marking as completed")
+                    logger.info(f"Download {db_id} not found in any active provider transfers - marking as completed")
                     self._update_status(db_id, "completed")
                     self._remove_from_queue(db_id)
 

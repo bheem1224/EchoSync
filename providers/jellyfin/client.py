@@ -1236,7 +1236,10 @@ class JellyfinClient(MediaServerProvider):
             return []
 
     def update_playlist(self, playlist_name: str, tracks) -> bool:
-        """Update an existing playlist or create it if it doesn't exist"""
+        """
+        DEPRECATED: Use add_tracks_to_playlist() instead.
+        Update an existing playlist or create it if it doesn't exist
+        """
         if not self.ensure_connection():
             return False
         
@@ -1275,7 +1278,176 @@ class JellyfinClient(MediaServerProvider):
         except Exception as e:
             logger.error(f"Error updating Jellyfin playlist '{playlist_name}': {e}")
             return False
-    
+
+    def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: List[str]) -> bool:
+        """
+        Add tracks to an existing Jellyfin playlist using provider-specific track IDs (Jellyfin GUIDs).
+        
+        Args:
+            playlist_id: The Jellyfin playlist ID (GUID string)
+            provider_track_ids: List of Jellyfin track IDs (GUID strings)
+            
+        Returns:
+            bool: True if tracks were successfully added, False otherwise
+        """
+        if not self.ensure_connection():
+            return False
+        
+        if not provider_track_ids:
+            logger.warning("add_tracks_to_playlist called with empty track list")
+            return False
+        
+        try:
+            # Validate that all provided IDs are valid GUIDs
+            valid_ids = [tid for tid in provider_track_ids if self._is_valid_guid(tid)]
+            invalid_count = len(provider_track_ids) - len(valid_ids)
+            
+            if invalid_count > 0:
+                logger.warning(f"Filtering {invalid_count} invalid track IDs from add_tracks_to_playlist request")
+            
+            if not valid_ids:
+                logger.error("No valid Jellyfin track IDs provided for playlist")
+                return False
+            
+            # Add tracks to playlist using Jellyfin's batch endpoint
+            # POST /Playlists/{playlistId}/Items?Ids=id1,id2,id3
+            add_url = f"{self.base_url}/Playlists/{playlist_id}/Items"
+            headers = {
+                'X-Emby-Token': self.api_key,
+                'Content-Type': 'application/json'
+            }
+            
+            add_params = {
+                'Ids': ','.join(valid_ids),
+                'UserId': self.user_id
+            }
+            
+            response = self._http.post(add_url, params=add_params, headers=headers)
+            
+            if response.status_code not in [200, 204]:
+                logger.error(f"Failed to add tracks to Jellyfin playlist {playlist_id}: "
+                           f"{response.status_code} - {response.text}")
+                return False
+            
+            logger.info(f"✅ Added {len(valid_ids)} tracks to Jellyfin playlist {playlist_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding tracks to Jellyfin playlist {playlist_id}: {e}")
+            return False
+
+    def remove_tracks_from_playlist(self, playlist_id: str, provider_track_ids: List[str]) -> bool:
+        """Remove tracks from an existing Jellyfin playlist using Jellyfin track IDs (GUIDs)."""
+        if not self.ensure_connection():
+            return False
+
+        if not provider_track_ids:
+            logger.info("remove_tracks_from_playlist called with empty track list; nothing to do")
+            return True
+
+        try:
+            # Resolve playlist by ID or by name fallback.
+            playlist_obj = None
+            if self._is_valid_guid(str(playlist_id)):
+                playlist_obj = JellyfinPlaylistInfo(
+                    id=str(playlist_id),
+                    title=str(playlist_id),
+                    description=None,
+                    duration=0,
+                    leaf_count=0,
+                    tracks=[],
+                )
+            else:
+                playlist_obj = self.get_playlist_by_name(str(playlist_id))
+
+            if not playlist_obj:
+                logger.error(f"Playlist '{playlist_id}' not found on Jellyfin server")
+                return False
+
+            valid_ids = [tid for tid in provider_track_ids if self._is_valid_guid(tid)]
+            if not valid_ids:
+                logger.warning("No valid Jellyfin track IDs provided for removal")
+                return True
+
+            # Preferred path: direct remove endpoint.
+            remove_url = f"{self.base_url}/Playlists/{playlist_obj.id}/Items"
+            headers = {
+                'X-Emby-Token': self.api_key,
+                'Content-Type': 'application/json'
+            }
+            remove_params = {
+                'Ids': ','.join(valid_ids),
+                'UserId': self.user_id
+            }
+
+            response = self._http.delete(remove_url, params=remove_params, headers=headers)
+            if response.status_code in [200, 204]:
+                logger.info(f"✅ Removed {len(valid_ids)} track(s) from Jellyfin playlist {playlist_obj.id}")
+                return True
+
+            logger.warning(
+                f"Direct Jellyfin remove failed ({response.status_code}); rebuilding playlist as fallback"
+            )
+
+            # Fallback: rebuild playlist with remaining tracks if API variant rejects removal request.
+            current_tracks = self.get_playlist_tracks(playlist_obj.id)
+            remaining_ids = [
+                str(getattr(track, 'ratingKey', ''))
+                for track in current_tracks
+                if str(getattr(track, 'ratingKey', '')) and str(getattr(track, 'ratingKey', '')) not in set(valid_ids)
+            ]
+
+            # Delete old playlist
+            delete_url = f"{self.base_url}/Items/{playlist_obj.id}"
+            delete_resp = self._http.delete(delete_url, headers={'X-Emby-Token': self.api_key})
+            if delete_resp.status_code not in [200, 204]:
+                logger.error(f"Fallback failed: unable to delete playlist {playlist_obj.id}")
+                return False
+
+            # Recreate playlist with remaining IDs.
+            if not remaining_ids:
+                # Recreate empty playlist to preserve user expectation that playlist still exists.
+                create_resp = self._http.post(
+                    f"{self.base_url}/Playlists",
+                    json={'Name': playlist_obj.title, 'UserId': self.user_id, 'MediaType': 'Audio'},
+                    headers=headers,
+                )
+                if create_resp.status_code >= 400:
+                    logger.error(f"Failed to recreate empty playlist '{playlist_obj.title}' after removal")
+                    return False
+                logger.info(f"✅ Removed all requested tracks by rebuilding playlist '{playlist_obj.title}'")
+                return True
+
+            create_resp = self._http.post(
+                f"{self.base_url}/Playlists",
+                json={'Name': playlist_obj.title, 'UserId': self.user_id, 'MediaType': 'Audio'},
+                headers=headers,
+            )
+            if create_resp.status_code >= 400:
+                logger.error(f"Failed to recreate playlist '{playlist_obj.title}' after removal")
+                return False
+
+            created_payload = create_resp.json() if create_resp.content else {}
+            new_playlist_id = created_payload.get('Id')
+            if not new_playlist_id:
+                logger.error("Failed to get recreated Jellyfin playlist ID")
+                return False
+
+            add_resp = self._http.post(
+                f"{self.base_url}/Playlists/{new_playlist_id}/Items",
+                params={'Ids': ','.join(remaining_ids), 'UserId': self.user_id},
+                headers=headers,
+            )
+            if add_resp.status_code not in [200, 204]:
+                logger.error(f"Failed to restore remaining tracks after rebuild: {add_resp.status_code}")
+                return False
+
+            logger.info(f"✅ Removed requested tracks by rebuilding Jellyfin playlist '{playlist_obj.title}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error removing tracks from Jellyfin playlist {playlist_id}: {e}")
+            return False
+
     def trigger_library_scan(self, library_name: str = "Music") -> bool:
         """Trigger Jellyfin library scan for the specified library"""
         if not self.ensure_connection():

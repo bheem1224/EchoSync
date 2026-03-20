@@ -1,45 +1,60 @@
-"""
-Consensus Calculator for the Suggestion Engine.
-Reads all ratings for a given sync_id from the user_ratings table in working.db.
-Calculates the global average and decides if a track should be rejected based on rules.
+"""Consensus lifecycle for suggestion/deletion decisions.
+
+Rules (from product intent):
+- Incoming ratings are 0.5-5.0 stars and must be mapped to 1-10.
+- 1-2: deletion candidate at month-end.
+- 3-4: quality upgrade candidate at week-end.
+- 5-10: keep and feed preference model.
 """
 
 from typing import Dict, Any
+
 from database.working_database import get_working_database, UserRating
 
 
+def stars_to_ten_point(stars: float) -> int:
+    """Map 0.5-5.0 stars to integer 1-10 scale."""
+    bounded = max(0.5, min(5.0, float(stars)))
+    return int(round(bounded * 2.0))
+
+
 def calculate_consensus(sync_id: str) -> Dict[str, Any]:
-    """
-    Reads ratings for a given sync_id, calculates the global average,
-    and returns REJECTED status if there are at least 2 ratings and the average is < 4.0.
-    """
-    # Important: Remove query parameters from the sync_id to get the base identity
+    """Calculate lifecycle action for a track based on mapped consensus rating."""
     base_sync_id = sync_id.split('?')[0]
 
     db = get_working_database()
     with db.session_scope() as session:
-        # Get all ratings for this base_sync_id
         ratings_records = session.query(UserRating).filter(UserRating.sync_id == base_sync_id).all()
 
         if not ratings_records:
-            return {"status": "KEEP"}
+            return {"status": "KEEP", "action": "KEEP", "sync_id": base_sync_id}
 
-        total_rating = 0.0
-        downvoters = []
+        mapped_scores = [stars_to_ten_point(record.rating) for record in ratings_records]
+        avg_score = sum(mapped_scores) / len(mapped_scores)
 
-        for record in ratings_records:
-            total_rating += record.rating
-            if record.rating < 4.0:
-                downvoters.append(record.user_id)
-
-        avg_rating = total_rating / len(ratings_records)
-
-        # Rule: At least 2 ratings, and average falls below 4.0
-        if len(ratings_records) >= 2 and avg_rating < 4.0:
+        # Follow the explicit lifecycle thresholds.
+        if avg_score <= 2.0:
             return {
-                "status": "REJECTED",
+                "status": "DELETE_CANDIDATE",
+                "action": "DELETE_MONTH_END",
                 "sync_id": base_sync_id,
-                "downvoters": downvoters
+                "score_10": avg_score,
+                "user_ids": [record.user_id for record in ratings_records],
             }
 
-        return {"status": "KEEP"}
+        if avg_score <= 4.0:
+            return {
+                "status": "UPGRADE_CANDIDATE",
+                "action": "UPGRADE_WEEK_END",
+                "sync_id": base_sync_id,
+                "score_10": avg_score,
+                "user_ids": [record.user_id for record in ratings_records],
+            }
+
+        return {
+            "status": "KEEP",
+            "action": "KEEP_AND_FEED_PREFERENCE_MODEL",
+            "sync_id": base_sync_id,
+            "score_10": avg_score,
+            "user_ids": [record.user_id for record in ratings_records],
+        }

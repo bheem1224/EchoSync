@@ -281,11 +281,11 @@ class PlaylistSyncService:
             if download_missing and unmatched_tracks:
                 if self._cancelled:
                     return self._create_error_result(playlist.name, ["Sync cancelled"])
-                self._update_progress(playlist.name, "Downloading missing tracks", "", 70, 5, 4, 
+                self._update_progress(playlist.name, "Publishing download intents", "", 70, 5, 4, 
                                     total_tracks=total_tracks,
                                     matched_tracks=len(matched_tracks),
                                     failed_tracks=len(unmatched_tracks))
-                downloaded_tracks = await self._download_missing_tracks(unmatched_tracks)
+                downloaded_tracks = await self._publish_download_intents(unmatched_tracks)
             
             if self._cancelled:
                 return self._create_error_result(playlist.name, ["Sync cancelled"])
@@ -296,23 +296,17 @@ class PlaylistSyncService:
                                 matched_tracks=len(matched_tracks),
                                 failed_tracks=len(unmatched_tracks))
             
-            # Get the actual media server track objects
-            media_tracks = [r.plex_track for r in matched_tracks if r.plex_track] # plex_track is a generic name here
-            logger.info(f"Creating playlist with {len(media_tracks)} matched tracks")
-
-            # Validate that all tracks have proper ratingKey attributes for playlist creation
-            valid_tracks = []
-            for i, track in enumerate(media_tracks):
-                if track and hasattr(track, 'ratingKey'):
-                    valid_tracks.append(track)
-                    logger.debug(f"✔️ Track {i+1} valid for playlist: '{track.title}' (ratingKey: {track.ratingKey})")
+            # Extract provider-specific track IDs from matched tracks
+            # For Plex, ratingKeys; for other providers, use the track IDs from database
+            provider_track_ids = []
+            for r in matched_tracks:
+                if r.plex_track and hasattr(r.plex_track, 'ratingKey'):
+                    provider_track_ids.append(str(r.plex_track.ratingKey))
+                    logger.debug(f"✔️ Resolved track to ratingKey: {r.plex_track.ratingKey}")
                 else:
-                    logger.warning(f"❌ Track {i+1} invalid for playlist: {track} (type: {type(track)}, has ratingKey: {hasattr(track, 'ratingKey') if track else 'N/A'})")
+                    logger.warning(f"❌ Track has no valid ratingKey: {r.plex_track}")
             
-            logger.info(f"Playlist validation: {len(valid_tracks)}/{len(media_tracks)} tracks are valid {server_type.title()} objects with ratingKeys")
-            
-            # Use the validated tracks for the sync
-            plex_tracks = valid_tracks # Keep variable name for compatibility with the rest of the function
+            logger.info(f"Extracted {len(provider_track_ids)} provider-specific IDs for {len(matched_tracks)} matched tracks")
             
             # Use active media server for playlist sync
             media_client, server_type = self._get_active_media_client()
@@ -320,11 +314,11 @@ class PlaylistSyncService:
                 logger.error(f"No active media client available for playlist sync")
                 sync_success = False
             else:
-                logger.info(f"Syncing playlist '{playlist.name}' to {server_type.upper()} server")
-                # THE FIX: Ensure we are passing the correct, native track objects to the client
-                sync_success = media_client.update_playlist(playlist.name, valid_tracks)
+                logger.info(f"Syncing playlist '{playlist.name}' to {server_type.upper()} server with {len(provider_track_ids)} track IDs")
+                # NEW INTERFACE: Pass only track IDs instead of full track objects
+                sync_success = media_client.add_tracks_to_playlist(playlist.name, provider_track_ids)
             
-            synced_tracks = len(plex_tracks) if sync_success else 0
+            synced_tracks = len(provider_track_ids) if sync_success else 0
             failed_tracks = len(playlist.tracks) - synced_tracks - downloaded_tracks
             
             self._update_progress(playlist.name, "Sync completed", "", 100, 5, 5,
@@ -555,24 +549,37 @@ class PlaylistSyncService:
             logger.error(f"Error fetching {server_type} tracks: {e}")
             return []
     
-    async def _download_missing_tracks(self, unmatched_tracks: List[MatchResult]) -> int:
-        downloaded_count = 0
+    async def _publish_download_intents(self, unmatched_tracks: List[MatchResult]) -> int:
+        """Publish DOWNLOAD_INTENT events via event bus for missing tracks instead of downloading inline.
         
+        This allows asynchronous handling and prevents blocking sync operations.
+        The download manager and other services can subscribe to these events.
+        """
+        from core.event_bus import event_bus
+        
+        intent_count = 0
         for match_result in unmatched_tracks:
             try:
-                logger.info(f"Queueing download for: {match_result.spotify_track.title}")
+                spotify_track = match_result.spotify_track
+                logger.info(f"Publishing DOWNLOAD_INTENT for: {spotify_track.title} - {spotify_track.artist_name}")
                 
-                # Use Central Download Manager
-                download_id = self.download_manager.queue_download(match_result.spotify_track)
+                # Publish event via event bus for asynchronous processing
+                event_bus.publish({
+                    "event": "DOWNLOAD_INTENT",
+                    "sync_id": spotify_track.identifiers.get('spotify') or spotify_track.identifiers.get('provider_id'),
+                    "fallback_metadata": spotify_track.to_dict(),
+                    "timestamp": utc_isoformat(utc_now()),
+                    "source": "playlist_sync"
+                })
                 
-                if download_id:
-                    downloaded_count += 1
-                    logger.info(f"Download queued with ID: {download_id}")
+                intent_count += 1
+                logger.debug(f"DOWNLOAD_INTENT published for track {spotify_track.identifiers.get('spotify')}")
                 
             except Exception as e:
-                logger.error(f"Error queueing download: {e}")
+                logger.error(f"Error publishing DOWNLOAD_INTENT: {e}")
         
-        return downloaded_count
+        logger.info(f"Published {intent_count} DOWNLOAD_INTENT events for missing tracks")
+        return intent_count
     
     def _create_error_result(self, playlist_name: str, errors: List[str]) -> SyncResult:
         return SyncResult(

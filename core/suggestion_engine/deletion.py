@@ -1,65 +1,74 @@
-"""
-Deletion Gate for the Suggestion Engine.
-Evaluates rules to determine whether a rejected track should be
-soft deleted (unlinked for specific users) or hard deleted (physically removed).
-"""
+"""Lifecycle gate for suggestion engine deletion/upgrade actions."""
 
-from typing import List
-from database.working_database import get_working_database, UserTrackState, UserRating
+from typing import Dict, Any
+
 from core.event_bus import event_bus
+from database.working_database import get_working_database, UserTrackState
 
 
-def should_delete_file(sync_id: str, downvoters: List[int]) -> None:
-    """
-    Evaluates deletion rules for a REJECTED track and publishes the appropriate intent.
-
-    Args:
-        sync_id: The full sync_id URI (or base sync_id). We strip query params to check the DB.
-        downvoters: List of user IDs who rated the track < 4.0.
-    """
+def apply_lifecycle_action(sync_id: str, consensus_result: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply lifecycle action with admin overrides and publish intent events."""
     base_sync_id = sync_id.split('?')[0]
 
     db = get_working_database()
     with db.session_scope() as session:
-        # Get the UserTrackState for this track to find the sponsor
-        # We assume the first sponsor found is the main sponsor, or we check any user track state
-        # that has a sponsor_id set. Let's look for a record with sponsor_id.
-        track_states = session.query(UserTrackState).filter(
-            UserTrackState.sync_id == base_sync_id,
-            UserTrackState.sponsor_id.isnot(None)
-        ).all()
+        states = session.query(UserTrackState).filter(UserTrackState.sync_id == base_sync_id).all()
 
-        # If there's no explicitly recorded sponsor, we assume Soft Delete to be safe,
-        # or we could attempt to infer. Let's assume we have a sponsor_id.
-        sponsor_id = None
-        if track_states:
-             # Just use the first one's sponsor_id as the primary sponsor for this track
-             sponsor_id = track_states[0].sponsor_id
+        admin_exempt_deletion = any(state.admin_exempt_deletion for state in states)
+        admin_force_upgrade = any(state.admin_force_upgrade for state in states)
 
-        # If we can't find a sponsor_id, we default to Soft Delete to avoid accidental data loss.
-        # But if we do, we check the sponsor's rating.
-        sponsor_rated_badly = False
+        action = (consensus_result or {}).get("action", "KEEP")
 
-        if sponsor_id is not None:
-             # Check if sponsor rated it < 4.0
-             sponsor_rating_record = session.query(UserRating).filter(
-                 UserRating.sync_id == base_sync_id,
-                 UserRating.user_id == sponsor_id
-             ).first()
+        # Force-upgrade override wins unless deletion exemption is the only requested action.
+        if admin_force_upgrade:
+            event_bus.publish(
+                {
+                    "event": "QUALITY_UPGRADE_INTENT",
+                    "sync_id": sync_id,
+                    "scheduled": "WEEK_END",
+                    "reason": "admin_force_upgrade",
+                }
+            )
+            return {"status": "UPGRADE_FORCED", "action": "UPGRADE_WEEK_END", "sync_id": base_sync_id}
 
-             if sponsor_rating_record and sponsor_rating_record.rating < 4.0:
-                 sponsor_rated_badly = True
+        if action == "DELETE_MONTH_END":
+            if admin_exempt_deletion:
+                event_bus.publish(
+                    {
+                        "event": "LIFECYCLE_KEEP_INTENT",
+                        "sync_id": sync_id,
+                        "reason": "admin_exempt_deletion",
+                    }
+                )
+                return {"status": "KEEP_EXEMPT", "action": "KEEP", "sync_id": base_sync_id}
 
-        # Rule B: Hard Delete (Sponsor also rated it < 4.0)
-        if sponsor_rated_badly:
-             event_bus.publish({
-                 "event": "HARD_DELETE_INTENT",
-                 "sync_id": sync_id
-             })
-        else:
-             # Rule A: Soft Delete (Sponsor hasn't rated, or rated >= 4.0)
-             event_bus.publish({
-                 "event": "SOFT_UNLINK_INTENT",
-                 "sync_id": sync_id,
-                 "downvoters": downvoters
-             })
+            event_bus.publish(
+                {
+                    "event": "HARD_DELETE_INTENT",
+                    "sync_id": sync_id,
+                    "scheduled": "MONTH_END",
+                    "reason": "score_1_2",
+                }
+            )
+            return {"status": "DELETE_SCHEDULED", "action": "DELETE_MONTH_END", "sync_id": base_sync_id}
+
+        if action == "UPGRADE_WEEK_END":
+            event_bus.publish(
+                {
+                    "event": "QUALITY_UPGRADE_INTENT",
+                    "sync_id": sync_id,
+                    "scheduled": "WEEK_END",
+                    "reason": "score_3_4",
+                }
+            )
+            return {"status": "UPGRADE_SCHEDULED", "action": "UPGRADE_WEEK_END", "sync_id": base_sync_id}
+
+        event_bus.publish(
+            {
+                "event": "PREFERENCE_MODEL_FEEDBACK",
+                "sync_id": sync_id,
+                "score_10": (consensus_result or {}).get("score_10"),
+                "user_ids": (consensus_result or {}).get("user_ids", []),
+            }
+        )
+        return {"status": "KEEP", "action": "KEEP_AND_FEED_PREFERENCE_MODEL", "sync_id": base_sync_id}

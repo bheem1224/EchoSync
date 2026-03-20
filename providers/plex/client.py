@@ -134,6 +134,8 @@ class PlexClient(ProviderBase):
         """Create or replace a Plex playlist with provided native Plex track items.
 
         Expects `tracks` to be native Plex Track objects with ratingKey attributes.
+        
+        DEPRECATED: Use add_tracks_to_playlist(playlist_id, provider_track_ids) instead.
         """
         if not self.ensure_connection() or not self.server:
             return False
@@ -161,6 +163,112 @@ class PlexClient(ProviderBase):
             return True
         except Exception as e:
             logger.error(f"Error updating Plex playlist '{name}': {e}")
+            return False
+
+    def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: List[str]) -> bool:
+        """Add tracks to a Plex playlist using ratingKeys (provider-specific track IDs).
+        
+        NEW INTERFACE: Accepts only track IDs (ratingKeys), not full track objects.
+        This is provider-agnostic and more efficient than passing full objects.
+        
+        Args:
+            playlist_id: Plex playlist ID or name
+            provider_track_ids: List of Plex ratingKeys as strings (e.g., ['123', '456'])
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.ensure_connection() or not self.server:
+            logger.error("Plex not connected for add_tracks_to_playlist")
+            return False
+        
+        try:
+            # Find the playlist by ID or name
+            try:
+                # Try as ratingKey first (numeric ID)
+                try:
+                    playlist_id_int = int(playlist_id)
+                    playlist = self.server.fetchItem(playlist_id_int)
+                except (ValueError, TypeError):
+                    # Try as name
+                    playlist = self.server.playlist(playlist_id)
+            except Exception as e:
+                logger.error(f"Failed to find Plex playlist '{playlist_id}': {e}")
+                return False
+            
+            if not playlist:
+                logger.error(f"Playlist '{playlist_id}' not found on Plex server")
+                return False
+            
+            # Convert string ratingKeys to actual track objects
+            items = []
+            for rk in provider_track_ids:
+                try:
+                    rk_int = int(rk)
+                    item = self.server.fetchItem(rk_int)
+                    if item:
+                        items.append(item)
+                    else:
+                        logger.warning(f"Track with ratingKey {rk} not found on Plex server")
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid ratingKey format: {rk}")
+                except Exception as e:
+                    logger.warning(f"Error fetching track {rk}: {e}")
+            
+            if not items:
+                logger.error(f"No valid Plex items found for ratingKeys: {provider_track_ids}")
+                return False
+            
+            # Add items to playlist
+            try:
+                playlist.addItems(items)
+                logger.info(f"Successfully added {len(items)} tracks to Plex playlist '{playlist_id}'")
+                return True
+            except Exception as e:
+                logger.error(f"Error adding items to Plex playlist '{playlist_id}': {e}")
+                return False
+        
+        except Exception as e:
+            logger.error(f"Error in add_tracks_to_playlist for '{playlist_id}': {e}", exc_info=True)
+            return False
+
+    def remove_tracks_from_playlist(self, playlist_id: str, provider_track_ids: List[str]) -> bool:
+        """Remove tracks from a Plex playlist using ratingKeys."""
+        if not self.ensure_connection() or not self.server:
+            logger.error("Plex not connected for remove_tracks_from_playlist")
+            return False
+
+        if not provider_track_ids:
+            logger.info("remove_tracks_from_playlist called with empty track list; nothing to do")
+            return True
+
+        try:
+            try:
+                try:
+                    playlist = self.server.fetchItem(int(playlist_id))
+                except (ValueError, TypeError):
+                    playlist = self.server.playlist(playlist_id)
+            except Exception as e:
+                logger.error(f"Failed to find Plex playlist '{playlist_id}': {e}")
+                return False
+
+            if not playlist:
+                logger.error(f"Playlist '{playlist_id}' not found on Plex server")
+                return False
+
+            removal_keys = {str(rk) for rk in provider_track_ids}
+            existing_items = list(playlist.items())
+            to_remove = [item for item in existing_items if str(getattr(item, 'ratingKey', '')) in removal_keys]
+
+            if not to_remove:
+                logger.info(f"No matching tracks found to remove from Plex playlist '{playlist_id}'")
+                return True
+
+            playlist.removeItems(to_remove)
+            logger.info(f"Removed {len(to_remove)} track(s) from Plex playlist '{playlist_id}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error removing tracks from Plex playlist '{playlist_id}': {e}", exc_info=True)
             return False
 
     def delete_track(self, rating_key: str) -> bool:

@@ -524,6 +524,65 @@ class ConfigDatabase:
         except Exception as e:
             logger.error(f"Error cleaning PKCE sessions: {e}")
 
+    # Download Provider Priority
+    def get_download_provider_priority(self) -> List[str]:
+        """
+        Get the user-defined download provider priority list.
+        Returns list of provider names in priority order (highest first).
+        Example: ["slskd", "yt_dlp", "torrent"]
+        """
+        try:
+            import json
+            import contextlib
+            with contextlib.closing(self._get_connection()) as conn:
+                c = conn.cursor()
+                c.execute("SELECT config_value FROM service_config WHERE service_id IS NULL AND config_key = ?", ("download_provider_priority",))
+                row = c.fetchone()
+                if not row or not row[0]:
+                    # Return default: try all active download providers in their natural order
+                    return []
+                try:
+                    return json.loads(row[0])
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning("Invalid download_provider_priority format, returning default")
+                    return []
+        except Exception as e:
+            logger.error(f"Error getting download provider priority: {e}")
+            return []
+
+    def set_download_provider_priority(self, provider_list: List[str]) -> bool:
+        """
+        Set the user-defined download provider priority list.
+        
+        Args:
+            provider_list: List of provider names in priority order (highest first)
+            Example: ["slskd", "yt_dlp", "torrent"]
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            import json
+            # Store as JSON string in a global (service_id=NULL) setting
+            json_value = json.dumps(provider_list)
+            
+            # Use a special service_id=NULL for global settings
+            execute_write_sql(
+                str(self.database_path),
+                """
+                    INSERT INTO service_config(service_id, config_key, config_value, is_sensitive)
+                    VALUES(NULL, ?, ?, 0)
+                    ON CONFLICT(service_id, config_key)
+                    DO UPDATE SET config_value=excluded.config_value, updated_at=strftime('%s','now')
+                """,
+                ("download_provider_priority", json_value),
+            )
+            logger.info(f"Set download provider priority: {provider_list}")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting download provider priority: {e}")
+            return False
+
 
 _config_db: Optional[ConfigDatabase] = None
 

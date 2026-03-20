@@ -215,6 +215,7 @@ class ProviderCapabilities:
     supports_library_scan: bool = False
     supports_streaming: bool = False
     supports_downloads: bool = False
+    supports_pre_filtering: bool = False
     playlist_algorithms: list = None  # List of algorithm IDs (e.g., ['spotify_mood'])
     supports_fingerprinting: bool = False  # Audio fingerprinting (AcoustID)
     supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
