@@ -6,10 +6,22 @@ from core.tiered_logger import get_logger
 from core.provider import ProviderRegistry
 from services.download_manager import get_download_manager
 from services.match_service import MatchService, MatchContext
-from core.matching_engine import SoulSyncTrack, MatchResult
+from core.matching_engine import SoulSyncTrack
 from time_utils import utc_isoformat, utc_now
 
 logger = get_logger("sync_service")
+
+@dataclass
+class TrackMatchResult:
+    """Simple result object for track matching in playlist sync"""
+    spotify_track: SoulSyncTrack
+    provider_track_id: Optional[str] = None  # Raw track ID from provider (e.g., ratingKey, db ID)
+    confidence: float = 0.0
+    
+    @property
+    def is_match(self) -> bool:
+        """True if a track was found in the provider"""
+        return self.provider_track_id is not None
 
 @dataclass
 class SpotifyPlaylist:
@@ -254,11 +266,10 @@ class PlaylistSyncService:
                 # Use the robust search approach
                 plex_match, confidence = await self._find_track_in_media_server(track)
                 
-                match_result = MatchResult(
+                match_result = TrackMatchResult(
                     spotify_track=track,
-                    plex_track=plex_match,
-                    confidence=confidence,
-                    match_type="robust_search" if plex_match else "no_match"
+                    provider_track_id=plex_match,
+                    confidence=confidence
                 )
                 match_results.append(match_result)
             
@@ -297,14 +308,14 @@ class PlaylistSyncService:
                                 failed_tracks=len(unmatched_tracks))
             
             # Extract provider-specific track IDs from matched tracks
-            # For Plex, ratingKeys; for other providers, use the track IDs from database
+            # Pass raw string IDs directly to add_tracks_to_playlist
             provider_track_ids = []
             for r in matched_tracks:
-                if r.plex_track and hasattr(r.plex_track, 'ratingKey'):
-                    provider_track_ids.append(str(r.plex_track.ratingKey))
-                    logger.debug(f"✔️ Resolved track to ratingKey: {r.plex_track.ratingKey}")
+                if r.provider_track_id:
+                    provider_track_ids.append(str(r.provider_track_id))
+                    logger.debug(f"✔️ Resolved track to provider ID: {r.provider_track_id}")
                 else:
-                    logger.warning(f"❌ Track has no valid ratingKey: {r.plex_track}")
+                    logger.warning(f"❌ Track has no valid provider ID: {r.spotify_track.title}")
             
             logger.info(f"Extracted {len(provider_track_ids)} provider-specific IDs for {len(matched_tracks)} matched tracks")
             
@@ -406,8 +417,12 @@ class PlaylistSyncService:
             self.clear_progress_callback(playlist.name)
             self._cancelled = False
     
-    async def _find_track_in_media_server(self, spotify_track: SoulSyncTrack) -> Tuple[Optional[Any], float]:
-        """Find a track using the same improved database matching as Download Missing Tracks modal"""
+    async def _find_track_in_media_server(self, spotify_track: SoulSyncTrack) -> Tuple[Optional[str], float]:
+        """Find a track in the media server using database matching.
+        
+        Returns:
+            Tuple of (track_id_string, confidence_score) or (None, 0.0) if not found
+        """
         try:
             # Check active media server connection
             media_client, server_type = self._get_active_media_client()
@@ -434,49 +449,27 @@ class PlaylistSyncService:
                 if db_track and confidence >= 0.7:
                     logger.debug(f"✔️ Database match found for '{original_title}' by '{artist_name}': '{db_track.title}' with confidence {confidence:.2f}")
                     
-                    # Fetch the actual track object from active media server using the database track ID
-                    try:
-                        if server_type == "jellyfin":
-                            # For Jellyfin, create a track object from database info (Jellyfin doesn't have fetchItem)
-                            class JellyfinTrackFromDB:
-                                    def __init__(self, db_track):
-                                        self.ratingKey = db_track.id
-                                        self.title = db_track.title
-                                        self.id = db_track.id
-
-                            actual_track = JellyfinTrackFromDB(db_track)
-                            logger.debug(f"✔️ Created Jellyfin track object for '{db_track.title}' (ID: {actual_track.ratingKey})")
-                            return actual_track, confidence
-                        elif server_type == "navidrome":
-                            # For Navidrome, create a track object from database info (similar to Jellyfin)
-                            class NavidromeTrackFromDB:
-                                    def __init__(self, db_track):
-                                        self.ratingKey = db_track.id
-                                        self.title = db_track.title
-                                        self.id = db_track.id
-
-                            actual_track = NavidromeTrackFromDB(db_track)
-                            logger.debug(f"✔️ Created Navidrome track object for '{db_track.title}' (ID: {actual_track.ratingKey})")
-                            return actual_track, confidence
-                        else:
-                            # For Plex, use the original fetchItem approach
-                            # Validate that the track ID is numeric (Plex requirement)
-                            try:
-                                track_id = int(db_track.id)
-                                actual_plex_track = media_client.server.fetchItem(track_id)
-                                if actual_plex_track and hasattr(actual_plex_track, 'ratingKey'):
-                                    logger.debug(f"✔️ Successfully fetched actual Plex track for '{db_track.title}' (ratingKey: {actual_plex_track.ratingKey})")
-                                    return actual_plex_track, confidence
-                                else:
-                                    logger.warning(f"❌ Fetched Plex track for '{db_track.title}' lacks ratingKey attribute")
-                            except ValueError:
-                                logger.warning(f"❌ Invalid Plex track ID format for '{db_track.title}' (ID: {db_track.id}) - skipping this track")
+                    # Extract the track ID from the database
+                    track_id = str(db_track.id)
+                    
+                    # For Plex, validate that the track ID is numeric and fetchable
+                    if server_type == "plex":
+                        try:
+                            track_id_int = int(track_id)
+                            actual_plex_track = media_client.server.fetchItem(track_id_int)
+                            if actual_plex_track and hasattr(actual_plex_track, 'ratingKey'):
+                                logger.debug(f"✔️ Successfully validated Plex track for '{db_track.title}' (ratingKey: {actual_plex_track.ratingKey})")
+                                return str(actual_plex_track.ratingKey), confidence
+                            else:
+                                logger.warning(f"❌ Fetched Plex track for '{db_track.title}' lacks ratingKey attribute")
                                 return None, 0.0
-
-                    except Exception as fetch_error:
-                        logger.error(f"❌ Failed to fetch actual {server_type} track for '{db_track.title}' (ID: {db_track.id}): {fetch_error}")
-                        # Continue to try other artists rather than fail completely
-                        return None, 0.0
+                        except ValueError:
+                            logger.warning(f"❌ Invalid Plex track ID format for '{db_track.title}' (ID: {db_track.id}) - skipping this track")
+                            return None, 0.0
+                    else:
+                        # For Jellyfin and Navidrome, use the database ID directly
+                        logger.debug(f"✔️ Using database track ID for '{server_type}': {track_id}")
+                        return track_id, confidence
 
             except Exception as db_error:
                 logger.error(f"Error checking track existence for '{original_title}' by '{artist_name}': {db_error}")
@@ -626,7 +619,7 @@ class PlaylistSyncService:
             for result in match_results[:10]:
                 track_info = {
                     "spotify_track": f"{result.spotify_track.title} - {result.spotify_track.artist_name}",
-                    f"{server_type}_match": getattr(result, 'plex_track', None).title if getattr(result, 'plex_track', None) else None,
+                    f"{server_type}_match": f"ID: {result.provider_track_id}" if result.is_match else None,
                     "confidence": result.confidence,
                     "status": "available" if result.is_match else "needs_download"
                 }

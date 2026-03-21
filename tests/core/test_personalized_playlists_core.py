@@ -246,3 +246,19 @@ def test_build_custom_playlist_no_spotify_auth(service: PersonalizedPlaylistsSer
     
     assert "error" in result
     assert "Spotify not authenticated" in result['error']
+
+
+def test_get_discovery_tracks_by_category_uses_named_like_parameters(service: PersonalizedPlaylistsService, mock_db):
+    """Ensure category discovery queries keep LIKE values bound as parameters."""
+    mock_db.cursor.fetchall.return_value = []
+
+    result = service._get_discovery_tracks_by_category("rock", limit=5)
+
+    assert result == []
+    mock_db.cursor.execute.assert_called_once()
+    query, params = mock_db.cursor.execute.call_args[0]
+    assert "LIKE :category_pattern" in query
+    assert params == {
+        "category_pattern": "%rock%",
+        "limit": 5,
+    }

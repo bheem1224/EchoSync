@@ -12,6 +12,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, List
+from database.working_database import get_working_database
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 
@@ -57,6 +58,13 @@ class JobQueue:
         self._workers = threading.BoundedSemaphore(worker_count)
         self._poll_interval = poll_interval
         self._is_running: Dict[str, bool] = {}  # Concurrency lock: job_name -> is_currently_running
+
+    def _release_worker_resources(self):
+        """Return any working DB connections opened by background jobs to the engine."""
+        try:
+            get_working_database().dispose()
+        except Exception as e:
+            logger.debug(f"Failed to dispose working database after job execution: {e}")
 
     def _remove_from_heap(self, name: str):
         self._heap = [job for job in self._heap if job.name != name]
@@ -215,6 +223,7 @@ class JobQueue:
         def _run_job_thread():
             try:
                 logger.info(f"Starting manual execution of job '{name}'")
+                job.running = True
                 job.last_started = time.time()
                 job.func()
                 job.last_finished = time.time()
@@ -231,7 +240,9 @@ class JobQueue:
                 logger.error(f"Error during manual execution of job '{name}': {e}")
             finally:
                 with self._lock:
+                    job.running = False
                     self._is_running[name] = False
+                self._release_worker_resources()
         
         thread = threading.Thread(target=_run_job_thread, daemon=True)
         thread.start()
@@ -330,52 +341,56 @@ class JobQueue:
             logger.warning(f"No available workers for job: {job.name}")
             return
 
+        self._is_running[job.name] = True
+
         def worker():
             attempt = 0
-            while True:
-                try:
-                    # Log health checks at DEBUG, other jobs at INFO
-                    log_level = logger.debug if 'health_check' in job.name else logger.info
-                    log_level(f"Starting job: {job.name} (attempt {attempt + 1})")
-                    job.running = True
-                    job.last_started = time.time()
-                    job.func()
-                    job.last_success = time.time()
-                    job.last_error = None
-                    job.last_error_time = None
-                    job.current_retries = 0
-                    job.total_successes += 1
-                    log_level(f"Completed job: {job.name}")
-                    break
-                except Exception as e:
-                    error_msg = str(e)
-                    job.last_error = error_msg
-                    job.last_error_time = time.time()
-                    job.current_retries += 1
-                    job.total_failures += 1
-                    attempt += 1
-                    logger.error(f"Job failed: {job.name}, attempt {attempt}, error: {e}", exc_info=True)
-
-                    if job.current_retries >= job.max_retries:
-                        logger.error(
-                            f"Job '{job.name}' exceeded max retries ({job.max_retries}); giving up. "
-                            f"Total failures: {job.total_failures}"
-                        )
+            try:
+                while True:
+                    try:
+                        # Log health checks at DEBUG, other jobs at INFO
+                        log_level = logger.debug if 'health_check' in job.name else logger.info
+                        log_level(f"Starting job: {job.name} (attempt {attempt + 1})")
+                        job.running = True
+                        job.last_started = time.time()
+                        job.func()
+                        job.last_success = time.time()
+                        job.last_error = None
+                        job.last_error_time = None
+                        job.current_retries = 0
+                        job.total_successes += 1
+                        log_level(f"Completed job: {job.name}")
                         break
+                    except Exception as e:
+                        error_msg = str(e)
+                        job.last_error = error_msg
+                        job.last_error_time = time.time()
+                        job.current_retries += 1
+                        job.total_failures += 1
+                        attempt += 1
+                        logger.error(f"Job failed: {job.name}, attempt {attempt}, error: {e}", exc_info=True)
 
-                    backoff = job.backoff_base * (job.backoff_factor ** (job.current_retries - 1))
-                    logger.info(f"Retrying job '{job.name}' in {backoff:.1f}s")
-                    time.sleep(backoff)
-                    continue
-                finally:
+                        if job.current_retries >= job.max_retries:
+                            logger.error(
+                                f"Job '{job.name}' exceeded max retries ({job.max_retries}); giving up. "
+                                f"Total failures: {job.total_failures}"
+                            )
+                            break
+
+                        backoff = job.backoff_base * (job.backoff_factor ** (job.current_retries - 1))
+                        logger.info(f"Retrying job '{job.name}' in {backoff:.1f}s")
+                        time.sleep(backoff)
+                        continue
+            finally:
+                with self._lock:
                     job.last_finished = time.time()
                     job.running = False
-
-            self._workers.release()
-
-            if job.interval_seconds:
-                job.next_run = time.time() + job.interval_seconds
-                heapq.heappush(self._heap, job)
+                    self._is_running[job.name] = False
+                    if job.interval_seconds and job.enabled:
+                        job.next_run = time.time() + job.interval_seconds
+                        heapq.heappush(self._heap, job)
+                self._workers.release()
+                self._release_worker_resources()
 
         threading.Thread(target=worker, daemon=True).start()
 

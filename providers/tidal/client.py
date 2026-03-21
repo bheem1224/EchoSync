@@ -271,10 +271,9 @@ class TidalClient(SyncServiceProvider):
     def remove_tracks_from_playlist(self, playlist_id: str, provider_track_ids: List[str]) -> bool:
         """
         Tidal is currently read-only for playlists.
-        This method is not yet implemented for write operations.
+        This method is not supported for write operations.
         """
-        logger.warning("remove_tracks_from_playlist is not yet implemented for Tidal provider (read-only)")
-        return False
+        raise NotImplementedError("Tidal provider does not support write-mode playlist manipulation")
 
     def get_track(self, track_id: str) -> dict:
         # Stub implementation

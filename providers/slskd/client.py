@@ -13,6 +13,13 @@ from core.request_manager import RequestManager, RateLimitConfig
 
 logger = get_logger("slskd_provider")
 
+
+def _sanitize_peer_filename(filename: str) -> str:
+    """Collapse any peer-supplied path to a safe local filename."""
+    normalized = (filename or "").replace('\\', '/')
+    basename = os.path.basename(normalized)
+    return basename or "downloaded_file"
+
 @dataclass
 class SearchResult:
     """Base class for search results"""
@@ -325,17 +332,18 @@ class SlskdProvider(DownloaderProvider):
 
     def _convert_to_soulsync_track(self, result: TrackResult) -> SoulSyncTrack:
         """Convert TrackResult to SoulSyncTrack with injected technical stats"""
+        safe_filename = _sanitize_peer_filename(result.filename)
         # Create base track
         # result.duration is stored as milliseconds by the JSON parser
         soul_track = self.create_soul_sync_track(
-            title=result.title or result.filename,
+            title=result.title or safe_filename,
             artist=result.artist or "Unknown Artist",
             album=result.album or "",
             duration_ms=result.duration if result.duration else None,
             track_number=result.track_number,
             bitrate=result.bitrate,
             file_format=result.quality,
-            file_path=result.filename,
+            file_path=str(self.download_path / safe_filename),
             source="slskd",
             provider_id=result.filename, # Use filename as unique ID for Soulseek
         )
@@ -348,6 +356,7 @@ class SlskdProvider(DownloaderProvider):
              soul_track.identifiers['upload_speed'] = result.upload_speed
              soul_track.identifiers['queue_length'] = result.queue_length
              soul_track.identifiers['provider_item_id'] = result.filename
+             soul_track.identifiers['local_filename'] = safe_filename
              soul_track.identifiers['bitrate'] = result.bitrate
 
              # Technical metadata
@@ -671,6 +680,7 @@ class SlskdProvider(DownloaderProvider):
                 return None
             
             username, filename = download_id.split('|', 1)
+            safe_filename = _sanitize_peer_filename(filename)
             
             # Query the transfers endpoint to find this download
             # GET /api/v0/transfers/downloads returns all downloads grouped by username
@@ -704,7 +714,9 @@ class SlskdProvider(DownloaderProvider):
                                         return {
                                             'id': download_id,
                                             'status': status,
-                                            'filename': filename,
+                                            'filename': safe_filename,
+                                            'remote_filename': filename,
+                                            'local_path': str(self.download_path / safe_filename),
                                             'username': username,
                                             'progress': file_data.get('percentComplete', 0),
                                             'size': file_data.get('size', 0)
