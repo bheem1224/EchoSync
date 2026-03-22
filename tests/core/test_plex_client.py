@@ -110,11 +110,13 @@ def test_add_tracks_to_managed_playlist_uses_exact_target_user_id(monkeypatch):
     matched_user = MagicMock()
     matched_user.id = 'managed-1'
     matched_user.uuid = None
+    matched_user.username = 'kiddo'
     matched_user.title = 'Kiddo'
 
     other_user = MagicMock()
     other_user.id = 'managed-2'
     other_user.uuid = None
+    other_user.username = 'other'
     other_user.title = 'Other'
 
     server = MagicMock()
@@ -137,7 +139,42 @@ def test_add_tracks_to_managed_playlist_uses_exact_target_user_id(monkeypatch):
         )
 
     assert ok is True
-    server.switchUser.assert_called_once_with('Kiddo')
+    server.switchUser.assert_called_once_with('kiddo')
+
+
+def test_add_tracks_to_managed_playlist_falls_back_to_source_account_name(monkeypatch):
+    client = PlexClient(account_id=7)
+    client.ensure_connection = lambda: True
+    client.music_library = MagicMock()
+
+    matched_user = MagicMock()
+    matched_user.id = None
+    matched_user.uuid = 'plex-uuid-22'
+    matched_user.username = 'simi'
+    matched_user.title = 'Simi'
+    matched_user.email = None
+
+    server = MagicMock()
+    server.myPlexAccount.return_value.users.return_value = [matched_user]
+    target_server = MagicMock()
+    target_server.fetchItem.return_value = MagicMock(ratingKey='100')
+    server.switchUser.return_value = target_server
+    client.server = server
+    client._find_managed_playlist = lambda *args, **kwargs: None
+
+    created_playlist = MagicMock()
+    created_playlist.items.return_value = [MagicMock(ratingKey='100')]
+
+    with patch('plexapi.playlist.Playlist.create', return_value=created_playlist):
+        ok = client.add_tracks_to_managed_playlist(
+            'Road Trip',
+            ['100'],
+            source_account_name='Simi',
+            target_user_id='managed-id-that-does-not-match-runtime-shape',
+        )
+
+    assert ok is True
+    server.switchUser.assert_called_once_with('simi')
 
 
 def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):

@@ -351,6 +351,111 @@ class PlexClient(ProviderBase):
             logger.debug(f"Error while scanning Plex playlists for managed match: {e}")
         return None
 
+    @staticmethod
+    def _normalize_plex_identity(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized.casefold() if normalized else None
+
+    def _resolve_managed_user(self, target_user_id: Optional[str] = None, source_account_name: Optional[str] = None):
+        """Resolve a Plex managed user using stored IDs first, then display-name fallbacks."""
+        if not self.server:
+            return None
+
+        try:
+            myplex_account = self.server.myPlexAccount()
+        except Exception as e:
+            logger.warning(f"Failed to load MyPlex account while resolving managed user: {e}")
+            return None
+
+        normalized_target_id = self._normalize_plex_identity(target_user_id)
+        normalized_source_name = self._normalize_plex_identity(source_account_name)
+
+        admin_ids = {
+            normalized
+            for normalized in [
+                self._normalize_plex_identity(getattr(myplex_account, 'uuid', None)),
+                self._normalize_plex_identity(getattr(myplex_account, 'id', None)),
+                self._normalize_plex_identity(getattr(myplex_account, 'username', None)),
+                self._normalize_plex_identity(getattr(myplex_account, 'title', None)),
+                self._normalize_plex_identity(getattr(myplex_account, 'email', None)),
+            ]
+            if normalized
+        }
+        if normalized_target_id and normalized_target_id in admin_ids:
+            return None
+
+        try:
+            users = myplex_account.users() or []
+        except Exception as e:
+            logger.warning(f"Failed to enumerate managed Plex users: {e}")
+            return None
+
+        for user in users:
+            identities = {
+                normalized
+                for normalized in [
+                    self._normalize_plex_identity(getattr(user, 'id', None)),
+                    self._normalize_plex_identity(getattr(user, 'uuid', None)),
+                    self._normalize_plex_identity(getattr(user, 'username', None)),
+                    self._normalize_plex_identity(getattr(user, 'title', None)),
+                    self._normalize_plex_identity(getattr(user, 'email', None)),
+                ]
+                if normalized
+            }
+            if normalized_target_id and normalized_target_id in identities:
+                return user
+
+        if normalized_source_name:
+            for user in users:
+                display_candidates = {
+                    normalized
+                    for normalized in [
+                        self._normalize_plex_identity(getattr(user, 'username', None)),
+                        self._normalize_plex_identity(getattr(user, 'title', None)),
+                        self._normalize_plex_identity(getattr(user, 'email', None)),
+                    ]
+                    if normalized
+                }
+                if normalized_source_name in display_candidates:
+                    logger.info(
+                        f"Resolved managed Plex user by display-name fallback for source account '{source_account_name}'"
+                    )
+                    return user
+
+        return None
+
+    def _switch_to_user_server(self, user: Any):
+        """Switch Plex context to a managed user using the first working identity key."""
+        if not self.server or not user:
+            return None
+
+        switch_candidates = []
+        for value in [
+            getattr(user, 'username', None),
+            getattr(user, 'title', None),
+            getattr(user, 'email', None),
+        ]:
+            candidate = str(value).strip() if value is not None else ''
+            if candidate and candidate not in switch_candidates:
+                switch_candidates.append(candidate)
+
+        last_error = None
+        for candidate in switch_candidates:
+            try:
+                switched = self.server.switchUser(candidate)
+                if switched:
+                    logger.info(f"Switched Plex context using managed-user key '{candidate}'")
+                    return switched
+            except Exception as e:
+                last_error = e
+                logger.debug(f"Plex switchUser failed for candidate '{candidate}': {e}")
+
+        if last_error:
+            raise last_error
+        return None
+
     def add_tracks_to_managed_playlist(
         self,
         playlist_name: str,
@@ -370,27 +475,29 @@ class PlexClient(ProviderBase):
 
         # --- Managed Account Routing Logic ---
         target_server = self.server
-        if target_user_id:
+        if target_user_id or source_account_name:
             try:
-                matched_user = None
-
-                myplex_account = self.server.myPlexAccount()
-                if myplex_account:
-                    users = myplex_account.users()
-                    for u in users:
-                        candidate_id = getattr(u, 'id', None) or getattr(u, 'uuid', None)
-                        if candidate_id is not None and str(candidate_id) == str(target_user_id):
-                            matched_user = u
-                            break
+                matched_user = self._resolve_managed_user(
+                    target_user_id=target_user_id,
+                    source_account_name=source_account_name,
+                )
 
                 if matched_user:
                     logger.info(
                         f"Routing playlist '{playlist_name}' to managed user '{matched_user.title}' using Plex user_id '{target_user_id}'"
                     )
-                    target_server = self.server.switchUser(matched_user.title)
+                    switched_server = self._switch_to_user_server(matched_user)
+                    if switched_server:
+                        target_server = switched_server
+                    else:
+                        logger.info(
+                            f"Managed user '{matched_user.title}' resolved but Plex returned no switched server. "
+                            f"Defaulting playlist '{playlist_name}' to main account."
+                        )
                 else:
                     logger.info(
-                        f"No managed user found for Plex user_id '{target_user_id}'. Defaulting playlist '{playlist_name}' to main account."
+                        f"No managed user found for Plex user_id '{target_user_id}' and source account '{source_account_name}'. "
+                        f"Defaulting playlist '{playlist_name}' to main account."
                     )
             except Exception as routing_err:
                 logger.warning(

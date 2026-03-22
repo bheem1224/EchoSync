@@ -69,6 +69,38 @@
     (p.capabilities?.supports_library_scan ?? false)
   );
 
+  function getPlaylistTargetContext(playlist) {
+    if (!playlist) return '';
+
+    return (
+      playlist.target_account_name ||
+      playlist.target_user_name ||
+      playlist.target_profile_name ||
+      playlist.target_display_name ||
+      (playlist.target_user_id ? playlist.source_account_name : '') ||
+      ''
+    );
+  }
+
+  function formatTargetWithContext(targetLabel, playlistItems = []) {
+    if (!targetLabel) return '';
+
+    const contexts = [...new Set(
+      (playlistItems || [])
+        .map(getPlaylistTargetContext)
+        .filter(Boolean)
+    )];
+
+    if (contexts.length === 0) {
+      return targetLabel;
+    }
+
+    return `${targetLabel} (${contexts.join(', ')})`;
+  }
+
+  $: selectedPlaylistItems = playlists.filter((_, index) => selectedPlaylists.includes(index));
+  $: selectedTargetLabel = formatTargetWithContext(targetProvider, selectedPlaylistItems);
+
   async function loadPlaylists() {
     if (!sourceProvider) {
       console.log('[Sync] No source provider selected');
@@ -578,7 +610,7 @@
         {#each scheduledSyncs as sync (sync.id)}
           <div class="table-row">
             <div class="col-source">{sync.source}</div>
-            <div class="col-target">{sync.target}</div>
+            <div class="col-target">{formatTargetWithContext(sync.target, sync.playlists)}</div>
             <div class="col-interval">
               {scheduleIntervalOptions.find(o => o.value === sync.interval)?.label || sync.interval + 's'}
             </div>
@@ -604,7 +636,7 @@
       <div>
         <p class="eyebrow">Playlist Sync</p>
         <h2>{syncProgressEvent ? 'Sync' : 'Analysis'}</h2>
-        <p class="sub">{syncProgressEvent ? 'Syncing tracks to Plex...' : `Source: ${sourceProvider} → Target: ${targetProvider}`}</p>
+        <p class="sub">{syncProgressEvent ? `Syncing tracks to ${selectedTargetLabel || targetProvider}...` : `Source: ${sourceProvider} → Target: ${selectedTargetLabel || targetProvider}`}</p>
       </div>
       <button class="close-btn" on:click={closeAnalysisModal}>×</button>
     </header>
@@ -750,7 +782,7 @@
         </div>
         <div class="config-row">
           <span class="config-label">Target:</span>
-          <span class="config-value">{targetProvider}</span>
+          <span class="config-value">{selectedTargetLabel || targetProvider}</span>
         </div>
         <div class="config-row">
           <span class="config-label">Playlists:</span>
@@ -829,7 +861,7 @@
         </label>
       </div>
       
-      <p class="info-text">Note: This will sync {scheduleForm.playlists.length} selected playlist(s) every {scheduleIntervalOptions.find(o => o.value === scheduleForm.interval)?.label || scheduleForm.interval + 's'}.</p>
+      <p class="info-text">Note: This will sync {scheduleForm.playlists.length} selected playlist(s) to {formatTargetWithContext(scheduleForm.target, scheduleForm.playlists)} every {scheduleIntervalOptions.find(o => o.value === scheduleForm.interval)?.label || scheduleForm.interval + 's'}.</p>
     </div>
     
     <div class="modal-footer">
