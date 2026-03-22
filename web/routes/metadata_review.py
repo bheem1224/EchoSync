@@ -84,6 +84,35 @@ def _import_single_file(file_path: Path, metadata: Dict[str, Any]) -> int:
     return manager.bulk_import([track], total_count=1)
 
 
+from flask import send_file
+
+@bp.get("/review-queue/<int:task_id>/stream")
+def stream_review_task_audio(task_id: int):
+    """Stream the physical audio file for the frontend player with Range support."""
+    db = get_working_database()
+    try:
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task:
+                return jsonify({"error": "Task not found"}), 404
+
+            file_path = Path(task.file_path)
+            if not file_path.exists() or not file_path.is_file():
+                return jsonify({"error": "File not found on disk"}), 404
+
+            # Use Flask's native send_file with conditional=True to automatically
+            # handle 'Accept-Ranges: bytes' and safe streaming without holding locks
+            return send_file(
+                file_path,
+                mimetype="audio/mpeg" if file_path.suffix.lower() == ".mp3" else "audio/flac",
+                as_attachment=False,
+                conditional=True
+            )
+    except Exception as e:
+        logger.error(f"Failed to stream review task audio {task_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to stream audio"}), 500
+
+
 @bp.get("/review-queue")
 def get_review_queue():
     """Return pending metadata review tasks sorted newest-first."""
@@ -141,6 +170,32 @@ def update_review_queue_item(task_id: int):
         return jsonify({"error": "Failed to update review task"}), 500
 
 
+def _process_approval_background(task_id: int, final_metadata: Dict[str, Any]):
+    """Background processor for approval tasks to prevent thread blocking."""
+    db = get_working_database()
+    try:
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task:
+                return
+
+            file_path = Path(task.file_path)
+            if not file_path.exists() or not file_path.is_file():
+                return
+
+            enhancer = get_metadata_enhancer()
+
+            # Identify the file first to check AcoustID fingerprint asynchronously if needed
+            # even though we are approving, triggering the metadata enhancer tag_file handles the core logic
+            enhancer.tag_file(file_path, final_metadata)
+
+            _import_single_file(file_path, final_metadata)
+
+            task.detected_metadata = final_metadata
+            task.status = "approved"
+    except Exception as e:
+        logger.error(f"Background approval task {task_id} failed: {e}", exc_info=True)
+
 @bp.post("/review-queue/<int:task_id>/approve")
 def approve_review_queue_item(task_id: int):
     """Approve a review task: write tags, import file, mark approved."""
@@ -161,22 +216,25 @@ def approve_review_queue_item(task_id: int):
             if not file_path.exists() or not file_path.is_file():
                 return jsonify({"error": "File does not exist"}), 404
 
-            enhancer = get_metadata_enhancer()
-            enhancer.tag_file(file_path, final_metadata)
+            # Queue the background job using core job_queue logic
+            from core.job_queue import job_queue
 
-            imported_count = _import_single_file(file_path, final_metadata)
-
-            task.detected_metadata = final_metadata
-            task.status = "approved"
+            # Register a dynamic one-off job for this task
+            job_name = f"approve_review_task_{task_id}"
+            job_queue.register_job(
+                name=job_name,
+                func=lambda: _process_approval_background(task_id, final_metadata),
+                interval_seconds=None,  # One-off job
+                start_after=0.0
+            )
 
             return jsonify(
                 {
                     "success": True,
                     "id": task.id,
-                    "status": task.status,
-                    "imported_count": imported_count,
+                    "status": "approved_queued"
                 }
-            ), 200
+            ), 202
     except Exception as e:
         logger.error(f"Failed to approve review task {task_id}: {e}", exc_info=True)
-        return jsonify({"error": "Failed to approve review task"}), 500
+        return jsonify({"error": "Failed to queue approval review task"}), 500

@@ -105,6 +105,7 @@ class Track(Base):
 
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     isrc: Mapped[Optional[str]] = mapped_column(String)
+    acoustid_id: Mapped[Optional[str]] = mapped_column(String)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
 
     album: Mapped[Optional[Album]] = relationship(back_populates="tracks")
@@ -210,6 +211,7 @@ class MusicDatabase:
         """
         required_columns = {
             "isrc": "TEXT",
+            "acoustid_id": "TEXT",
         }
 
         try:
