@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onDestroy } from 'svelte';
   import apiClient from '../../api/client';
   import { feedback } from '../../stores/feedback';
 
@@ -9,8 +9,12 @@
 
   let savingDraft = false;
   let approving = false;
+  let autosaveTimer = null;
+  let initializedTaskId = null;
+  let lastObservedSignature = '';
+  let lastSavedSignature = '';
 
-  let editable = {
+  let proposedMetadata = {
     title: '',
     artist: '',
     album: '',
@@ -20,9 +24,9 @@
     isrc: ''
   };
 
-  $: if (task) {
+  $: if (task?.id && task.id !== initializedTaskId) {
     const proposed = task?.detected_metadata || {};
-    editable = {
+    proposedMetadata = {
       title: proposed.title || '',
       artist: proposed.artist || '',
       album: proposed.album || '',
@@ -31,6 +35,23 @@
       disc_number: proposed.disc_number || '',
       isrc: proposed.isrc || ''
     };
+
+    initializedTaskId = task.id;
+    const initialSignature = JSON.stringify(buildPayload());
+    lastObservedSignature = initialSignature;
+    lastSavedSignature = initialSignature;
+    clearAutosaveTimer();
+  }
+
+  $: proposedSignature = JSON.stringify(buildPayload());
+
+  $: if (
+    task?.id &&
+    proposedSignature &&
+    proposedSignature !== lastObservedSignature
+  ) {
+    lastObservedSignature = proposedSignature;
+    scheduleAutosave();
   }
 
   $: currentMetadata =
@@ -78,24 +99,53 @@
 
   function buildPayload() {
     return {
-      title: (editable.title || '').trim(),
-      artist: (editable.artist || '').trim(),
-      album: (editable.album || '').trim(),
-      year: editable.year ? Number(editable.year) || editable.year : '',
-      track_number: editable.track_number ? Number(editable.track_number) || editable.track_number : '',
-      disc_number: editable.disc_number ? Number(editable.disc_number) || editable.disc_number : '',
-      isrc: (editable.isrc || '').trim()
+      title: (proposedMetadata.title || '').trim(),
+      artist: (proposedMetadata.artist || '').trim(),
+      album: (proposedMetadata.album || '').trim(),
+      year: proposedMetadata.year ? Number(proposedMetadata.year) || proposedMetadata.year : '',
+      track_number: proposedMetadata.track_number ? Number(proposedMetadata.track_number) || proposedMetadata.track_number : '',
+      disc_number: proposedMetadata.disc_number ? Number(proposedMetadata.disc_number) || proposedMetadata.disc_number : '',
+      isrc: (proposedMetadata.isrc || '').trim()
     };
   }
 
-  async function saveDraft() {
+  function clearAutosaveTimer() {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
+  }
+
+  function scheduleAutosave() {
     if (!task?.id || savingDraft || approving) return;
+    clearAutosaveTimer();
+    autosaveTimer = setTimeout(() => {
+      const currentSignature = JSON.stringify(buildPayload());
+      if (currentSignature !== lastSavedSignature) {
+        saveDraft({ silent: true });
+      }
+    }, 1000);
+  }
+
+  async function saveDraft(options = {}) {
+    const { silent = false } = options;
+    if (!task?.id || savingDraft || approving) return;
+    clearAutosaveTimer();
+
+    const payload = buildPayload();
+    const payloadSignature = JSON.stringify(payload);
+    if (silent && payloadSignature === lastSavedSignature) {
+      return;
+    }
+
     savingDraft = true;
     dispatch('draftstart', { taskId: task.id });
     try {
-      const payload = buildPayload();
       await apiClient.put(`/review-queue/${task.id}`, { metadata: payload });
-      feedback.addToast('Draft metadata saved', 'success');
+      lastSavedSignature = payloadSignature;
+      if (!silent) {
+        feedback.addToast('Draft metadata saved', 'success');
+      }
       dispatch('saved', { taskId: task.id, metadata: payload });
     } catch (error) {
       console.error('Failed to save draft:', error);
@@ -131,6 +181,10 @@
     }
     return String(value);
   }
+
+  onDestroy(() => {
+    clearAutosaveTimer();
+  });
 </script>
 
 <svelte:window on:keydown={handleGlobalKeydown} />
@@ -201,37 +255,37 @@
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label class="sm:col-span-2">
                 <span class="block text-xs text-slate-400 mb-1">Title</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={editable.title} on:keydown={handleInputKeydown} />
+                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.title} on:keydown={handleInputKeydown} />
               </label>
 
               <label class="sm:col-span-2">
                 <span class="block text-xs text-slate-400 mb-1">Artist</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={editable.artist} on:keydown={handleInputKeydown} />
+                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.artist} on:keydown={handleInputKeydown} />
               </label>
 
               <label class="sm:col-span-2">
                 <span class="block text-xs text-slate-400 mb-1">Album</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={editable.album} on:keydown={handleInputKeydown} />
+                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.album} on:keydown={handleInputKeydown} />
               </label>
 
               <label>
                 <span class="block text-xs text-slate-400 mb-1">Year</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={editable.year} on:keydown={handleInputKeydown} />
+                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.year} on:keydown={handleInputKeydown} />
               </label>
 
               <label>
                 <span class="block text-xs text-slate-400 mb-1">Track Number</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={editable.track_number} on:keydown={handleInputKeydown} />
+                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.track_number} on:keydown={handleInputKeydown} />
               </label>
 
               <label>
                 <span class="block text-xs text-slate-400 mb-1">Disc Number</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={editable.disc_number} on:keydown={handleInputKeydown} />
+                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.disc_number} on:keydown={handleInputKeydown} />
               </label>
 
               <label>
                 <span class="block text-xs text-slate-400 mb-1">ISRC</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={editable.isrc} on:keydown={handleInputKeydown} />
+                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.isrc} on:keydown={handleInputKeydown} />
               </label>
             </div>
           </section>

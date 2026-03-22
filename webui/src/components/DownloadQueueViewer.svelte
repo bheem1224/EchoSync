@@ -76,22 +76,30 @@
       return;
     }
 
-    try {
-      const ids = Array.from(selectedIds);
-      
-      // Search each selected item
-      for (const id of ids) {
+    const ids = Array.from(selectedIds);
+    let successCount = 0;
+    let failureCount = 0;
+
+    // Search each selected item and continue even if one fails.
+    for (const id of ids) {
+      try {
         await apiClient.post(`/downloads/${id}/search`);
+        successCount += 1;
+      } catch (error) {
+        failureCount += 1;
+        console.error(`Error searching item ${id}:`, error);
       }
-      
-      feedback.addToast(`Searching ${ids.length} selected item${ids.length > 1 ? 's' : ''}...`, 'success');
-      
-      // Reload queue after a brief delay
-      setTimeout(loadQueue, 1000);
-    } catch (error) {
-      console.error('Error searching selected items:', error);
-      feedback.addToast('Failed to search selected items', 'error');
     }
+
+    if (successCount > 0) {
+      feedback.addToast(`Searching ${successCount} item${successCount > 1 ? 's' : ''}...`, 'success');
+    }
+    if (failureCount > 0) {
+      feedback.addToast(`Failed to start search for ${failureCount} item${failureCount > 1 ? 's' : ''}`, 'error');
+    }
+
+    // Reload queue after a brief delay
+    setTimeout(loadQueue, 1000);
   }
 
   async function deleteSelected() {
@@ -103,23 +111,34 @@
     const confirmed = confirm(`Delete ${selectedIds.size} selected item${selectedIds.size > 1 ? 's' : ''}?`);
     if (!confirmed) return;
 
-    try {
-      const ids = Array.from(selectedIds);
-      
-      // Delete each selected item
-      for (const id of ids) {
+    const ids = Array.from(selectedIds);
+    let successCount = 0;
+    let failureCount = 0;
+
+    // Delete each selected item and continue even if one fails.
+    for (const id of ids) {
+      try {
         await apiClient.delete(`/downloads/${id}`);
+        selectedIds.delete(id);
+        successCount += 1;
+      } catch (error) {
+        failureCount += 1;
+        console.error(`Error deleting item ${id}:`, error);
       }
-      
-      selectedIds.clear();
-      feedback.addToast(`Deleted ${ids.length} item${ids.length > 1 ? 's' : ''}`, 'success');
-      
-      // Reload queue
-      await loadQueue();
-    } catch (error) {
-      console.error('Error deleting selected items:', error);
-      feedback.addToast('Failed to delete selected items', 'error');
     }
+
+    selectedIds = selectedIds;
+    updateSelectAll();
+
+    if (successCount > 0) {
+      feedback.addToast(`Deleted ${successCount} item${successCount > 1 ? 's' : ''}`, 'success');
+    }
+    if (failureCount > 0) {
+      feedback.addToast(`Failed to delete ${failureCount} item${failureCount > 1 ? 's' : ''}`, 'error');
+    }
+
+    // Reload queue
+    await loadQueue();
   }
 
   function formatDate(isoString) {
