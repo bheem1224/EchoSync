@@ -555,8 +555,9 @@ class JellyfinClient(MediaServerProvider):
             start_index = 0
             limit = 10000
             consecutive_failures = 0
-            
-            while True:
+            has_more_tracks = True
+
+            while has_more_tracks:
                 params = {
                     'ParentId': self.music_library_id,
                     'IncludeItemTypes': 'Audio',
@@ -567,37 +568,37 @@ class JellyfinClient(MediaServerProvider):
                     'StartIndex': start_index,
                     'Limit': limit
                 }
-                
+
                 response = self._make_request(f'/Users/{self.user_id}/Items', params)
-                
+
                 if not response:
                     consecutive_failures += 1
                     if consecutive_failures >= 3:
                         logger.warning("🚨 Multiple track fetch failures - stopping")
-                        break
-                    
-                    if limit > 1000:
+                        has_more_tracks = False
+                    elif limit > 1000:
                         limit = limit // 2
                         logger.warning(f"⚠️ Track fetch timeout - reducing batch size to {limit}")
-                        continue
                     else:
-                        break
-                
+                        has_more_tracks = False
+                    continue
+
                 consecutive_failures = 0
                 batch_tracks = response.get('Items', [])
                 if not batch_tracks:
-                    break
-                    
+                    has_more_tracks = False
+                    continue
+
                 all_tracks.extend(batch_tracks)
-                
+
                 if len(batch_tracks) < limit:
-                    break
-                    
-                start_index += limit
-                progress_msg = f"Fetched {len(all_tracks)} tracks so far..."
-                logger.info(f"   🎵 {progress_msg} (batch size: {limit})")
-                if self._progress_callback:
-                    self._progress_callback(progress_msg)
+                    has_more_tracks = False
+                else:
+                    start_index += limit
+                    progress_msg = f"Fetched {len(all_tracks)} tracks so far..."
+                    logger.info(f"   🎵 {progress_msg} (batch size: {limit})")
+                    if self._progress_callback:
+                        self._progress_callback(progress_msg)
             
             # Group tracks by album ID for instant lookup
             self._track_cache = {}
@@ -618,8 +619,9 @@ class JellyfinClient(MediaServerProvider):
             start_index = 0
             limit = 10000
             consecutive_failures = 0
-            
-            while True:
+            has_more_albums = True
+
+            while has_more_albums:
                 params = {
                     'ParentId': self.music_library_id,
                     'IncludeItemTypes': 'MusicAlbum',
@@ -630,37 +632,37 @@ class JellyfinClient(MediaServerProvider):
                     'StartIndex': start_index,
                     'Limit': limit
                 }
-                
+
                 response = self._make_request(f'/Users/{self.user_id}/Items', params)
-                
+
                 if not response:
                     consecutive_failures += 1
                     if consecutive_failures >= 3:
                         logger.warning("🚨 Multiple album fetch failures - stopping")
-                        break
-                    
-                    if limit > 1000:
+                        has_more_albums = False
+                    elif limit > 1000:
                         limit = limit // 2
                         logger.warning(f"⚠️ Album fetch timeout - reducing batch size to {limit}")
-                        continue
                     else:
-                        break
-                
+                        has_more_albums = False
+                    continue
+
                 consecutive_failures = 0
                 batch_albums = response.get('Items', [])
                 if not batch_albums:
-                    break
-                    
+                    has_more_albums = False
+                    continue
+
                 all_albums.extend(batch_albums)
-                
+
                 if len(batch_albums) < limit:
-                    break
-                    
-                start_index += limit
-                progress_msg = f"Fetched {len(all_albums)} albums so far..."
-                logger.info(f"   📀 {progress_msg} (batch size: {limit})")
-                if self._progress_callback:
-                    self._progress_callback(progress_msg)
+                    has_more_albums = False
+                else:
+                    start_index += limit
+                    progress_msg = f"Fetched {len(all_albums)} albums so far..."
+                    logger.info(f"   📀 {progress_msg} (batch size: {limit})")
+                    if self._progress_callback:
+                        self._progress_callback(progress_msg)
             
             # Group albums by artist ID for instant lookup
             self._album_cache = {}

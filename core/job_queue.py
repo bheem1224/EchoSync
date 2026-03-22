@@ -132,7 +132,14 @@ class JobQueue:
                     interval_seconds = float(saved_interval)
                     logger.debug(f"Applied saved interval override for {name}: {interval_seconds}s")
 
-            next_run = time.time() + max(start_after, 0.0)
+            # When start_after is 0 for a periodic job, schedule the first run one full
+            # interval from now rather than immediately.  Running at "now" risks the job
+            # being popped from the heap before the queue's worker loop is running, which
+            # can leave it stuck in a permanent «Pending» state with no future next_run.
+            if start_after == 0.0 and interval_seconds is not None:
+                next_run = time.time() + interval_seconds
+            else:
+                next_run = time.time() + max(start_after, 0.0)
             job = ScheduledJob(
                 next_run=next_run,
                 name=name,
@@ -236,7 +243,7 @@ class JobQueue:
                 logger.warning(f"Job '{name}' is already running, skipping duplicate execution")
                 return False
             
-            # Mark as running and spawn background thread
+            # Mark as running — will be cleared by _run_job_thread's finally block
             self._is_running[name] = True
         
         # Execute in a background thread outside the lock
@@ -263,8 +270,14 @@ class JobQueue:
                     self._finalize_job_after_run(job, time.time())
                 self._release_worker_resources()
         
-        thread = threading.Thread(target=_run_job_thread, daemon=True)
-        thread.start()
+        try:
+            thread = threading.Thread(target=_run_job_thread, daemon=True)
+            thread.start()
+        except Exception:
+            # Thread failed to start — release the lock so the job is not permanently stuck
+            with self._lock:
+                self._is_running[name] = False
+            raise
         logger.info(f"Spawned background thread for manual execution of job '{name}'")
         return True
 
@@ -360,6 +373,8 @@ class JobQueue:
             logger.warning(f"No available workers for job: {job.name}")
             return
 
+        # _is_running is set here; the worker's finally block clears it via _finalize_job_after_run.
+        # The try/except below ensures it is also cleared if Thread.start() itself fails.
         self._is_running[job.name] = True
 
         def worker():
@@ -406,7 +421,14 @@ class JobQueue:
                 self._workers.release()
                 self._release_worker_resources()
 
-        threading.Thread(target=worker, daemon=True).start()
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception:
+            # Thread failed to start — release semaphore and lock so resources are not leaked
+            with self._lock:
+                self._is_running[job.name] = False
+            self._workers.release()
+            raise
 
 
 # Global singleton

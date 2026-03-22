@@ -1,26 +1,23 @@
 #!/usr/bin/env python3
 
+import threading
 from typing import Optional, Dict
 from database import MusicDatabase, LibraryManager
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 import logging
-import threading
 
 logger = get_logger("database_update_worker")
 
-try:
-    from PyQt6.QtCore import QThread
-    HAS_QTHREAD = True
-except ImportError:
-    HAS_QTHREAD = False
-    QThread = threading.Thread
 
-
-class DatabaseUpdateWorker(QThread if HAS_QTHREAD else threading.Thread):
+class DatabaseUpdateWorker:
     """
-    Worker thread for updating SoulSync database with media server library data.
+    Worker for updating SoulSync database with media server library data.
     Syncs all tracks from media client into the database using bulk operations.
+
+    The ``run()`` method is a plain synchronous callable — it can be invoked
+    directly by the JobQueue worker pool (blocking) or dispatched into a
+    background thread via ``start()`` for fire-and-forget HTTP route use.
     """
 
     def __init__(
@@ -31,12 +28,6 @@ class DatabaseUpdateWorker(QThread if HAS_QTHREAD else threading.Thread):
         server_type: str = "generic",
         force_sequential: bool = False
     ):
-        super().__init__()
-        if HAS_QTHREAD:
-            self.daemon = False
-        else:
-            self.daemon = True
-
         self.media_client = media_client
         self.server_type = server_type
         self.database_path = database_path
@@ -52,8 +43,8 @@ class DatabaseUpdateWorker(QThread if HAS_QTHREAD else threading.Thread):
         self.failed_operations = 0
         self.total_tracks = 0
 
-        # For routes expecting 'thread' attribute
-        self.thread = self
+        # Thread reference populated by start(); callers that need is_alive() check this.
+        self.thread: Optional[threading.Thread] = None
 
         logger.info(f"DatabaseUpdateWorker initialized for {server_type} ({('full' if full_refresh else 'incremental')} mode)")
 
@@ -113,8 +104,20 @@ class DatabaseUpdateWorker(QThread if HAS_QTHREAD else threading.Thread):
         finally:
             logger.info("Database update worker finished")
 
+    def start(self):
+        """Dispatch run() in a daemon thread for fire-and-forget use (e.g. HTTP routes).
+
+        Stores the thread in ``self.thread`` so callers can check ``is_alive()``.
+        For the JobQueue path call ``run()`` directly — it is already executing in a
+        JobQueue worker thread and does not need an additional thread.
+        """
+        t = threading.Thread(target=self.run, daemon=True)
+        self.thread = t
+        t.start()
+        logger.info(f"DatabaseUpdateWorker thread started for {self.server_type}")
+
     def stop(self):
-        """Signal the worker to stop processing"""
+        """Signal the worker to stop processing."""
         self.should_stop = True
         logger.info("Stop signal sent to database update worker")
 

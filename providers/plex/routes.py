@@ -2,7 +2,6 @@
 
 import threading
 import uuid
-import time
 from flask import Blueprint, request, jsonify
 from core.tiered_logger import get_logger
 from core.settings import config_manager
@@ -220,15 +219,24 @@ def start_oauth():
 
         logger.info(f"Plex OAuth session started: {session_id} with pin id: {pin_login._id}")
 
-        def cleanup_session():
-            time.sleep(900)  # 15 minutes
+        # Register a one-shot cleanup job with the central scheduler so the session
+        # is expired after 15 minutes without spawning a raw background thread.
+        _session_id = session_id  # capture for closure
+        def _cleanup_oauth_session():
             with plex_oauth_lock:
-                if session_id in plex_oauth_sessions:
-                    plex_oauth_sessions.pop(session_id, None)
-                    logger.info(f"Plex OAuth session cleaned up: {session_id}")
+                if _session_id in plex_oauth_sessions:
+                    plex_oauth_sessions.pop(_session_id, None)
+                    logger.info(f"Plex OAuth session cleaned up: {_session_id}")
 
-        cleanup_thread = threading.Thread(target=cleanup_session, daemon=True)
-        cleanup_thread.start()
+        from core.job_queue import job_queue
+        job_queue.register_job(
+            name=f"plex_oauth_cleanup_{session_id}",
+            func=_cleanup_oauth_session,
+            interval_seconds=None,  # one-shot
+            start_after=900.0,      # 15 minutes
+            enabled=True,
+            tags=["plex", "oauth", "cleanup"],
+        )
 
         return jsonify({
             'session_id': session_id,

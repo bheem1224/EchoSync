@@ -18,8 +18,6 @@ import asyncio
 import inspect
 import logging
 import re
-import threading
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -49,7 +47,6 @@ class DownloadManager:
         self._shutdown = False
         self._loop_task = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._loop_thread: Optional[threading.Thread] = None
         self._provider: Optional[ProviderBase] = None
         self._quality_profile_cache = None
 
@@ -229,7 +226,13 @@ class DownloadManager:
             return download.id
 
     async def start_background_task(self):
-        """Start the background processing loop"""
+        """Start the background processing loop (async / auto-start path only).
+
+        Called by backend_services.py when downloads.auto_start is True.  The
+        loop runs as an asyncio Task on whatever event loop is already running.
+        In the common WSGI/Flask path there is no running event loop; in that
+        case the job queue drives processing via process_downloads_now() instead.
+        """
         if self._loop_task:
             return
         self._shutdown = False
@@ -237,57 +240,27 @@ class DownloadManager:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = None
-
-        if loop:
-            self._loop = loop
-            self._loop_task = loop.create_task(self._process_loop())
-            logger.info("Download Manager background task started (shared loop)")
+            logger.info(
+                "Download Manager: no running event loop — auto-start skipped. "
+                "The job queue will drive download processing via process_downloads_now()."
+            )
             return
 
-        # No running event loop (common for Flask/WSGI). Start a dedicated loop thread.
-        self._start_dedicated_loop()
+        self._loop = loop
+        self._loop_task = loop.create_task(self._process_loop())
+        logger.info("Download Manager background task started (shared async loop)")
 
     async def stop_background_task(self):
-        """Stop the background processing loop"""
+        """Stop the background processing loop."""
         self._shutdown = True
         if self._loop_task:
-            if self._loop and self._loop.is_running() and self._loop is not asyncio.get_running_loop():
-                # Wake the loop so it can notice shutdown
-                self._loop.call_soon_threadsafe(lambda: None)
-                if self._loop_thread:
-                    self._loop_thread.join(timeout=5)
-            else:
+            try:
                 await self._loop_task
+            except Exception:
+                pass
             self._loop_task = None
         self._loop = None
         logger.info("Download Manager background task stopped")
-
-    def ensure_background_task(self):
-        """Start background processing when called from sync contexts."""
-        if self._loop_task:
-            return
-        self._shutdown = False
-        self._start_dedicated_loop()
-
-    def _start_dedicated_loop(self):
-        """Spin up a dedicated asyncio loop in a daemon thread for download processing."""
-        if self._loop_task or (self._loop_thread and self._loop_thread.is_alive()):
-            return
-
-        def _runner():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            self._loop = loop
-            self._loop_task = loop.create_task(self._process_loop())
-            try:
-                loop.run_until_complete(self._loop_task)
-            finally:
-                loop.close()
-
-        self._loop_thread = threading.Thread(target=_runner, daemon=True)
-        self._loop_thread.start()
-        logger.info("Download Manager background task started (dedicated loop)")
 
     async def _recover_stuck_items(self):
         """Reset items stuck in 'searching' state back to 'queued' on startup."""
@@ -1399,45 +1372,43 @@ class DownloadManager:
             logger.error(f"Error purging existing tracks from queue: {e}")
 
     def process_downloads_now(self):
-        """
-        Manually trigger download processing (called from job queue).
-        This submits processing tasks to the existing event loop without blocking.
-        """
-        if not self._loop:
-            logger.info("Download manager loop not running; starting background task")
-            self.ensure_background_task()
-            for _ in range(20):
-                if self._loop:
-                    break
-                time.sleep(0.05)
+        """Run one processing cycle.  Safe to call from any sync context.
 
-            if not self._loop:
-                logger.warning("Download manager loop not ready yet; processing will start on next cycle")
-                return
-        
-        # Submit the async processing to the running loop
-        try:
-            # Create a coroutine for processing queued items and checking active downloads
-            async def manual_process():
-                # Always requeue failed items when user manually runs the queue
+        When the async auto-start loop is active (``self._loop`` set by
+        ``start_background_task``), the cycle is submitted to that loop so it
+        does not conflict with the running Task.  Otherwise a fresh event loop
+        is created via ``asyncio.run()`` — this is the normal path taken by the
+        JobQueue and HTTP route triggers.
+        """
+        if self._loop and self._loop.is_running():
+            # Auto-start mode: submit into the existing event loop.
+            async def _manual_pass():
                 requeued = self._requeue_retryable_failed_items(limit=50)
                 if requeued > 0:
                     logger.info(f"Manual run: re-queued {requeued} retryable failed items")
+                await self._process_queued_items()
+                await self._check_active_downloads()
+                logger.info("Manual download processing completed")
 
-                provider = self._get_provider()
-                if provider:
-                    await self._process_queued_items()
-                    await self._check_active_downloads()
-                    logger.info("Manual download processing completed")
-                else:
-                    logger.warning("Cannot process downloads: no active provider")
-            
-            # Schedule the coroutine on the existing loop
-            asyncio.run_coroutine_threadsafe(manual_process(), self._loop)
-            # Don't wait - let it process in background
-            logger.info("Download processing triggered (will run in background)")
+            asyncio.run_coroutine_threadsafe(_manual_pass(), self._loop)
+            logger.info("Download processing triggered on existing event loop")
+            return
+
+        # No persistent loop — run a self-contained one-shot cycle.
+        async def _one_pass():
+            requeued = self._requeue_retryable_failed_items(limit=50)
+            if requeued > 0:
+                logger.info(f"Manual run: re-queued {requeued} retryable failed items")
+            await self._recover_stuck_items()
+            self._purge_existing_tracks_from_queue()
+            await self._process_queued_items()
+            await self._check_active_downloads()
+            logger.info("Download processing cycle complete")
+
+        try:
+            asyncio.run(_one_pass())
         except Exception as e:
-            logger.error(f"Failed to trigger download processing: {e}", exc_info=True)
+            logger.error(f"Download processing cycle failed: {e}", exc_info=True)
 
     def _requeue_retryable_failed_items(self, limit: int = 50) -> int:
         """Move retryable failed items back to queued so manual runs can re-attempt them.
@@ -1492,10 +1463,9 @@ def register_download_manager_job(interval_seconds: int = 21600):
     from core.job_queue import job_queue, unregister_job
     
     def process_downloads():
-        """Trigger manual download processing"""
+        """Run one full download processing cycle driven by the job queue."""
         dm = get_download_manager()
-        dm.ensure_background_task()  # Ensure the loop is running
-        dm.process_downloads_now()    # Trigger processing immediately
+        dm.process_downloads_now()
     
     unregister_job("download_manager_status")
 

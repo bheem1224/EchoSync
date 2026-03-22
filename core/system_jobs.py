@@ -72,7 +72,8 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                 logger.error(f"Failed to import DatabaseUpdateWorker: {e}")
                 return
             
-            # Create and run worker
+            # Create and run worker — run() is a blocking synchronous call executed
+            # directly on the JobQueue worker thread; no additional thread needed.
             try:
                 worker = DatabaseUpdateWorker(
                     media_client=provider,
@@ -81,19 +82,14 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                     server_type=active_server,
                     force_sequential=True
                 )
-                
-                # Start worker thread
-                worker.start()
-                worker.join(timeout=3600)  # 1 hour timeout
-                
-                if worker.is_alive():
-                    logger.warning("Database update worker still running after 1 hour, may be stuck")
-                else:
-                    logger.info(
-                        f"Database update completed: {worker.processed_tracks} tracks, "
-                        f"{worker.successful_operations} successful, {worker.failed_operations} failed"
-                    )
-                    
+
+                worker.run()
+
+                logger.info(
+                    f"Database update completed: {worker.processed_tracks} tracks, "
+                    f"{worker.successful_operations} successful, {worker.failed_operations} failed"
+                )
+
             except Exception as e:
                 logger.error(f"Failed to run database update worker: {e}", exc_info=True)
                 
@@ -272,6 +268,46 @@ def register_process_lifecycle_actions_job(interval_seconds: int = 86400, enable
     )
 
 
+def register_download_manager_queue_job(interval_seconds: int = 21600, enabled: bool = True):
+    """Register the download manager queue processing job (every 6 hours)."""
+    try:
+        from services.download_manager import register_download_manager_job
+        register_download_manager_job(interval_seconds=interval_seconds)
+        logger.info(
+            f"Download manager queue job registered "
+            f"(interval: {interval_seconds}s = {interval_seconds / 3600:.1f}h, enabled={enabled})"
+        )
+    except Exception as e:
+        logger.error(f"Failed to register download_manager_queue job: {e}", exc_info=True)
+
+
+def register_user_history_sync_job(interval_seconds: int = 43200, enabled: bool = True):
+    """Register periodic user history sync job (every 12 hours)."""
+
+    def run_user_history_sync():
+        try:
+            logger.info("Starting scheduled user history sync job")
+            from services.user_history_service import UserHistoryService
+            stats = UserHistoryService().sync_baseline_history()
+            logger.info(f"User history sync complete: {stats}")
+        except Exception as e:
+            logger.error(f"User history sync job failed: {e}", exc_info=True)
+
+    job_queue.register_job(
+        name="user_history_sync",
+        func=run_user_history_sync,
+        interval_seconds=interval_seconds,
+        enabled=enabled,
+        tags=["system", "user_history", "suggestion_engine"],
+        max_retries=1,
+    )
+
+    logger.info(
+        f"User history sync job registered "
+        f"(interval: {interval_seconds}s = {interval_seconds / 3600:.1f}h, enabled={enabled})"
+    )
+
+
 def register_all_system_jobs():
     """
     Register all system jobs with the global job_queue.
@@ -292,7 +328,13 @@ def register_all_system_jobs():
 
         # Daily lifecycle staging queue processing.
         register_process_lifecycle_actions_job(interval_seconds=86400, enabled=True)
-        
+
+        # Download manager queue processing (every 6 hours).
+        register_download_manager_queue_job(interval_seconds=21600, enabled=True)
+
+        # User history sync for Suggestion Engine baseline data (every 12 hours).
+        register_user_history_sync_job(interval_seconds=43200, enabled=True)
+
         logger.info("All system jobs registered successfully")
     except Exception as e:
         logger.error(f"Failed to register system jobs: {e}", exc_info=True)

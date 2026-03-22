@@ -87,7 +87,6 @@ def run_downloads():
             )
         
         dm = get_download_manager()
-        dm.ensure_background_task()
         dm.process_downloads_now()
         
         return Response(
@@ -180,7 +179,6 @@ def search_download(download_id: int):
         
         # Trigger the download manager to process immediately
         dm = get_download_manager()
-        dm.ensure_background_task()
         dm.process_downloads_now()
         
         logger.info(f"Triggered search for download {download_id}")

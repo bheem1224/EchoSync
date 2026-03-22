@@ -1,5 +1,4 @@
 import requests
-import time
 import logging
 
 logger = logging.getLogger("tidal_api")
@@ -33,20 +32,22 @@ class TidalAPI:
         endpoint = "/my-collection/playlists"
         playlists = []
         params = {"limit": 50}
+        has_more = True
 
-        while True:
+        while has_more:
             data = self._get(endpoint, params)
             if not data or "items" not in data:
-                break
+                has_more = False
+                continue
 
             playlists.extend(data["items"])
 
-            # Handle pagination
             if "next" in data:
                 params["cursor"] = data["next"]
-                time.sleep(0.5)  # Rate limiting
+                # Rate limiting is managed by the caller's RequestManager;
+                # no manual sleep needed here.
             else:
-                break
+                has_more = False
 
         return playlists
 
@@ -58,11 +59,13 @@ class TidalAPI:
             "limit": 100
         }
         tracks = []
+        has_more = True
 
-        while True:
+        while has_more:
             data = self._get(endpoint, params)
             if not data or "items" not in data:
-                break
+                has_more = False
+                continue
 
             # Parse included data
             included = {item["id"]: item for item in data.get("included", [])}
@@ -81,11 +84,11 @@ class TidalAPI:
                 }
                 tracks.append(track)
 
-            # Handle pagination
             if "next" in data:
                 params["cursor"] = data["next"]
-                time.sleep(0.5)  # Rate limiting
+                # Rate limiting is managed by the caller's RequestManager;
+                # no manual sleep needed here.
             else:
-                break
+                has_more = False
 
         return tracks

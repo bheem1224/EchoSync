@@ -385,8 +385,11 @@ class TidalClient(SyncServiceProvider):
         try:
             port = 8889
             self.auth_server = HTTPServer(('localhost', port), CallbackHandler)
-            server_thread = threading.Thread(target=self.auth_server.serve_forever)
-            server_thread.daemon = True
+            server_thread = threading.Thread(
+                target=self.auth_server.serve_forever,
+                daemon=True,
+                name="TidalOAuthSidecar",
+            )
             server_thread.start()
             logger.info(f"Started Tidal callback server on port {port}")
         except Exception as e:
@@ -432,31 +435,50 @@ class TidalClient(SyncServiceProvider):
     
     # Duplicate _load_saved_tokens removed
     
+    def shutdown_auth_server(self) -> None:
+        """Shut down the local OAuth sidecar server if it is still running.
+
+        Called after a successful (or failed) token exchange so the daemon thread
+        does not keep the port occupied for the lifetime of the process.
+        """
+        if self.auth_server is not None:
+            try:
+                self.auth_server.shutdown()
+                logger.info("Tidal OAuth sidecar server shut down")
+            except Exception as e:
+                logger.warning(f"Error shutting down Tidal OAuth sidecar: {e}")
+            finally:
+                self.auth_server = None
+
     def fetch_token_from_code(self, auth_code: str) -> bool:
         """Exchange authorization code for access tokens (for web server callback)"""
         try:
             if not self.code_verifier:
                 logger.error("Cannot exchange token: code_verifier is missing!")
                 return False
-                
+
             logger.info(f"Starting token exchange with code: {auth_code[:20]}...")
             logger.info(f"PKCE verifier present: verifier_len={len(self.code_verifier)}")
             logger.info(f"Redirect URI: {self.redirect_uri}")
-            
+
             self.auth_code = auth_code
             result = self._exchange_code_for_tokens()
-            
+
             if result:
                 logger.info("✅ Token exchange successful")
             else:
                 logger.error("❌ Token exchange failed")
-            
+
             return result
         except Exception as e:
             logger.error(f"Error in fetch_token_from_code: {e}")
             import traceback
             logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
+        finally:
+            # Always shut down the sidecar — whether the exchange succeeded or not,
+            # the ephemeral callback server has served its purpose.
+            self.shutdown_auth_server()
     
     def _ensure_valid_token(self):
         """Ensure we have a valid access token, refresh if needed"""
