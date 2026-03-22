@@ -40,6 +40,7 @@ from web.routes.accounts import bp as accounts_bp
 from web.routes.media_server import bp as media_server_bp
 from web.routes.library import bp as library_bp
 from web.routes.metadata import bp as metadata_bp
+from web.routes.metadata_review import bp as metadata_review_bp
 from web.routes.manager import bp as manager_bp
 from web.routes.downloads import bp as downloads_bp
 from web.routes.suggestions import bp as suggestions_bp
@@ -102,6 +103,7 @@ def create_app() -> Flask:
     app.register_blueprint(media_server_bp)
     app.register_blueprint(library_bp)
     app.register_blueprint(metadata_bp)
+    app.register_blueprint(metadata_review_bp)
     app.register_blueprint(manager_bp)
     app.register_blueprint(downloads_bp)
     app.register_blueprint(suggestions_bp)

@@ -3,7 +3,8 @@
     import Omnibar from '$lib/components/Omnibar.svelte';
 
     // Simple active tab logic based on path
-    $: activeTab = $page.url.pathname.includes('/library/manager') ? 'manager' :
+    $: activeTab = $page.url.pathname.includes('/library/review-queue') ? 'review-queue' :
+                   $page.url.pathname.includes('/library/manager') ? 'manager' :
                    $page.url.pathname.includes('/library/suggestions') ? 'suggestions' : 'collection';
 </script>
 
@@ -37,6 +38,12 @@
                         class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors {activeTab === 'suggestions' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}"
                     >
                         Suggestions
+                    </a>
+                    <a
+                        href="/library/review-queue"
+                        class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors {activeTab === 'review-queue' ? 'bg-cyan-600 text-white shadow' : 'text-gray-400 hover:text-white'}"
+                    >
+                        Review Queue
                     </a>
                 </nav>
             </div>
