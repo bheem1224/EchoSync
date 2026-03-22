@@ -4,7 +4,7 @@ from time_utils import utc_now
 import json
 from core.tiered_logger import get_logger
 from services.download_manager import get_download_manager
-from database.music_database import get_database, Download
+from database.working_database import get_working_database, Download
 from core.job_queue import list_jobs as jq_list_jobs
 
 logger = get_logger("downloads_route")
@@ -32,7 +32,7 @@ def _to_ui_status(raw_status: str) -> str:
 def get_queue():
     """Return all downloads in the queue with their current status."""
     try:
-        with get_database().session_scope() as session:
+        with get_working_database().session_scope() as session:
             downloads = session.query(Download).all()
             
             queue_items = []
@@ -108,7 +108,7 @@ def run_downloads():
 def delete_download(download_id: int):
     """Remove a specific download from the queue."""
     try:
-        with get_database().session_scope() as session:
+        with get_working_database().session_scope() as session:
             download = session.query(Download).filter(Download.id == download_id).first()
             
             if not download:
@@ -140,7 +140,7 @@ def delete_download(download_id: int):
 def clear_queue():
     """Clear all downloads from the queue."""
     try:
-        with get_database().session_scope() as session:
+        with get_working_database().session_scope() as session:
             count = session.query(Download).delete()
             session.commit()
             
@@ -163,7 +163,7 @@ def clear_queue():
 def search_download(download_id: int):
     """Trigger search and download for a specific queue item."""
     try:
-        with get_database().session_scope() as session:
+        with get_working_database().session_scope() as session:
             download = session.query(Download).filter(Download.id == download_id).first()
             
             if not download:
@@ -212,7 +212,7 @@ def delete_batch():
                 mimetype="application/json"
             )
         
-        with get_database().session_scope() as session:
+        with get_working_database().session_scope() as session:
             count = session.query(Download).filter(Download.id.in_(ids)).delete(synchronize_session=False)
             session.commit()
             

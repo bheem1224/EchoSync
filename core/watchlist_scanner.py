@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import re
 import time
 from bs4 import BeautifulSoup
-from database.music_database import get_database, WatchlistArtist
+from database.working_database import get_working_database, WatchlistArtist
 from providers.spotify.client import SpotifyClient
 from core.wishlist_service import get_wishlist_service
 from core.matching_engine import SoulSyncTrack
@@ -100,7 +100,7 @@ class WatchlistScanner:
     def database(self):
         """Get database instance (lazy loading)"""
         if self._database is None:
-            self._database = get_database(self.database_path)
+            self._database = get_working_database(self.database_path)
         return self._database
     
     @property

@@ -448,6 +448,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     "album": track_album,
                     "duration": duration_str,
                     "duration_ms": track_duration,
+                    "isrc": getattr(source_track, "isrc", None),
                     "library_match": library_match,
                     "download_status": "-",
                     "matched_track_id": best_match_track_id,
@@ -455,6 +456,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     "target_source": target_source,
                     "target_identifier": best_match_target_id,
                     "target_exists": bool(best_match_target_id),
+                    "source_track": source_track.to_dict() if hasattr(source_track, "to_dict") else None,
                     "source_identifier": (
                         None if not getattr(source_track, 'identifiers', None) else (
                             source_track.identifiers.get(source)
@@ -516,6 +518,10 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                 "artist": track["artist"],
                 "album": track["album"],
                 "duration": track.get("duration_ms"),
+                "duration_ms": track.get("duration_ms"),
+                "isrc": track.get("isrc"),
+                "source_identifier": track.get("source_identifier"),
+                "source_track": track.get("source_track"),
             })
 
     return {
@@ -929,13 +935,29 @@ def download_missing_tracks():
         # The existing download_manager job will process them
         for track_info in missing:
             try:
-                # Create SoulSyncTrack from metadata
-                track = SoulSyncTrack(
-                    raw_title=track_info.get("title"),
-                    artist_name=track_info.get("artist"),
-                    album_title=track_info.get("album") or "",
-                    duration=track_info.get("duration_ms")
-                )
+                # Prefer full serialized source track when present so metadata survives queueing.
+                source_track_payload = track_info.get("source_track")
+                if isinstance(source_track_payload, dict):
+                    track = SoulSyncTrack.from_dict(source_track_payload)
+                else:
+                    duration_ms = track_info.get("duration_ms")
+                    if duration_ms is None:
+                        duration_ms = track_info.get("duration")
+
+                    identifiers = {}
+                    source_identifier = track_info.get("source_identifier")
+                    if source_identifier:
+                        identifiers["spotify"] = str(source_identifier)
+
+                    # Create SoulSyncTrack from fallback metadata, preserving ISRC when provided.
+                    track = SoulSyncTrack(
+                        raw_title=track_info.get("title"),
+                        artist_name=track_info.get("artist"),
+                        album_title=track_info.get("album") or "",
+                        duration=duration_ms,
+                        isrc=track_info.get("isrc"),
+                        identifiers=identifiers,
+                    )
 
                 # Queue the download (no separate job needed)
                 download_id = download_manager.queue_download(track)

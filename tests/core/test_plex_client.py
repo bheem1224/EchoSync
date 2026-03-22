@@ -258,3 +258,26 @@ def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
     assert len(interactions) == 1
     server.switchUser.assert_called_once_with('Kiddo')
     target_server.history.assert_called_once_with(maxresults=10)
+
+
+def test_track_to_interaction_extracts_user_rating_and_play_count():
+    client = PlexClient(account_id=7)
+
+    # Avoid coupling this test to full conversion internals.
+    converted = MagicMock()
+    converted.artist_name = 'Artist'
+    converted.title = 'Song'
+    converted.identifiers = {'plex': '100'}
+    client._convert_track_to_soulsync = lambda _: converted
+
+    plex_track = MagicMock()
+    plex_track.ratingKey = '100'
+    plex_track.viewCount = 11
+    plex_track.userRating = 8.0  # Plex-style 10-point rating
+    plex_track.lastViewedAt = None
+
+    interaction = client._track_to_interaction(plex_track)
+
+    assert interaction is not None
+    assert interaction.play_count == 11
+    assert interaction.rating == 4.0

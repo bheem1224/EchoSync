@@ -1346,6 +1346,19 @@ class PlexClient(ProviderBase):
 
         provider_item_id = str(getattr(plex_track, 'ratingKey', None) or converted.identifiers.get('plex') or '')
         play_count = int(getattr(plex_track, 'viewCount', 0) or 0)
+        raw_rating = getattr(plex_track, 'userRating', None)
+        rating: Optional[float] = None
+        try:
+            if raw_rating is not None:
+                parsed = float(raw_rating)
+                # Plex often stores ratings on a 10-point scale; normalize to 5-point for Suggestion Engine.
+                rating = parsed / 2.0 if parsed > 5.0 else parsed
+                if rating < 0:
+                    rating = None
+                elif rating > 5.0:
+                    rating = 5.0
+        except Exception:
+            rating = None
         last_played_at = self._coerce_datetime(getattr(plex_track, 'lastViewedAt', None))
 
         return UserTrackInteraction(
@@ -1353,7 +1366,7 @@ class PlexClient(ProviderBase):
             artist_name=converted.artist_name,
             track_title=converted.title,
             play_count=play_count,
-            rating=None,
+            rating=rating,
             last_played_at=last_played_at,
         )
 

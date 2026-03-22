@@ -68,21 +68,9 @@ class UserRating(WorkingBase):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(nullable=False, index=True)
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    rating: Mapped[float] = mapped_column(Float)  # 1-5, or system flags 0.1, 2.1, 3.1
+    rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 1-5, or system flags 0.1, 2.1, 3.1
+    play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-
-
-class Wishlist(WorkingBase):
-    __tablename__ = "wishlist"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    query_string: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
-
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
 
 
 class WatchlistArtist(WorkingBase):
@@ -263,7 +251,14 @@ class WorkingDatabase:
 
     def create_all(self) -> None:
         WorkingBase.metadata.create_all(self.engine)
+        self._drop_legacy_tables()
+        self._ensure_user_rating_columns()
         self._ensure_user_track_state_columns()
+
+    def _drop_legacy_tables(self) -> None:
+        """Drop legacy working DB tables that are no longer part of the schema."""
+        with self.engine.begin() as conn:
+            conn.exec_driver_sql("DROP TABLE IF EXISTS wishlist")
 
     def _ensure_user_track_state_columns(self) -> None:
         """Best-effort migration for new user_track_states override columns."""
@@ -283,6 +278,26 @@ class WorkingDatabase:
                     if column_name not in existing:
                         conn.exec_driver_sql(
                             f"ALTER TABLE user_track_states ADD COLUMN {column_name} {ddl}"
+                        )
+        except Exception:
+            # Non-fatal; metadata create_all already guarantees fresh schemas include columns.
+            pass
+
+    def _ensure_user_rating_columns(self) -> None:
+        """Best-effort migration for user_ratings columns introduced after initial rollout."""
+        required_columns = {
+            "play_count": "INTEGER NOT NULL DEFAULT 0",
+        }
+
+        try:
+            with self.engine.begin() as conn:
+                existing_rows = conn.exec_driver_sql("PRAGMA table_info('user_ratings')").fetchall()
+                existing = {str(row[1]) for row in existing_rows}
+
+                for column_name, ddl in required_columns.items():
+                    if column_name not in existing:
+                        conn.exec_driver_sql(
+                            f"ALTER TABLE user_ratings ADD COLUMN {column_name} {ddl}"
                         )
         except Exception:
             # Non-fatal; metadata create_all already guarantees fresh schemas include columns.
@@ -353,7 +368,6 @@ __all__ = [
     "WorkingBase",
     "User",
     "UserRating",
-    "Wishlist",
     "WatchlistArtist",
     "ReviewTask",
     "Download",

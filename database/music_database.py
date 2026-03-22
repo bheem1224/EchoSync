@@ -40,17 +40,6 @@ class Base(DeclarativeBase):
     """Base metadata class for SQLAlchemy models."""
 
 
-class User(Base):
-    __tablename__ = "users"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    username: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
-    plex_id: Mapped[Optional[str]] = mapped_column(String, unique=True)
-    provider: Mapped[Optional[str]] = mapped_column(String)
-
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-
-
 class Artist(Base):
     __tablename__ = "artists"
 
@@ -122,18 +111,15 @@ class Track(Base):
     external_identifiers: Mapped[List["ExternalIdentifier"]] = relationship(
         back_populates="track", cascade="all, delete-orphan"
     )
-    user_ratings: Mapped[List["UserRating"]] = relationship(
-        back_populates="track", cascade="all, delete-orphan"
-    )
     audio_fingerprints: Mapped[List["AudioFingerprint"]] = relationship(
         back_populates="track", cascade="all, delete-orphan"
     )
 
     @hybrid_property
     def get_consensus_rating(self) -> int:
-        if not self.user_ratings:
+        if self.global_rating is None:
             return 0
-        return max((rating.rating or 0) for rating in self.user_ratings)
+        return int(round(self.global_rating))
 
 
 class ExternalIdentifier(Base):
@@ -153,23 +139,6 @@ class ExternalIdentifier(Base):
     track: Mapped[Track] = relationship(back_populates="external_identifiers")
 
 
-class UserRating(Base):
-    __tablename__ = "user_ratings"
-    __table_args__ = (
-        UniqueConstraint("user_id", "track_id", name="uq_user_track"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(nullable=False, index=True)
-    track_id: Mapped[int] = mapped_column(
-        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    rating: Mapped[float] = mapped_column(Float)  # 1-5, or system flags 0.1, 2.1, 3.1
-    timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-
-    track: Mapped[Track] = relationship(back_populates="user_ratings")
-
-
 class AudioFingerprint(Base):
     __tablename__ = "audio_fingerprints"
 
@@ -181,63 +150,6 @@ class AudioFingerprint(Base):
     acoustid_id: Mapped[Optional[str]] = mapped_column(String)
 
     track: Mapped[Track] = relationship(back_populates="audio_fingerprints")
-
-
-class Wishlist(Base):
-    __tablename__ = "wishlist"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    query_string: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
-
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
-
-
-class WatchlistArtist(Base):
-    """Model for tracking watched artists and their scan status."""
-    __tablename__ = "watchlist_artists"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    spotify_artist_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
-    artist_name: Mapped[str] = mapped_column(String, nullable=False)
-    last_scan_timestamp: Mapped[Optional[datetime]] = mapped_column(UTCDateTime())
-    image_url: Mapped[Optional[str]] = mapped_column(String)
-    
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
-
-
-class ReviewTask(Base):
-    """Model for items in the Metadata Review Queue."""
-    __tablename__ = "review_tasks"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    file_path: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
-    status: Mapped[str] = mapped_column(String, default="pending", nullable=False)  # pending, approved, ignored
-    detected_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
-    confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-
-
-class Download(Base):
-    """Model for tracking download state (Central Control)."""
-    __tablename__ = "downloads"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    soul_sync_track: Mapped[dict] = mapped_column(JSON, nullable=False)  # Serialized SoulSyncTrack
-    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
-    provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
-    retry_count: Mapped[int] = mapped_column(Integer, default=0)
-
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
 
 
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
@@ -285,6 +197,21 @@ class MusicDatabase:
 
     def create_all(self) -> None:
         Base.metadata.create_all(self.engine)
+        self._drop_legacy_tables()
+
+    def _drop_legacy_tables(self) -> None:
+        """Drop legacy tables that were migrated to the working database."""
+        legacy_tables = (
+            "users",
+            "user_ratings",
+            "downloads",
+            "review_tasks",
+            "watchlist_artists",
+            "wishlist",
+        )
+        with self.engine.begin() as conn:
+            for table_name in legacy_tables:
+                conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table_name}")
 
     def drop_all(self) -> None:
         Base.metadata.drop_all(self.engine)
@@ -303,23 +230,6 @@ class MusicDatabase:
             raise
         finally:
             session.close()
-
-    def get_system_user_id(self) -> int:
-        """Get or create the system user ID for automated flags."""
-        with self.session_scope() as session:
-            user = session.query(User).filter(User.username == "SoulSync System").first()
-            if user:
-                return user.id
-
-            # Create system user
-            system_user = User(
-                username="SoulSync System",
-                plex_id="system_local_admin",
-                provider="local"
-            )
-            session.add(system_user)
-            session.commit()
-            return system_user.id
 
     def search_library(self, query: str) -> Dict[str, List[Dict]]:
         """Search across Artists, Albums, and Tracks."""
@@ -596,17 +506,11 @@ def close_database() -> None:
 
 __all__ = [
     "Base",
-    "User",
     "Artist",
     "Album",
     "Track",
     "ExternalIdentifier",
-    "UserRating",
     "AudioFingerprint",
-    "Wishlist",
-    "WatchlistArtist",
-    "ReviewTask",
-    "Download",
     "MusicDatabase",
     "get_database",
     "close_database",

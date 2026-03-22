@@ -143,6 +143,16 @@ def create_app() -> Flask:
         except Exception as e:
             print(f"[ERROR] Failed to register blueprint {bp.name}: {e}")
 
+    # Day-1 ingestion: seed working.db users and baseline history for Suggestion Engine context.
+    # Skip during pytest runs to keep tests deterministic and fast.
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        try:
+            from services.user_history_service import run_day1_ingestion_on_startup
+            stats = run_day1_ingestion_on_startup()
+            print(f"[INFO] Day-1 user history ingestion complete: {stats}")
+        except Exception as e:
+            print(f"[WARN] Day-1 user history ingestion failed: {e}")
+
     # Load scheduled sync jobs on startup
     from web.routes.playlists import load_scheduled_syncs_on_startup
     try:

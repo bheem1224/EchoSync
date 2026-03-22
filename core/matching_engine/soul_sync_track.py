@@ -294,6 +294,7 @@ class SoulSyncTrack:
             'file_path': self.file_path,
             'file_format': self.file_format,
             'release_year': self.release_year,
+            'version': self.version,
             'added_at': self.added_at.isoformat() if self.added_at else None,
             'sample_rate': self.sample_rate,
             'bit_depth': self.bit_depth,
@@ -305,6 +306,7 @@ class SoulSyncTrack:
             'original_release_date': self.original_release_date.isoformat() if self.original_release_date else None,
             'fingerprint': self.fingerprint,
             'quality_tags': self.quality_tags,
+            'is_compilation': self.is_compilation,
             'identifiers': self.identifiers,
         }
 
@@ -329,6 +331,15 @@ class SoulSyncTrack:
         if isinstance(identifiers, list):
              identifiers = {}
 
+        # Compatibility: accept either duration or duration_ms and hydrate ISRC from identifiers.
+        duration_value = data.get('duration')
+        if duration_value is None:
+            duration_value = data.get('duration_ms')
+
+        isrc_value = data.get('isrc')
+        if isrc_value is None and isinstance(identifiers, dict):
+            isrc_value = identifiers.get('isrc')
+
         track = cls(
             raw_title=raw_title,
             artist_name=data.get('artist_name', 'Unknown Artist'),
@@ -339,24 +350,26 @@ class SoulSyncTrack:
             album_sort_title=data.get('album_sort_title'),
             album_type=data.get('album_type'),
             album_release_group_id=data.get('album_release_group_id'),
-            duration=data.get('duration'),
+            duration=duration_value,
             track_number=data.get('track_number'),
             disc_number=data.get('disc_number'),
             bitrate=data.get('bitrate'),
             file_path=data.get('file_path'),
             file_format=data.get('file_format'),
             release_year=data.get('release_year'),
+            version=data.get('version'),
             added_at=added_at,
             sample_rate=data.get('sample_rate'),
             bit_depth=data.get('bit_depth'),
             file_size_bytes=data.get('file_size_bytes'),
             musicbrainz_id=data.get('musicbrainz_id'),
-            isrc=data.get('isrc'),
+            isrc=isrc_value,
             acoustid_id=data.get('acoustid_id'),
             mb_release_id=data.get('mb_release_id'),
             original_release_date=original_release_date,
             fingerprint=data.get('fingerprint'),
             quality_tags=data.get('quality_tags'),
+            is_compilation=data.get('is_compilation'),
             identifiers=identifiers,
         )
         return track

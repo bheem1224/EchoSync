@@ -4,7 +4,7 @@ import mimetypes
 from flask import Blueprint, jsonify, request, send_file
 from pathlib import Path
 from services.metadata_enhancer import get_metadata_enhancer
-from database import get_database, ReviewTask
+from database.working_database import get_working_database, ReviewTask
 from core.enums import Capability
 from core.plugin_loader import get_provider
 from core.tiered_logger import get_logger
@@ -69,7 +69,7 @@ def _extract_source_metadata(file_path: Path):
 def get_queue():
     """Get items in the review queue."""
     try:
-        db = get_database()
+        db = get_working_database()
         queue = []
         with db.session_scope() as session:
             # Query pending tasks
@@ -101,7 +101,7 @@ def get_queue():
 def get_queue_item(task_id: int):
     """Get full details for one review queue item, including source metadata."""
     try:
-        db = get_database()
+        db = get_working_database()
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task or task.status != 'pending':
@@ -130,7 +130,7 @@ def get_queue_item(task_id: int):
 def stream_queue_audio(task_id: int):
     """Stream audio file for a review queue item."""
     try:
-        db = get_database()
+        db = get_working_database()
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task or task.status != 'pending':
@@ -160,7 +160,7 @@ def approve_match():
         if not task_id or not metadata:
              return jsonify({"error": "Missing task ID or metadata"}), 400
 
-        db = get_database()
+        db = get_working_database()
         enhancer = get_metadata_enhancer()
 
         file_path = None
@@ -226,7 +226,7 @@ def ignore_task():
         if not task_id:
              return jsonify({"error": "Missing task ID"}), 400
 
-        db = get_database()
+        db = get_working_database()
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if task:

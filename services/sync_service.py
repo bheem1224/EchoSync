@@ -555,12 +555,21 @@ class PlaylistSyncService:
             try:
                 spotify_track = match_result.spotify_track
                 logger.info(f"Publishing DOWNLOAD_INTENT for: {spotify_track.title} - {spotify_track.artist_name}")
+                full_track = spotify_track.to_dict()
+                identifiers = full_track.get("identifiers") if isinstance(full_track, dict) else {}
+                spotify_id = None
+                if isinstance(identifiers, dict):
+                    spotify_id = identifiers.get("spotify") or identifiers.get("spotify_id")
                 
                 # Publish event via event bus for asynchronous processing
                 event_bus.publish({
                     "event": "DOWNLOAD_INTENT",
-                    "sync_id": spotify_track.identifiers.get('spotify') or spotify_track.identifiers.get('provider_id'),
-                    "fallback_metadata": spotify_track.to_dict(),
+                    "sync_id": spotify_id or spotify_track.identifiers.get('provider_id'),
+                    "track": full_track,
+                    # Legacy compatibility for existing consumers.
+                    "fallback_metadata": full_track,
+                    "duration_ms": full_track.get("duration"),
+                    "isrc": full_track.get("isrc"),
                     "timestamp": utc_isoformat(utc_now()),
                     "source": "playlist_sync"
                 })

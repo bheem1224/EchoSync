@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from flask import Flask
+from core.matching_engine.soul_sync_track import SoulSyncTrack
 
 # reuse client fixture from other tests
 
@@ -153,3 +154,71 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
     # ensure provider was called separately for each account/playlist
     assert (1, 'p1') in called
     assert (2, 'p2') in called
+
+
+def test_download_missing_hydrates_from_full_source_track_payload(client, monkeypatch):
+    queued = []
+
+    class FakeDownloadManager:
+        def ensure_background_task(self):
+            return None
+
+        def queue_download(self, track):
+            queued.append(track)
+            return 123
+
+    monkeypatch.setattr('services.download_manager.get_download_manager', lambda: FakeDownloadManager())
+
+    source_track = SoulSyncTrack(
+        raw_title='My Song',
+        artist_name='My Artist',
+        album_title='My Album',
+        duration=210000,
+        isrc='USRC17607839',
+        identifiers={'spotify': 'spotify-track-id'},
+    )
+
+    resp = client.post('/api/playlists/download-missing', json={
+        'missing': [{
+            'title': 'My Song',
+            'artist': 'My Artist',
+            'album': 'My Album',
+            'source_track': source_track.to_dict(),
+        }]
+    })
+
+    assert resp.status_code == 200
+    assert len(queued) == 1
+    assert queued[0].duration == 210000
+    assert queued[0].isrc == 'USRC17607839'
+
+
+def test_download_missing_preserves_duration_and_isrc_from_fallback_fields(client, monkeypatch):
+    queued = []
+
+    class FakeDownloadManager:
+        def ensure_background_task(self):
+            return None
+
+        def queue_download(self, track):
+            queued.append(track)
+            return 124
+
+    monkeypatch.setattr('services.download_manager.get_download_manager', lambda: FakeDownloadManager())
+
+    resp = client.post('/api/playlists/download-missing', json={
+        'missing': [{
+            'title': 'Fallback Song',
+            'artist': 'Fallback Artist',
+            'album': 'Fallback Album',
+            'duration': 198000,
+            'isrc': 'GBUM71029604',
+            'source_identifier': 'spotify-fallback-id',
+        }]
+    })
+
+    assert resp.status_code == 200
+    assert len(queued) == 1
+    assert queued[0].duration == 198000
+    assert queued[0].isrc == 'GBUM71029604'
+    assert queued[0].identifiers.get('spotify') == 'spotify-fallback-id'

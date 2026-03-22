@@ -22,8 +22,7 @@ from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.soul_sync_track import SoulSyncTrack
-from database import get_database
-from database.music_database import ReviewTask
+from database.working_database import get_working_database, ReviewTask
 
 # Optional Mutagen imports
 try:
@@ -191,7 +190,7 @@ class MetadataEnhancerService:
     def create_or_update_review_task(self, file_path: Path, metadata: Optional[Dict[str, Any]], confidence: float, status='pending'):
         """Create or update a task in the review queue."""
         try:
-            db = get_database()
+            db = get_working_database()
             with db.session_scope() as session:
                 existing = session.query(ReviewTask).filter(ReviewTask.file_path == str(file_path)).first()
                 if existing:

@@ -54,10 +54,12 @@ class UserHistoryService:
             - errors: List of error messages encountered
         """
         stats = {
+            'users_synced': 0,
             'accounts_processed': 0,
             'interactions_fetched': 0,
             'matches_found': 0,
             'ratings_imported': 0,
+            'listen_count_imported': 0,
             'errors': []
         }
         
@@ -69,6 +71,9 @@ class UserHistoryService:
             if not accounts:
                 self.logger.info("No active Plex accounts found for history sync")
                 return stats
+
+            # Day-1 bootstrap: ensure all active Plex managed users exist before history sync.
+            stats['users_synced'] = self.sync_active_plex_users_to_working_db(accounts)
             
             # Get Plex provider to call fetch_user_history()
             try:
@@ -195,6 +200,29 @@ class UserHistoryService:
         except Exception as e:
             self.logger.error(f"Failed to get/create working user: {e}", exc_info=True)
             return None
+
+    def sync_active_plex_users_to_working_db(self, accounts: Optional[List[Dict]] = None) -> int:
+        """Ensure all active Plex accounts in config.db exist in working.db users."""
+        users_synced = 0
+        try:
+            if accounts is None:
+                plex_service_id = self.config_db.get_or_create_service_id('plex')
+                accounts = self.config_db.get_accounts(service_id=plex_service_id, is_active=True)
+
+            for account in accounts or []:
+                account_name = account.get('display_name') or account.get('account_name') or 'Unknown'
+                user = self._get_or_create_working_user(
+                    account_id=account.get('id'),
+                    account_name=account_name,
+                    plex_user_id=account.get('user_id'),
+                    account_email=account.get('account_email'),
+                )
+                if user:
+                    users_synced += 1
+        except Exception as e:
+            self.logger.error(f"Failed syncing active Plex users to working DB: {e}", exc_info=True)
+
+        return users_synced
     
     def _process_interactions(
         self,
@@ -261,23 +289,30 @@ class UserHistoryService:
                             )
                             continue
 
-                        if interaction.rating is None:
+                        # Store Day-1 historical context when a real rating exists OR listen count exists.
+                        play_count = int(getattr(interaction, 'play_count', 0) or 0)
+                        if interaction.rating is None and play_count <= 0:
                             continue
 
                         matched_count += 1
+                        rating_value = float(interaction.rating) if interaction.rating is not None else None
                         rating_payload_by_sync_id[record["sync_id"]] = {
                             "user_id": user_id,
                             "sync_id": record["sync_id"],
-                            "rating": float(interaction.rating),
+                            "rating": rating_value,
+                            "play_count": play_count,
                             "timestamp": utc_now(),
                         }
+
+                        if interaction.rating is not None:
+                            stats['ratings_imported'] += 1
+                        stats['listen_count_imported'] += play_count
 
                     if rating_payload_by_sync_id:
                         self._bulk_upsert_user_ratings(
                             work_session,
                             list(rating_payload_by_sync_id.values()),
                         )
-                        stats['ratings_imported'] += matched_count
         
         except Exception as e:
             self.logger.error(f"Error in _process_interactions: {e}", exc_info=True)
@@ -295,6 +330,7 @@ class UserHistoryService:
                 index_elements=['user_id', 'sync_id'],
                 set_={
                     'rating': insert_stmt.excluded.rating,
+                    'play_count': insert_stmt.excluded.play_count,
                     'timestamp': insert_stmt.excluded.timestamp,
                 }
             )
@@ -322,3 +358,9 @@ class UserHistoryService:
             work_session.bulk_save_objects(new_objects)
         if update_mappings:
             work_session.bulk_update_mappings(UserRating, update_mappings)
+
+
+def run_day1_ingestion_on_startup() -> Dict[str, int]:
+    """Startup hook: seed working.db users + baseline ratings/listen counts from active Plex accounts."""
+    service = UserHistoryService()
+    return service.sync_baseline_history()

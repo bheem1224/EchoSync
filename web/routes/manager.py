@@ -4,7 +4,7 @@ from core.tiered_logger import get_logger
 from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
 from services.metadata_enhancer import get_metadata_enhancer
-from database.music_database import get_database, Track, UserRating, Artist
+from database.music_database import get_database, Track, Artist
 from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState
 from core.suggestion_engine.consensus import calculate_consensus
 from core.suggestion_engine.deletion import execute_delete_now, execute_upgrade_now
@@ -430,14 +430,14 @@ def resolve_conflict():
 @bp.route("/trends", methods=["GET"])
 def get_trends():
     """Returns library stats (filtered)."""
-    db = get_database()
+    work_db = get_working_database()
     try:
-        with db.session_scope() as session:
+        with work_db.session_scope() as session:
             # Use SQL aggregation for efficiency
             distribution_query = (
-                session.query(func.round(UserRating.rating), func.count(UserRating.id))
-                .filter(UserRating.rating.isnot(None))
-                .group_by(func.round(UserRating.rating))
+                session.query(func.round(WorkingUserRating.rating), func.count(WorkingUserRating.id))
+                .filter(WorkingUserRating.rating.isnot(None))
+                .group_by(func.round(WorkingUserRating.rating))
                 .all()
             )
 

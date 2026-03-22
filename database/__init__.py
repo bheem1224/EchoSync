@@ -25,10 +25,7 @@ from .music_database import (
     Album,
     Track,
     ExternalIdentifier,
-    UserRating,
     AudioFingerprint,
-    Wishlist,
-    ReviewTask,
     get_database,
     close_database
 )
@@ -48,10 +45,7 @@ __all__ = [
     'Album',
     'Track',
     'ExternalIdentifier',
-    'UserRating',
     'AudioFingerprint',
-    'Wishlist',
-    'ReviewTask',
     'LibraryManager',
     'get_database',
     'close_database',

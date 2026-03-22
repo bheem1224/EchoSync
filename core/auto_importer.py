@@ -41,7 +41,7 @@ from core.error_handler import error_handler
 from core.tiered_logger import get_logger
 from core.media_scan_manager import MediaScanManager
 from core.job_queue import job_queue  # Use global singleton
-from database.music_database import get_database, ReviewTask
+from database.working_database import get_working_database, ReviewTask
 
 logger = get_logger("auto_importer")
 
