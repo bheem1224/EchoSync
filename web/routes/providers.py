@@ -55,6 +55,22 @@ def _build_active_plex_user_map():
         logger.warning(f"Failed to build Plex user map for provider playlists: {e}")
         return {}
 
+
+def _match_plex_user_for_account(plex_user_map: dict, account_name: str):
+    """Return the Plex user_id for a source account name.
+
+    Tries exact match first, then substring: Plex 'Simi' contained in 'Simi\\'s Spotify'.
+    """
+    normalized = (account_name or '').strip().lower()
+    if not normalized:
+        return None
+    if normalized in plex_user_map:
+        return plex_user_map[normalized]
+    for plex_name, uid in plex_user_map.items():
+        if plex_name and plex_name in normalized:
+            return uid
+    return None
+
 @bp.get("")
 @bp.get("/")
 def list_all_providers():
@@ -231,7 +247,7 @@ def get_provider_playlists(provider_name):
                                 p_dict['name'] = original_name
                                 # pass account name as a separate field to render in subtle UI
                                 p_dict['source_account_name'] = account_name
-                                mapped_user_id = plex_user_map.get(account_name.strip().lower())
+                                mapped_user_id = _match_plex_user_for_account(plex_user_map, account_name)
                                 if mapped_user_id:
                                     p_dict['target_user_id'] = mapped_user_id
                                 # record which account this playlist came from so clients can target it later

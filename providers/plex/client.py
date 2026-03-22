@@ -409,7 +409,7 @@ class PlexClient(ProviderBase):
 
         if normalized_source_name:
             for user in users:
-                display_candidates = {
+                display_candidates = [
                     normalized
                     for normalized in [
                         self._normalize_plex_identity(getattr(user, 'username', None)),
@@ -417,12 +417,15 @@ class PlexClient(ProviderBase):
                         self._normalize_plex_identity(getattr(user, 'email', None)),
                     ]
                     if normalized
-                }
-                if normalized_source_name in display_candidates:
-                    logger.info(
-                        f"Resolved managed Plex user by display-name fallback for source account '{source_account_name}'"
-                    )
-                    return user
+                ]
+                # Check if any Plex user identity is contained within the source account name
+                # e.g. 'simi' in "simi's spotify" should match managed user 'Simi'
+                for candidate in display_candidates:
+                    if candidate in normalized_source_name:
+                        logger.info(
+                            f"Resolved managed Plex user by display-name fallback for source account '{source_account_name}'"
+                        )
+                        return user
 
         return None
 

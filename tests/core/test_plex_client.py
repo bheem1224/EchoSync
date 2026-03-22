@@ -177,6 +177,44 @@ def test_add_tracks_to_managed_playlist_falls_back_to_source_account_name(monkey
     server.switchUser.assert_called_once_with('simi')
 
 
+def test_add_tracks_to_managed_playlist_falls_back_via_substring_account_name(monkeypatch):
+    """'Simi's Spotify' should resolve to Plex managed user 'Simi' via substring match."""
+    client = PlexClient(account_id=7)
+    client.ensure_connection = lambda: True
+    client.music_library = MagicMock()
+
+    matched_user = MagicMock()
+    matched_user.id = None
+    matched_user.uuid = 'plex-uuid-33'
+    matched_user.username = 'simi'
+    matched_user.title = 'Simi'
+    matched_user.email = None
+
+    server = MagicMock()
+    server.myPlexAccount.return_value.users.return_value = [matched_user]
+    target_server = MagicMock()
+    target_server.fetchItem.return_value = MagicMock(ratingKey='200')
+    server.switchUser.return_value = target_server
+    client.server = server
+    client._find_managed_playlist = lambda *args, **kwargs: None
+
+    created_playlist = MagicMock()
+    created_playlist.items.return_value = [MagicMock(ratingKey='200')]
+
+    with patch('plexapi.playlist.Playlist.create', return_value=created_playlist):
+        ok = client.add_tracks_to_managed_playlist(
+            'Chill Vibes',
+            ['200'],
+            # target_user_id is None — simulates the providers.py gap before the fix
+            source_account_name="Simi's Spotify",
+            target_user_id=None,
+        )
+
+    assert ok is True
+    # Must have switched to the matched user, not stayed on admin
+    server.switchUser.assert_called_once_with('simi')
+
+
 def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
     client = PlexClient(account_id=7)
     client.ensure_connection = lambda: True
