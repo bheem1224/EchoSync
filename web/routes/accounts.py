@@ -5,6 +5,28 @@ from core.tiered_logger import get_logger
 logger = get_logger("accounts_route")
 bp = Blueprint("accounts", __name__, url_prefix="/api/accounts")
 
+
+@bp.post("/plex/sync_users")
+def sync_plex_users():
+    """Sync Plex admin and managed users into config.db and return the updated list."""
+    try:
+        from providers.plex.client import PlexClient
+
+        client = PlexClient()
+        client.import_managed_users()
+
+        storage = get_storage_service()
+        accounts = storage.list_accounts('plex')
+        return jsonify({
+            'service': 'plex',
+            'accounts': accounts,
+            'total': len(accounts),
+            'success': True,
+        }), 200
+    except Exception as e:
+        logger.error(f"Error syncing Plex users: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
 @bp.get("/<service_name>")
 def list_service_accounts(service_name):
     """List all accounts for a specific service."""

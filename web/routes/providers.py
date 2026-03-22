@@ -30,6 +30,31 @@ def _normalize_sensitive_value_for_save(key, value):
             return decrypted
     return value
 
+
+def _build_active_plex_user_map():
+    """Build a display-name to Plex user_id map from active config.db accounts."""
+    try:
+        from database.config_database import get_config_database
+
+        config_db = get_config_database()
+        plex_service_id = config_db.get_or_create_service_id('plex')
+        accounts = config_db.get_accounts(service_id=plex_service_id, is_active=True)
+
+        mapping = {}
+        for account in accounts:
+            user_id = account.get('user_id')
+            if not user_id:
+                continue
+
+            for key in (account.get('display_name'), account.get('account_name')):
+                normalized = (key or '').strip().lower()
+                if normalized:
+                    mapping[normalized] = str(user_id)
+        return mapping
+    except Exception as e:
+        logger.warning(f"Failed to build Plex user map for provider playlists: {e}")
+        return {}
+
 @bp.get("")
 @bp.get("/")
 def list_all_providers():
@@ -157,6 +182,7 @@ def get_provider_playlists(provider_name):
             try:
                 from core.storage import get_storage_service
                 storage = get_storage_service()
+                plex_user_map = _build_active_plex_user_map()
 
                 accounts = storage.list_accounts(provider_name)
 
@@ -205,6 +231,9 @@ def get_provider_playlists(provider_name):
                                 p_dict['name'] = original_name
                                 # pass account name as a separate field to render in subtle UI
                                 p_dict['source_account_name'] = account_name
+                                mapped_user_id = plex_user_map.get(account_name.strip().lower())
+                                if mapped_user_id:
+                                    p_dict['target_user_id'] = mapped_user_id
                                 # record which account this playlist came from so clients can target it later
                                 p_dict['account_id'] = account_id
                                 all_playlists.append(p_dict)

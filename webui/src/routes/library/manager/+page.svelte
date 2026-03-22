@@ -21,6 +21,7 @@
     let pruneLoading = false;
     let savingSettings = false;
     let actionLoadingSyncId = null;
+    let syncingManagedUsers = false;
 
     onMount(async () => {
         await refreshAll();
@@ -123,6 +124,31 @@
             const accountData = await accountRes.json();
             managedAccounts = accountData.accounts || [];
         } catch (e) { console.error(e); }
+    }
+
+    async function syncManagedUsers() {
+        if (activeServer !== 'plex') return;
+
+        syncingManagedUsers = true;
+        try {
+            const res = await fetch('/api/accounts/plex/sync_users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                managedAccounts = data.accounts || [];
+            } else {
+                const payload = await res.json().catch(() => ({}));
+                alert(payload.error || 'Failed to sync managed users');
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Failed to sync managed users');
+        } finally {
+            syncingManagedUsers = false;
+        }
     }
 
     async function fetchPendingActions() {
@@ -336,7 +362,19 @@
     <div class="card p-6">
         <div class="section-header-row">
             <h2 class="mb-0">Managed Accounts ({activeServer})</h2>
-            <button on:click={fetchManagedAccounts} class="btn btn--ghost btn--small">Refresh Accounts</button>
+            <div class="actions">
+                {#if activeServer === 'plex'}
+                    <button on:click={syncManagedUsers} disabled={syncingManagedUsers} class="btn btn--primary btn--small">
+                        {#if syncingManagedUsers}
+                            <span class="spinner" aria-hidden="true"></span>
+                            Syncing...
+                        {:else}
+                            Sync Managed Users
+                        {/if}
+                    </button>
+                {/if}
+                <button on:click={fetchManagedAccounts} disabled={syncingManagedUsers} class="btn btn--ghost btn--small">Refresh Accounts</button>
+            </div>
         </div>
 
         {#if managedAccounts.length === 0}
@@ -566,6 +604,20 @@
     .btn--ghost { background: rgba(255,255,255,0.05); color: var(--text); border: 1px solid var(--glass-border); }
     .btn--ghost:hover { background: rgba(255,255,255,0.08); }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(0, 0, 0, 0.2);
+        border-top-color: currentColor;
+        border-radius: 50%;
+        display: inline-block;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
 
     .queues-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
     @media (max-width: 980px) { .queues-grid { grid-template-columns: 1fr; } }

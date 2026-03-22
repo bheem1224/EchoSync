@@ -265,6 +265,100 @@ class ConfigDatabase:
             logger.error(f"Error ensuring account exists: {e}")
             return int(account_id) if account_id is not None else 0
 
+    def upsert_account(
+        self,
+        service_id: int,
+        account_name: Optional[str] = None,
+        display_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+        account_email: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        is_authenticated: Optional[bool] = None,
+        account_id: Optional[int] = None,
+    ) -> int:
+        """Insert or update an account row using stable identity fields when available."""
+        try:
+            import contextlib
+
+            with contextlib.closing(self._get_connection()) as conn:
+                c = conn.cursor()
+
+                row = None
+                if account_id is not None:
+                    c.execute(
+                        "SELECT id FROM accounts WHERE id = ? AND service_id = ?",
+                        (account_id, service_id),
+                    )
+                    row = c.fetchone()
+
+                if row is None and user_id:
+                    c.execute(
+                        "SELECT id FROM accounts WHERE service_id = ? AND user_id = ?",
+                        (service_id, user_id),
+                    )
+                    row = c.fetchone()
+
+                if row is None and account_name:
+                    c.execute(
+                        "SELECT id FROM accounts WHERE service_id = ? AND account_name = ?",
+                        (service_id, account_name),
+                    )
+                    row = c.fetchone()
+
+                existing_id = int(row[0]) if row else None
+
+            if existing_id is None:
+                new_account_id = self.ensure_account(
+                    service_id=service_id,
+                    account_id=account_id,
+                    account_name=account_name,
+                    display_name=display_name,
+                    user_id=user_id,
+                )
+                if not new_account_id:
+                    return 0
+                existing_id = new_account_id
+
+            assignments = []
+            params: list[Any] = []
+
+            if account_name is not None:
+                assignments.append("account_name = ?")
+                params.append(account_name)
+            if display_name is not None:
+                assignments.append("display_name = ?")
+                params.append(display_name)
+            if user_id is not None:
+                assignments.append("user_id = ?")
+                params.append(user_id)
+            if account_email is not None:
+                assignments.append("account_email = ?")
+                params.append(account_email)
+            if is_active is not None:
+                assignments.append("is_active = ?")
+                params.append(1 if is_active else 0)
+            if is_authenticated is not None:
+                assignments.append("is_authenticated = ?")
+                params.append(1 if is_authenticated else 0)
+                if is_authenticated:
+                    assignments.append("last_authenticated_at = ?")
+                    params.append(int(time.time()))
+
+            assignments.append("updated_at = strftime('%s','now')")
+
+            if params:
+                params.append(existing_id)
+                execute_write_sql(
+                    str(self.database_path),
+                    f"UPDATE accounts SET {', '.join(assignments)} WHERE id = ?",
+                    tuple(params),
+                )
+
+            return existing_id
+        except Exception as e:
+            logger.error(f"Error upserting account: {e}")
+            return int(account_id) if account_id is not None else 0
+
     def set_active_account(self, service_id: int, account_id: int, exclusive: bool = True) -> bool:
         """Set an account as active. 
         

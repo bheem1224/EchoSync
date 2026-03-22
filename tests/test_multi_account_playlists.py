@@ -50,6 +50,18 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
 
 def test_providers_playlist_route_includes_account_id(client, monkeypatch):
     """The providers playlist endpoint should return playlists with account_id for multi-account providers."""
+    class FakeConfigDB:
+        def get_or_create_service_id(self, name):
+            return 77
+
+        def get_accounts(self, service_id=None, is_active=None):
+            assert service_id == 77
+            assert is_active is True
+            return [
+                {'id': 10, 'display_name': 'First', 'account_name': 'First', 'user_id': 'plex-user-1'},
+                {'id': 20, 'display_name': 'Second', 'account_name': 'Second', 'user_id': 'plex-user-2'},
+            ]
+
     # fake storage service to return two spotify accounts
     fake_storage = MagicMock()
     fake_storage.list_accounts.return_value = [
@@ -57,6 +69,7 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
         {'id': 2, 'display_name': 'Second'}
     ]
     monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
+    monkeypatch.setattr('database.config_database.get_config_database', lambda: FakeConfigDB())
 
     # fake SpotifyClient to return one playlist per account with distinctive id
     class FakeSpotifyClient:
@@ -82,6 +95,8 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
     # each item should include account_id field
     assert any(item.get('account_id') == 1 for item in items)
     assert any(item.get('account_id') == 2 for item in items)
+    assert any(item.get('target_user_id') == 'plex-user-1' for item in items)
+    assert any(item.get('target_user_id') == 'plex-user-2' for item in items)
     # Since we removed account name suffix from the UI string, we check source_account_name instead
     assert items[0]['source_account_name'] in ['First', 'Second']
 

@@ -86,6 +86,31 @@ class StorageService:
         service_id = db.get_or_create_service_id(service_name)
         return db.ensure_account(service_id, account_name=account_name, display_name=display_name, user_id=user_id)
 
+    def upsert_account(
+        self,
+        service_name: str,
+        account_name: Optional[str] = None,
+        display_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+        account_email: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        is_authenticated: Optional[bool] = None,
+        account_id: Optional[int] = None,
+    ) -> Optional[int]:
+        from database.config_database import get_config_database
+        db = get_config_database()
+        service_id = db.get_or_create_service_id(service_name)
+        return db.upsert_account(
+            service_id=service_id,
+            account_name=account_name,
+            display_name=display_name,
+            user_id=user_id,
+            account_email=account_email,
+            is_active=is_active,
+            is_authenticated=is_authenticated,
+            account_id=account_id,
+        )
+
     def toggle_account_active(self, account_id: int, active: bool) -> bool:
         from database.config_database import get_config_database
         db = get_config_database()

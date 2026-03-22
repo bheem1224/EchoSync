@@ -186,6 +186,7 @@
     try {
       // If a single playlist is selected, pull its source_account_name
       let sourceAccountName = undefined;
+      let targetUserId = undefined;
       let syncPlaylistName = 'Multi-Playlist Sync';
 
       if (selectedPlaylists.length === 1) {
@@ -194,6 +195,7 @@
         if (p) {
           syncPlaylistName = p.name;
           sourceAccountName = p.source_account_name;
+          targetUserId = p.target_user_id;
         } else {
           syncPlaylistName = 'Synced Playlist';
         }
@@ -208,6 +210,7 @@
           target_source: targetProvider,
           playlist_name: syncPlaylistName,
           source_account_name: sourceAccountName,
+          target_user_id: targetUserId,
           matches: analysisResult.summary.matched_pairs,
           download_missing: syncDownloadMissing,
         },
@@ -327,7 +330,9 @@
         id: p.id,
         name: p.name,
         track_count: p.track_count,
-        ...(p.account_id !== undefined && { account_id: p.account_id })
+        ...(p.source_account_name !== undefined && { source_account_name: p.source_account_name }),
+        ...(p.account_id !== undefined && { account_id: p.account_id }),
+        ...(p.target_user_id !== undefined && { target_user_id: p.target_user_id })
       }));
 
     scheduleForm = {

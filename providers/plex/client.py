@@ -17,6 +17,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import time
 from core.tiered_logger import get_logger
+from core.user_history import UserTrackInteraction
 
 logger = get_logger("plex_client")
 
@@ -58,7 +59,14 @@ class PlexClient(ProviderBase):
                 storage = get_storage_service()
                 accounts = storage.list_accounts('plex')
                 if accounts:
-                    account_id = accounts[0].get('id')
+                    token_backed_account = next(
+                        (
+                            account for account in accounts
+                            if account.get('id') and storage.get_account_token(account.get('id'))
+                        ),
+                        None,
+                    )
+                    account_id = (token_backed_account or accounts[0]).get('id')
                     logger.info(f"No Plex account explicitly requested, defaulting to account: {account_id}")
             except Exception as e:
                 logger.warning(f"Failed to auto-detect Plex account: {e}")
@@ -350,6 +358,7 @@ class PlexClient(ProviderBase):
         marker: str = "⇄",
         overwrite: bool = True,
         source_account_name: str = None,
+        target_user_id: str = None,
     ) -> bool:
         """Ensure managed playlist exists and overwrite with provided ratingKeys.
 
@@ -361,38 +370,32 @@ class PlexClient(ProviderBase):
 
         # --- Managed Account Routing Logic ---
         target_server = self.server
-        if source_account_name:
+        if target_user_id:
             try:
-                # Attempt to find a managed user that matches the source account name
-                source_name_lower = source_account_name.lower()
                 matched_user = None
 
-                # Check MyPlex users if available (this gets home users / managed users)
                 myplex_account = self.server.myPlexAccount()
                 if myplex_account:
                     users = myplex_account.users()
-
-                    # 1. Exact match (highest confidence)
                     for u in users:
-                        if u.title.lower() == source_name_lower:
+                        candidate_id = getattr(u, 'id', None) or getattr(u, 'uuid', None)
+                        if candidate_id is not None and str(candidate_id) == str(target_user_id):
                             matched_user = u
                             break
 
-                    # 2. Case-insensitive substring match: if managed_account.name.lower() in source_account_name.lower()
-                    if not matched_user:
-                        for u in users:
-                            managed_name_lower = u.title.lower()
-                            if managed_name_lower in source_name_lower:
-                                matched_user = u
-                                break
-
                 if matched_user:
-                    logger.info(f"Routing playlist '{playlist_name}' to managed user '{matched_user.title}'")
+                    logger.info(
+                        f"Routing playlist '{playlist_name}' to managed user '{matched_user.title}' using Plex user_id '{target_user_id}'"
+                    )
                     target_server = self.server.switchUser(matched_user.title)
                 else:
-                    logger.info(f"No managed user match found for '{source_account_name}'. Defaulting to main account.")
+                    logger.info(
+                        f"No managed user found for Plex user_id '{target_user_id}'. Defaulting playlist '{playlist_name}' to main account."
+                    )
             except Exception as routing_err:
-                logger.warning(f"Failed to route to managed account for '{source_account_name}': {routing_err}. Defaulting to main account.")
+                logger.warning(
+                    f"Failed to route to managed account for Plex user_id '{target_user_id}': {routing_err}. Defaulting to main account."
+                )
 
         management_tag = "managed by SoulSync"
         if source_account_name:
@@ -1049,6 +1052,91 @@ class PlexClient(ProviderBase):
         except Exception as e:
             logger.error(f"Failed to connect to Plex: {e}")
             self.server = None
+
+    def import_managed_users(self) -> List[Dict[str, Any]]:
+        """Import the Plex admin account and managed users into config.db account rows."""
+        if not self.ensure_connection() or not self.server:
+            logger.error("Cannot import Plex managed users without an active Plex connection")
+            return []
+
+        from core.storage import get_storage_service
+
+        storage = get_storage_service()
+        token_data = storage.get_account_token(self.account_id) if self.account_id else None
+
+        try:
+            myplex_account = self.server.myPlexAccount()
+        except Exception as e:
+            logger.error(f"Failed to load MyPlex account details: {e}", exc_info=True)
+            return []
+
+        imported_ids: List[int] = []
+
+        admin_user_id = (
+            getattr(myplex_account, 'uuid', None)
+            or getattr(myplex_account, 'id', None)
+            or getattr(myplex_account, 'username', None)
+        )
+        admin_account_name = (
+            getattr(myplex_account, 'username', None)
+            or getattr(myplex_account, 'title', None)
+            or getattr(myplex_account, 'email', None)
+            or 'Plex Admin'
+        )
+        admin_email = getattr(myplex_account, 'email', None)
+
+        admin_account_id = storage.upsert_account(
+            'plex',
+            account_name=admin_account_name,
+            display_name=admin_account_name,
+            user_id=str(admin_user_id) if admin_user_id is not None else None,
+            account_email=admin_email,
+            is_active=True,
+            is_authenticated=True,
+            account_id=self.account_id,
+        )
+        if admin_account_id:
+            imported_ids.append(int(admin_account_id))
+            self.account_id = int(admin_account_id)
+
+            if token_data and token_data.get('access_token'):
+                storage.save_account_token(
+                    account_id=self.account_id,
+                    access_token=token_data.get('access_token'),
+                    refresh_token=token_data.get('refresh_token'),
+                    token_type=token_data.get('token_type', 'Bearer'),
+                    expires_at=token_data.get('expires_at'),
+                    scope=token_data.get('scope'),
+                )
+
+        users = []
+        try:
+            users = myplex_account.users() or []
+        except Exception as e:
+            logger.warning(f"Failed to enumerate Plex managed users: {e}")
+
+        for user in users:
+            user_id = getattr(user, 'id', None) or getattr(user, 'uuid', None)
+            username = getattr(user, 'username', None) or getattr(user, 'title', None)
+            display_name = getattr(user, 'title', None) or getattr(user, 'username', None) or username
+            email = getattr(user, 'email', None)
+
+            managed_account_id = storage.upsert_account(
+                'plex',
+                account_name=username or display_name,
+                display_name=display_name,
+                user_id=str(user_id) if user_id is not None else None,
+                account_email=email,
+                is_active=True,
+                is_authenticated=False,
+            )
+            if managed_account_id:
+                imported_ids.append(int(managed_account_id))
+
+        accounts = storage.list_accounts('plex') or []
+        imported = [account for account in accounts if account.get('id') in set(imported_ids)]
+        logger.info(f"Imported {len(imported)} Plex account rows (admin + managed users)")
+        return imported
     
     def _find_music_library(self):
         """Automatically find and set active music library."""
@@ -1056,77 +1144,144 @@ class PlexClient(ProviderBase):
             return
         
         try:
-            # Collect all music libraries
-            music_sections = [
-                section for section in self.server.library.sections()
-                if section.type == 'artist'
-            ]
-            
-            if not music_sections:
-                logger.warning("No music library found on Plex server")
-                return
-            
-            # Try priority names first
-            for priority_name in ['Music', 'music', 'Audio', 'audio', 'Songs', 'songs']:
-                for section in music_sections:
-                    if section.title == priority_name:
-                        self.music_library = section
-                        logger.info(f"Selected music library: {section.title}")
-                        return
-            
-            # Fall back to first music library found
-            self.music_library = music_sections[0]
-            logger.info(f"Selected music library: {self.music_library.title}")
+            self.music_library = self._find_music_library_for_server(self.server)
+            if self.music_library:
+                logger.info(f"Selected music library: {self.music_library.title}")
         
         except Exception as e:
             logger.error(f"Error finding music library: {e}")
-    
-    def fetch_user_history(self, limit: int = 100) -> List[SoulSyncTrack]:
-        """Fetch user's listening history from Plex.
-        
-        Since Plex doesn't expose play history directly, this uses recently added tracks
-        as a proxy for user interaction. Falls back to all tracks if needed.
-        
-        Args:
-            limit: Maximum number of tracks to return
-            
-        Returns:
-            List of SoulSyncTrack objects representing recent interactions
-        """
-        if not self.ensure_connection() or not self.music_library:
+
+    def _find_music_library_for_server(self, server: PlexServer) -> Optional[MusicSection]:
+        """Find the preferred music library for a specific Plex server context."""
+        music_sections = [section for section in server.library.sections() if section.type == 'artist']
+
+        if not music_sections:
+            logger.warning("No music library found on Plex server")
+            return None
+
+        for priority_name in ['Music', 'music', 'Audio', 'audio', 'Songs', 'songs']:
+            for section in music_sections:
+                if section.title == priority_name:
+                    return section
+
+        return music_sections[0]
+
+    def _resolve_history_context(self, account_id: Optional[int]):
+        """Resolve Plex server and library for an account-specific history query."""
+        if not self.ensure_connection() or not self.server:
+            return None, None
+
+        target_server = self.server
+        target_library = self.music_library
+
+        if account_id is None:
+            return target_server, target_library
+
+        from core.storage import get_storage_service
+
+        storage = get_storage_service()
+        accounts = storage.list_accounts('plex') or []
+        account = next((item for item in accounts if item.get('id') == account_id), None)
+        if not account:
+            logger.warning(f"No Plex account found for history sync account_id={account_id}")
+            return target_server, target_library
+
+        target_user_id = account.get('user_id')
+        if not target_user_id:
+            return target_server, target_library
+
+        try:
+            myplex_account = self.server.myPlexAccount()
+            admin_ids = {
+                str(value)
+                for value in [
+                    getattr(myplex_account, 'uuid', None),
+                    getattr(myplex_account, 'id', None),
+                    getattr(myplex_account, 'username', None),
+                ]
+                if value is not None
+            }
+            if str(target_user_id) in admin_ids:
+                return target_server, target_library
+
+            for user in myplex_account.users() or []:
+                candidate_id = getattr(user, 'id', None) or getattr(user, 'uuid', None)
+                if candidate_id is not None and str(candidate_id) == str(target_user_id):
+                    target_server = self.server.switchUser(user.title)
+                    target_library = self._find_music_library_for_server(target_server)
+                    logger.info(
+                        f"Resolved Plex history context for account_id={account_id} to managed user '{user.title}'"
+                    )
+                    return target_server, target_library
+        except Exception as e:
+            logger.warning(f"Failed to resolve Plex history context for account_id={account_id}: {e}")
+
+        return target_server, target_library
+
+    def _coerce_datetime(self, value: Any) -> Optional[datetime]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        try:
+            return datetime.fromtimestamp(int(value), tz=timezone.utc)
+        except Exception:
+            return None
+
+    def _track_to_interaction(self, plex_track: Any) -> Optional[UserTrackInteraction]:
+        """Convert a Plex history or library item into a standardized interaction."""
+        converted = self._convert_track_to_soulsync(plex_track)
+        if not converted:
+            return None
+
+        provider_item_id = str(getattr(plex_track, 'ratingKey', None) or converted.identifiers.get('plex') or '')
+        play_count = int(getattr(plex_track, 'viewCount', 0) or 0)
+        last_played_at = self._coerce_datetime(getattr(plex_track, 'lastViewedAt', None))
+
+        return UserTrackInteraction(
+            provider_item_id=provider_item_id,
+            artist_name=converted.artist_name,
+            track_title=converted.title,
+            play_count=play_count,
+            rating=None,
+            last_played_at=last_played_at,
+        )
+
+    def fetch_user_history(self, account_id: Optional[int] = None, limit: int = 100) -> List[UserTrackInteraction]:
+        """Fetch account-specific listening history from Plex using exact managed-user context when available."""
+        target_server, target_library = self._resolve_history_context(account_id)
+        if not target_server or not target_library:
             logger.warning("Plex not connected or no music library for history")
             return []
-        
+
         try:
-            tracks = []
-            
-            # Try to get recently added tracks (best approximation of history)
+            interactions: List[UserTrackInteraction] = []
+
             try:
-                logger.debug(f"Fetching recently added tracks from Plex (limit={limit})")
-                # Plex doesn't have a direct "recently played" API, so we use recently added tracks
-                # This represents tracks the user has interacted with recently
-                recent_tracks = self.music_library.searchTracks(maxresults=limit, sort='addedAt:desc')
-                
-                logger.info(f"Plex returned {len(recent_tracks)} recently added tracks")
-                
-                for item in recent_tracks:
-                    if isinstance(item, PlexTrack):
-                        try:
-                            track = self._convert_track_to_soulsync(item)
-                            if track:
-                                tracks.append(track)
-                        except Exception as e:
-                            logger.debug(f"Error converting track in history: {e}")
-                
-                logger.info(f"Converted {len(tracks)} recent tracks to SoulSyncTrack format")
-                
+                logger.debug(f"Fetching Plex play history for account_id={account_id} (limit={limit})")
+                history_items = target_server.history(maxresults=limit)
+                for item in history_items or []:
+                    interaction = self._track_to_interaction(item)
+                    if interaction:
+                        interactions.append(interaction)
+
+                if interactions:
+                    logger.info(f"Fetched {len(interactions)} Plex history interactions for account_id={account_id}")
+                    return interactions[:limit]
             except Exception as e:
-                logger.warning(f"Failed to fetch recently added tracks: {e}. Falling back to all tracks.")
-                # Fallback: return all available tracks
-                tracks = self.get_all_tracks(limit=limit)
-            
-            return tracks[:limit]
-        
+                logger.warning(
+                    f"Failed to fetch Plex history for account_id={account_id}: {e}. Falling back to lastViewedAt library query."
+                )
+
+            recent_tracks = target_library.searchTracks(maxresults=limit, sort='lastViewedAt:desc')
+            for item in recent_tracks or []:
+                interaction = self._track_to_interaction(item)
+                if interaction:
+                    interactions.append(interaction)
+
+            logger.info(f"Fetched {len(interactions)} fallback Plex history interactions for account_id={account_id}")
+            return interactions[:limit]
+
         except Exception as e:
             logger.error(f"Error fetching user history from Plex: {e}", exc_info=True)
             return []

@@ -102,6 +102,7 @@ def save_settings():
             token = data['token'].strip()
             from core.storage import get_storage_service
             from core.security import encrypt_string
+            from providers.plex.client import PlexClient
             import time
             storage = get_storage_service()
 
@@ -120,6 +121,11 @@ def save_settings():
             storage.mark_account_authenticated(account_id)
             storage.toggle_account_active(account_id, True)
             logger.info(f"Plex token saved to SQLite account {account_id}")
+
+            try:
+                PlexClient(account_id=account_id).import_managed_users()
+            except Exception as e:
+                logger.warning(f"Failed to import Plex managed users after saving settings: {e}")
         
         if 'path_mappings' in data:
             import json
@@ -275,6 +281,7 @@ def poll_oauth(session_id: str):
         if is_logged_in and auth_token:
             from core.storage import get_storage_service
             from core.security import encrypt_string
+            from providers.plex.client import PlexClient
             storage = get_storage_service()
 
             # Plex follows a Singleton Account Pattern. Look for an existing account first.
@@ -312,6 +319,10 @@ def poll_oauth(session_id: str):
                 storage.mark_account_authenticated(account_id)
                 storage.toggle_account_active(account_id, True)
                 logger.info(f"Plex OAuth completed and token securely saved for account: {account_name}")
+                try:
+                    PlexClient(account_id=account_id).import_managed_users()
+                except Exception as import_err:
+                    logger.warning(f"Failed to import Plex managed users after OAuth: {import_err}")
             except Exception as e:
                 logger.error(f"Failed to securely save Plex token: {e}")
                 return jsonify({'error': 'Failed to securely save token'}), 500

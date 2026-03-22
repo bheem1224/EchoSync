@@ -17,6 +17,54 @@ import time
 logger = get_logger("playlists_api")
 bp = Blueprint("playlists", __name__, url_prefix="/api/playlists")
 
+
+def _get_provider_for_account(provider_name, acc_id=None):
+    from core.provider import ProviderRegistry
+
+    if provider_name in ['spotify', 'tidal']:
+        if acc_id is None:
+            from core.storage import get_storage_service
+
+            storage = get_storage_service()
+            accounts = storage.list_accounts(provider_name)
+            if not accounts:
+                return None, None
+            acc_id_local = accounts[0]['id']
+        else:
+            acc_id_local = acc_id
+
+        if provider_name == 'spotify':
+            from providers.spotify.client import SpotifyClient
+
+            return SpotifyClient(account_id=acc_id_local), acc_id_local
+        if provider_name == 'tidal':
+            from providers.tidal.client import TidalClient
+
+            return TidalClient(account_id=str(acc_id_local)), acc_id_local
+
+    try:
+        return ProviderRegistry.create_instance(provider_name), None
+    except ValueError:
+        return None, None
+
+
+def _extract_track_field(track, key):
+    if isinstance(track, dict):
+        return track.get(key)
+    return getattr(track, key, None)
+
+
+def _extract_target_identifier(candidate):
+    if isinstance(candidate, dict):
+        return candidate.get('id') or candidate.get('target_identifier')
+
+    identifiers = getattr(candidate, 'identifiers', {}) or {}
+    for key in ('plex', 'spotify_id', 'tidal_id', 'id'):
+        if key in identifiers:
+            return identifiers.get(key)
+
+    return getattr(candidate, 'id', None)
+
 @bp.get("/")
 def list_playlists():
     # Placeholder: surface playlists via provider adapters (future)
@@ -39,37 +87,10 @@ def analyze_playlists():
         return jsonify({"error": "playlists list required"}), 400
 
     try:
-        from core.provider import ProviderRegistry
         from database.music_database import MusicDatabase
-        
-        # Helper to instantiate a provider, optionally tied to a specific account
-        def _get_provider_for_account(acc_id=None):
-            if source in ['spotify', 'tidal']:
-                if acc_id is None:
-                    # fall back to active/first account if no id provided
-                    from core.storage import get_storage_service
-                    storage = get_storage_service()
-                    accounts = storage.list_accounts(source)
-                    if not accounts:
-                        return None, None
-                    acc_id_local = accounts[0]['id']
-                else:
-                    acc_id_local = acc_id
-
-                if source == 'spotify':
-                    from providers.spotify.client import SpotifyClient
-                    return SpotifyClient(account_id=acc_id_local), acc_id_local
-                elif source == 'tidal':
-                    from providers.tidal.client import TidalClient
-                    return TidalClient(account_id=str(acc_id_local)), acc_id_local
-            else:
-                try:
-                    return ProviderRegistry.create_instance(source), None
-                except ValueError:
-                    return None, None
 
         # Prepare base provider instance (may be overridden per-playlist)
-        source_provider, default_acc = _get_provider_for_account(None)
+        source_provider, default_acc = _get_provider_for_account(source, None)
         if source_provider is None:
             return jsonify({"error": f"No {source.title()} accounts configured. Please add an account in Settings."}), 400
 
@@ -108,7 +129,7 @@ def analyze_playlists():
             # if account_id present, ensure we use provider instance tied to that account
             acc_id = playlist_info.get('account_id')
             if acc_id and source in ['spotify', 'tidal']:
-                provider_instance, _ = _get_provider_for_account(acc_id)
+                provider_instance, _ = _get_provider_for_account(source, acc_id)
                 if provider_instance:
                     # use the per-account client for fetching tracks
                     source_provider = provider_instance
@@ -683,7 +704,8 @@ def trigger_sync():
     if target == "plex":
         # Local-server sync: add tracks to managed playlist with overwrite
         source_account_name = payload.get("source_account_name")
-        return _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode, source_account_name)
+        target_user_id = payload.get("target_user_id")
+        return _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode, source_account_name, target_user_id)
     elif target in tier_to_tier_providers:
         # Tier-to-tier sync: add tracks to target provider's playlist
         return _sync_to_tier(payload, source, target, playlist_name, matches, download_missing, sync_mode)
@@ -691,7 +713,7 @@ def trigger_sync():
         return jsonify({"accepted": False, "error": f"Sync to {target} not implemented"}), 400
 
 
-def _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode, source_account_name=None):
+def _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode, source_account_name=None, target_user_id=None):
     """Sync matched tracks to a Plex managed playlist."""
     # Collect ratingKeys from matches (target_identifier)
     rating_keys = [m.get("target_identifier") for m in matches if m.get("target_identifier")]
@@ -766,6 +788,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
                 marker=marker,
                 overwrite=True,
                 source_account_name=source_account_name,
+                target_user_id=target_user_id,
             )
             event_bus.publish(job_name, "playlist_updated", {
                 "playlist": playlist_name,
@@ -1258,18 +1281,19 @@ def _register_scheduled_sync_job(sync_config):
 
     def _run_scheduled_sync():
         try:
-            # Analyze playlists
-            from database.music_database import MusicDatabase
-            db = MusicDatabase()
-            from core.provider import ProviderRegistry
-            
-            source_provider = ProviderRegistry.get_provider(source)
-            if not source_provider:
-                raise RuntimeError(f"Source provider {source} not found")
+            playlist_entries = [
+                playlist if isinstance(playlist, dict) else {"id": playlist}
+                for playlist in playlists
+            ]
 
-            # Fetch playlists and run matching (abbreviated)
+            # Fetch playlists using the correct source account context per playlist.
             all_tracks = []
-            for playlist_id in playlists:
+            for playlist_info in playlist_entries:
+                playlist_id = playlist_info.get('id')
+                source_provider, _ = _get_provider_for_account(source, playlist_info.get('account_id'))
+                if not source_provider:
+                    raise RuntimeError(f"Source provider {source} not found")
+
                 try:
                     playlist_tracks = source_provider.get_playlist_tracks(playlist_id)
                     all_tracks.extend(playlist_tracks)
@@ -1280,21 +1304,32 @@ def _register_scheduled_sync_job(sync_config):
                 logger.warning(f"No tracks found for scheduled sync {sync_config['id']}")
                 return
 
-            # Match against target provider
-            target_provider = ProviderRegistry.get_provider(target)
+            target_provider, _ = _get_provider_for_account(target, None)
             if not target_provider:
                 raise RuntimeError(f"Target provider {target} not found")
 
             matches = []
             for track in all_tracks:
                 try:
-                    # Search target provider
-                    search_results = target_provider.search(track.get("title"), track.get("artist"))
+                    title = _extract_track_field(track, 'title') or _extract_track_field(track, 'track_title')
+                    artist = _extract_track_field(track, 'artist_name') or _extract_track_field(track, 'artist')
+                    if not title or not artist:
+                        continue
+
+                    query = f"{artist} {title}".strip()
+                    try:
+                        search_results = target_provider.search(query, type="track", limit=5)
+                    except TypeError:
+                        search_results = target_provider.search(title, artist)
+
                     if search_results:
                         best_match = search_results[0]
+                        target_identifier = _extract_target_identifier(best_match)
+                        if not target_identifier:
+                            continue
                         matches.append({
-                            "track_id": track.get("id"),
-                            "target_identifier": best_match.get("id"),
+                            "track_id": _extract_track_field(track, 'id') or _extract_track_field(track, 'provider_item_id'),
+                            "target_identifier": target_identifier,
                         })
                 except Exception as e:
                     logger.debug(f"Failed to match track: {e}")
@@ -1302,10 +1337,13 @@ def _register_scheduled_sync_job(sync_config):
             if matches:
                 # Trigger sync with matched tracks
                 playlist_name = f"Synced Playlist ({sync_config['id']})"
+                primary_playlist = playlist_entries[0] if len(playlist_entries) == 1 else {}
                 if target == "plex":
                     _sync_to_plex({
                         "source": source,
                         "target": target,
+                        "target_user_id": primary_playlist.get('target_user_id'),
+                        "source_account_name": primary_playlist.get('source_account_name'),
                     }, source, target, playlist_name, matches, download_missing, "scheduled")
                 elif target in {"spotify", "tidal", "apple_music"}:
                     _sync_to_tier({
