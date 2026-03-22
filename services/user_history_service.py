@@ -7,14 +7,14 @@ indexed by deterministic sync_id generated from normalized track metadata.
 
 from typing import Optional, Dict, List
 from core.tiered_logger import get_logger
-from core.settings import config_manager
 from database.config_database import get_config_database
 from database.working_database import get_working_database, UserRating, User
 from database.music_database import get_database as get_music_database, Track, Artist
 from core.matching_engine.text_utils import generate_deterministic_id
 from core.user_history import UserTrackInteraction
-from datetime import datetime
-import base64
+from sqlalchemy import tuple_
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from time_utils import utc_now
 
 logger = get_logger("user_history_service")
 
@@ -220,68 +220,105 @@ class UserHistoryService:
             Number of interactions successfully matched and stored
         """
         matched_count = 0
+        if not interactions:
+            return matched_count
         
         try:
             with self.music_db.session_scope() as music_session:
                 with self.working_db.session_scope() as work_session:
-                    
+                    interaction_records = []
+                    unique_pairs = set()
+
                     for interaction in interactions:
                         try:
-                            # Generate base sync_id from normalized artist|title
-                            base_sync_id = generate_deterministic_id(
-                                interaction.artist_name,
-                                interaction.track_title
-                            )
-                            
-                            # Format as full sync_id
-                            sync_id = f"ss:track:meta:{base_sync_id}"
-                            
-                            # Try to find track in music_database
-                            track = music_session.query(Track).join(
-                                Track.artist
-                            ).filter(
-                                Artist.name == interaction.artist_name,
-                                Track.title == interaction.track_title
-                            ).first()
-                            
-                            if track:
-                                # Store rating in working.db
-                                # Rating scale: use provider rating directly
-                                # If we have a rating, convert to 1-5 scale (assuming provider uses this)
-                                if interaction.rating is not None:
-                                    rating_value = float(interaction.rating)
-                                    
-                                    # Create or update UserRating
-                                    existing_rating = work_session.query(UserRating).filter(
-                                        UserRating.user_id == user_id,
-                                        UserRating.sync_id == sync_id
-                                    ).first()
-                                    
-                                    if existing_rating:
-                                        # Update existing rating with new value
-                                        existing_rating.rating = rating_value
-                                    else:
-                                        # Create new rating record
-                                        rating = UserRating(
-                                            user_id=user_id,
-                                            sync_id=sync_id,
-                                            rating=rating_value
-                                        )
-                                        work_session.add(rating)
-                                    
-                                    stats['ratings_imported'] += 1
-                                    matched_count += 1
-                            else:
-                                self.logger.debug(
-                                    f"No track found for {interaction.artist_name} - {interaction.track_title}"
-                                )
-                        
+                            sync_id = f"ss:track:meta:{generate_deterministic_id(interaction.artist_name, interaction.track_title)}"
+                            pair = (interaction.artist_name, interaction.track_title)
+                            unique_pairs.add(pair)
+                            interaction_records.append({
+                                "interaction": interaction,
+                                "pair": pair,
+                                "sync_id": sync_id,
+                            })
                         except Exception as e:
                             self.logger.warning(
-                                f"Error processing interaction {interaction.artist_name} - {interaction.track_title}: {e}"
+                                f"Error preparing interaction {interaction.artist_name} - {interaction.track_title}: {e}"
                             )
+
+                    if not interaction_records:
+                        return 0
+
+                    matched_tracks = music_session.query(Track).join(Track.artist).filter(
+                        tuple_(Artist.name, Track.title).in_(list(unique_pairs))
+                    ).all()
+                    matched_pairs = {(track.artist.name, track.title) for track in matched_tracks}
+                    rating_payload_by_sync_id: Dict[str, Dict[str, object]] = {}
+
+                    for record in interaction_records:
+                        interaction = record["interaction"]
+                        if record["pair"] not in matched_pairs:
+                            self.logger.debug(
+                                f"No track found for {interaction.artist_name} - {interaction.track_title}"
+                            )
+                            continue
+
+                        if interaction.rating is None:
+                            continue
+
+                        matched_count += 1
+                        rating_payload_by_sync_id[record["sync_id"]] = {
+                            "user_id": user_id,
+                            "sync_id": record["sync_id"],
+                            "rating": float(interaction.rating),
+                            "timestamp": utc_now(),
+                        }
+
+                    if rating_payload_by_sync_id:
+                        self._bulk_upsert_user_ratings(
+                            work_session,
+                            list(rating_payload_by_sync_id.values()),
+                        )
+                        stats['ratings_imported'] += matched_count
         
         except Exception as e:
             self.logger.error(f"Error in _process_interactions: {e}", exc_info=True)
         
         return matched_count
+
+    def _bulk_upsert_user_ratings(self, work_session, rating_payloads: List[Dict[str, object]]) -> None:
+        """Write matched user ratings in a single bulk transaction."""
+        if not rating_payloads:
+            return
+
+        if self.working_db.engine.dialect.name == 'sqlite':
+            insert_stmt = sqlite_insert(UserRating).values(rating_payloads)
+            upsert_stmt = insert_stmt.on_conflict_do_update(
+                index_elements=['user_id', 'sync_id'],
+                set_={
+                    'rating': insert_stmt.excluded.rating,
+                    'timestamp': insert_stmt.excluded.timestamp,
+                }
+            )
+            work_session.execute(upsert_stmt)
+            return
+
+        sync_ids = [payload['sync_id'] for payload in rating_payloads]
+        existing_sync_ids = {
+            sync_id
+            for (sync_id,) in work_session.query(UserRating.sync_id).filter(
+                UserRating.user_id == rating_payloads[0]['user_id'],
+                UserRating.sync_id.in_(sync_ids),
+            ).all()
+        }
+
+        new_objects = []
+        update_mappings = []
+        for payload in rating_payloads:
+            if payload['sync_id'] in existing_sync_ids:
+                update_mappings.append(payload)
+            else:
+                new_objects.append(UserRating(**payload))
+
+        if new_objects:
+            work_session.bulk_save_objects(new_objects)
+        if update_mappings:
+            work_session.bulk_update_mappings(UserRating, update_mappings)

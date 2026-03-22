@@ -1241,10 +1241,13 @@ class PersonalizedPlaylistsService:
                         popularity,
                         track_data_json
                     FROM discovery_pool
-                    WHERE artist_name LIKE ? OR track_name LIKE ?
+                    WHERE artist_name LIKE :category_pattern OR track_name LIKE :category_pattern
                     ORDER BY RANDOM()
-                    LIMIT ?
-                """, (f'%{category}%', f'%{category}%', limit))
+                    LIMIT :limit
+                """, {
+                    'category_pattern': f'%{category}%',
+                    'limit': limit,
+                })
 
                 rows = cursor.fetchall()
                 tracks = []

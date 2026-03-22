@@ -30,19 +30,18 @@ jobs:
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           BASE_IMAGE="ghcr.io/${{ github.repository_owner }}/soulsync"
           
-          # 1. We ALWAYS want the 'latest' tag for every push to main
-          TAGS="$BASE_IMAGE:latest"
-          
-          # 2. Check for version string (e.g., "version: v1.2.3" or "version: v2.0.0-beta")
+          # Check for version string (e.g., "version: v1.2.3" or "version: v2.1.0")
           if echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then
             # Extract exactly the version string
             EXTRACTED_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -n 1 | sed -E 's/version:\s*//i')
             
-            # Append the new version tag to our list using a comma
-            TAGS="$TAGS,$BASE_IMAGE:$EXTRACTED_VERSION"
-            echo "Detected version tag: $EXTRACTED_VERSION"
+            # It's a tagged release: give it BOTH the version tag AND the 'latest' tag
+            TAGS="$BASE_IMAGE:$EXTRACTED_VERSION,$BASE_IMAGE:latest"
+            echo "Detected version tag: $EXTRACTED_VERSION. Tagging as $EXTRACTED_VERSION and latest."
           else
-            echo "No explicit version found. Building 'latest' only."
+            # Normal push to main: give it ONLY the 'beta' tag
+            TAGS="$BASE_IMAGE:beta"
+            echo "No explicit version found. Building 'beta' only."
           fi
           
           # Output the final string to GitHub Actions environment
@@ -53,5 +52,5 @@ jobs:
         with:
           context: .
           push: true
-          # 3. Pass the dynamic list of tags directly to the build action
+          # Pass the dynamic list of tags directly to the build action
           tags: ${{ steps.extract_tags.outputs.tags }}

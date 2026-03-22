@@ -498,6 +498,7 @@ class DownloadManager:
                 priority_tiers = self._get_priority_tiers(quality_profile)
                 provider_best_candidate = None
                 provider_best_score = 0.0
+                prefer_larger_files = bool(quality_profile and quality_profile.get('prefer_larger_files'))
                 
                 for priority_num, priority_formats in priority_tiers:
                     # Filter by priority formats
@@ -506,6 +507,18 @@ class DownloadManager:
                     
                     if not tier_candidates:
                         continue
+
+                    if getattr(provider, 'supports_pre_filtering', False):
+                        provider_best_candidate = self._select_prefiltered_candidate(
+                            tier_candidates,
+                            prefer_larger_files,
+                        )
+                        if provider_best_candidate:
+                            provider_best_score = float(perfect_match_threshold)
+                            logger.info(
+                                f"    Prefilter bypass on {provider.name}: selected candidate from priority {priority_num} without deep matching"
+                            )
+                            break
                     
                     # Get matching engine and score candidates
                     matcher = self._get_matching_engine()
@@ -1114,6 +1127,34 @@ class DownloadManager:
         filtered.sort(key=lambda t: t.file_size_bytes or 0, reverse=True)
         
         return filtered
+
+    def _select_prefiltered_candidate(
+        self,
+        candidates: List[SoulSyncTrack],
+        prefer_larger_files: bool,
+    ) -> Optional[SoulSyncTrack]:
+        """Choose the best candidate using lightweight quality and peer heuristics only."""
+        if not candidates:
+            return None
+
+        def candidate_key(candidate: SoulSyncTrack) -> Tuple[int, int, int, int, int, int]:
+            bitrate = int(candidate.identifiers.get('bitrate', 0) or 0)
+            free_slots = int(candidate.identifiers.get('free_upload_slots', 0) or 0)
+            upload_speed = int(candidate.identifiers.get('upload_speed', 0) or 0)
+            queue_length = int(candidate.identifiers.get('queue_length', 0) or 0)
+            size = int(candidate.file_size_bytes or candidate.identifiers.get('size', 0) or 0)
+            size_rank = size if prefer_larger_files else -size
+            provider_item_id = candidate.identifiers.get('provider_item_id', '') or ''
+            return (
+                bitrate,
+                free_slots,
+                upload_speed,
+                -queue_length,
+                size_rank,
+                len(provider_item_id),
+            )
+
+        return max(candidates, key=candidate_key)
 
     def _remove_from_queue(self, download_id: int):
         """CLEANUP TASK 1: Remove a download from the queue after successful completion."""
