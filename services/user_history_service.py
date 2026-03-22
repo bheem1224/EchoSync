@@ -14,7 +14,6 @@ from core.matching_engine.text_utils import generate_deterministic_id
 from core.user_history import UserTrackInteraction
 from sqlalchemy import tuple_
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from database.music_database import ExternalIdentifier
 from time_utils import utc_now
 
 logger = get_logger("user_history_service")
@@ -258,53 +257,15 @@ class UserHistoryService:
                     interaction_records = []
                     unique_pairs = set()
 
-                    provider_item_ids = [interaction.provider_item_id for interaction in interactions if interaction.provider_item_id]
-
-                    # O(1) match via ExternalIdentifiers
-                    ext_idents = music_session.query(ExternalIdentifier, Track.title, Artist.name).join(
-                        Track, ExternalIdentifier.track_id == Track.id
-                    ).join(
-                        Artist, Track.artist_id == Artist.id
-                    ).filter(
-                        ExternalIdentifier.provider_source == 'plex',
-                        ExternalIdentifier.provider_item_id.in_(provider_item_ids)
-                    ).all()
-
-                    plex_id_to_track_info = {
-                        ext_ident.provider_item_id: (artist_name, track_title)
-                        for ext_ident, track_title, artist_name in ext_idents
-                    }
-
                     for interaction in interactions:
                         try:
-                            # O(1) lookup via identifiers
-                            if interaction.provider_item_id in plex_id_to_track_info:
-                                artist_name, track_title = plex_id_to_track_info[interaction.provider_item_id]
-                                sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, track_title)}"
-                            else:
-                                if interaction.provider_item_id and interaction.provider_item_id.startswith('ss:track:meta:'):
-                                    sync_id = interaction.provider_item_id.split('?')[0]
-                                    interaction_records.append({
-                                        "interaction": interaction,
-                                        "sync_id": sync_id,
-                                    })
-                                else:
-                                    # Always fallback to text matching if not matched by O(1) ID or fat pointer URI
-                                    sync_id = f"ss:track:meta:{generate_deterministic_id(interaction.artist_name, interaction.track_title)}"
-                                    pair = (interaction.artist_name, interaction.track_title)
-                                    unique_pairs.add(pair)
-                                    interaction_records.append({
-                                        "interaction": interaction,
-                                        "pair": pair,
-                                        "sync_id": sync_id,
-                                        "matched_by_id": False
-                                    })
-                                    continue
-
+                            sync_id = f"ss:track:meta:{generate_deterministic_id(interaction.artist_name, interaction.track_title)}"
+                            pair = (interaction.artist_name, interaction.track_title)
+                            unique_pairs.add(pair)
                             interaction_records.append({
                                 "interaction": interaction,
+                                "pair": pair,
                                 "sync_id": sync_id,
-                                "matched_by_id": True
                             })
                         except Exception as e:
                             self.logger.warning(
@@ -314,19 +275,15 @@ class UserHistoryService:
                     if not interaction_records:
                         return 0
 
-                    matched_pairs = set()
-                    if unique_pairs:
-                        matched_tracks = music_session.query(Track).join(Track.artist).filter(
-                            tuple_(Artist.name, Track.title).in_(list(unique_pairs))
-                        ).all()
-                        matched_pairs = {(track.artist.name, track.title) for track in matched_tracks}
-
+                    matched_tracks = music_session.query(Track).join(Track.artist).filter(
+                        tuple_(Artist.name, Track.title).in_(list(unique_pairs))
+                    ).all()
+                    matched_pairs = {(track.artist.name, track.title) for track in matched_tracks}
                     rating_payload_by_sync_id: Dict[str, Dict[str, object]] = {}
 
                     for record in interaction_records:
                         interaction = record["interaction"]
-                        # Validate text fallback matches, skip if not matched by ID and not in matched_pairs
-                        if not record.get("matched_by_id") and record.get("pair") not in matched_pairs:
+                        if record["pair"] not in matched_pairs:
                             self.logger.debug(
                                 f"No track found for {interaction.artist_name} - {interaction.track_title}"
                             )
