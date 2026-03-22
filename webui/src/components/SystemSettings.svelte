@@ -1,4 +1,7 @@
 <script>
+  import { feedback } from '../stores/feedback';
+  import apiClient from '../api/client';
+
   const cpuUsage = 14;
   const memoryUsedGb = 2.4;
   const memoryTotalGb = 8;
@@ -17,12 +20,40 @@
     { id: 'yt-dlp', name: 'yt-dlp', enabled: false }
   ];
 
+  let isRebuildingDatabase = false;
+
   function toggleProvider(providerId) {
     providerStates = providerStates.map((provider) =>
       provider.id === providerId
         ? { ...provider, enabled: !provider.enabled }
         : provider
     );
+  }
+
+  async function handleRebuildDatabase() {
+    const confirmed = confirm(
+      'WARNING: This will completely erase your local database schemas, including all tracks, matched states, and history. You will need to perform a full Library Import afterwards. Are you sure you want to proceed?'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    isRebuildingDatabase = true;
+
+    try {
+      const response = await apiClient.post('/database/rebuild');
+      if (response.data && response.data.success) {
+        feedback.addToast('Database rebuilt successfully! Go to the Library page to trigger a new import.', 'success');
+      } else {
+        feedback.addToast('Failed to rebuild database: ' + (response.data?.error || 'Unknown error'), 'error');
+      }
+    } catch (error) {
+      console.error('Failed to rebuild database:', error);
+      feedback.addToast('Failed to rebuild database: ' + (error.message || 'Unknown error'), 'error');
+    } finally {
+      isRebuildingDatabase = false;
+    }
   }
 </script>
 
@@ -134,6 +165,54 @@
       <p class="mt-4 text-xs italic text-amber-300/90">
         Note: Disabling a provider requires a system restart to fully unload.
       </p>
+    </article>
+
+    <article class="lg:col-span-2 bg-red-950/40 border border-red-900/60 rounded-xl p-5 shadow-sm">
+      <div class="flex items-start gap-3 mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 9v2m0 4v2m-6.773-4h13.546a2 2 0 011.82 2.975l-6.773 11.25a2 2 0 01-3.64 0l-6.773-11.25a2 2 0 011.82-2.975Z" />
+        </svg>
+        <div>
+          <h2 class="text-base font-semibold text-red-300 mb-1">Danger Zone</h2>
+          <p class="text-xs text-red-300/70">Advanced operations that cannot be undone. Proceed with caution.</p>
+        </div>
+      </div>
+
+      <div class="bg-red-950/60 border border-red-900/40 rounded-lg p-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="font-medium text-gray-100">Rebuild Database Schema</p>
+            <p class="text-xs text-gray-400 mt-1">Permanently erase all synced tracks and database history. Start fresh with a new library import.</p>
+          </div>
+          <button
+            on:click={handleRebuildDatabase}
+            disabled={isRebuildingDatabase}
+            class="px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 flex items-center gap-2 whitespace-nowrap"
+            class:bg-red-600={!isRebuildingDatabase}
+            class:hover:bg-red-700={!isRebuildingDatabase}
+            class:text-white={!isRebuildingDatabase}
+            class:bg-gray-700={isRebuildingDatabase}
+            class:cursor-not-allowed={isRebuildingDatabase}
+            class:opacity-60={isRebuildingDatabase}
+          >
+            {#if isRebuildingDatabase}
+              <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Rebuilding...
+            {:else}
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                <path d="M21 3v5h-5" />
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                <path d="M3 21v-5h5" />
+              </svg>
+              Rebuild Schema
+            {/if}
+          </button>
+        </div>
+      </div>
     </article>
   </div>
 </section>
