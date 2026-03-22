@@ -1388,6 +1388,10 @@ class PlexClient(ProviderBase):
                         continue
                     interaction = self._track_to_interaction(item)
                     if interaction:
+                        # Plex history rows often omit viewCount; each history row still
+                        # represents at least one play event for the selected account.
+                        if int(getattr(interaction, 'play_count', 0) or 0) <= 0:
+                            interaction.play_count = 1
                         interactions.append(interaction)
 
                 if interactions:

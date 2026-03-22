@@ -440,6 +440,35 @@ class UserHistoryService:
             return
 
         if self.working_db.engine.dialect.name == 'sqlite':
+            # Backward compatibility: some existing working.db files have
+            # user_ratings.rating declared NOT NULL. Listen-only rows (rating=None)
+            # would fail inserts in that schema, so coerce missing ratings to 0.0.
+            # This preserves listen_count ingestion until schema migration is applied.
+            try:
+                needs_non_null_rating = False
+                with self.working_db.engine.connect() as conn:
+                    pragma_rows = conn.exec_driver_sql("PRAGMA table_info('user_ratings')").fetchall()
+                    for row in pragma_rows:
+                        col_name = str(row[1]) if len(row) > 1 else ""
+                        not_null_flag = int(row[3]) if len(row) > 3 and row[3] is not None else 0
+                        if col_name == 'rating' and not_null_flag == 1:
+                            needs_non_null_rating = True
+                            break
+
+                if needs_non_null_rating:
+                    adjusted_payloads = []
+                    for payload in rating_payloads:
+                        if payload.get('rating') is None:
+                            patched = dict(payload)
+                            patched['rating'] = 0.0
+                            adjusted_payloads.append(patched)
+                        else:
+                            adjusted_payloads.append(payload)
+                    rating_payloads = adjusted_payloads
+            except Exception:
+                # Best-effort compatibility guard; continue with original payloads.
+                pass
+
             insert_stmt = sqlite_insert(UserRating).values(rating_payloads)
             upsert_stmt = insert_stmt.on_conflict_do_update(
                 index_elements=['user_id', 'sync_id'],
