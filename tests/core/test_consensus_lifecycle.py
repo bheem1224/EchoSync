@@ -89,6 +89,19 @@ def test_deletion_respects_admin_exempt_and_force_upgrade(tmp_path, monkeypatch)
     assert res_exempt["status"] == "KEEP_EXEMPT"
     assert res_force["status"] == "UPGRADE_FORCED"
 
-    event_names = [e.get("event") for e in bus.events]
-    assert "LIFECYCLE_KEEP_INTENT" in event_names
-    assert "QUALITY_UPGRADE_INTENT" in event_names
+    # Lifecycle actions are now staged in UserTrackState and processed by timers.
+    with db.session_scope() as session:
+        exempt_state = session.query(UserTrackState).filter(UserTrackState.sync_id == sync_exempt).first()
+        force_state = session.query(UserTrackState).filter(UserTrackState.sync_id == sync_force).first()
+
+        assert exempt_state is not None
+        assert force_state is not None
+
+        assert exempt_state.lifecycle_action is None
+        assert exempt_state.lifecycle_queued_at is None
+
+        assert force_state.lifecycle_action == "UPGRADE_WEEK_END"
+        assert force_state.lifecycle_queued_at is not None
+
+    # No immediate intent events are emitted by staging decisions.
+    assert bus.events == []

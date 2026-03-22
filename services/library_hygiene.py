@@ -2,6 +2,10 @@ from typing import List, Dict, Optional, Tuple, Any
 from sqlalchemy import func
 from database.music_database import get_database, Track, AudioFingerprint, Artist
 from core.tiered_logger import get_logger
+from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.settings import config_manager
+from services.download_manager import get_download_manager
+import base64
 import os
 
 logger = get_logger("services.library_hygiene")
@@ -208,3 +212,71 @@ class DuplicateHygieneService:
 
         logger.info(f"Prune Job Completed. Deleted {count} tracks.")
         return {"deleted_count": count, "details": details}
+
+    def _resolve_track_by_sync_id(self, sync_id: str) -> Optional[Track]:
+        """Resolve a DB track from deterministic sync_id formats."""
+        base_sync_id = (sync_id or "").split("?")[0]
+
+        with self.db.session_scope() as session:
+            if base_sync_id.startswith("ss:track:mbid:"):
+                mbid = base_sync_id.split("ss:track:mbid:", 1)[1]
+                if not mbid:
+                    return None
+                return session.query(Track).filter(Track.musicbrainz_id == mbid).first()
+
+            if base_sync_id.startswith("ss:track:meta:"):
+                encoded = base_sync_id.split("ss:track:meta:", 1)[1]
+                if not encoded:
+                    return None
+                try:
+                    decoded = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
+                    artist_name, title = decoded.split("|", 1)
+                except Exception:
+                    return None
+
+                return (
+                    session.query(Track)
+                    .join(Artist, Track.artist_id == Artist.id)
+                    .filter(
+                        func.lower(Artist.name) == artist_name.lower(),
+                        func.lower(Track.title) == title.lower(),
+                    )
+                    .first()
+                )
+
+        return None
+
+    def queue_quality_upgrade_for_sync_id(
+        self,
+        sync_id: str,
+        upgrade_quality_profile_id: Optional[str] = None,
+    ) -> int:
+        """Queue a quality replacement download for a staged lifecycle track.
+
+        If profile ID is not provided, this reads manager.upgrade_quality_profile_id.
+        """
+        track = self._resolve_track_by_sync_id(sync_id)
+        if not track or not track.artist:
+            logger.warning(f"Could not resolve track for upgrade sync_id: {sync_id}")
+            return 0
+
+        if upgrade_quality_profile_id is None:
+            manager_config = config_manager.get("manager", {}) or {}
+            upgrade_quality_profile_id = manager_config.get("upgrade_quality_profile_id")
+
+        soul_track = SoulSyncTrack(
+            raw_title=track.title,
+            artist_name=track.artist.name,
+            album_title=track.album.title if track.album else "",
+            duration=track.duration,
+            bitrate=track.bitrate,
+            file_format=track.file_format,
+            sample_rate=track.sample_rate,
+            bit_depth=track.bit_depth,
+            file_size_bytes=track.file_size_bytes,
+            musicbrainz_id=track.musicbrainz_id,
+            identifiers={},
+        )
+
+        dm = get_download_manager()
+        return dm.queue_download(soul_track, quality_profile_id=upgrade_quality_profile_id)

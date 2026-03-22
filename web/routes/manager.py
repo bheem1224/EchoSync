@@ -4,12 +4,15 @@ from core.tiered_logger import get_logger
 from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
 from services.metadata_enhancer import get_metadata_enhancer
-from database.music_database import get_database, Track, UserRating
+from database.music_database import get_database, Track, UserRating, Artist
 from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState
 from core.suggestion_engine.consensus import calculate_consensus
+from core.suggestion_engine.deletion import execute_delete_now, execute_upgrade_now
+from core.matching_engine.text_utils import generate_deterministic_id
 from pathlib import Path
 from sqlalchemy import func, case
 from datetime import datetime
+import base64
 
 logger = get_logger("web.routes.manager")
 bp = Blueprint("manager", __name__, url_prefix="/api/manager")
@@ -17,6 +20,57 @@ bp = Blueprint("manager", __name__, url_prefix="/api/manager")
 
 def _normalize_sync_id(sync_id: str) -> str:
     return (sync_id or "").split("?")[0].strip()
+
+
+def _sync_id_from_track_id(track_id: int) -> str | None:
+    db = get_database()
+    with db.session_scope() as session:
+        row = (
+            session.query(Track.title, Artist.name)
+            .join(Artist, Track.artist_id == Artist.id)
+            .filter(Track.id == track_id)
+            .first()
+        )
+        if not row:
+            return None
+        encoded = generate_deterministic_id(row.name, row.title)
+        return f"ss:track:meta:{encoded}"
+
+
+def _resolve_track_preview(sync_id: str):
+    base_sync_id = _normalize_sync_id(sync_id)
+    if not base_sync_id.startswith("ss:track:meta:"):
+        return None
+
+    encoded = base_sync_id.split("ss:track:meta:", 1)[1]
+    if not encoded:
+        return None
+
+    try:
+        decoded = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
+        artist_name, title = decoded.split("|", 1)
+    except Exception:
+        return None
+
+    db = get_database()
+    with db.session_scope() as session:
+        row = (
+            session.query(Track.id, Track.title, Artist.name)
+            .join(Artist, Track.artist_id == Artist.id)
+            .filter(
+                func.lower(Artist.name) == artist_name.lower(),
+                func.lower(Track.title) == title.lower(),
+            )
+            .first()
+        )
+        if not row:
+            return None
+
+        return {
+            "track_id": row.id,
+            "title": row.title,
+            "artist": row.name,
+        }
 
 @bp.route("/settings", methods=["GET", "POST"])
 def manager_settings():
@@ -31,6 +85,9 @@ def manager_settings():
                 'enabled',
                 'delete_threshold',
                 'upgrade_threshold',
+                'auto_delete',
+                'auto_upgrade',
+                'upgrade_quality_profile_id',
                 'auto_delete_low_quality_duplicates',
                 'auto_process_suggestion_engine_ratings',
             ]:
@@ -50,6 +107,9 @@ def manager_settings():
                 'enabled': True,
                 'delete_threshold': 1,
                 'upgrade_threshold': 2,
+                'auto_delete': False,
+                'auto_upgrade': False,
+                'upgrade_quality_profile_id': None,
                 'auto_delete_low_quality_duplicates': False,
                 'auto_process_suggestion_engine_ratings': True,
             })
@@ -215,16 +275,99 @@ def get_duplicates():
 
 @bp.route("/queue/actions", methods=["GET"])
 def get_action_queue():
-    """Get items pending action (determined by consensus rules).
-    
-    NOTE: Phase 3 Suggestion Engine uses event-driven deletion instead of manual overrides.
-    This endpoint is deprecated. Consensus is now evaluated asynchronously in the suggestion engine.
-    """
-    return jsonify({
-        "success": True,
-        "queue": [],
-        "message": "Action queue deprecated. Use Phase 3 Suggestion Engine for consensus evaluation."
-    }), 200
+    """Get currently staged lifecycle actions and their queue age."""
+    now = utc_now()
+    work_db = get_working_database()
+
+    try:
+        with work_db.session_scope() as session:
+            states = (
+                session.query(UserTrackState)
+                .filter(UserTrackState.lifecycle_action.in_(["DELETE_MONTH_END", "UPGRADE_WEEK_END"]))
+                .all()
+            )
+
+        grouped = {}
+        for state in states:
+            row = grouped.setdefault(
+                state.sync_id,
+                {
+                    "sync_id": state.sync_id,
+                    "action_needed": state.lifecycle_action,
+                    "queued_at": state.lifecycle_queued_at,
+                    "admin_exempt_deletion": False,
+                    "admin_force_upgrade": False,
+                },
+            )
+            if state.lifecycle_queued_at and (row["queued_at"] is None or state.lifecycle_queued_at < row["queued_at"]):
+                row["queued_at"] = state.lifecycle_queued_at
+            row["admin_exempt_deletion"] = row["admin_exempt_deletion"] or bool(state.admin_exempt_deletion)
+            row["admin_force_upgrade"] = row["admin_force_upgrade"] or bool(state.admin_force_upgrade)
+
+        queue = []
+        for item in grouped.values():
+            queued_at = item["queued_at"]
+            days_in_queue = 0
+            if queued_at:
+                days_in_queue = max(0, int((now - queued_at).total_seconds() // 86400))
+
+            preview = _resolve_track_preview(item["sync_id"]) or {}
+
+            queue.append(
+                {
+                    "sync_id": item["sync_id"],
+                    "track_id": preview.get("track_id"),
+                    "title": preview.get("title"),
+                    "artist": preview.get("artist"),
+                    "action_needed": item["action_needed"],
+                    "queued_at": queued_at.isoformat() if queued_at else None,
+                    "days_in_queue": days_in_queue,
+                    "admin_exempt_deletion": item["admin_exempt_deletion"],
+                    "admin_force_upgrade": item["admin_force_upgrade"],
+                }
+            )
+
+        queue.sort(key=lambda row: (row["action_needed"], -(row["days_in_queue"] or 0)))
+
+        return jsonify({"success": True, "queue": queue, "count": len(queue)}), 200
+    except Exception as e:
+        logger.error(f"Error getting staged lifecycle queue: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/track/<int:track_id>/force_delete", methods=["POST"])
+def force_delete_track(track_id: int):
+    """Force immediate lifecycle delete execution for a track, bypassing timers."""
+    sync_id = _sync_id_from_track_id(track_id)
+    if not sync_id:
+        return jsonify({"error": "Track not found"}), 404
+
+    try:
+        result = execute_delete_now(sync_id)
+        status = 200 if result.get("success") else 400
+        return jsonify(result), status
+    except Exception as e:
+        logger.error(f"Error forcing delete for track {track_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/track/<int:track_id>/force_upgrade", methods=["POST"])
+def force_upgrade_track(track_id: int):
+    """Force immediate lifecycle upgrade execution for a track, bypassing timers."""
+    sync_id = _sync_id_from_track_id(track_id)
+    if not sync_id:
+        return jsonify({"error": "Track not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    quality_profile_id = payload.get("quality_profile_id")
+
+    try:
+        result = execute_upgrade_now(sync_id, quality_profile_id=quality_profile_id)
+        status = 200 if result.get("success") else 400
+        return jsonify(result), status
+    except Exception as e:
+        logger.error(f"Error forcing upgrade for track {track_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 @bp.route("/track/<int:track_id>/fetch_metadata", methods=["POST"])
 def fetch_metadata(track_id):

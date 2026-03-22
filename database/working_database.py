@@ -144,6 +144,8 @@ class UserTrackState(WorkingBase):
     sponsor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     admin_exempt_deletion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     admin_force_upgrade: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    lifecycle_action: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    lifecycle_queued_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
@@ -268,6 +270,8 @@ class WorkingDatabase:
         required_columns = {
             "admin_exempt_deletion": "BOOLEAN NOT NULL DEFAULT 0",
             "admin_force_upgrade": "BOOLEAN NOT NULL DEFAULT 0",
+            "lifecycle_action": "TEXT",
+            "lifecycle_queued_at": "DATETIME",
         }
 
         try:

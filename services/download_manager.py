@@ -185,7 +185,7 @@ class DownloadManager:
             logger.error(f"Error getting active download providers: {e}", exc_info=True)
             return []
 
-    def queue_download(self, track: SoulSyncTrack) -> int:
+    def queue_download(self, track: SoulSyncTrack, quality_profile_id: Optional[str] = None) -> int:
         """
         Add a track to the download queue.
         Returns the database ID of the new download record.
@@ -202,6 +202,9 @@ class DownloadManager:
         with self.work_db.session_scope() as session:
             # Serialize track to JSON for storage
             track_json = track.to_dict()
+            if quality_profile_id:
+                identifiers = track_json.setdefault("identifiers", {})
+                identifiers["quality_profile_id"] = str(quality_profile_id)
 
             # Prevent duplicate queue entries for the same track while it is in-flight
             existing = self._find_existing_download(track_json)
@@ -414,7 +417,12 @@ class DownloadManager:
             logger.info(f"Starting waterfall search for: {target_track.artist_name} - {target_track.title}")
 
             # 1. Get quality profile from config to determine allowed formats
-            quality_profile = self._get_quality_profile()
+            requested_profile_id = (
+                (download.soul_sync_track.get("identifiers") or {}).get("quality_profile_id")
+                if isinstance(download.soul_sync_track, dict)
+                else None
+            )
+            quality_profile = self._get_quality_profile(requested_profile_id)
             allowed_formats = self._extract_allowed_formats(quality_profile)
             
             # Get duration tolerance from quality profile (default 5 seconds)
@@ -521,7 +529,7 @@ class DownloadManager:
                             break
                     
                     # Get matching engine and score candidates
-                    matcher = self._get_matching_engine()
+                    matcher = self._get_matching_engine(quality_profile)
                     candidate = matcher.select_best_download_candidate(target_track, tier_candidates)
                     
                     if candidate:
@@ -861,24 +869,34 @@ class DownloadManager:
 
         return unique
 
-    def _get_quality_profile(self) -> Optional[Dict[str, Any]]:
+    def _get_quality_profile(self, profile_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get the active quality profile from config."""
         try:
             profiles = config_manager.get_quality_profiles()
-            if profiles and len(profiles) > 0:
-                # Use first profile (could be enhanced to support multiple/selection)
-                return profiles[0]
+            if not profiles:
+                return None
+
+            if profile_id is not None:
+                profile_id_str = str(profile_id)
+                for profile in profiles:
+                    if str(profile.get("id")) == profile_id_str:
+                        return profile
+                logger.warning(f"Requested quality profile '{profile_id}' not found; falling back to default")
+
+            # Use first profile by default when no specific profile is requested.
+            return profiles[0]
         except Exception as e:
             logger.warning(f"Failed to load quality profile: {e}")
         return None
     
-    def _get_matching_engine(self) -> WeightedMatchingEngine:
+    def _get_matching_engine(self, quality_profile: Optional[Dict[str, Any]] = None) -> WeightedMatchingEngine:
         """
         Get or create the matching engine with settings from quality profile.
         If quality profile has custom settings, create a custom profile.
         Otherwise use the default PROFILE_DOWNLOAD_SEARCH.
         """
-        quality_profile = self._get_quality_profile()
+        if quality_profile is None:
+            quality_profile = self._get_quality_profile()
         if not quality_profile:
             return WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
         

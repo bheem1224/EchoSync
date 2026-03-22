@@ -13,6 +13,8 @@ from core.settings import config_manager
 from core.job_queue import job_queue
 from database.music_database import get_database
 from core.personalized_playlists import get_personalized_playlists_service
+from services.library_hygiene import DuplicateHygieneService
+from core.suggestion_engine.deletion import process_lifecycle_actions
 
 logger = get_logger("system_jobs")
 
@@ -213,6 +215,63 @@ def register_suggestion_engine_playlist_job(interval_seconds: int = 86400, enabl
     )
 
 
+def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = True):
+    """Register daily duplicate scan job for library hygiene."""
+
+    def run_duplicate_scan():
+        try:
+            logger.info("Starting duplicate scan job")
+            service = DuplicateHygieneService()
+            result = service.find_duplicates()
+            auto_count = len((result or {}).get("auto_resolve", []))
+            manual_count = len((result or {}).get("manual_review", []))
+            logger.info(
+                f"Duplicate scan complete: auto_resolve_groups={auto_count}, manual_review_groups={manual_count}"
+            )
+        except Exception as e:
+            logger.error(f"Duplicate scan job failed: {e}", exc_info=True)
+
+    job_queue.register_job(
+        name="duplicate_scan_job",
+        func=run_duplicate_scan,
+        interval_seconds=interval_seconds,
+        enabled=enabled,
+        tags=["system", "duplicates", "hygiene"],
+        max_retries=1,
+    )
+
+    logger.info(
+        f"Duplicate scan job registered "
+        f"(interval: {interval_seconds}s = {interval_seconds/3600:.1f}h, enabled={enabled})"
+    )
+
+
+def register_process_lifecycle_actions_job(interval_seconds: int = 86400, enabled: bool = True):
+    """Register daily lifecycle queue processing job."""
+
+    def run_process_lifecycle_actions():
+        try:
+            logger.info("Starting lifecycle action processing job")
+            summary = process_lifecycle_actions()
+            logger.info(f"Lifecycle processing complete: {summary}")
+        except Exception as e:
+            logger.error(f"Lifecycle processing job failed: {e}", exc_info=True)
+
+    job_queue.register_job(
+        name="process_lifecycle_actions",
+        func=run_process_lifecycle_actions,
+        interval_seconds=interval_seconds,
+        enabled=enabled,
+        tags=["system", "lifecycle", "suggestion_engine"],
+        max_retries=1,
+    )
+
+    logger.info(
+        f"Lifecycle processing job registered "
+        f"(interval: {interval_seconds}s = {interval_seconds/3600:.1f}h, enabled={enabled})"
+    )
+
+
 def register_all_system_jobs():
     """
     Register all system jobs with the global job_queue.
@@ -227,6 +286,12 @@ def register_all_system_jobs():
 
         # Daily suggestion playlist generation (Phase 5).
         register_suggestion_engine_playlist_job(interval_seconds=86400, enabled=True)
+
+        # Daily duplicate scan for hygiene signals.
+        register_duplicate_scan_job(interval_seconds=86400, enabled=True)
+
+        # Daily lifecycle staging queue processing.
+        register_process_lifecycle_actions_job(interval_seconds=86400, enabled=True)
         
         logger.info("All system jobs registered successfully")
     except Exception as e:

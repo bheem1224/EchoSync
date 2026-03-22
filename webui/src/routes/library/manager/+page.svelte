@@ -5,19 +5,22 @@
         enabled: true,
         delete_threshold: 1,
         upgrade_threshold: 2,
+        auto_delete: false,
+        auto_upgrade: false,
+        upgrade_quality_profile_id: '',
         auto_delete_low_quality_duplicates: false,
         auto_process_suggestion_engine_ratings: true
     };
+    let qualityProfiles = [];
     let duplicates = [];
     let managedAccounts = [];
     let activeServer = 'plex';
-    let deleteCandidates = [];
-    let upgradeCandidates = [];
+    let pendingActions = [];
 
     let loading = true;
     let pruneLoading = false;
     let savingSettings = false;
-    let vetoLoadingSyncId = null;
+    let actionLoadingSyncId = null;
 
     onMount(async () => {
         await refreshAll();
@@ -28,9 +31,10 @@
         try {
             await Promise.all([
                 fetchSettings(),
+                fetchQualityProfiles(),
                 fetchDuplicates(),
                 fetchManagedAccounts(),
-                fetchSuggestionCandidates()
+                fetchPendingActions()
             ]);
         } finally {
             loading = false;
@@ -42,9 +46,33 @@
             const res = await fetch('/api/manager/settings');
             if (res.ok) {
                 const data = await res.json();
-                settings = data.settings;
+                settings = {
+                    ...settings,
+                    ...(data.settings || {})
+                };
             }
         } catch (e) { console.error(e); }
+    }
+
+    async function fetchQualityProfiles() {
+        const profileEndpoints = ['/api/metadata/profiles', '/api/quality-profiles'];
+
+        for (const url of profileEndpoints) {
+            try {
+                const res = await fetch(url);
+                if (!res.ok) continue;
+                const data = await res.json();
+                const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
+                if (profiles.length > 0) {
+                    qualityProfiles = profiles;
+                    return;
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        qualityProfiles = [];
     }
 
     async function saveSettings() {
@@ -97,13 +125,12 @@
         } catch (e) { console.error(e); }
     }
 
-    async function fetchSuggestionCandidates() {
+    async function fetchPendingActions() {
         try {
-            const res = await fetch('/api/manager/suggestion-candidates?limit=100');
+            const res = await fetch('/api/manager/queue/actions');
             if (res.ok) {
                 const data = await res.json();
-                deleteCandidates = data.delete_candidates || [];
-                upgradeCandidates = data.upgrade_candidates || [];
+                pendingActions = data.queue || [];
             }
         } catch (e) { console.error(e); }
     }
@@ -137,45 +164,71 @@
         } catch (e) { console.error(e); }
     }
 
-    async function toggleOverride(syncId, field, currentValue) {
-        vetoLoadingSyncId = syncId;
+    async function vetoPendingAction(item) {
+        const isDelete = item.action_needed === 'DELETE_MONTH_END';
+        const field = isDelete ? 'admin_exempt_deletion' : 'admin_force_upgrade';
+        const value = isDelete ? true : false;
+
+        actionLoadingSyncId = item.sync_id;
         try {
             const res = await fetch('/api/manager/suggestion-candidates/override', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    sync_id: syncId,
+                    sync_id: item.sync_id,
                     field,
-                    value: !currentValue
+                    value
                 })
             });
 
             if (res.ok) {
-                const payload = await res.json();
-                const state = payload.state || {};
-
-                deleteCandidates = deleteCandidates.map((candidate) =>
-                    candidate.sync_id === syncId
-                        ? {
-                            ...candidate,
-                            admin_exempt_deletion: !!state.admin_exempt_deletion,
-                            admin_force_upgrade: !!state.admin_force_upgrade
-                        }
-                        : candidate
-                );
-
-                upgradeCandidates = upgradeCandidates.map((candidate) =>
-                    candidate.sync_id === syncId
-                        ? {
-                            ...candidate,
-                            admin_exempt_deletion: !!state.admin_exempt_deletion,
-                            admin_force_upgrade: !!state.admin_force_upgrade
-                        }
-                        : candidate
-                );
+                pendingActions = pendingActions.filter((entry) => entry.sync_id !== item.sync_id);
             } else { alert('Failed to process action'); }
         } catch (e) { console.error(e); }
-        finally { vetoLoadingSyncId = null; }
+        finally { actionLoadingSyncId = null; }
+    }
+
+    async function executeNow(item) {
+        if (!item.track_id) {
+            alert('Cannot execute action because this queued item is not linked to a track ID.');
+            return;
+        }
+
+        const isDelete = item.action_needed === 'DELETE_MONTH_END';
+        if (isDelete && !confirm('Are you sure? This action is irreversible.')) {
+            return;
+        }
+
+        actionLoadingSyncId = item.sync_id;
+        try {
+            const endpoint = isDelete
+                ? `/api/manager/track/${item.track_id}/force_delete`
+                : `/api/manager/track/${item.track_id}/force_upgrade`;
+
+            const reqInit = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            };
+
+            if (!isDelete) {
+                reqInit.body = JSON.stringify({
+                    quality_profile_id: settings.upgrade_quality_profile_id || null
+                });
+            }
+
+            const res = await fetch(endpoint, reqInit);
+            if (res.ok) {
+                pendingActions = pendingActions.filter((entry) => entry.sync_id !== item.sync_id);
+            } else {
+                const payload = await res.json().catch(() => ({}));
+                alert(payload.error || 'Action failed');
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Action failed');
+        } finally {
+            actionLoadingSyncId = null;
+        }
     }
 </script>
 
@@ -215,6 +268,34 @@
                             <input type="checkbox" bind:checked={settings.auto_process_suggestion_engine_ratings}>
                             <span class="slider round"></span>
                         </label>
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm font-medium">Auto Delete Staged Queue</span>
+                        <span class="info-icon" title="When enabled, staged DELETE_MONTH_END actions older than 30 days are executed by the lifecycle processor.">i</span>
+                        <label class="switch">
+                            <input type="checkbox" bind:checked={settings.auto_delete}>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm font-medium">Auto Upgrade Staged Queue</span>
+                        <span class="info-icon" title="When enabled, staged UPGRADE_WEEK_END actions older than 7 days are executed by the lifecycle processor.">i</span>
+                        <label class="switch">
+                            <input type="checkbox" bind:checked={settings.auto_upgrade}>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm muted">Upgrade Quality Profile:</span>
+                        <select bind:value={settings.upgrade_quality_profile_id} class="input-select">
+                            <option value="">Default</option>
+                            {#each qualityProfiles as profile}
+                                <option value={String(profile.id)}>{profile.name || profile.id}</option>
+                            {/each}
+                        </select>
                     </div>
 
                     <div class="flex items-center gap-2">
@@ -319,86 +400,60 @@
             </div>
         </div>
 
-        <!-- Suggestion Engine Veto / Exemption Controls -->
+        <!-- Pending Actions (staged queue) -->
         <div class="queue-col">
             <h2 class="queue-header">
                 <span class="dot blue"></span>
-                Suggestion Engine Controls
-                <span class="count">({deleteCandidates.length + upgradeCandidates.length})</span>
+                Pending Actions
+                <span class="count">({pendingActions.length})</span>
             </h2>
 
             <div class="card queue-list">
-                {#if deleteCandidates.length === 0 && upgradeCandidates.length === 0}
-                    <div class="empty">No threshold candidates found.</div>
+                {#if pendingActions.length === 0}
+                    <div class="empty">No staged lifecycle actions.</div>
                 {:else}
                     <div class="list-content suggestion-list">
-                        <div class="candidate-block">
-                            <h3 class="candidate-title">Delete Candidates (Score 1-2)</h3>
-                            {#if deleteCandidates.length === 0}
-                                <div class="empty compact">No delete candidates.</div>
-                            {:else}
-                                {#each deleteCandidates as candidate}
-                                    <div class="action-item">
-                                        <div class="info">
-                                            <div class="header-row">
-                                                <span class="badge delete">delete_month_end</span>
-                                                <span class="title" title={candidate.sync_id}>{candidate.sync_id}</span>
-                                            </div>
-                                            <div class="meta">Score: {candidate.score_10} • Ratings: {candidate.ratings_count}</div>
-                                        </div>
-
-                                        <div class="actions">
-                                            <button
-                                                on:click={() => toggleOverride(candidate.sync_id, 'admin_exempt_deletion', candidate.admin_exempt_deletion)}
-                                                class="btn btn--small {candidate.admin_exempt_deletion ? 'btn--danger' : 'btn--success'}"
-                                                disabled={vetoLoadingSyncId === candidate.sync_id}
-                                                title="Toggle admin_exempt_deletion"
-                                            >
-                                                {candidate.admin_exempt_deletion ? 'Remove Veto' : 'Veto Deletion'}
-                                            </button>
-                                        </div>
+                        {#each pendingActions as item}
+                            <div class="action-item">
+                                <div class="info">
+                                    <div class="header-row">
+                                        <span class="badge {item.action_needed === 'DELETE_MONTH_END' ? 'delete' : 'upgrade'}">
+                                            {item.action_needed === 'DELETE_MONTH_END' ? 'Pending Delete' : 'Pending Upgrade'}
+                                        </span>
+                                        <span class="title" title={item.sync_id}>{item.title || item.sync_id}</span>
                                     </div>
-                                {/each}
-                            {/if}
-                        </div>
+                                    <div class="artist">{item.artist || 'Unknown Artist'}</div>
+                                    <div class="meta">In queue: {item.days_in_queue ?? 0} day(s)</div>
+                                </div>
 
-                        <div class="candidate-block">
-                            <h3 class="candidate-title">Upgrade Candidates (Score 3-4)</h3>
-                            {#if upgradeCandidates.length === 0}
-                                <div class="empty compact">No upgrade candidates.</div>
-                            {:else}
-                                {#each upgradeCandidates as candidate}
-                                    <div class="action-item">
-                                        <div class="info">
-                                            <div class="header-row">
-                                                <span class="badge upgrade">upgrade_week_end</span>
-                                                <span class="title" title={candidate.sync_id}>{candidate.sync_id}</span>
-                                            </div>
-                                            <div class="meta">Score: {candidate.score_10} • Ratings: {candidate.ratings_count}</div>
-                                        </div>
+                                <div class="actions">
+                                    <button
+                                        on:click={() => vetoPendingAction(item)}
+                                        class="btn btn--small btn--success"
+                                        disabled={actionLoadingSyncId === item.sync_id}
+                                        title="Veto this queued action"
+                                    >
+                                        Veto
+                                    </button>
 
-                                        <div class="actions">
-                                            <button
-                                                on:click={() => toggleOverride(candidate.sync_id, 'admin_force_upgrade', candidate.admin_force_upgrade)}
-                                                class="btn btn--small {candidate.admin_force_upgrade ? 'btn--primary' : 'btn--ghost'}"
-                                                disabled={vetoLoadingSyncId === candidate.sync_id}
-                                                title="Toggle admin_force_upgrade"
-                                            >
-                                                {candidate.admin_force_upgrade ? 'Force Upgrade On' : 'Force Upgrade Off'}
-                                            </button>
-                                        </div>
-                                    </div>
-                                {/each}
-                            {/if}
-                        </div>
+                                    <button
+                                        on:click={() => executeNow(item)}
+                                        class={`btn btn--small ${item.action_needed === 'DELETE_MONTH_END' ? 'btn--danger' : 'btn--primary'}`}
+                                        disabled={actionLoadingSyncId === item.sync_id || !item.track_id}
+                                        title={!item.track_id ? 'Track ID unavailable for this sync item' : 'Execute action immediately'}
+                                    >
+                                        {item.action_needed === 'DELETE_MONTH_END' ? 'Delete Now' : 'Upgrade Now'}
+                                    </button>
+                                </div>
+                            </div>
+                        {/each}
 
                         <div class="info-block compact">
                             <p>
-                                Use the controls above to toggle <strong>admin_exempt_deletion</strong> and
-                                <strong>admin_force_upgrade</strong> flags in working.db for each sync_id.
+                                Veto marks delete actions as exempt and removes queued items from this staging view.
                             </p>
                             <p>
-                                These flags are consumed by the lifecycle gate and can veto deletion or force upgrade intents.
+                                Execute Now bypasses queue timers. Delete actions require explicit confirmation.
                             </p>
                         </div>
                     </div>
@@ -419,7 +474,6 @@
     .p-6 { padding: 24px; }
 
     h2 { font-size: 18px; font-weight: 600; color: var(--text); margin: 0 0 12px 0; }
-    h3 { margin: 0; color: var(--text); }
     .mb-0 { margin-bottom: 0; }
     .mt-3 { margin-top: 12px; }
     .muted { color: var(--muted); }
@@ -430,6 +484,15 @@
     .input-num {
         background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
         border-radius: 4px; color: var(--text); width: 60px; padding: 4px 8px; text-align: center;
+    }
+
+    .input-select {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 6px;
+        color: var(--text);
+        min-width: 180px;
+        padding: 6px 8px;
     }
 
     .info-icon {
