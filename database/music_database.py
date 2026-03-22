@@ -104,6 +104,7 @@ class Track(Base):
     added_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime())
 
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    isrc: Mapped[Optional[str]] = mapped_column(String)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
 
     album: Mapped[Optional[Album]] = relationship(back_populates="tracks")

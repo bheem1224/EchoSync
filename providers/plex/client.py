@@ -1351,12 +1351,11 @@ class PlexClient(ProviderBase):
         try:
             if raw_rating is not None:
                 parsed = float(raw_rating)
-                # Plex often stores ratings on a 10-point scale; normalize to 5-point for Suggestion Engine.
-                rating = parsed / 2.0 if parsed > 5.0 else parsed
-                if rating < 0:
+                rating = parsed
+                if rating < 0.0:
                     rating = None
-                elif rating > 5.0:
-                    rating = 5.0
+                elif rating > 10.0:
+                    rating = 10.0
         except Exception:
             rating = None
         last_played_at = self._coerce_datetime(getattr(plex_track, 'lastViewedAt', None))
@@ -1384,6 +1383,9 @@ class PlexClient(ProviderBase):
                 logger.debug(f"Fetching Plex play history for account_id={account_id} (limit={limit})")
                 history_items = target_server.history(maxresults=limit)
                 for item in history_items or []:
+                    # Strictly filter for audio tracks to avoid crashing on photos/extras
+                    if getattr(item, 'type', None) != 'track':
+                        continue
                     interaction = self._track_to_interaction(item)
                     if interaction:
                         interactions.append(interaction)
