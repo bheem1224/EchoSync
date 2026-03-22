@@ -3,6 +3,7 @@
   import apiClient from '../../api/client';
   import { feedback } from '../../stores/feedback';
   import MetadataReviewModal from './MetadataReviewModal.svelte';
+  import { decodeSyncId } from '../utils';
 
   let loading = true;
   let error = '';
@@ -41,6 +42,12 @@
 
   function getProposedTitle(task) {
     return task?.detected_metadata?.title || 'Unknown Title';
+  }
+
+  function getReadableSyncLabel(task) {
+    const rawSyncId = task?.sync_id;
+    if (!rawSyncId) return '';
+    return decodeSyncId(rawSyncId);
   }
 
   function openReviewModal(task) {
@@ -195,6 +202,11 @@
                 <td class="px-4 py-3">
                   <div class="text-sm text-slate-100">{getProposedArtist(task)}</div>
                   <div class="text-sm text-slate-300">{getProposedTitle(task)}</div>
+                  {#if task?.sync_id}
+                    <div class="text-xs text-cyan-200/90 truncate max-w-[320px]" title={task.sync_id}>
+                      {getReadableSyncLabel(task)}
+                    </div>
+                  {/if}
                 </td>
                 <td class="px-4 py-3">
                   <span class={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold ${confidenceBadgeClass(task.confidence_score || 0)}`}>

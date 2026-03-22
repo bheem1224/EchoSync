@@ -5,7 +5,8 @@ from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
 from services.metadata_enhancer import get_metadata_enhancer
 from database.music_database import get_database, Track, Artist
-from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState
+from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState, User
+from database.config_database import get_config_database
 from core.suggestion_engine.consensus import calculate_consensus
 from core.suggestion_engine.deletion import execute_delete_now, execute_upgrade_now
 from core.matching_engine.text_utils import generate_deterministic_id
@@ -71,6 +72,68 @@ def _resolve_track_preview(sync_id: str):
             "title": row.title,
             "artist": row.name,
         }
+
+
+def _resolve_working_user_for_trends():
+    """Resolve the working DB user for trends filtering.
+
+    Resolution order:
+    1) Explicit query params: user_id, then account_id
+    2) Active Plex managed account fallback (first active account)
+    """
+    config_db = get_config_database()
+    working_db = get_working_database()
+
+    requested_user_id = request.args.get("user_id", type=int)
+    requested_account_id = request.args.get("account_id", type=int)
+
+    resolved_user = None
+    resolved_account_id = None
+
+    with working_db.session_scope() as session:
+        if requested_user_id:
+            resolved_user = session.query(User).filter(User.id == requested_user_id).first()
+            if resolved_user:
+                return resolved_user, None, "user_id"
+
+        if requested_account_id:
+            plex_service_id = config_db.get_or_create_service_id("plex")
+            account = next(
+                (
+                    acc for acc in config_db.get_accounts(service_id=plex_service_id)
+                    if acc.get("id") == requested_account_id
+                ),
+                None,
+            )
+            if account:
+                resolved_account_id = account.get("id")
+                plex_user_id = str(account.get("user_id") or "").strip()
+                if plex_user_id:
+                    resolved_user = session.query(User).filter(User.plex_id == plex_user_id).first()
+                if not resolved_user:
+                    display_name = (account.get("display_name") or account.get("account_name") or "").strip()
+                    if display_name:
+                        resolved_user = session.query(User).filter(User.username == display_name).first()
+                if resolved_user:
+                    return resolved_user, resolved_account_id, "account_id"
+
+        plex_service_id = config_db.get_or_create_service_id("plex")
+        active_accounts = config_db.get_accounts(service_id=plex_service_id, is_active=True)
+        fallback_account = next((acc for acc in active_accounts if acc.get("user_id")), None)
+        if fallback_account is None and active_accounts:
+            fallback_account = active_accounts[0]
+
+        if fallback_account:
+            resolved_account_id = fallback_account.get("id")
+            plex_user_id = str(fallback_account.get("user_id") or "").strip()
+            if plex_user_id:
+                resolved_user = session.query(User).filter(User.plex_id == plex_user_id).first()
+            if not resolved_user:
+                display_name = (fallback_account.get("display_name") or fallback_account.get("account_name") or "").strip()
+                if display_name:
+                    resolved_user = session.query(User).filter(User.username == display_name).first()
+
+    return resolved_user, resolved_account_id, "active_account"
 
 @bp.route("/settings", methods=["GET", "POST"])
 def manager_settings():
@@ -432,14 +495,19 @@ def get_trends():
     """Returns library stats (filtered)."""
     work_db = get_working_database()
     try:
+        target_user, resolved_account_id, source = _resolve_working_user_for_trends()
+
         with work_db.session_scope() as session:
             # Use SQL aggregation for efficiency
-            distribution_query = (
-                session.query(func.round(WorkingUserRating.rating), func.count(WorkingUserRating.id))
-                .filter(WorkingUserRating.rating.isnot(None))
-                .group_by(func.round(WorkingUserRating.rating))
-                .all()
-            )
+            distribution_stmt = session.query(
+                func.round(WorkingUserRating.rating),
+                func.count(WorkingUserRating.id)
+            ).filter(WorkingUserRating.rating.isnot(None))
+
+            if target_user:
+                distribution_stmt = distribution_stmt.filter(WorkingUserRating.user_id == target_user.id)
+
+            distribution_query = distribution_stmt.group_by(func.round(WorkingUserRating.rating)).all()
 
             distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
             total_filtered = 0
@@ -459,6 +527,12 @@ def get_trends():
                 "total_ratings": total_filtered,
                 "average_rating": avg,
                 "distribution": distribution,
+                "user_scope": {
+                    "source": source,
+                    "account_id": resolved_account_id,
+                    "working_user_id": target_user.id if target_user else None,
+                    "working_username": target_user.username if target_user else None,
+                },
                 "note": "Genre stats unavailable (schema limitation)"
             }), 200
     except Exception as e:

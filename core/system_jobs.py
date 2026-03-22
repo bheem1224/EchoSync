@@ -8,15 +8,88 @@ System jobs run automatically at configured intervals and handle core operations
 - Cleanup tasks
 """
 
+import base64
+from collections import defaultdict
+
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.job_queue import job_queue
 from database.music_database import get_database
+from database.config_database import get_config_database
+from database.working_database import get_working_database, User, UserRating
 from core.personalized_playlists import get_personalized_playlists_service
 from services.library_hygiene import DuplicateHygieneService
 from core.suggestion_engine.deletion import process_lifecycle_actions
 
 logger = get_logger("system_jobs")
+
+
+def _decode_artist_from_sync_id(sync_id: str) -> str:
+    """Decode artist from base sync identity ss:track:meta:{base64(artist|title)}."""
+    raw = str(sync_id or "").strip()
+    if not raw.startswith("ss:track:meta:"):
+        return ""
+
+    encoded = raw.split("ss:track:meta:", 1)[1].split("?", 1)[0].strip()
+    if not encoded:
+        return ""
+
+    try:
+        padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
+        decoded = base64.b64decode(padded.encode("ascii")).decode("utf-8", errors="ignore")
+        artist, _title = decoded.split("|", 1)
+        return artist.strip()
+    except Exception:
+        return ""
+
+
+def _get_top_listened_artists(limit: int = 5):
+    """Return top listened artist names across all active managed users."""
+    config_db = get_config_database()
+    working_db = get_working_database()
+
+    plex_service_id = config_db.get_or_create_service_id("plex")
+    active_accounts = config_db.get_accounts(service_id=plex_service_id, is_active=True)
+    if not active_accounts:
+        return []
+
+    artist_play_counts = defaultdict(int)
+
+    with working_db.session_scope() as session:
+        active_user_ids = set()
+        for account in active_accounts:
+            plex_user_id = str(account.get("user_id") or "").strip()
+            account_name = str(account.get("display_name") or account.get("account_name") or "").strip()
+
+            user = None
+            if plex_user_id:
+                user = session.query(User).filter(User.plex_id == plex_user_id).first()
+            if not user and account_name:
+                user = session.query(User).filter(User.username == account_name).first()
+
+            if user:
+                active_user_ids.add(user.id)
+
+        if not active_user_ids:
+            return []
+
+        rows = (
+            session.query(UserRating.sync_id, UserRating.play_count)
+            .filter(
+                UserRating.user_id.in_(list(active_user_ids)),
+                UserRating.play_count > 0,
+            )
+            .all()
+        )
+
+        for sync_id, play_count in rows:
+            artist = _decode_artist_from_sync_id(sync_id)
+            if not artist:
+                continue
+            artist_play_counts[artist] += int(play_count or 0)
+
+    ranked = sorted(artist_play_counts.items(), key=lambda item: item[1], reverse=True)
+    return [artist for artist, _count in ranked[:limit]]
 
 
 def register_database_update_job(interval_seconds: int = 21600, enabled: bool = True):
@@ -184,6 +257,31 @@ def register_suggestion_engine_playlist_job(interval_seconds: int = 86400, enabl
     def run_suggestion_playlist_generation():
         try:
             logger.info("Starting daily suggestion playlist generation job")
+
+            try:
+                from core.suggestion_engine.discovery import discover_tracks
+
+                top_artists = _get_top_listened_artists(limit=5)
+                if top_artists:
+                    logger.info(
+                        "Running pre-playlist discovery for top artists: %s",
+                        ", ".join(top_artists),
+                    )
+                    for artist_name in top_artists:
+                        try:
+                            discover_tracks(artist_name)
+                        except Exception as discover_error:
+                            logger.warning(
+                                f"Discovery failed for artist '{artist_name}': {discover_error}",
+                                exc_info=True,
+                            )
+                else:
+                    logger.info("No active-user listening history available for discovery warm-up")
+            except Exception as discovery_stage_error:
+                logger.warning(
+                    f"Pre-playlist discovery stage failed: {discovery_stage_error}",
+                    exc_info=True,
+                )
 
             database = get_database()
             playlists_service = get_personalized_playlists_service(database, spotify_client=None)

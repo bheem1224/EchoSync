@@ -1,5 +1,6 @@
 <script>
     import { onMount } from 'svelte';
+    import { decodeSyncId } from '../../../lib/utils';
 
     let settings = {
         enabled: true,
@@ -256,6 +257,10 @@
             actionLoadingSyncId = null;
         }
     }
+
+    function getReadableTrackLabel(item) {
+        return item?.title || decodeSyncId(item?.sync_id) || item?.sync_id || 'Unknown Track';
+    }
 </script>
 
 <div class="animate-fade-in grid-layout">
@@ -458,7 +463,7 @@
                                         <span class="badge {item.action_needed === 'DELETE_MONTH_END' ? 'delete' : 'upgrade'}">
                                             {item.action_needed === 'DELETE_MONTH_END' ? 'Pending Delete' : 'Pending Upgrade'}
                                         </span>
-                                        <span class="title" title={item.sync_id}>{item.title || item.sync_id}</span>
+                                        <span class="title" title={item.sync_id}>{getReadableTrackLabel(item)}</span>
                                     </div>
                                     <div class="artist">{item.artist || 'Unknown Artist'}</div>
                                     <div class="meta">In queue: {item.days_in_queue ?? 0} day(s)</div>

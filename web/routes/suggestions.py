@@ -17,10 +17,119 @@ from database.working_database import get_working_database, UserRating, User, Do
 from database.music_database import get_database as get_music_database
 from core.account_manager import AccountManager
 from services.download_manager import get_download_manager
+from sqlalchemy import func, tuple_
+from collections import Counter
+import base64
 import logging
 
 logger = get_logger("suggestions")
 bp = Blueprint("suggestions", __name__, url_prefix="/api/suggestions")
+
+
+def _decode_sync_id_pair(sync_id: str):
+    """Decode ss:track:meta sync IDs into (artist, title) pairs."""
+    raw = str(sync_id or "").strip()
+    if not raw.startswith("ss:track:meta:"):
+        return None
+
+    encoded = raw.split("ss:track:meta:", 1)[1].split("?", 1)[0].strip()
+    if not encoded:
+        return None
+
+    try:
+        padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
+        decoded = base64.b64decode(padded).decode("utf-8", errors="ignore")
+        artist_name, track_title = decoded.split("|", 1)
+        artist_name = artist_name.strip()
+        track_title = track_title.strip()
+        if artist_name and track_title:
+            return artist_name, track_title
+    except Exception:
+        return None
+
+    return None
+
+
+def _resolve_scope_account(accounts, requested_account_id=None, requested_user_id=None):
+    """Resolve scope account by account_id/user_id, else first active managed user."""
+    if requested_account_id:
+        for account in accounts:
+            if account.get('id') == requested_account_id:
+                return account, 'account_id'
+
+    if requested_user_id:
+        requested_user_id = str(requested_user_id)
+        for account in accounts:
+            if str(account.get('user_id') or '') == requested_user_id:
+                return account, 'user_id'
+
+    active_account = next((account for account in accounts if account.get('is_active')), None)
+    if active_account:
+        return active_account, 'active_account'
+
+    if accounts:
+        return accounts[0], 'first_account'
+
+    return None, 'none'
+
+
+def _calculate_top_genres_for_user(work_session, music_session, user_id: int, limit: int = 5):
+    """Calculate user-scoped taste distribution from highly-rated tracks.
+
+    Uses user ratings from working DB and matches to music DB tracks by decoded
+    sync_id metadata. If explicit genres are unavailable in schema, falls back to
+    artist-name buckets so the UI still receives scoped category data.
+    """
+    rated_sync_ids = [
+        row.sync_id
+        for row in work_session.query(UserRating.sync_id)
+        .filter(
+            UserRating.user_id == user_id,
+            UserRating.rating.isnot(None),
+            UserRating.rating >= 4.0,
+        )
+        .all()
+    ]
+
+    decoded_pairs = []
+    for sync_id in rated_sync_ids:
+        pair = _decode_sync_id_pair(sync_id)
+        if pair:
+            decoded_pairs.append((pair[0].lower(), pair[1].lower()))
+
+    if not decoded_pairs:
+        return []
+
+    from database.music_database import Track, Artist
+
+    matched_tracks = (
+        music_session.query(Track, Artist)
+        .join(Artist, Track.artist_id == Artist.id)
+        .filter(tuple_(func.lower(Artist.name), func.lower(Track.title)).in_(decoded_pairs))
+        .all()
+    )
+
+    if not matched_tracks:
+        return []
+
+    buckets = Counter()
+    for _, artist in matched_tracks:
+        key = str(artist.name or '').strip()
+        if key:
+            buckets[key] += 1
+
+    total = sum(buckets.values())
+    if total <= 0:
+        return []
+
+    top = []
+    for name, count in buckets.most_common(limit):
+        top.append({
+            'name': name,
+            'count': count,
+            'percentage': round((count / total) * 100, 2),
+        })
+    return top
 
 
 @bp.get("/accounts")
@@ -38,11 +147,20 @@ def get_suggestion_accounts():
         working_db = get_working_database()
         music_db = get_music_database()
         
-        # Get all Plex accounts (managed accounts)
+        requested_account_id = request.args.get('account_id', type=int)
+        requested_user_id = request.args.get('user_id')
+
+        # Get all active Plex accounts (managed accounts)
         plex_service_id = config_db.get_or_create_service_id('plex')
         accounts = config_db.get_accounts(service_id=plex_service_id, is_active=True)
+        scoped_account, scope_source = _resolve_scope_account(
+            accounts,
+            requested_account_id=requested_account_id,
+            requested_user_id=requested_user_id,
+        )
         
         result_accounts = []
+        scoped_distribution = []
         
         for account in accounts:
             account_id = account['id']
@@ -55,21 +173,27 @@ def get_suggestion_accounts():
             try:
                 # Find user in working_db and count their high ratings
                 with working_db.session_scope() as work_session:
-                    user = work_session.query(User).filter(
-                        User.plex_id == account.get('user_id')
-                    ).first() if account.get('user_id') else None
+                    with music_db.session_scope() as music_session:
+                        user = work_session.query(User).filter(
+                            User.plex_id == account.get('user_id')
+                        ).first() if account.get('user_id') else None
                     
-                    if user:
-                        # Count approved tracks for this user (high ratings: 4.0+)
-                        high_ratings = work_session.query(UserRating).filter(
-                            UserRating.user_id == user.id,
-                            UserRating.rating >= 4.0
-                        ).count()
-                        total_suggestions = high_ratings
-                    
-                    # Top genres would come from metadata provider
-                    # For now, return empty (would require Spotify/MB API calls)
-                    top_genres = []
+                        if user:
+                            # Count approved tracks for this user (high ratings: 4.0+)
+                            high_ratings = work_session.query(UserRating).filter(
+                                UserRating.user_id == user.id,
+                                UserRating.rating >= 4.0
+                            ).count()
+                            total_suggestions = high_ratings
+                            top_genres = _calculate_top_genres_for_user(
+                                work_session,
+                                music_session,
+                                user.id,
+                                limit=5,
+                            )
+
+                            if scoped_account and scoped_account.get('id') == account_id:
+                                scoped_distribution = top_genres
             except Exception as e:
                 logger.warning(f"Failed to calculate taste profile for account {account_id}: {e}")
             
@@ -85,7 +209,13 @@ def get_suggestion_accounts():
             })
         
         return jsonify({
-            'accounts': result_accounts
+            'accounts': result_accounts,
+            'genre_scope': {
+                'source': scope_source,
+                'account_id': scoped_account.get('id') if scoped_account else None,
+                'user_id': scoped_account.get('user_id') if scoped_account else None,
+            },
+            'genre_distribution': scoped_distribution,
         }), 200
         
     except Exception as e:

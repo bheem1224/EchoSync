@@ -2,6 +2,7 @@
     import { onMount } from 'svelte';
     import apiClient from '../../../api/client';
     import { feedback } from '../../../stores/feedback';
+    import { decodeSyncId } from '../../../lib/utils';
 
     let autoSuggestEnabled = true;
     let togglingAuto = false;
@@ -115,6 +116,8 @@
 
     function normalizePendingTrack(item, index) {
         const nestedTrack = item?.track || item?.track_data || item?.track_payload || {};
+        const rawSyncId = nestedTrack.sync_id || item?.sync_id || item?.id;
+        const readableFromSyncId = decodeSyncId(rawSyncId);
 
         const title =
             nestedTrack.display_title ||
@@ -122,7 +125,7 @@
             nestedTrack.title ||
             item?.track_name ||
             item?.title ||
-            item?.sync_id ||
+            readableFromSyncId ||
             `Track ${index + 1}`;
 
         const artist =
@@ -140,9 +143,7 @@
         );
 
         const syncId =
-            nestedTrack.sync_id ||
-            item?.sync_id ||
-            item?.id ||
+            rawSyncId ||
             `${selectedAccount?.id || 'acct'}-${index}-${Date.now()}`;
 
         const payload = {
@@ -397,7 +398,7 @@
                     <tbody class="divide-y divide-slate-800 text-slate-200">
                         {#each auditHistory as row}
                             <tr class="hover:bg-slate-800/45">
-                                <td class="px-4 py-3 font-medium text-cyan-100">{row.sync_id || row.id}</td>
+                                <td class="px-4 py-3 font-medium text-cyan-100">{decodeSyncId(row.sync_id) || row.id}</td>
                                 <td class="px-4 py-3">
                                     <span class="rounded-full px-2.5 py-1 text-xs font-semibold {row.status === 'completed' ? 'bg-emerald-500/15 text-emerald-300' : row.status === 'failed' ? 'bg-rose-500/20 text-rose-300' : 'bg-cyan-500/20 text-cyan-200'}">
                                         {row.status || 'unknown'}

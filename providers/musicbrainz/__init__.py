@@ -1,3 +1,5 @@
-from .client import MusicBrainzProvider
+from .client import MusicBrainzClient, MusicBrainzProvider
 
-ProviderClass = MusicBrainzProvider
+ProviderClass = MusicBrainzClient
+
+__all__ = ["MusicBrainzClient", "MusicBrainzProvider", "ProviderClass"]
