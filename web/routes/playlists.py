@@ -809,7 +809,8 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
             backoff_base=5.0,
             backoff_factor=2.0,
         )
-        job_queue.run_now(job_name)
+        if not job_queue.execute_job_now(job_name):
+            raise RuntimeError(f"Job '{job_name}' is already running or unavailable")
     except Exception as e:
         logger.error(f"Failed to schedule Plex sync job '{job_name}': {e}")
         return jsonify({"accepted": False, "error": f"Failed to schedule sync: {e}"}), 500
@@ -915,7 +916,8 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
             backoff_base=5.0,
             backoff_factor=2.0,
         )
-        job_queue.run_now(job_name)
+        if not job_queue.execute_job_now(job_name):
+            raise RuntimeError(f"Job '{job_name}' is already running or unavailable")
     except Exception as e:
         logger.error(f"Failed to schedule {target} sync job '{job_name}': {e}")
         return jsonify({"accepted": False, "error": f"Failed to schedule sync: {e}"}), 500

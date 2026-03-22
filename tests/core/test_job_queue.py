@@ -36,4 +36,5 @@ def test_scheduled_job_clears_running_lock_and_disposes_working_db(monkeypatch):
 
     assert queue._is_running.get(job.name, False) is False
     assert job.running is False
+    assert job.name not in queue._jobs
     assert disposed["count"] == 1

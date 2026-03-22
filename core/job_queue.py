@@ -70,6 +70,26 @@ class JobQueue:
         self._heap = [job for job in self._heap if job.name != name]
         heapq.heapify(self._heap)
 
+    def _finalize_job_after_run(self, job: ScheduledJob, finished_at: float) -> None:
+        """Finalize job state after an execution attempt.
+
+        One-time jobs (interval_seconds is None) are transient and must be removed from
+        registry/heap once finished so they do not keep showing up in API/UI job lists.
+        """
+        job.last_finished = finished_at
+        job.running = False
+        self._is_running[job.name] = False
+
+        if job.interval_seconds is not None:
+            if job.enabled:
+                job.next_run = finished_at + job.interval_seconds
+                heapq.heappush(self._heap, job)
+            return
+
+        # Purge transient one-time jobs to prevent "ghost" stale entries in UI.
+        self._remove_from_heap(job.name)
+        self._jobs.pop(job.name, None)
+
     # Public API
     def start(self):
         if self._running:
@@ -240,8 +260,7 @@ class JobQueue:
                 logger.error(f"Error during manual execution of job '{name}': {e}")
             finally:
                 with self._lock:
-                    job.running = False
-                    self._is_running[name] = False
+                    self._finalize_job_after_run(job, time.time())
                 self._release_worker_resources()
         
         thread = threading.Thread(target=_run_job_thread, daemon=True)
@@ -383,12 +402,7 @@ class JobQueue:
                         continue
             finally:
                 with self._lock:
-                    job.last_finished = time.time()
-                    job.running = False
-                    self._is_running[job.name] = False
-                    if job.interval_seconds and job.enabled:
-                        job.next_run = time.time() + job.interval_seconds
-                        heapq.heappush(self._heap, job)
+                    self._finalize_job_after_run(job, time.time())
                 self._workers.release()
                 self._release_worker_resources()
 

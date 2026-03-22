@@ -1,7 +1,7 @@
 from flask import Blueprint, Response, request
 import json
 from core.tiered_logger import get_logger
-from core.job_queue import list_jobs as jq_list_jobs, job_queue, run_job_now
+from core.job_queue import list_jobs as jq_list_jobs, job_queue
 
 logger = get_logger("jobs_route")
 bp = Blueprint("jobs", __name__, url_prefix="/api/jobs")
@@ -92,7 +92,15 @@ def run_job():
                 "started_at": job.get("last_started"),
             }), status=409, mimetype="application/json")
         
-        run_job_now(job_name)
+        if not job_queue.execute_job_now(job_name):
+            return Response(
+                json.dumps({
+                    "error": f"job '{job_name}' could not be executed",
+                    "reason": "Job may be disabled or already running.",
+                }),
+                status=409,
+                mimetype="application/json",
+            )
         logger.info(f"Job triggered: {job_name}")
         return Response(json.dumps({"accepted": True, "job": job_name}), status=200, mimetype="application/json")
     except Exception as e:
