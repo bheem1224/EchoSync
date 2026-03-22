@@ -3,6 +3,7 @@ from core.provider_base import ProviderBase
 from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.settings import config_manager
+from core.storage import get_storage_service
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.tiered_logger import get_logger
 
@@ -59,6 +60,31 @@ class AcoustIDProvider(ProviderBase):
             api_key = str(api_key).strip()
             logger.debug(f"AcoustID API key loaded from config.json (length={len(api_key)})")
         return api_key or None
+
+    def _get_submit_keys(self) -> tuple[Optional[str], Optional[str]]:
+        """Get AcoustID client and user API keys for submission endpoints."""
+        client_key: Optional[str] = None
+        user_key: Optional[str] = None
+
+        try:
+            storage = get_storage_service()
+            client_key = storage.get_service_config(self.name, 'api_key')
+            user_key = storage.get_service_config(self.name, 'user_api_key')
+        except Exception as e:
+            logger.debug(f"Could not load AcoustID submission keys from storage service: {e}")
+
+        client_key = str(client_key).strip() if client_key else None
+        user_key = str(user_key).strip() if user_key else None
+
+        if not client_key:
+            client_key = self._get_api_key()
+
+        if not user_key:
+            cfg_user_key = config_manager.get('acoustid.user_api_key')
+            if cfg_user_key:
+                user_key = str(cfg_user_key).strip()
+
+        return client_key or None, user_key or None
 
     def resolve_fingerprint(self, fingerprint: str, duration: int) -> List[str]:
         """
@@ -124,6 +150,48 @@ class AcoustIDProvider(ProviderBase):
         except Exception as e:
             logger.error(f"Failed to resolve fingerprint: {e}")
             return []
+
+    def submit_fingerprint(self, fingerprint: str, duration: int, mbid: str) -> bool:
+        """Submit fingerprint to AcoustID for community contribution."""
+        client_key, user_key = self._get_submit_keys()
+        if not client_key or not user_key:
+            logger.debug("Skipping AcoustID submit: missing client or user API key")
+            return False
+
+        if not fingerprint or not str(fingerprint).strip() or not mbid or not str(mbid).strip():
+            logger.debug("Skipping AcoustID submit: missing fingerprint or MBID")
+            return False
+
+        try:
+            duration_int = int(duration)
+        except Exception:
+            logger.debug("Skipping AcoustID submit: invalid duration")
+            return False
+
+        payload = {
+            'client': client_key,
+            'user': user_key,
+            'fingerprint.0': str(fingerprint).strip(),
+            'duration.0': duration_int,
+            'mbid.0': str(mbid).strip(),
+        }
+
+        try:
+            response = self.http.post(f"{self.api_base}/submit", data=payload)
+            if response.status_code != 200:
+                logger.warning(f"AcoustID submit failed ({response.status_code}): {response.text[:200]}")
+                return False
+
+            data = response.json() or {}
+            if data.get('status') != 'ok':
+                logger.warning(f"AcoustID submit returned non-ok response: {data}")
+                return False
+
+            logger.info("Submitted AcoustID fingerprint contribution")
+            return True
+        except Exception as e:
+            logger.warning(f"AcoustID submit failed: {e}")
+            return False
 
     # Implement abstract methods
     def authenticate(self, **kwargs) -> bool:
