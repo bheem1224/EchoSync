@@ -3,6 +3,10 @@ name: Build and Publish Docker Image
 on:
   push:
     branches: [ "main" ]
+    
+# Apply the GitHub-recommended fix for the Node 20 deprecation block
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   contents: read
