@@ -1338,6 +1338,80 @@ class PlexClient(ProviderBase):
         except Exception:
             return None
 
+    def _extract_user_rating(self, plex_item: Any) -> Optional[float]:
+        """Normalize Plex user rating to the 0-10 scale used in working DB.
+
+        Plex uses 0 for "unrated" in some payloads, so that should remain None.
+        """
+        raw_rating = getattr(plex_item, 'userRating', None)
+
+        # Some payload shapes expose user state as a mapping-like object.
+        if raw_rating in (None, ''):
+            user_state = getattr(plex_item, 'userState', None)
+            if isinstance(user_state, dict):
+                raw_rating = user_state.get('rating')
+
+        if raw_rating in (None, ''):
+            return None
+
+        try:
+            parsed = float(raw_rating)
+        except Exception:
+            return None
+
+        if parsed <= 0.0:
+            return None
+        if parsed > 10.0:
+            return 10.0
+        return parsed
+
+    def _enrich_interactions_with_user_ratings(
+        self,
+        interactions: List[UserTrackInteraction],
+        target_server: Any,
+    ) -> None:
+        """Backfill missing ratings by resolving metadata items in user context."""
+        if not interactions or not target_server:
+            return
+
+        rating_cache: Dict[str, Optional[float]] = {}
+        enriched_count = 0
+
+        for interaction in interactions:
+            if interaction.rating is not None:
+                continue
+
+            provider_item_id = str(getattr(interaction, 'provider_item_id', '') or '').strip()
+            if not provider_item_id:
+                continue
+
+            if provider_item_id in rating_cache:
+                cached_rating = rating_cache[provider_item_id]
+                if cached_rating is not None:
+                    interaction.rating = cached_rating
+                    enriched_count += 1
+                continue
+
+            resolved_rating: Optional[float] = None
+            try:
+                try:
+                    item = target_server.fetchItem(int(provider_item_id))
+                except Exception:
+                    item = target_server.fetchItem(f'/library/metadata/{provider_item_id}')
+
+                if item is not None:
+                    resolved_rating = self._extract_user_rating(item)
+            except Exception as exc:
+                logger.debug(f"Could not enrich rating for Plex item {provider_item_id}: {exc}")
+
+            rating_cache[provider_item_id] = resolved_rating
+            if resolved_rating is not None:
+                interaction.rating = resolved_rating
+                enriched_count += 1
+
+        if enriched_count:
+            logger.info(f"Enriched {enriched_count} Plex history interactions with user ratings")
+
     def _track_to_interaction(self, plex_track: Any) -> Optional[UserTrackInteraction]:
         """Convert a Plex history or library item into a standardized interaction."""
         converted = self._convert_track_to_soulsync(plex_track)
@@ -1346,18 +1420,7 @@ class PlexClient(ProviderBase):
 
         provider_item_id = str(getattr(plex_track, 'ratingKey', None) or converted.identifiers.get('plex') or '')
         play_count = int(getattr(plex_track, 'viewCount', 0) or 0)
-        raw_rating = getattr(plex_track, 'userRating', None)
-        rating: Optional[float] = None
-        try:
-            if raw_rating is not None:
-                parsed = float(raw_rating)
-                rating = parsed
-                if rating < 0.0:
-                    rating = None
-                elif rating > 10.0:
-                    rating = 10.0
-        except Exception:
-            rating = None
+        rating = self._extract_user_rating(plex_track)
         last_played_at = self._coerce_datetime(getattr(plex_track, 'lastViewedAt', None))
 
         return UserTrackInteraction(
@@ -1395,6 +1458,7 @@ class PlexClient(ProviderBase):
                         interactions.append(interaction)
 
                 if interactions:
+                    self._enrich_interactions_with_user_ratings(interactions, target_server)
                     logger.info(f"Fetched {len(interactions)} Plex history interactions for account_id={account_id}")
                     return interactions[:limit]
             except Exception as e:
@@ -1407,6 +1471,8 @@ class PlexClient(ProviderBase):
                 interaction = self._track_to_interaction(item)
                 if interaction:
                     interactions.append(interaction)
+
+            self._enrich_interactions_with_user_ratings(interactions, target_server)
 
             logger.info(f"Fetched {len(interactions)} fallback Plex history interactions for account_id={account_id}")
             return interactions[:limit]

@@ -285,3 +285,108 @@ def test_track_to_interaction_extracts_user_rating_and_play_count():
     assert interaction is not None
     assert interaction.play_count == 11
     assert interaction.rating == 8.0
+
+
+def test_track_to_interaction_treats_zero_rating_as_unrated():
+    client = PlexClient(account_id=7)
+
+    converted = MagicMock()
+    converted.artist_name = 'Artist'
+    converted.title = 'Song'
+    converted.identifiers = {'plex': '100'}
+    client._convert_track_to_soulsync = lambda _: converted
+
+    plex_track = MagicMock()
+    plex_track.ratingKey = '100'
+    plex_track.viewCount = 1
+    plex_track.userRating = 0
+    plex_track.lastViewedAt = None
+
+    interaction = client._track_to_interaction(plex_track)
+
+    assert interaction is not None
+    assert interaction.rating is None
+
+
+def test_enrich_interactions_with_user_ratings_fetches_missing_only():
+    client = PlexClient(account_id=7)
+
+    missing_rating = UserTrackInteraction(
+        provider_item_id='100',
+        artist_name='Artist A',
+        track_title='Song A',
+        play_count=1,
+        rating=None,
+    )
+    existing_rating = UserTrackInteraction(
+        provider_item_id='200',
+        artist_name='Artist B',
+        track_title='Song B',
+        play_count=2,
+        rating=7.0,
+    )
+
+    rated_item = MagicMock()
+    rated_item.userRating = 9.0
+
+    target_server = MagicMock()
+    target_server.fetchItem.return_value = rated_item
+
+    interactions = [missing_rating, existing_rating]
+    client._enrich_interactions_with_user_ratings(interactions, target_server)
+
+    assert missing_rating.rating == 9.0
+    assert existing_rating.rating == 7.0
+    target_server.fetchItem.assert_called_once_with(100)
+
+
+def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
+    client = PlexClient(account_id=7)
+    client.ensure_connection = lambda: True
+    client.music_library = MagicMock()
+
+    managed_user = MagicMock()
+    managed_user.id = 'managed-1'
+    managed_user.uuid = None
+    managed_user.title = 'Kiddo'
+
+    myplex_account = MagicMock()
+    myplex_account.uuid = 'admin-uuid'
+    myplex_account.id = 123
+    myplex_account.username = 'admin'
+    myplex_account.users.return_value = [managed_user]
+
+    target_server = MagicMock()
+    history_item = MagicMock()
+    history_item.type = 'track'
+    target_server.history.return_value = [history_item]
+
+    rated_metadata = MagicMock()
+    rated_metadata.userRating = 8.5
+    target_server.fetchItem.return_value = rated_metadata
+
+    server = MagicMock()
+    server.myPlexAccount.return_value = myplex_account
+    server.switchUser.return_value = target_server
+    client.server = server
+
+    client._find_music_library_for_server = lambda _: MagicMock()
+    client._track_to_interaction = lambda _: UserTrackInteraction(
+        provider_item_id='123',
+        artist_name='Artist',
+        track_title='Song',
+        play_count=1,
+        rating=None,
+    )
+
+    fake_storage = MagicMock()
+    fake_storage.list_accounts.return_value = [
+        {'id': 8, 'display_name': 'Kiddo', 'user_id': 'managed-1'}
+    ]
+    monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
+
+    interactions = client.fetch_user_history(account_id=8, limit=10)
+
+    assert len(interactions) == 1
+    assert interactions[0].rating == 8.5
+    target_server.fetchItem.assert_called_once_with(123)
