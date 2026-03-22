@@ -3,13 +3,12 @@ name: Build and Publish Docker Image
 on:
   push:
     branches: [ "main" ]
-    
-# Apply the GitHub-recommended fix for the Node 20 deprecation block
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
-  contents: read
+  contents: write  # Upgraded to 'write' so the action can create a GitHub Release
   packages: write
 
 jobs:
@@ -34,27 +33,36 @@ jobs:
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           BASE_IMAGE="ghcr.io/${{ github.repository_owner }}/soulsync"
           
-          # Check for version string (e.g., "version: v1.2.3" or "version: v2.1.0")
+          # Check for version string
           if echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then
-            # Extract exactly the version string
             EXTRACTED_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -n 1 | sed -E 's/version:\s*//i')
             
-            # It's a tagged release: give it BOTH the version tag AND the 'latest' tag
             TAGS="$BASE_IMAGE:$EXTRACTED_VERSION,$BASE_IMAGE:latest"
             echo "Detected version tag: $EXTRACTED_VERSION. Tagging as $EXTRACTED_VERSION and latest."
+            
+            # Export the version for the GitHub Release step
+            echo "version=$EXTRACTED_VERSION" >> $GITHUB_OUTPUT
           else
-            # Normal push to main: give it ONLY the 'beta' tag
             TAGS="$BASE_IMAGE:beta"
             echo "No explicit version found. Building 'beta' only."
           fi
           
-          # Output the final string to GitHub Actions environment
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          # Pass the dynamic list of tags directly to the build action
           tags: ${{ steps.extract_tags.outputs.tags }}
+
+      - name: Create GitHub Release
+        # Only run this step if a version was successfully extracted
+        if: steps.extract_tags.outputs.version != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.extract_tags.outputs.version }}
+          name: Release ${{ steps.extract_tags.outputs.version }}
+          generate_release_notes: true # Automatically generates a changelog based on PRs!
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

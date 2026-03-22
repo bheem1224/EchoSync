@@ -10,7 +10,8 @@ from core.plugin_loader import get_provider
 from core.enums import Capability
 from core.event_bus import event_bus
 from database.working_database import get_working_database, UserTrackState
-from database.music_database import get_database as get_music_database, Track
+from database.music_database import get_database as get_music_database, Track, Artist
+from core.matching_engine.text_utils import generate_deterministic_id
 
 
 def discover_tracks(artist_id: str) -> None:
@@ -59,7 +60,8 @@ def discover_tracks(artist_id: str) -> None:
 
     for track in tracks_to_process:
         full_sync_id = track.sync_id
-        base_sync_id = full_sync_id.split('?')[0]
+        # Canonical base identity: normalized deterministic track key
+        base_sync_id = f"ss:track:meta:{generate_deterministic_id(track.artist_name, track.title)}"
         provider_sync_ids[base_sync_id] = full_sync_id
 
     if not provider_sync_ids:
@@ -69,51 +71,26 @@ def discover_tracks(artist_id: str) -> None:
     music_db = get_music_database()
     physical_sync_ids: Set[str] = set()
 
-    # Let's query the working.db's Download or UserTrackState for sync_ids that exist locally,
-    # OR since the prompt says "Physical_Library_SyncIDs", but `Track` doesn't store `sync_id` URNs directly.
-    # Actually wait, let's look at `database/music_database.py`. The `Track` model does not have a `sync_id` column.
-    # Ah! The memory says "Operational tracking tables ... use a universally addressable structured URN string called sync_id (e.g., ss:track:mbid:... or ss:track:meta:...) as their tracking reference instead of local SQLite integer IDs. SoulSyncTrack implements sync_id as a dynamic property."
-    # If the local `Track` does not store `sync_id`, how do we know if it's in the physical library?
-    # Actually, `Download` has `sync_id`. But `Track` doesn't? Let's check `database/music_database.py` again.
-    # No `sync_id` in `Track`.
-    # Wait, the prompt says "For tracks in music_library.db, should I match by musicbrainz_id directly using the Track model?" And the answer was:
-    # "The base identity is ss:track:meta:{base64(lowercase_artist|lowercase_title)}. In consensus.py and discovery.py, whenever you do internal database diffing or lookups, you must strip the query parameters... When publishing the DOWNLOAD_INTENT, you pass the full URI string."
-    # If the physical `Track` doesn't have `sync_id` column, the only way is to construct the base identity from artist and title.
-    # To avoid N+1 and loading the whole DB, we can just do a join and load only the columns we need, or better, only look for the tracks we are actually checking!
-    # We only care about the tracks in `provider_sync_ids`.
-    # So we can parse the base `sync_id` of the discovered tracks, decode the base64, and query ONLY those titles/artists!
-
     with music_db.session_scope() as session:
-        import base64
-        # Decode the provider base IDs to get the artist/title pairs we're looking for
-        lookups = []
-        for base_id in provider_sync_ids.keys():
-            try:
-                b64_str = base_id.split("meta:")[1]
-                decoded = base64.b64decode(b64_str.encode("ascii")).decode("utf-8")
-                artist, title = decoded.split("|", 1)
-                lookups.append((artist, title, base_id))
-            except Exception:
-                pass
+        from sqlalchemy import func, or_
 
-        # Now we only query the DB for these specific titles to avoid loading everything
-        if lookups:
-            from sqlalchemy import func
-            from sqlalchemy.orm import joinedload
-            # Fetch all tracks from the DB where the lower title is in our lookup list
-            titles = [l[1] for l in lookups]
-            # Batch the query if necessary, but typically an artist tracklist is < 100 tracks
-            local_tracks = session.query(Track).join(Track.artist).filter(
-                func.lower(Track.title).in_(titles)
-            ).all()
+        local_tracks = (
+            session.query(Track)
+            .join(Artist, Track.artist_id == Artist.id)
+            .filter(
+                or_(
+                    func.lower(Artist.name) == str(artist_id or "").lower(),
+                    Artist.musicbrainz_id == artist_id,
+                )
+            )
+            .all()
+        )
 
-            for t in local_tracks:
-                artist = t.artist.name.lower() if t.artist else "unknown"
-                title = t.title.lower() if t.title else "unknown"
-                payload = f"{artist}|{title}"
-                encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-                base_id = f"ss:track:meta:{encoded}"
-                physical_sync_ids.add(base_id)
+        for t in local_tracks:
+            artist_name = t.artist.name if t.artist else "unknown"
+            title = t.title if t.title else "unknown"
+            base_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
+            physical_sync_ids.add(base_id)
 
     # 3. Get Ghost Track base sync_ids
     working_db = get_working_database()
