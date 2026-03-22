@@ -223,6 +223,11 @@
     return String(value);
   }
 
+  onDestroy(() => {
+    clearAutosaveTimer();
+  });
+</script>
+
   function applyMetadataUpdate(newMetadata) {
     if (!newMetadata || typeof newMetadata !== 'object') {
       return;

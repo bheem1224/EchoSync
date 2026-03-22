@@ -224,6 +224,34 @@ def _import_single_file(file_path: Path, metadata: Dict[str, Any]) -> int:
     return manager.bulk_import([track], total_count=1)
 
 
+from flask import send_file
+
+@bp.get("/review-queue/<int:task_id>/stream")
+def stream_review_task_audio(task_id: int):
+    """Stream the physical audio file for the frontend player with Range support."""
+    db = get_working_database()
+    try:
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task:
+                return jsonify({"error": "Task not found"}), 404
+
+            file_path = Path(task.file_path)
+            if not file_path.exists() or not file_path.is_file():
+                return jsonify({"error": "File not found on disk"}), 404
+
+            # Use Flask's native send_file with conditional=True to automatically
+            # handle 'Accept-Ranges: bytes' and safe streaming without holding locks
+            return send_file(
+                file_path,
+                mimetype="audio/mpeg" if file_path.suffix.lower() == ".mp3" else "audio/flac",
+                as_attachment=False,
+                conditional=True
+            )
+    except Exception as e:
+        logger.error(f"Failed to stream review task audio {task_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to stream audio"}), 500
+      
 def _normalize_duration_seconds(metadata: Dict[str, Any], file_path: Path) -> Optional[int]:
     duration = _coerce_int(metadata.get("duration"))
     if duration and duration > 0:
@@ -318,6 +346,32 @@ def update_review_queue_item(task_id: int):
         return jsonify({"error": "Failed to update review task"}), 500
 
 
+def _process_approval_background(task_id: int, final_metadata: Dict[str, Any]):
+    """Background processor for approval tasks to prevent thread blocking."""
+    db = get_working_database()
+    try:
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task:
+                return
+
+            file_path = Path(task.file_path)
+            if not file_path.exists() or not file_path.is_file():
+                return
+
+            enhancer = get_metadata_enhancer()
+
+            # Identify the file first to check AcoustID fingerprint asynchronously if needed
+            # even though we are approving, triggering the metadata enhancer tag_file handles the core logic
+            enhancer.tag_file(file_path, final_metadata)
+
+            _import_single_file(file_path, final_metadata)
+
+            task.detected_metadata = final_metadata
+            task.status = "approved"
+    except Exception as e:
+        logger.error(f"Background approval task {task_id} failed: {e}", exc_info=True)
+
 @bp.post("/review-queue/<int:task_id>/approve")
 def approve_review_queue_item(task_id: int):
     """Approve a review task: write tags, import file, mark approved."""
@@ -338,49 +392,65 @@ def approve_review_queue_item(task_id: int):
             if not file_path.exists() or not file_path.is_file():
                 return jsonify({"error": "File does not exist"}), 404
 
-            enhancer = get_metadata_enhancer()
-            enhancer.tag_file(file_path, final_metadata)
+            from core.job_queue import job_queue
+            def _background_approval_task():
+                try:
+                    # 1. Tag the physical file
+                    enhancer = get_metadata_enhancer()
+                    enhancer.tag_file(file_path, final_metadata)
 
-            contribute_metadata = bool(config_manager.get("preferences.contribute_metadata", True))
-            acoustid_fingerprint = str(final_metadata.get("acoustid_fingerprint") or "").strip()
-            musicbrainz_id = str(final_metadata.get("musicbrainz_id") or "").strip()
+                    # 2. Community Contribution (AcoustID)
+                    contribute_metadata = bool(config_manager.get("preferences.contribute_metadata", True))
+                    acoustid_fingerprint = str(final_metadata.get("acoustid_fingerprint") or "").strip()
+                    musicbrainz_id = str(final_metadata.get("musicbrainz_id") or "").strip()
 
-            if contribute_metadata and acoustid_fingerprint and musicbrainz_id:
-                duration_seconds = _normalize_duration_seconds(final_metadata, file_path)
-                if duration_seconds and duration_seconds > 0:
-                    threading.Thread(
-                        target=_submit_acoustid_contribution_async,
-                        kwargs={
-                            "fingerprint": acoustid_fingerprint,
-                            "duration": duration_seconds,
-                            "mbid": musicbrainz_id,
-                        },
-                        daemon=True,
-                    ).start()
-                else:
-                    logger.debug("Skipping AcoustID contribution: duration unavailable")
+                    if contribute_metadata and acoustid_fingerprint and musicbrainz_id:
+                        duration_seconds = _normalize_duration_seconds(final_metadata, file_path)
+                        if duration_seconds and duration_seconds > 0:
+                            # We are ALREADY safely inside a background task! 
+                            # We can just call this directly without a rogue threading.Thread.
+                            _submit_acoustid_contribution_async(
+                                fingerprint=acoustid_fingerprint,
+                                duration=duration_seconds,
+                                mbid=musicbrainz_id
+                            )
+                        else:
+                            logger.debug("Skipping AcoustID contribution: duration unavailable")
 
-            imported_count = _import_single_file(file_path, final_metadata)
+                    # 3. Import the file into the database
+                    imported_count = _import_single_file(file_path, final_metadata)
+                except Exception as e:
+                    logger.error(f"Background approval failed: {e}")
+                    
+            # Register and run the task as a one-off background job
+            job_name = f"approve_metadata_{task_id}"
+            job_queue.register_job(job_name, _background_approval_task, interval_seconds=None)
+            job_queue.execute_job_now(job_name)
 
-            task.detected_metadata = final_metadata
-            task.status = "approved"
+            # Register a dynamic one-off job for this task
+            job_name = f"approve_review_task_{task_id}"
+            job_queue.register_job(
+                name=job_name,
+                func=lambda: _process_approval_background(task_id, final_metadata),
+                interval_seconds=None,  # One-off job
+                start_after=0.0
+            )
 
             return jsonify(
                 {
                     "success": True,
                     "id": task.id,
-                    "status": task.status,
-                    "imported_count": imported_count,
+                    "status": "approved_queued"
                 }
-            ), 200
+            ), 202
     except Exception as e:
         logger.error(f"Failed to approve review task {task_id}: {e}", exc_info=True)
-        return jsonify({"error": "Failed to approve review task"}), 500
+return jsonify({"error": "Failed to queue approval review task"}), 500
 
 
 @bp.get("/review-queue/<int:task_id>/stream")
 def stream_review_queue_item(task_id: int):
-    """Stream raw audio file for a review task."""
+    """Stream raw audio file for a review task with Range support."""
     db = get_working_database()
     try:
         with db.session_scope() as session:
@@ -392,11 +462,15 @@ def stream_review_queue_item(task_id: int):
             if not file_path:
                 return jsonify({"error": "File does not exist"}), 404
 
+            # Use Flask's native send_file with conditional=True to automatically
+            # handle 'Accept-Ranges: bytes' and safe streaming without holding locks
+            from flask import send_file
             return send_file(
                 file_path,
+                mimetype="audio/mpeg" if file_path.suffix.lower() == ".mp3" else "audio/flac",
                 as_attachment=False,
                 conditional=True,
-                download_name=file_path.name,
+                download_name=file_path.name
             )
     except Exception as e:
         logger.error(f"Failed to stream review task {task_id}: {e}", exc_info=True)
@@ -468,6 +542,7 @@ def lookup_review_queue_item_acoustid(task_id: int):
 @bp.post("/review-queue/<int:task_id>/lookup/musicbrainz")
 def lookup_review_queue_item_musicbrainz(task_id: int):
     """Run text-based MusicBrainz lookup and update detected metadata."""
+    from flask import request
     payload = request.get_json(silent=True) or {}
 
     db = get_working_database()
