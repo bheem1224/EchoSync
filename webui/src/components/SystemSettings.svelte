@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from 'svelte';
   import { feedback } from '../stores/feedback';
   import apiClient from '../api/client';
 
@@ -13,21 +14,33 @@
     storageUsed: '412 GB'
   };
 
-  let providerStates = [
-    { id: 'plex', name: 'Plex', enabled: true },
-    { id: 'navidrome', name: 'Navidrome', enabled: true },
-    { id: 'slskd', name: 'Slskd', enabled: true },
-    { id: 'yt-dlp', name: 'yt-dlp', enabled: false }
-  ];
-
+  let providerStates = [];
+  let loadingProviders = true;
   let isRebuildingDatabase = false;
 
-  function toggleProvider(providerId) {
-    providerStates = providerStates.map((provider) =>
-      provider.id === providerId
-        ? { ...provider, enabled: !provider.enabled }
-        : provider
-    );
+  onMount(async () => {
+    await loadProviders();
+  });
+
+  async function loadProviders() {
+    try {
+      const response = await apiClient.get('/providers');
+      if (response.data && Array.isArray(response.data)) {
+        // Map API response to component state
+        providerStates = response.data.map(provider => ({
+          id: provider.id,
+          name: provider.display_name || provider.name || provider.id,
+          configured: provider.is_configured || false,
+          disabled: provider.disabled || false,
+          category: provider.category || 'provider'
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to load providers:', error);
+      feedback.addToast('Failed to load provider list', 'error');
+    } finally {
+      loadingProviders = false;
+    }
   }
 
   async function handleRebuildDatabase() {
@@ -140,30 +153,56 @@
     <article class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm">
       <h2 class="text-base font-semibold mb-4">Installed Providers</h2>
 
-      <div class="space-y-3">
-        {#each providerStates as provider}
-          <div class="flex items-center justify-between bg-gray-900/60 border border-gray-700/40 rounded-lg px-4 py-3">
-            <div>
-              <p class="font-medium text-gray-100">{provider.name}</p>
-              <p class="text-xs text-gray-400">{provider.enabled ? 'Enabled' : 'Disabled'}</p>
+      {#if loadingProviders}
+        <div class="flex items-center justify-center py-8">
+          <svg class="animate-spin h-6 w-6 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span class="ml-3 text-gray-400">Loading providers...</span>
+        </div>
+      {:else if providerStates.length === 0}
+        <div class="text-center py-6">
+          <p class="text-sm text-gray-400">No providers found</p>
+        </div>
+      {:else}
+        <div class="space-y-3">
+          {#each providerStates as provider (provider.id)}
+            <div class="flex items-center justify-between bg-gray-900/60 border border-gray-700/40 rounded-lg px-4 py-3">
+              <div>
+                <p class="font-medium text-gray-100">{provider.name}</p>
+                <p class="text-xs text-gray-400">
+                  {#if provider.disabled}
+                    <span class="text-red-400">Disabled</span>
+                  {:else if provider.configured}
+                    <span class="text-emerald-400">Configured</span>
+                  {:else}
+                    <span class="text-amber-400">Not Configured</span>
+                  {/if}
+                </p>
+              </div>
+
+              <div class="flex items-center gap-3">
+                <span class="text-xs text-gray-400 capitalize px-2 py-1 bg-gray-800 rounded">
+                  {provider.category}
+                </span>
+                <div class="relative">
+                  {#if provider.configured}
+                    <div class="w-3 h-3 bg-emerald-500 rounded-full"></div>
+                  {:else if provider.disabled}
+                    <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+                  {:else}
+                    <div class="w-3 h-3 bg-amber-500 rounded-full"></div>
+                  {/if}
+                </div>
+              </div>
             </div>
+          {/each}
+        </div>
+      {/if}
 
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                class="sr-only peer"
-                checked={provider.enabled}
-                on:change={() => toggleProvider(provider.id)}
-              />
-              <span class="w-11 h-6 bg-gray-600 rounded-full peer peer-checked:bg-emerald-500 transition-colors duration-200"></span>
-              <span class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full transition-transform duration-200 peer-checked:translate-x-5"></span>
-            </label>
-          </div>
-        {/each}
-      </div>
-
-      <p class="mt-4 text-xs italic text-amber-300/90">
-        Note: Disabling a provider requires a system restart to fully unload.
+      <p class="mt-4 text-xs italic text-gray-300">
+        Green: Configured • Amber: Available but not yet configured • Red: Disabled
       </p>
     </article>
 

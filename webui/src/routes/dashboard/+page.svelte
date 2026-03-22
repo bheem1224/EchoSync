@@ -93,18 +93,25 @@
             isUpdating = true;
             scanningStatus = true;
             
-            // Calculate progress percentage based on tracks processed
-            const total = (progress.total ?? dbStats.tracks) || 1000;
+            // Use the actual total from progress data, with fallback
+            const total = progress.total || 1000;
             const processed = progress.tracks || 0;
             updateProgress = Math.min(100, Math.round((processed / total) * 100));
             
-            updateStatus = `Processing: ${progress.artists || 0} artists, ${progress.albums || 0} albums, ${progress.tracks || 0} tracks`;
+            // Update stats in real-time from progress data
+            dbStats.completed = processed;
+            dbStats.total = total;
+            dbStats.failed = progress.failed || 0;
+            
+            updateStatus = `Processing: ${progress.artists || 0} artists, ${progress.albums || 0} albums, ${processed} tracks`;
           } else if (isUpdating) {
             // Just finished
             isUpdating = false;
             scanningStatus = false;
             updateProgress = 100;
             updateStatus = 'Complete';
+            
+            // Load fresh stats from API
             await loadDatabaseStats();
 
             // Stop polling since update is finished
@@ -113,9 +120,13 @@
               pollingIntervalId = null;
             }
 
+            // Reset after 3 seconds
             setTimeout(() => {
               updateProgress = 0;
               updateStatus = '';
+              dbStats.completed = 0;
+              dbStats.total = 0;
+              dbStats.failed = 0;
             }, 3000);
           } else {
              // Not running and not updating, stop polling
@@ -128,7 +139,7 @@
       } catch (error) {
         // Silently fail - polling
       }
-    }, 2000);
+    }, 1000);
   }
 
   onDestroy(() => {
@@ -287,15 +298,15 @@
           <div class="progress-info">
             <span class="progress-label">{updateStatus}</span>
             {#if dbStats.total > 0}
-              <span class="progress-count">{dbStats.completed}/{dbStats.total} items (0.0%)</span>
+              <span class="progress-count">{dbStats.completed}/{dbStats.total} tracks ({updateProgress}%)</span>
             {/if}
           </div>
           <div class="progress-bar">
             <div class="progress-fill" style="width: {updateProgress}%"></div>
           </div>
-          {#if dbStats.completed > 0}
+          {#if dbStats.completed > 0 && dbStats.total > 0}
             <div class="completion-status">
-              Completed: {dbStats.completed} successful, {dbStats.failed} failed.
+              {dbStats.failed > 0 ? `${dbStats.completed} processed, ${dbStats.failed} failed` : `${dbStats.completed} tracks processed`}
             </div>
           {/if}
         </div>
