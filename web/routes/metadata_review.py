@@ -222,35 +222,6 @@ def _import_single_file(file_path: Path, metadata: Dict[str, Any]) -> int:
     manager = LibraryManager(db.session_factory)
     track = _build_track_from_metadata(file_path, metadata)
     return manager.bulk_import([track], total_count=1)
-
-
-from flask import send_file
-
-@bp.get("/review-queue/<int:task_id>/stream")
-def stream_review_task_audio(task_id: int):
-    """Stream the physical audio file for the frontend player with Range support."""
-    db = get_working_database()
-    try:
-        with db.session_scope() as session:
-            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
-            if not task:
-                return jsonify({"error": "Task not found"}), 404
-
-            file_path = Path(task.file_path)
-            if not file_path.exists() or not file_path.is_file():
-                return jsonify({"error": "File not found on disk"}), 404
-
-            # Use Flask's native send_file with conditional=True to automatically
-            # handle 'Accept-Ranges: bytes' and safe streaming without holding locks
-            return send_file(
-                file_path,
-                mimetype="audio/mpeg" if file_path.suffix.lower() == ".mp3" else "audio/flac",
-                as_attachment=False,
-                conditional=True
-            )
-    except Exception as e:
-        logger.error(f"Failed to stream review task audio {task_id}: {e}", exc_info=True)
-        return jsonify({"error": "Failed to stream audio"}), 500
       
 def _normalize_duration_seconds(metadata: Dict[str, Any], file_path: Path) -> Optional[int]:
     duration = _coerce_int(metadata.get("duration"))
@@ -445,7 +416,6 @@ def approve_review_queue_item(task_id: int):
             ), 202
     except Exception as e:
         logger.error(f"Failed to approve review task {task_id}: {e}", exc_info=True)
-return jsonify({"error": "Failed to queue approval review task"}), 500
 
 
 @bp.get("/review-queue/<int:task_id>/stream")
