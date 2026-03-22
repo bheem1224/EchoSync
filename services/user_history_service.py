@@ -5,7 +5,8 @@ Syncs historical play counts and ratings from providers into working.db,
 indexed by deterministic sync_id generated from normalized track metadata.
 """
 
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Set
+import re
 from core.tiered_logger import get_logger
 from database.config_database import get_config_database
 from database.working_database import get_working_database, UserRating, User
@@ -258,7 +259,18 @@ class UserHistoryService:
                     interaction_records = []
                     unique_pairs = set()
 
-                    provider_item_ids = [interaction.provider_item_id for interaction in interactions if interaction.provider_item_id]
+                    provider_item_ids: Set[str] = set()
+                    for interaction in interactions:
+                        raw_id = (interaction.provider_item_id or "").strip()
+                        if not raw_id:
+                            continue
+                        provider_item_ids.add(raw_id)
+                        normalized_id = self._normalize_provider_item_id(raw_id)
+                        if normalized_id:
+                            provider_item_ids.add(normalized_id)
+
+                    if not provider_item_ids:
+                        self.logger.debug("No provider_item_id values found in interactions; using text fallback only")
 
                     # O(1) match via ExternalIdentifiers
                     ext_idents = music_session.query(ExternalIdentifier, Track.title, Artist.name).join(
@@ -267,23 +279,30 @@ class UserHistoryService:
                         Artist, Track.artist_id == Artist.id
                     ).filter(
                         ExternalIdentifier.provider_source == 'plex',
-                        ExternalIdentifier.provider_item_id.in_(provider_item_ids)
+                        ExternalIdentifier.provider_item_id.in_(list(provider_item_ids))
                     ).all()
 
-                    plex_id_to_track_info = {
-                        ext_ident.provider_item_id: (artist_name, track_title)
-                        for ext_ident, track_title, artist_name in ext_idents
-                    }
+                    plex_id_to_track_info: Dict[str, tuple] = {}
+                    for ext_ident, track_title, artist_name in ext_idents:
+                        raw_ext_id = str(ext_ident.provider_item_id)
+                        plex_id_to_track_info[raw_ext_id] = (artist_name, track_title)
+                        normalized_ext_id = self._normalize_provider_item_id(raw_ext_id)
+                        if normalized_ext_id:
+                            plex_id_to_track_info[normalized_ext_id] = (artist_name, track_title)
 
                     for interaction in interactions:
                         try:
+                            interaction_provider_id = self._normalize_provider_item_id(interaction.provider_item_id)
+                            if not interaction_provider_id:
+                                interaction_provider_id = (interaction.provider_item_id or "").strip()
+
                             # O(1) lookup via identifiers
-                            if interaction.provider_item_id in plex_id_to_track_info:
-                                artist_name, track_title = plex_id_to_track_info[interaction.provider_item_id]
+                            if interaction_provider_id in plex_id_to_track_info:
+                                artist_name, track_title = plex_id_to_track_info[interaction_provider_id]
                                 sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, track_title)}"
                             else:
-                                if interaction.provider_item_id and interaction.provider_item_id.startswith('ss:track:meta:'):
-                                    sync_id = interaction.provider_item_id.split('?')[0]
+                                if interaction_provider_id and interaction_provider_id.startswith('ss:track:meta:'):
+                                    sync_id = interaction_provider_id.split('?')[0]
                                     interaction_records.append({
                                         "interaction": interaction,
                                         "sync_id": sync_id,
@@ -361,6 +380,32 @@ class UserHistoryService:
             self.logger.error(f"Error in _process_interactions: {e}", exc_info=True)
         
         return matched_count
+
+    def _normalize_provider_item_id(self, provider_item_id: Optional[str]) -> str:
+        """Normalize provider item IDs for robust reverse lookups.
+
+        Handles common Plex representations such as:
+        - "120760"
+        - "/library/metadata/120760"
+        - "http://host:32400/library/metadata/120760"
+        - "plex://track/120760"
+        """
+        raw = str(provider_item_id or "").strip()
+        if not raw:
+            return ""
+
+        if raw.startswith("ss:track:meta:"):
+            return raw
+
+        metadata_match = re.search(r"/library/metadata/(\d+)", raw)
+        if metadata_match:
+            return metadata_match.group(1)
+
+        trailing_digits = re.search(r"(\d+)$", raw)
+        if trailing_digits:
+            return trailing_digits.group(1)
+
+        return raw
 
     def _bulk_upsert_user_ratings(self, work_session, rating_payloads: List[Dict[str, object]]) -> None:
         """Write matched user ratings in a single bulk transaction."""

@@ -1,7 +1,7 @@
 from services.user_history_service import UserHistoryService
 from core.user_history import UserTrackInteraction
 from core.matching_engine.text_utils import generate_deterministic_id
-from database.music_database import Artist, Track
+from database.music_database import Artist, Track, ExternalIdentifier
 from database.working_database import User, UserRating
 
 
@@ -123,3 +123,56 @@ def test_process_interactions_persists_listen_count_without_rating(mock_db, mock
         row = work_session.query(UserRating).filter(UserRating.user_id == user_id, UserRating.sync_id == sync_id).one()
         assert row.play_count == 12
         assert row.rating is None
+
+
+def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(mock_db, mock_work_db):
+    service = UserHistoryService()
+    service.music_db = mock_db
+    service.working_db = mock_work_db
+
+    with mock_db.session_scope() as music_session:
+        artist = Artist(name="Coolio")
+        music_session.add(artist)
+        music_session.flush()
+
+        track = Track(title="Gangsta's Paradise", artist=artist)
+        music_session.add(track)
+        music_session.flush()
+
+        music_session.add(
+            ExternalIdentifier(
+                track_id=track.id,
+                provider_source="plex",
+                provider_item_id="120760",
+                raw_data=None,
+            )
+        )
+
+    with mock_work_db.session_scope() as work_session:
+        user = User(username="listener3", provider="plex")
+        work_session.add(user)
+        work_session.flush()
+        user_id = user.id
+
+    stats = {"ratings_imported": 0, "listen_count_imported": 0}
+    interactions = [
+        UserTrackInteraction(
+            provider_item_id="/library/metadata/120760",
+            artist_name="Various Artists",
+            track_title="Gangsta's Paradise",
+            rating=4.0,
+            play_count=2,
+        )
+    ]
+
+    matched_count = service._process_interactions(user_id, interactions, stats)
+
+    assert matched_count == 1
+    assert stats["ratings_imported"] == 1
+    assert stats["listen_count_imported"] == 2
+
+    expected_sync_id = f"ss:track:meta:{generate_deterministic_id('Coolio', 'Gangsta\'s Paradise')}"
+    with mock_work_db.session_scope() as work_session:
+        row = work_session.query(UserRating).filter(UserRating.user_id == user_id, UserRating.sync_id == expected_sync_id).one()
+        assert row.rating == 4.0
+        assert row.play_count == 2
