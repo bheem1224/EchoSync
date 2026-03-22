@@ -10,32 +10,27 @@ def test_scheduled_sync_passes_target_user_id_to_plex(monkeypatch):
 
     monkeypatch.setattr('web.routes.playlists.job_queue.register_job', fake_register_job)
 
-    class FakeSourceProvider:
-        def get_playlist_tracks(self, playlist_id):
-            return [
-                {
-                    'title': 'Song',
-                    'artist_name': 'Artist',
-                    'id': 'source-1',
-                }
-            ]
+    analysis_calls = []
 
-    class FakeTargetProvider:
-        def search(self, query, type='track', limit=5):
-            return [
-                {
-                    'id': '123',
-                }
-            ]
+    def fake_analyze_playlists_internal(source, target_source, playlists, quality_profile='Auto'):
+        analysis_calls.append({
+            'source': source,
+            'target_source': target_source,
+            'playlists': playlists,
+            'quality_profile': quality_profile,
+        })
+        return {
+            'summary': {
+                'matched_pairs': [
+                    {
+                        'track_id': 42,
+                        'target_identifier': '123',
+                    }
+                ]
+            }
+        }
 
-    def fake_get_provider_for_account(provider_name, acc_id=None):
-        if provider_name == 'spotify':
-            return FakeSourceProvider(), acc_id
-        if provider_name == 'plex':
-            return FakeTargetProvider(), None
-        return None, None
-
-    monkeypatch.setattr('web.routes.playlists._get_provider_for_account', fake_get_provider_for_account)
+    monkeypatch.setattr('web.routes.playlists._analyze_playlists_internal', fake_analyze_playlists_internal)
 
     sync_calls = []
 
@@ -70,6 +65,11 @@ def test_scheduled_sync_passes_target_user_id_to_plex(monkeypatch):
 
     _register_scheduled_sync_job(sync_config)
     captured['func']()
+
+    assert len(analysis_calls) == 1
+    assert analysis_calls[0]['source'] == 'spotify'
+    assert analysis_calls[0]['target_source'] == 'plex'
+    assert analysis_calls[0]['playlists'][0]['target_user_id'] == 'managed-1'
 
     assert len(sync_calls) == 1
     assert sync_calls[0]['payload']['target_user_id'] == 'managed-1'

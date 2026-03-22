@@ -65,6 +65,475 @@ def _extract_target_identifier(candidate):
 
     return getattr(candidate, 'id', None)
 
+
+def _analyze_playlists_internal(source, target_source, playlists, quality_profile="Auto"):
+    """Run the canonical playlist matching flow used by both manual and scheduled syncs."""
+    from database.music_database import MusicDatabase
+    from core.provider import PlaylistSupport
+    from core.matching_engine.scoring_profile import ExactSyncProfile
+    from sqlalchemy import text
+
+    source_provider, default_acc = _get_provider_for_account(source, None)
+    if source_provider is None:
+        raise RuntimeError(f"No {source.title()} accounts configured. Please add an account in Settings.")
+
+    caps = getattr(source_provider, 'capabilities', None)
+    if not caps or caps.supports_playlists not in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
+        raise RuntimeError(f"Provider {source} does not support reading playlists")
+
+    db = MusicDatabase()
+    matching_engine = WeightedMatchingEngine(ExactSyncProfile())
+
+    all_tracks = []
+    found_count = 0
+    missing_count = 0
+
+    for playlist_info in playlists:
+        playlist_id = playlist_info.get("id")
+        playlist_name = playlist_info.get("name", "Unknown Playlist")
+
+        acc_id = playlist_info.get('account_id')
+        if acc_id and source in ['spotify', 'tidal']:
+            provider_instance, _ = _get_provider_for_account(source, acc_id)
+            if provider_instance:
+                source_provider = provider_instance
+
+        if not playlist_id:
+            logger.warning(f"Skipping playlist without id: {playlist_name}")
+            continue
+
+        try:
+            logger.info(f"Fetching tracks for playlist: {playlist_name} (id: {playlist_id})")
+            source_tracks = source_provider.get_playlist_tracks(playlist_id)
+
+            for source_track in source_tracks:
+                track_title = source_track.title
+                track_artist = source_track.artist_name
+                track_album = source_track.album_title or ''
+                track_duration = source_track.duration
+
+                def _strip_feat(title: str) -> str:
+                    if not title:
+                        return ""
+                    cleaned = re.sub(r"\s*[\(\[\{]\s*(feat\.?|featuring|with)\b[^\)\]\}]*[\)\]\}]", "", title, flags=re.IGNORECASE)
+                    cleaned = re.sub(r"\s+(feat\.?|featuring|with)\b.*$", "", cleaned, flags=re.IGNORECASE)
+                    return cleaned.strip() or title
+
+                search_title = _strip_feat(track_title)
+                library_match = "Not Found"
+                best_score = 0
+
+                try:
+                    with db.engine.connect() as conn:
+                        tier1_query = text("""
+                            SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
+                            FROM tracks t
+                            JOIN artists a ON t.artist_id = a.id
+                            LEFT JOIN albums al ON t.album_id = al.id
+                            WHERE (
+                                (LOWER(a.name) = LOWER(:artist_exact) AND LOWER(t.title) LIKE LOWER(:title_pattern))
+                                OR
+                                (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) = LOWER(:title_exact))
+                                OR
+                                (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) LIKE LOWER(:title_pattern))
+                            )
+                            ORDER BY 
+                                (LOWER(a.name) = LOWER(:artist_exact)) DESC,
+                                (LOWER(t.title) = LOWER(:title_exact)) DESC,
+                                ABS(t.duration - :duration) ASC
+                            LIMIT 20
+                        """)
+
+                        result = conn.execute(tier1_query, {
+                            "artist_exact": track_artist,
+                            "artist_pattern": f"%{track_artist}%",
+                            "title_exact": search_title,
+                            "title_pattern": f"%{search_title}%",
+                            "duration": track_duration or 0,
+                        })
+                        candidates = result.fetchall()
+                        tier2_mode = False
+
+                        if not candidates and track_duration:
+                            sql_duration_tolerance_ms = 2000
+                            duration_min = track_duration - sql_duration_tolerance_ms
+                            duration_max = track_duration + sql_duration_tolerance_ms
+
+                            logger.debug(
+                                f"Tier 1 found 0 candidates for '{track_title}' by '{track_artist}'. "
+                                f"Attempting Tier 2 with title='{search_title}', duration={track_duration}ms ±{sql_duration_tolerance_ms}ms"
+                            )
+                            tier2_query = text("""
+                                SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
+                                FROM tracks t
+                                JOIN artists a ON t.artist_id = a.id
+                                LEFT JOIN albums al ON t.album_id = al.id
+                                WHERE (
+                                    LOWER(t.title) = LOWER(:title_exact)
+                                    OR LOWER(REPLACE(REPLACE(t.title, '''', ''), '’', '')) = LOWER(REPLACE(REPLACE(:title_exact, '''', ''), '’', ''))
+                                )
+                                  AND t.duration IS NOT NULL
+                                  AND t.duration BETWEEN :duration_min AND :duration_max
+                                ORDER BY ABS(t.duration - :duration) ASC
+                                LIMIT 10
+                            """)
+
+                            result = conn.execute(tier2_query, {
+                                "title_exact": search_title,
+                                "duration": track_duration,
+                                "duration_min": duration_min,
+                                "duration_max": duration_max,
+                            })
+                            candidates = result.fetchall()
+                            tier2_mode = True
+
+                    external_ids_map = {}
+                    if target_source and candidates:
+                        candidate_ids = [row[0] for row in candidates]
+                        try:
+                            external_ids_map = db.get_external_identifier_map(target_source, candidate_ids)
+                        except Exception as ext_err:
+                            logger.debug(f"External identifier lookup failed for target '{target_source}': {ext_err}")
+
+                    best_match = None
+                    best_match_track_id = None
+                    best_match_target_id = None
+                    candidate_diagnostics = []
+
+                    for candidate_row in candidates:
+                        candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
+                        raw_title_candidate = candidate_row[1]
+                        edition_candidate = candidate_row[3]
+                        sort_title_candidate = None
+                        try:
+                            sort_title_candidate = candidate_row[6]
+                        except Exception:
+                            sort_title_candidate = None
+
+                        if edition_candidate is None and sort_title_candidate and sort_title_candidate != raw_title_candidate:
+                            version_pattern = r'\b(Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)\b'
+                            version_match = re.search(version_pattern, sort_title_candidate, re.IGNORECASE)
+                            if version_match:
+                                edition_candidate = version_match.group(0)
+
+                        candidate_track = SoulSyncTrack(
+                            raw_title=raw_title_candidate,
+                            artist_name=candidate_row[4],
+                            album_title=candidate_row[7] or "",
+                            duration=candidate_row[2] if candidate_row[2] else 0,
+                            edition=edition_candidate,
+                        )
+
+                        if source_track.edition or candidate_track.edition:
+                            logger.debug(
+                                f"Version comparison: source='{source_track.edition}' vs candidate='{candidate_track.edition}' "
+                                f"(source_title='{source_track.title}', candidate_title='{candidate_track.title}')"
+                            )
+
+                        if tier2_mode:
+                            result = matching_engine.calculate_title_duration_match(
+                                source_track,
+                                candidate_track,
+                                target_source=target_source,
+                                target_identifier=candidate_target_id,
+                            )
+                        else:
+                            result = matching_engine.calculate_match(
+                                source_track,
+                                candidate_track,
+                                target_source=target_source,
+                                target_identifier=candidate_target_id,
+                            )
+
+                        logger.debug(f"Match score for '{track_title}' vs '{candidate_track.title}': {result.confidence_score}")
+
+                        candidate_diagnostics.append({
+                            "candidate": {
+                                "title": candidate_track.title,
+                                "artist": candidate_track.artist_name,
+                                "duration": candidate_track.duration or 0,
+                            },
+                            "result": {
+                                "score": result.confidence_score,
+                                "passed_version": result.passed_version_check,
+                                "passed_edition": result.passed_edition_check,
+                                "fuzzy_text": result.fuzzy_text_score,
+                                "duration_score": result.duration_match_score,
+                                "quality_bonus": result.quality_bonus_applied,
+                                "version_penalty": result.version_penalty_applied,
+                                "edition_penalty": result.edition_penalty_applied,
+                            },
+                            "reasoning": result.reasoning,
+                        })
+
+                        if result.confidence_score > best_score:
+                            best_score = result.confidence_score
+                            best_match = (candidate_row[0], result)
+                            best_match_track_id = candidate_row[0]
+                            best_match_target_id = candidate_target_id
+
+                    tier2_needed_due_to_version = (
+                        not tier2_mode and len(candidates) > 0 and best_score == 0.0 and
+                        all(not d["result"]["passed_version"] for d in candidate_diagnostics)
+                    )
+                    tier2_needed_due_to_failure = (
+                        not tier2_mode and len(candidates) > 0 and best_score < 70 and track_duration
+                    )
+                    if tier2_needed_due_to_version or tier2_needed_due_to_failure:
+                        logger.debug(
+                            (
+                                f"Tier 2 escalation triggered for '{track_title}' by '{track_artist}'. "
+                                + ("Reason: version mismatch." if tier2_needed_due_to_version else "Reason: no acceptable Tier 1 match.")
+                            )
+                        )
+
+                        candidates = []
+                        candidate_diagnostics = []
+                        best_score = 0
+                        best_match = None
+
+                        if track_duration:
+                            sql_duration_tolerance_ms = 2000
+                            duration_min = track_duration - sql_duration_tolerance_ms
+                            duration_max = track_duration + sql_duration_tolerance_ms
+
+                            with db.engine.connect() as tier2_conn:
+                                tier2_query = text("""
+                                    SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
+                                    FROM tracks t
+                                    JOIN artists a ON t.artist_id = a.id
+                                    LEFT JOIN albums al ON t.album_id = al.id
+                                    WHERE LOWER(t.title) = LOWER(:title_exact)
+                                    AND t.duration IS NOT NULL
+                                    AND t.duration BETWEEN :duration_min AND :duration_max
+                                    ORDER BY ABS(t.duration - :duration) ASC
+                                    LIMIT 10
+                                """)
+
+                                result = tier2_conn.execute(tier2_query, {
+                                    "title_exact": search_title,
+                                    "duration": track_duration,
+                                    "duration_min": duration_min,
+                                    "duration_max": duration_max,
+                                })
+                                candidates = result.fetchall()
+
+                            if candidates:
+                                logger.debug(
+                                    f"Tier 2 escalation found {len(candidates)} title+duration matches for '{track_title}'. "
+                                    f"Re-scoring with Tier 2 profile..."
+                                )
+
+                                external_ids_map = {}
+                                if target_source:
+                                    candidate_ids = [row[0] for row in candidates]
+                                    try:
+                                        external_ids_map = db.get_external_identifier_map(target_source, candidate_ids)
+                                    except Exception as ext_err:
+                                        logger.debug(f"External identifier lookup failed for Tier 2: {ext_err}")
+
+                                for candidate_row in candidates:
+                                    candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
+                                    raw_title_candidate = candidate_row[1]
+                                    edition_candidate = candidate_row[3]
+                                    sort_title_candidate = None
+                                    try:
+                                        sort_title_candidate = candidate_row[6]
+                                    except Exception:
+                                        sort_title_candidate = None
+
+                                    if edition_candidate is None and sort_title_candidate and sort_title_candidate != raw_title_candidate:
+                                        version_pattern = r'\b(Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)\b'
+                                        version_match = re.search(version_pattern, sort_title_candidate, re.IGNORECASE)
+                                        if version_match:
+                                            edition_candidate = version_match.group(0)
+
+                                    candidate_track = SoulSyncTrack(
+                                        raw_title=raw_title_candidate,
+                                        artist_name=candidate_row[4],
+                                        album_title=candidate_row[7] or "",
+                                        duration=candidate_row[2] if candidate_row[2] else 0,
+                                        edition=edition_candidate,
+                                    )
+
+                                    result = matching_engine.calculate_title_duration_match(
+                                        source_track,
+                                        candidate_track,
+                                        target_source=target_source,
+                                        target_identifier=candidate_target_id,
+                                    )
+
+                                    logger.debug(f"Tier 2 re-score: '{track_title}' vs '{candidate_track.title}': {result.confidence_score}")
+
+                                    candidate_diagnostics.append({
+                                        "candidate": {
+                                            "title": candidate_track.title,
+                                            "artist": candidate_track.artist_name,
+                                            "duration": candidate_track.duration or 0,
+                                        },
+                                        "result": {
+                                            "score": result.confidence_score,
+                                            "passed_version": result.passed_version_check,
+                                            "passed_edition": result.passed_edition_check,
+                                            "fuzzy_text": result.fuzzy_text_score,
+                                            "duration_score": result.duration_match_score,
+                                            "quality_bonus": result.quality_bonus_applied,
+                                            "version_penalty": result.version_penalty_applied,
+                                            "edition_penalty": result.edition_penalty_applied,
+                                        },
+                                        "reasoning": result.reasoning,
+                                    })
+
+                                    if result.confidence_score > best_score:
+                                        best_score = result.confidence_score
+                                        best_match = (candidate_row[0], result)
+                                        best_match_track_id = candidate_row[0]
+                                        best_match_target_id = candidate_target_id
+
+                                tier2_mode = True
+
+                    if best_score >= 85:
+                        library_match = "Found"
+                        found_count += 1
+                    elif best_score >= 70:
+                        library_match = f"Found (score: {int(best_score)}%)"
+                        found_count += 1
+                    else:
+                        library_match = "Not Found"
+                        missing_count += 1
+                        if logger.isEnabledFor(logging.DEBUG):
+                            try:
+                                src_dur = source_track.duration or 0
+                                logger.debug(
+                                    f"Unmatched: '{track_title}' by '{track_artist}' (duration: {src_dur} ms). "
+                                    f"Considered {len(candidate_diagnostics)} candidates."
+                                )
+                                top_candidates = sorted(candidate_diagnostics, key=lambda c: c["result"]["score"], reverse=True)[:5]
+                                for idx, diag in enumerate(top_candidates, start=1):
+                                    cand = diag["candidate"]
+                                    res = diag["result"]
+                                    logger.debug(
+                                        (
+                                            f"  Candidate {idx}: '{cand['title']}' by '{cand['artist']}' "
+                                            f"(duration: {cand['duration']} ms) → score {res['score']:.1f} | "
+                                            f"version_pass={res['passed_version']}, edition_pass={res['passed_edition']}, "
+                                            f"fuzzy={res['fuzzy_text']:.2f}, duration={res['duration_score']:.2f}, "
+                                            f"penalties=V-{res['version_penalty']:.1f} E-{res['edition_penalty']:.1f}, "
+                                            f"quality=+{res['quality_bonus']:.1f}"
+                                        )
+                                    )
+                                    logger.debug(f"    Reasoning: {diag['reasoning']}")
+                            except Exception as log_err:
+                                logger.debug(f"Verbose unmatched diagnostics failed: {log_err}")
+
+                    if best_match:
+                        logger.info(f"Matched '{track_title}' with database track (score: {best_score:.0f}%)")
+
+                except Exception as e:
+                    logger.error(f"Error searching for track '{track_title}' by '{track_artist}': {e}", exc_info=True)
+                    missing_count += 1
+                    best_match_track_id = None
+                    best_match_target_id = None
+
+                duration_str = "–"
+                if track_duration:
+                    mins = track_duration // 60000
+                    secs = (track_duration % 60000) // 1000
+                    duration_str = f"{mins}:{secs:02d}"
+
+                all_tracks.append({
+                    "playlist": playlist_name,
+                    "title": track_title,
+                    "artist": track_artist,
+                    "album": track_album,
+                    "duration": duration_str,
+                    "duration_ms": track_duration,
+                    "library_match": library_match,
+                    "download_status": "-",
+                    "matched_track_id": best_match_track_id,
+                    "match_score": best_score,
+                    "target_source": target_source,
+                    "target_identifier": best_match_target_id,
+                    "target_exists": bool(best_match_target_id),
+                    "source_identifier": (
+                        None if not getattr(source_track, 'identifiers', None) else (
+                            source_track.identifiers.get(source)
+                            if isinstance(source_track.identifiers, dict) and source in source_track.identifiers
+                            else next(iter(source_track.identifiers.values()), None)
+                            if isinstance(source_track.identifiers, dict) and source_track.identifiers
+                            else None
+                        )
+                    ),
+                })
+
+        except Exception as e:
+            logger.error(f"Error fetching tracks for playlist {playlist_name}: {e}", exc_info=True)
+            all_tracks.append({
+                "playlist": playlist_name,
+                "title": f"Error: {str(e)}",
+                "artist": "–",
+                "album": "–",
+                "duration": "–",
+                "library_match": "Error",
+                "download_status": "-",
+            })
+
+    total_tracks = len(all_tracks)
+    try:
+        matched_map = {}
+        for t in all_tracks:
+            mid = t.get("matched_track_id")
+            if not mid:
+                continue
+            matched_map.setdefault(mid, []).append(t)
+
+        duplicate_matches = {k: v for k, v in matched_map.items() if len(v) > 1}
+        if duplicate_matches and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("[system] - Duplicate match analysis: found %d SoulSync tracks matched by multiple source tracks", len(duplicate_matches))
+            for soul_id, entries in duplicate_matches.items():
+                try:
+                    lines = []
+                    for e in entries:
+                        src_id = e.get("source_identifier") or "<unknown_source_id>"
+                        lines.append(f"{src_id} ('{e.get('title')}' by '{e.get('artist')}')")
+                    logger.debug(f"[system] - Duplicate match: {', '.join([f'{l} matched SoulSyncTrack {soul_id}' for l in lines])}")
+                except Exception as dup_err:
+                    logger.debug(f"[system] - Duplicate match formatting failed for SoulSyncTrack {soul_id}: {dup_err}")
+    except Exception as dup_all_err:
+        logger.debug(f"[system] - Duplicate match analysis failed: {dup_all_err}")
+
+    matched_pairs = []
+    missing_tracks = []
+    for track in all_tracks:
+        if track.get("matched_track_id") and track.get("target_identifier"):
+            matched_pairs.append({
+                "track_id": track["matched_track_id"],
+                "target_identifier": track["target_identifier"],
+            })
+        elif not track.get("matched_track_id"):
+            missing_tracks.append({
+                "title": track["title"],
+                "artist": track["artist"],
+                "album": track["album"],
+                "duration": track.get("duration_ms"),
+            })
+
+    return {
+        "summary": {
+            "total_tracks": total_tracks,
+            "found_in_library": found_count,
+            "missing_tracks": missing_count,
+            "downloaded": 0,
+            "quality_profile": quality_profile,
+            "source": source,
+            "target": target_source,
+            "matched_pairs": matched_pairs,
+            "can_sync": len(matched_pairs) > 0,
+        },
+        "tracks": all_tracks,
+        "missing": missing_tracks,
+    }
+
 @bp.get("/")
 def list_playlists():
     # Placeholder: surface playlists via provider adapters (future)
@@ -87,563 +556,8 @@ def analyze_playlists():
         return jsonify({"error": "playlists list required"}), 400
 
     try:
-        from database.music_database import MusicDatabase
-
-        # Prepare base provider instance (may be overridden per-playlist)
-        source_provider, default_acc = _get_provider_for_account(source, None)
-        if source_provider is None:
-            return jsonify({"error": f"No {source.title()} accounts configured. Please add an account in Settings."}), 400
-
-        try:
-            # see above; provider instance created already
-            pass
-        except ValueError as e:
-            return jsonify({"error": f"Provider {source} is disabled or not available"}), 400
-        
-        # Check if provider has playlist support
-        caps = getattr(source_provider, 'capabilities', None)
-        from core.provider import PlaylistSupport
-
-        if not caps or caps.supports_playlists not in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
-            return jsonify({"error": f"Provider {source} does not support reading playlists"}), 400
-        
-        # Initialize database for track lookups
-        db = MusicDatabase()
-        
-        # Initialize matching engine with EXACT_SYNC profile
-        # Use EXACT_SYNC because we need high-confidence text/duration matching
-        # without relying on fingerprints (Spotify metadata vs Plex metadata comparison)
-        from core.matching_engine.scoring_profile import ExactSyncProfile
-        profile = ExactSyncProfile()
-        matching_engine = WeightedMatchingEngine(profile)
-        
-        all_tracks = []
-        found_count = 0
-        missing_count = 0
-        
-        # Process each playlist
-        for playlist_info in playlists:
-            playlist_id = playlist_info.get("id")
-            playlist_name = playlist_info.get("name", "Unknown Playlist")
-
-            # if account_id present, ensure we use provider instance tied to that account
-            acc_id = playlist_info.get('account_id')
-            if acc_id and source in ['spotify', 'tidal']:
-                provider_instance, _ = _get_provider_for_account(source, acc_id)
-                if provider_instance:
-                    # use the per-account client for fetching tracks
-                    source_provider = provider_instance
-
-            if not playlist_id:
-                logger.warning(f"Skipping playlist without id: {playlist_name}")
-                continue
-            
-            try:
-                # Fetch actual tracks from provider - now returns List[SoulSyncTrack]
-                logger.info(f"Fetching tracks for playlist: {playlist_name} (id: {playlist_id})")
-                source_tracks = source_provider.get_playlist_tracks(playlist_id)
-                
-                # Check each track against database using matching engine
-                for source_track in source_tracks:
-                    # source_track is now SoulSyncTrack from provider (Spotify, Plex, etc.)
-                    track_title = source_track.title
-                    track_artist = source_track.artist_name
-                    track_album = source_track.album_title or ''
-                    track_duration = source_track.duration
-                    track_isrc = source_track.isrc
-
-                    def _strip_feat(title: str) -> str:
-                        if not title:
-                            return ""
-                        # Remove parenthetical/bracketed feat/with sections
-                        cleaned = re.sub(r"\s*[\(\[\{]\s*(feat\.?|featuring|with)\b[^\)\]\}]*[\)\]\}]", "", title, flags=re.IGNORECASE)
-                        # Remove trailing feat/with clauses
-                        cleaned = re.sub(r"\s+(feat\.?|featuring|with)\b.*$", "", cleaned, flags=re.IGNORECASE)
-                        return cleaned.strip() or title
-
-                    search_title = _strip_feat(track_title)
-                    
-                    # Search database for matching tracks
-                    library_match = "Not Found"
-                    best_score = 0
-                    try:
-                        # Get all candidates from database with similar title/artist
-                        from sqlalchemy import text
-                        
-                        with db.engine.connect() as conn:
-                            # TIER 1: Search with artist matching (preferred)
-                            # exact artist match + fuzzy title match takes priority
-                            # Then fall back to fuzzy artist + exact title match
-                            # Then fuzzy artist + fuzzy title
-                            tier1_query = text("""
-                                SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
-                                FROM tracks t
-                                JOIN artists a ON t.artist_id = a.id
-                                LEFT JOIN albums al ON t.album_id = al.id
-                                WHERE (
-                                    -- Priority 1: Exact artist match + any title containing search term
-                                    (LOWER(a.name) = LOWER(:artist_exact) AND LOWER(t.title) LIKE LOWER(:title_pattern))
-                                    OR
-                                    -- Priority 2: Artist contains search + exact title match
-                                    (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) = LOWER(:title_exact))
-                                    OR
-                                    -- Priority 3: Both artist and title contain search terms
-                                    (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) LIKE LOWER(:title_pattern))
-                                )
-                                ORDER BY 
-                                    -- Prioritize exact matches
-                                    (LOWER(a.name) = LOWER(:artist_exact)) DESC,
-                                    (LOWER(t.title) = LOWER(:title_exact)) DESC,
-                                    -- Then fuzzy matches with higher specificity
-                                    ABS(t.duration - :duration) ASC
-                                LIMIT 20
-                            """)
-
-                            result = conn.execute(tier1_query, {
-                                "artist_exact": track_artist,
-                                "artist_pattern": f"%{track_artist}%",
-                                "title_exact": search_title,
-                                "title_pattern": f"%{search_title}%",
-                                "duration": track_duration or 0
-                            })
-                            candidates = result.fetchall()
-                            tier2_mode = False  # Track if we're using Tier 2
-                            
-                            # TIER 2: Fallback - If Tier 1 returns 0 results, search by exact title ONLY
-                            # Guard rail: Duration filter for SQL (2 seconds) to retrieve candidates
-                            # The matching engine will apply the same 2s strict tolerance after retrieval
-                            if not candidates and track_duration:
-                                # Use 2 seconds for SQL query to align with scoring tolerance
-                                sql_duration_tolerance_ms = 2000  # 2 seconds for candidate retrieval
-                                duration_min = track_duration - sql_duration_tolerance_ms
-                                duration_max = track_duration + sql_duration_tolerance_ms
-                                
-                                logger.debug(
-                                    f"Tier 1 found 0 candidates for '{track_title}' by '{track_artist}'. "
-                                    f"Attempting Tier 2 with title='{search_title}', duration={track_duration}ms ±{sql_duration_tolerance_ms}ms"
-                                )
-                                tier2_query = text("""
-                                    SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
-                                    FROM tracks t
-                                    JOIN artists a ON t.artist_id = a.id
-                                    LEFT JOIN albums al ON t.album_id = al.id
-                                    WHERE (
-                                        LOWER(t.title) = LOWER(:title_exact)
-                                                                                OR LOWER(REPLACE(REPLACE(t.title, '''', ''), '’', '')) = LOWER(REPLACE(REPLACE(:title_exact, '''', ''), '’', ''))
-                                    )
-                                      AND t.duration IS NOT NULL
-                                      AND t.duration BETWEEN :duration_min AND :duration_max
-                                    ORDER BY ABS(t.duration - :duration) ASC
-                                    LIMIT 10
-                                """)
-                                
-                                result = conn.execute(tier2_query, {
-                                    "title_exact": search_title,
-                                    "duration": track_duration,
-                                    "duration_min": duration_min,
-                                    "duration_max": duration_max
-                                })
-                                candidates = result.fetchall()
-                                tier2_mode = True  # Mark that we're using Tier 2 scoring
-                                
-                                if candidates:
-                                    logger.debug(
-                                        f"Tier 2 fallback activated for '{track_title}' by '{track_artist}' "
-                                        f"(duration: {track_duration} ms). Found {len(candidates)} title+duration matches."
-                                    )
-                                else:
-                                    logger.debug(
-                                        f"Tier 2 found 0 candidates for exact title match '{search_title}' with duration {track_duration}ms. "
-                                        f"Either no exact title match exists or all candidates outside {sql_duration_tolerance_ms}ms tolerance."
-                                    )
-                        
-                        # Prefetch external identifiers for target source, if provided
-                        external_ids_map = {}
-                        if target_source and candidates:
-                            candidate_ids = [row[0] for row in candidates]
-                            try:
-                                external_ids_map = db.get_external_identifier_map(target_source, candidate_ids)
-                            except Exception as ext_err:
-                                logger.debug(
-                                    f"External identifier lookup failed for target '{target_source}': {ext_err}"
-                                )
-
-                        # Score each candidate using matching engine
-                        best_match = None
-                        best_match_track_id = None
-                        best_match_target_id = None
-                        # Collect diagnostics for unmatched verbose logging
-                        candidate_diagnostics = []
-                        
-                        for candidate_row in candidates:
-                            candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
-                            # Use actual title for matching; extract edition from sort_title if edition is NULL
-                            raw_title_candidate = candidate_row[1]  # Actual title
-                            edition_candidate = candidate_row[3]  # Edition from DB
-                            sort_title_candidate = None
-                            try:
-                                sort_title_candidate = candidate_row[6]
-                            except Exception:
-                                sort_title_candidate = None
-                            
-                            # If edition is NULL, try to extract version keywords from sort_title
-                            if edition_candidate is None and sort_title_candidate and sort_title_candidate != raw_title_candidate:
-                                version_pattern = r'\b(Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)\b'
-                                version_match = re.search(version_pattern, sort_title_candidate, re.IGNORECASE)
-                                if version_match:
-                                    edition_candidate = version_match.group(0)
-                            
-                            candidate_track = SoulSyncTrack(
-                                raw_title=raw_title_candidate,
-                                artist_name=candidate_row[4],
-                                album_title=candidate_row[7] or "",
-                                duration=candidate_row[2] if candidate_row[2] else 0,
-                                edition=edition_candidate,
-                            )
-                            
-                            # Log version info for debugging
-                            if source_track.edition or candidate_track.edition:
-                                logger.debug(
-                                    f"Version comparison: source='{source_track.edition}' vs candidate='{candidate_track.edition}' "
-                                    f"(source_title='{source_track.title}', candidate_title='{candidate_track.title}')"
-                                )
-                            
-                            # Choose scoring method based on tier
-                            if tier2_mode:
-                                # Tier 2: Use title+duration only matching (ignores artist)
-                                result = matching_engine.calculate_title_duration_match(
-                                    source_track,
-                                    candidate_track,
-                                    target_source=target_source,
-                                    target_identifier=candidate_target_id,
-                                )
-                            else:
-                                # Tier 1: Use standard full matching
-                                result = matching_engine.calculate_match(
-                                    source_track,
-                                    candidate_track,
-                                    target_source=target_source,
-                                    target_identifier=candidate_target_id,
-                                )
-                            
-                            logger.debug(f"Match score for '{track_title}' vs '{candidate_track.title}': {result.confidence_score}")
-                            
-                            # Collect detailed diagnostics for later verbose logging
-                            candidate_diagnostics.append({
-                                "candidate": {
-                                    "title": candidate_track.title,
-                                    "artist": candidate_track.artist_name,
-                                    "duration": candidate_track.duration or 0,
-                                },
-                                "result": {
-                                    "score": result.confidence_score,
-                                    "passed_version": result.passed_version_check,
-                                    "passed_edition": result.passed_edition_check,
-                                    "fuzzy_text": result.fuzzy_text_score,
-                                    "duration_score": result.duration_match_score,
-                                    "quality_bonus": result.quality_bonus_applied,
-                                    "version_penalty": result.version_penalty_applied,
-                                    "edition_penalty": result.edition_penalty_applied,
-                                },
-                                "reasoning": result.reasoning,
-                            })
-
-                            if result.confidence_score > best_score:
-                                best_score = result.confidence_score
-                                best_match = (candidate_row[0], result)
-                                best_match_track_id = candidate_row[0]
-                                best_match_target_id = candidate_target_id
-                        
-                        # Escalate to Tier 2 if Tier 1 failed:
-                        # - All candidates rejected due to version mismatch, OR
-                        # - No candidate reached minimum confidence threshold
-                        tier2_needed_due_to_version = (
-                            not tier2_mode and len(candidates) > 0 and best_score == 0.0 and 
-                            all(not d["result"]["passed_version"] for d in candidate_diagnostics)
-                        )
-                        tier2_needed_due_to_failure = (
-                            not tier2_mode and len(candidates) > 0 and best_score < 70 and track_duration
-                        )
-                        if tier2_needed_due_to_version or tier2_needed_due_to_failure:
-                            logger.debug(
-                                (
-                                    f"Tier 2 escalation triggered for '{track_title}' by '{track_artist}'. "
-                                    + ("Reason: version mismatch." if tier2_needed_due_to_version else "Reason: no acceptable Tier 1 match.")
-                                )
-                            )
-                            
-                            # Reset for Tier 2 search
-                            candidates = []
-                            candidate_diagnostics = []
-                            best_score = 0
-                            best_match = None
-                            
-                            if track_duration:
-                                sql_duration_tolerance_ms = 2000
-                                duration_min = track_duration - sql_duration_tolerance_ms
-                                duration_max = track_duration + sql_duration_tolerance_ms
-                                
-                                # Create a new connection for Tier 2 to avoid any connection state issues
-                                with db.engine.connect() as tier2_conn:
-                                    tier2_query = text("""
-                                        SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
-                                        FROM tracks t
-                                        JOIN artists a ON t.artist_id = a.id
-                                        LEFT JOIN albums al ON t.album_id = al.id
-                                        WHERE LOWER(t.title) = LOWER(:title_exact)
-                                        AND t.duration IS NOT NULL
-                                        AND t.duration BETWEEN :duration_min AND :duration_max
-                                        ORDER BY ABS(t.duration - :duration) ASC
-                                        LIMIT 10
-                                    """)
-                                    
-                                    result = tier2_conn.execute(tier2_query, {
-                                        "title_exact": search_title,
-                                        "duration": track_duration,
-                                        "duration_min": duration_min,
-                                        "duration_max": duration_max
-                                    })
-                                    candidates = result.fetchall()
-                                
-                                if candidates:
-                                    logger.debug(
-                                        f"Tier 2 escalation found {len(candidates)} title+duration matches for '{track_title}'. "
-                                        f"Re-scoring with Tier 2 profile..."
-                                    )
-                                    
-                                    # Prefetch external identifiers again for Tier 2 candidates
-                                    external_ids_map = {}
-                                    if target_source:
-                                        candidate_ids = [row[0] for row in candidates]
-                                        try:
-                                            external_ids_map = db.get_external_identifier_map(target_source, candidate_ids)
-                                        except Exception as ext_err:
-                                            logger.debug(
-                                                f"External identifier lookup failed for Tier 2: {ext_err}"
-                                            )
-                                    
-                                    # Re-score all Tier 2 candidates
-                                    for candidate_row in candidates:
-                                        candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
-                                        # Use actual title for matching; extract edition from sort_title if edition is NULL
-                                        raw_title_candidate = candidate_row[1]  # Actual title
-                                        edition_candidate = candidate_row[3]  # Edition from DB
-                                        sort_title_candidate = None
-                                        try:
-                                            sort_title_candidate = candidate_row[6]
-                                        except Exception:
-                                            sort_title_candidate = None
-                                        
-                                        # If edition is NULL, try to extract version keywords from sort_title
-                                        if edition_candidate is None and sort_title_candidate and sort_title_candidate != raw_title_candidate:
-                                            version_pattern = r'\b(Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)\b'
-                                            version_match = re.search(version_pattern, sort_title_candidate, re.IGNORECASE)
-                                            if version_match:
-                                                edition_candidate = version_match.group(0)
-                                        
-                                        candidate_track = SoulSyncTrack(
-                                            raw_title=raw_title_candidate,
-                                            artist_name=candidate_row[4],
-                                            album_title=candidate_row[7] or "",
-                                            duration=candidate_row[2] if candidate_row[2] else 0,
-                                            edition=edition_candidate,
-                                        )
-                                        
-                                        # Use Tier 2 scoring (title+duration only)
-                                        result = matching_engine.calculate_title_duration_match(
-                                            source_track,
-                                            candidate_track,
-                                            target_source=target_source,
-                                            target_identifier=candidate_target_id,
-                                        )
-                                        
-                                        logger.debug(f"Tier 2 re-score: '{track_title}' vs '{candidate_track.title}': {result.confidence_score}")
-                                        
-                                        candidate_diagnostics.append({
-                                            "candidate": {
-                                                "title": candidate_track.title,
-                                                "artist": candidate_track.artist_name,
-                                                "duration": candidate_track.duration or 0,
-                                            },
-                                            "result": {
-                                                "score": result.confidence_score,
-                                                "passed_version": result.passed_version_check,
-                                                "passed_edition": result.passed_edition_check,
-                                                "fuzzy_text": result.fuzzy_text_score,
-                                                "duration_score": result.duration_match_score,
-                                                "quality_bonus": result.quality_bonus_applied,
-                                                "version_penalty": result.version_penalty_applied,
-                                                "edition_penalty": result.edition_penalty_applied,
-                                            },
-                                            "reasoning": result.reasoning,
-                                        })
-
-                                        if result.confidence_score > best_score:
-                                            best_score = result.confidence_score
-                                            best_match = (candidate_row[0], result)
-                                            best_match_track_id = candidate_row[0]
-                                            best_match_target_id = candidate_target_id
-                                    
-                                    tier2_mode = True
-                                else:
-                                    logger.debug(
-                                        f"Tier 2 escalation found 0 candidates for '{track_title}'. "
-                                        f"Unable to find alternative versions."
-                                    )
-                        
-                        # Determine result based on best score
-                        if best_score >= 85:  # High confidence threshold
-                            library_match = "Found"
-                            found_count += 1
-                        elif best_score >= 70:  # Fuzzy match threshold
-                            library_match = f"Found (score: {int(best_score)}%)"
-                            found_count += 1
-                        else:
-                            library_match = "Not Found"
-                            missing_count += 1
-                            # Emit verbose diagnostics only when debug logging enabled
-                            if logger.isEnabledFor(logging.DEBUG):
-                                try:
-                                    src_dur = source_track.duration or 0
-                                    logger.debug(
-                                        f"Unmatched: '{track_title}' by '{track_artist}' (duration: {src_dur} ms). "
-                                        f"Considered {len(candidate_diagnostics)} candidates.")
-
-                                    # Sort candidates by score desc and limit to top 5 for readability
-                                    top_candidates = sorted(
-                                        candidate_diagnostics,
-                                        key=lambda c: c["result"]["score"],
-                                        reverse=True
-                                    )[:5]
-
-                                    for idx, diag in enumerate(top_candidates, start=1):
-                                        cand = diag["candidate"]
-                                        res = diag["result"]
-                                        logger.debug(
-                                            (
-                                                f"  Candidate {idx}: '{cand['title']}' by '{cand['artist']}' "
-                                                f"(duration: {cand['duration']} ms) → score {res['score']:.1f} | "
-                                                f"version_pass={res['passed_version']}, edition_pass={res['passed_edition']}, "
-                                                f"fuzzy={res['fuzzy_text']:.2f}, duration={res['duration_score']:.2f}, "
-                                                f"penalties=V-{res['version_penalty']:.1f} E-{res['edition_penalty']:.1f}, "
-                                                f"quality=+{res['quality_bonus']:.1f}"
-                                            )
-                                        )
-                                        # Include reasoning to understand failure path
-                                        logger.debug(f"    Reasoning: {diag['reasoning']}")
-                                except Exception as log_err:
-                                    # Do not disrupt flow due to logging errors
-                                    logger.debug(f"Verbose unmatched diagnostics failed: {log_err}")
-                        
-                        if best_match:
-                            logger.info(f"Matched '{track_title}' with database track (score: {best_score:.0f}%)")
-                            
-                    except Exception as e:
-                        logger.error(f"Error searching for track '{track_title}' by '{track_artist}': {e}", exc_info=True)
-                        missing_count += 1
-                    
-                    # Format duration
-                    duration_str = "–"
-                    if track_duration:
-                        mins = track_duration // 60000
-                        secs = (track_duration % 60000) // 1000
-                        duration_str = f"{mins}:{secs:02d}"
-                    
-                    all_tracks.append({
-                        "playlist": playlist_name,
-                        "title": track_title,
-                        "artist": track_artist,
-                        "album": track_album,
-                        "duration": duration_str,
-                        "duration_ms": track_duration,
-                        "library_match": library_match,
-                        "download_status": "-",
-                        "matched_track_id": best_match_track_id,
-                        "match_score": best_score,
-                        "target_source": target_source,
-                        "target_identifier": best_match_target_id,
-                        "target_exists": bool(best_match_target_id),
-                        # Preserve original source identifier if available (e.g., spotify_id)
-                        "source_identifier": (None if not getattr(source_track, 'identifiers', None) else (
-                            source_track.identifiers.get(source) if isinstance(source_track.identifiers, dict) and source in source_track.identifiers
-                            else next(iter(source_track.identifiers.values()), None) if isinstance(source_track.identifiers, dict) and source_track.identifiers
-                            else None
-                        )),
-                    })
-                    
-            except Exception as e:
-                logger.error(f"Error fetching tracks for playlist {playlist_name}: {e}", exc_info=True)
-                # Add error placeholder
-                all_tracks.append({
-                    "playlist": playlist_name,
-                    "title": f"Error: {str(e)}",
-                    "artist": "–",
-                    "album": "–",
-                    "duration": "–",
-                    "library_match": "Error",
-                    "download_status": "-"
-                })
-        
-        total_tracks = len(all_tracks)
-        # Detect duplicate matches where multiple source tracks matched the same SoulSync DB track
-        try:
-            matched_map = {}
-            for t in all_tracks:
-                mid = t.get("matched_track_id")
-                if not mid:
-                    continue
-                matched_map.setdefault(mid, []).append(t)
-
-            duplicate_matches = {k: v for k, v in matched_map.items() if len(v) > 1}
-            if duplicate_matches and logger.isEnabledFor(logging.DEBUG):
-                logger.debug("[system] - Duplicate match analysis: found %d SoulSync tracks matched by multiple source tracks", len(duplicate_matches))
-                for soul_id, entries in duplicate_matches.items():
-                    # Build a concise single-line report per duplicate SoulSync track
-                    try:
-                        lines = []
-                        for e in entries:
-                            src_id = e.get("source_identifier") or "<unknown_source_id>"
-                            lines.append(f"{src_id} ('{e.get('title')}' by '{e.get('artist')}')")
-                        # Example log: Duplicate match, Spotify track A matched SoulSyncTrack 123, Spotify track B matched SoulSyncTrack 123
-                        logger.debug(f"[system] - Duplicate match: {', '.join([f'{l} matched SoulSyncTrack {soul_id}' for l in lines])}")
-                    except Exception as dup_err:
-                        logger.debug(f"[system] - Duplicate match formatting failed for SoulSyncTrack {soul_id}: {dup_err}")
-        except Exception as dup_all_err:
-            logger.debug(f"[system] - Duplicate match analysis failed: {dup_all_err}")
-        
-        # Build sync-ready payload with matched pairs
-        matched_pairs = []
-        missing_tracks = []
-        for track in all_tracks:
-            if track.get("matched_track_id") and track.get("target_identifier"):
-                matched_pairs.append({
-                    "track_id": track["matched_track_id"],
-                    "target_identifier": track["target_identifier"],
-                })
-            elif not track.get("matched_track_id"):
-                missing_tracks.append({
-                    "title": track["title"],
-                    "artist": track["artist"],
-                    "album": track["album"],
-                    "duration": track.get("duration_ms"),
-                })
-        
-        return jsonify({
-            "summary": {
-                "total_tracks": total_tracks,
-                "found_in_library": found_count,
-                "missing_tracks": missing_count,
-                "downloaded": 0,
-                "quality_profile": quality_profile,
-                "source": source,
-                "target": target_source,
-                "matched_pairs": matched_pairs,
-                "can_sync": len(matched_pairs) > 0,
-            },
-            "tracks": all_tracks,
-            "missing": missing_tracks,
-        }), 200
-        
+        result = _analyze_playlists_internal(source, target_source, playlists, quality_profile)
+        return jsonify(result), 200
     except Exception as e:
         logger.error(f"Error analyzing playlists: {e}", exc_info=True)
         return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
@@ -1281,61 +1195,11 @@ def _register_scheduled_sync_job(sync_config):
 
     def _run_scheduled_sync():
         try:
-            playlist_entries = [
-                playlist if isinstance(playlist, dict) else {"id": playlist}
-                for playlist in playlists
-            ]
-
-            # Fetch playlists using the correct source account context per playlist.
-            all_tracks = []
-            for playlist_info in playlist_entries:
-                playlist_id = playlist_info.get('id')
-                source_provider, _ = _get_provider_for_account(source, playlist_info.get('account_id'))
-                if not source_provider:
-                    raise RuntimeError(f"Source provider {source} not found")
-
-                try:
-                    playlist_tracks = source_provider.get_playlist_tracks(playlist_id)
-                    all_tracks.extend(playlist_tracks)
-                except Exception as e:
-                    logger.warning(f"Failed to fetch playlist {playlist_id}: {e}")
-            
-            if not all_tracks:
-                logger.warning(f"No tracks found for scheduled sync {sync_config['id']}")
-                return
-
-            target_provider, _ = _get_provider_for_account(target, None)
-            if not target_provider:
-                raise RuntimeError(f"Target provider {target} not found")
-
-            matches = []
-            for track in all_tracks:
-                try:
-                    title = _extract_track_field(track, 'title') or _extract_track_field(track, 'track_title')
-                    artist = _extract_track_field(track, 'artist_name') or _extract_track_field(track, 'artist')
-                    if not title or not artist:
-                        continue
-
-                    query = f"{artist} {title}".strip()
-                    try:
-                        search_results = target_provider.search(query, type="track", limit=5)
-                    except TypeError:
-                        search_results = target_provider.search(title, artist)
-
-                    if search_results:
-                        best_match = search_results[0]
-                        target_identifier = _extract_target_identifier(best_match)
-                        if not target_identifier:
-                            continue
-                        matches.append({
-                            "track_id": _extract_track_field(track, 'id') or _extract_track_field(track, 'provider_item_id'),
-                            "target_identifier": target_identifier,
-                        })
-                except Exception as e:
-                    logger.debug(f"Failed to match track: {e}")
+            playlist_entries = [playlist if isinstance(playlist, dict) else {"id": playlist} for playlist in playlists]
+            analysis = _analyze_playlists_internal(source, target, playlist_entries, quality_profile="Auto")
+            matches = analysis.get("summary", {}).get("matched_pairs", []) or []
 
             if matches:
-                # Trigger sync with matched tracks
                 playlist_name = f"Synced Playlist ({sync_config['id']})"
                 primary_playlist = playlist_entries[0] if len(playlist_entries) == 1 else {}
                 if target == "plex":
