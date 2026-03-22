@@ -187,7 +187,7 @@
 <!-- Backdrop overlay -->
 {#if isOpen}
   <div
-    class="fixed inset-0 z-40 bg-black/50 transition-opacity"
+    class="fixed inset-0 bg-black bg-opacity-50 z-40 transition-opacity"
     role="button"
     tabindex="0"
     on:click={() => isOpen = false}
@@ -195,9 +195,9 @@
   ></div>
 {/if}
 
-<!-- Slide-out drawer / modal -->
+<!-- Slide-out drawer -->
 <div
-  class="fixed top-0 right-0 h-full w-full md:w-2/3 lg:w-1/2 bg-gray-900 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col cursor-default"
+  class="fixed top-0 right-0 h-full w-full md:w-2/3 lg:w-1/2 bg-gray-900 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col"
   class:translate-x-full={!isOpen}
   class:translate-x-0={isOpen}
 >

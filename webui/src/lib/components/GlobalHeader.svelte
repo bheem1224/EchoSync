@@ -1,13 +1,8 @@
 <script>
   import { unreadAlerts, activeDownloads } from '../../stores/headerStatus';
-  import DownloadQueueDrawer from './DownloadQueueDrawer.svelte';
 
+  export let toggleQueueDrawer = () => {};
   export let toggleNotificationDrawer = () => {};
-  let queueDrawerOpen = false;
-
-  function toggleQueueDrawer() {
-    queueDrawerOpen = !queueDrawerOpen;
-  }
 </script>
 
 <header class="sticky top-0 z-40 border-b border-gray-800 bg-gray-900 text-white">
@@ -53,5 +48,3 @@
     </div>
   </div>
 </header>
-
-<DownloadQueueDrawer bind:isOpen={queueDrawerOpen} />

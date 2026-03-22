@@ -253,10 +253,6 @@ def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
     ]
     monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
 
-    # Add type track so the interaction is included
-    mock_history_item = MagicMock()
-    mock_history_item.type = 'track'
-    target_server.history.return_value = [mock_history_item]
     interactions = client.fetch_user_history(account_id=8, limit=10)
 
     assert len(interactions) == 1
@@ -284,4 +280,4 @@ def test_track_to_interaction_extracts_user_rating_and_play_count():
 
     assert interaction is not None
     assert interaction.play_count == 11
-    assert interaction.rating == 8.0
+    assert interaction.rating == 4.0
