@@ -118,7 +118,7 @@ class TestDownloadManagerPrefilterBypass:
                 return False
 
         manager.work_db = SimpleNamespace(session_scope=lambda: FakeSessionScope(queued_download))
-        manager._get_quality_profile = lambda: {
+        manager._get_quality_profile = lambda requested_profile_id: {
             "formats": [{"type": "flac", "priority": 1, "min_bitrate": 320}],
             "prefer_larger_files": True,
         }

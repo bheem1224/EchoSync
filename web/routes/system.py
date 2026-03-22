@@ -431,3 +431,50 @@ def preview_rename():
     except Exception as e:
         logger.error(f"Error generating preview: {e}")
         return jsonify({"error": "Failed to generate preview"}), 500
+
+
+@bp.post("/database/rebuild")
+def rebuild_database():
+    """Rebuild the music library database by dropping and recreating all tables.
+    
+    This is a destructive operation that will clear all synced tracks from the
+    music library database. The database will be empty after this operation,
+    and library scans will need to be re-run to repopulate it.
+    
+    Returns JSON: { "success": true, "message": "..." }
+    """
+    try:
+        from database.music_database import get_database
+        from database.working_database import get_working_database
+        
+        logger.info("Database rebuild requested - clearing music library and working database")
+        
+        # Get database instances
+        music_db = get_database()
+        working_db = get_working_database()
+        
+        # Drop all tables in both databases
+        logger.info("Dropping music library database tables...")
+        music_db.drop_all()
+        
+        logger.info("Dropping working database tables...")
+        working_db.drop_all()
+        
+        # Recreate the schemas
+        logger.info("Recreating music library database schema...")
+        music_db.create_all()
+        
+        logger.info("Recreating working database schema...")
+        working_db.create_all()
+        
+        logger.info("Database rebuild completed successfully")
+        return jsonify({
+            "success": True,
+            "message": "Database rebuilt successfully. Library is now empty and ready for rescanning."
+        }), 200
+    except Exception as e:
+        logger.error(f"Error rebuilding database: {e}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": "Failed to rebuild database"
+        }), 500
