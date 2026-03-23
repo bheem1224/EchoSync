@@ -65,12 +65,31 @@ def _resolve_task_file(task: ReviewTask) -> Optional[Path]:
     return resolved
 
 
-def _serialize_task(task: ReviewTask, detected_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _read_current_metadata(task: ReviewTask) -> Dict[str, Any]:
+    resolved_file = _resolve_task_file(task)
+    if not resolved_file:
+        return {}
+
+    try:
+        enhancer = get_metadata_enhancer()
+        metadata = enhancer.read_tags(resolved_file)
+        return {str(key): value for key, value in metadata.items()}
+    except Exception as exc:
+        logger.debug(f"Failed to read current metadata for {task.file_path}: {exc}")
+    return {}
+
+
+def _serialize_task(
+    task: ReviewTask,
+    detected_metadata: Optional[Dict[str, Any]] = None,
+    current_metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     normalized = detected_metadata if detected_metadata is not None else _normalize_detected_metadata(getattr(task, "detected_metadata", None))
     return {
         "id": task.id,
         "file_path": task.file_path,
         "detected_metadata": normalized,
+        "current_metadata": current_metadata if current_metadata is not None else _read_current_metadata(task),
         "confidence_score": task.confidence_score,
         "created_at": task.created_at.isoformat() if task.created_at else None,
     }
@@ -272,8 +291,10 @@ def get_review_queue():
             serialized_tasks: List[Dict[str, Any]] = []
             for task in tasks:
                 detected_metadata = _normalize_detected_metadata(getattr(task, "detected_metadata", None))
+                current_metadata = _read_current_metadata(task)
+                resolved_file = _resolve_task_file(task)
+
                 if _is_missing_or_low_confidence(detected_metadata, float(task.confidence_score or 0.0)):
-                    resolved_file = _resolve_task_file(task)
                     parsed_guess = _best_effort_path_parse(resolved_file) if resolved_file else None
                     if parsed_guess:
                         detected_metadata = _merge_metadata(detected_metadata, parsed_guess)
@@ -282,7 +303,7 @@ def get_review_queue():
                             task.confidence_score = _PARSER_FALLBACK_CONFIDENCE
 
                 serialized_tasks.append(
-                    _serialize_task(task, detected_metadata=detected_metadata)
+                    _serialize_task(task, detected_metadata=detected_metadata, current_metadata=current_metadata)
                 )
             return jsonify(
                 {

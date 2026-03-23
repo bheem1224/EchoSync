@@ -232,22 +232,36 @@
       return;
     }
 
+    const normalizedLookupMetadata = {
+      ...newMetadata,
+      title: newMetadata.title ?? proposedMetadata.title,
+      artist: newMetadata.artist ?? proposedMetadata.artist,
+      album: newMetadata.album ?? proposedMetadata.album,
+      year: newMetadata.year ?? newMetadata.date ?? proposedMetadata.year,
+      track_number: newMetadata.track_number ?? proposedMetadata.track_number,
+      disc_number: newMetadata.disc_number ?? proposedMetadata.disc_number,
+      musicbrainz_id:
+        newMetadata.musicbrainz_id ??
+        newMetadata.recording_id ??
+        newMetadata.mbid ??
+        proposedMetadata.musicbrainz_id,
+      acoustid_id:
+        newMetadata.acoustid_id ??
+        newMetadata.acoustid ??
+        proposedMetadata.acoustid_id,
+      isrc: newMetadata.isrc ?? proposedMetadata.isrc,
+      comments: newMetadata.comments ?? proposedMetadata.comments
+    };
+
     proposedMetadata = {
       ...proposedMetadata,
-      title: newMetadata.title || '',
-      artist: newMetadata.artist || '',
-      album: newMetadata.album || '',
-      year: newMetadata.year || '',
-      track_number: newMetadata.track_number || '',
-      disc_number: newMetadata.disc_number || '',
-      musicbrainz_id:
-        newMetadata.musicbrainz_id ||
-        newMetadata.recording_id ||
-        '',
-      acoustid_id: newMetadata.acoustid_id || '',
-      isrc: newMetadata.isrc || '',
-      comments: newMetadata.comments || ''
+      ...normalizedLookupMetadata,
+      musicbrainz_id: normalizedLookupMetadata.musicbrainz_id || '',
+      acoustid_id: normalizedLookupMetadata.acoustid_id || '',
+      isrc: normalizedLookupMetadata.isrc || ''
     };
+
+    queueAutosave();
   }
 
   function getLookupMetadata(response) {
