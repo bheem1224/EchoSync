@@ -28,7 +28,7 @@ class MusicBrainzClient(ProviderBase):
         metadata=MetadataRichness.HIGH,
         supports_cover_art=True,
         supports_lyrics=False,
-        supports_user_auth=False,
+        supports_user_auth=True,
         supports_library_scan=False,
         supports_streaming=False,
         supports_downloads=False,
@@ -150,6 +150,79 @@ class MusicBrainzClient(ProviderBase):
 
         return list(deduped.values())
 
+    def search_metadata(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Compatibility search API used by metadata_enhancer fallback logic.
+
+        Returns lightweight recording dictionaries so the enhancer can run
+        weighted matching and then call get_metadata() on the winning MBID.
+        """
+        query = str(query or "").strip()
+        if not query:
+            return []
+
+        safe_limit = max(1, min(int(limit or 10), 100))
+        try:
+            response = self.http.get(
+                f"{self.api_base}/recording",
+                params={
+                    "fmt": "json",
+                    "query": query,
+                    "limit": safe_limit,
+                },
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    "MusicBrainz search_metadata failed (status=%s, query=%s)",
+                    response.status_code,
+                    query,
+                )
+                return []
+
+            payload = response.json() or {}
+            recordings = payload.get("recordings", []) or []
+            results: List[Dict[str, Any]] = []
+
+            for recording in recordings:
+                mbid = str(recording.get("id") or "").strip()
+                if not mbid:
+                    continue
+
+                artist_credit = recording.get("artist-credit") or []
+                artist_parts: List[str] = []
+                for entry in artist_credit:
+                    if isinstance(entry, dict):
+                        artist_parts.append(str(entry.get("name") or ""))
+                        artist_parts.append(str(entry.get("joinphrase") or ""))
+                artist_name = "".join(artist_parts).strip()
+
+                releases = recording.get("releases") or []
+                album_title = ""
+                if releases:
+                    album_title = str((releases[0] or {}).get("title") or "").strip()
+
+                isrc_values = recording.get("isrcs") or []
+                duration_ms = recording.get("length")
+                try:
+                    duration_ms = int(duration_ms) if duration_ms is not None else None
+                except Exception:
+                    duration_ms = None
+
+                results.append(
+                    {
+                        "title": str(recording.get("title") or "").strip(),
+                        "artist": artist_name,
+                        "album": album_title,
+                        "duration": duration_ms,
+                        "isrc": str(isrc_values[0]).strip() if isrc_values else None,
+                        "mbid": mbid,
+                    }
+                )
+
+            return results
+        except Exception as exc:
+            logger.warning(f"MusicBrainz search_metadata exception for '{query}': {exc}")
+            return []
+
     def get_metadata(self, mbid: str) -> Optional[Dict[str, Any]]:
         """Fetch detailed metadata for a recording MBID."""
         mbid = str(mbid or "").strip()
@@ -263,6 +336,97 @@ class MusicBrainzClient(ProviderBase):
 
     def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
         return []
+
+    def get_active_access_token(self, account_id: Optional[int] = None) -> Optional[str]:
+        """Return a decrypted access token for the first (or specified) authenticated account.
+
+        Returns None when no authenticated account is available, which means the
+        client falls back to anonymous / read-only API access.
+        """
+        try:
+            from core.storage import get_storage_service
+            from core.security import decrypt_string
+            from database.config_database import get_config_database
+
+            storage = get_storage_service()
+            accounts = storage.list_accounts("musicbrainz")
+            if not accounts:
+                return None
+
+            if account_id is not None:
+                target = next((a for a in accounts if a.get("id") == account_id), None)
+            else:
+                # Prefer active + authenticated, fall back to first authenticated
+                target = next(
+                    (a for a in accounts if a.get("is_authenticated") and a.get("is_active")),
+                    next((a for a in accounts if a.get("is_authenticated")), None),
+                )
+
+            if not target:
+                return None
+
+            db = get_config_database()
+            token_row = db.get_account_token(target["id"])
+            if not token_row:
+                return None
+
+            encrypted = token_row.get("access_token")
+            if not encrypted:
+                return None
+
+            return decrypt_string(encrypted)
+        except Exception as e:
+            logger.debug(f"Could not load MusicBrainz access token: {e}")
+            return None
+
+    def submit_isrc(self, mbid: str, isrc: str, account_id: Optional[int] = None) -> bool:
+        """Submit an ISRC–recording association to MusicBrainz.
+
+        Requires the user to have authenticated with the ``submit_isrc`` scope.
+        Returns True on success, False otherwise.
+
+        Args:
+            mbid: MusicBrainz recording MBID (UUID).
+            isrc: ISRC code to associate with the recording (e.g. "USRC17607839").
+            account_id: Specific account ID to use; defaults to the active authenticated account.
+        """
+        mbid = str(mbid or "").strip()
+        isrc = str(isrc or "").strip()
+        if not mbid or not isrc:
+            logger.warning("submit_isrc called with empty mbid or isrc")
+            return False
+
+        access_token = self.get_active_access_token(account_id)
+        if not access_token:
+            logger.warning("MusicBrainz submit_isrc: no authenticated account available")
+            return False
+
+        xml_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<metadata xmlns="http://musicbrainz.org/ns/mmd-2.0#">'
+            f'<recording id="{mbid}">'
+            '<isrc-list><isrc id="' + isrc + '"/></isrc-list>'
+            '</recording>'
+            '</metadata>'
+        )
+        try:
+            resp = self.http.post(
+                f"{self.api_base}/recording/{mbid}",
+                params={"client": "SoulSync-0.1.0-https://github.com/soulsync/soulsync"},
+                data=xml_body,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/xml; charset=UTF-8",
+                },
+            )
+            if resp.status_code in (200, 204):
+                logger.info(f"ISRC {isrc} submitted for MBID {mbid}")
+                return True
+            logger.warning(f"MusicBrainz ISRC submission returned {resp.status_code}: {resp.text[:200]}")
+            return False
+        except Exception as e:
+            logger.error(f"MusicBrainz submit_isrc failed: {e}")
+            return False
 
     def is_configured(self) -> bool:
         return True

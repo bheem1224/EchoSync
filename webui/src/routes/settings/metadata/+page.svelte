@@ -5,6 +5,7 @@
   import { getConfig, setConfig } from '../../../stores/config';
   import apiClient from '../../../api/client';
   import { metadataQueue } from '../../../stores/metadataQueue';
+  import MusicBrainzServiceCard from '../../../components/MusicBrainzServiceCard.svelte';
 
   // Tabs
   let activeTab = 'providers'; // providers, settings, queue
@@ -131,7 +132,7 @@
           key: 'info',
           label: 'Information',
           type: 'info',
-          value: 'MusicBrainz is a free public service and requires no configuration. Rate limiting (1 request/second) is automatically enforced.'
+          value: 'MusicBrainz OAuth is configured in the section below. Read-only metadata lookups need no credentials; OAuth login is required for ISRC submissions and community contributions.'
         }
       ]
     };
@@ -388,6 +389,13 @@
                   </div>
                 </div>
               {/each}
+            </div>
+          {/if}
+
+          <!-- MusicBrainz OAuth card (always shown when MusicBrainz is in the provider list) -->
+          {#if metadataProviders.some(p => p.name === 'musicbrainz')}
+            <div style="margin-top: 24px;">
+              <MusicBrainzServiceCard />
             </div>
           {/if}
 
