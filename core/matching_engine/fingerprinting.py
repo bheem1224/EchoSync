@@ -63,6 +63,9 @@ class FingerprintGenerator:
             # Generate fingerprint using Chromaprint
             # acoustid.fingerprint_file() returns (duration, fingerprint)
             duration, fingerprint = acoustid.fingerprint_file(file_path)
+
+            if isinstance(fingerprint, bytes):
+                fingerprint = fingerprint.decode("utf-8", errors="ignore")
             
             if not fingerprint:
                 logger.warning(f"Empty fingerprint generated for {file_path}")
@@ -108,6 +111,10 @@ class FingerprintGenerator:
 
         try:
             raw_duration, fingerprint = acoustid.fingerprint_file(file_path)
+
+            if isinstance(fingerprint, bytes):
+                fingerprint = fingerprint.decode("utf-8", errors="ignore")
+
             if not fingerprint:
                 logger.warning(f"Empty fingerprint generated for {file_path}")
                 return None, None

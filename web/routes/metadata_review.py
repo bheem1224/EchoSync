@@ -506,6 +506,9 @@ def lookup_review_queue_item_acoustid(task_id: int):
             if not fingerprint:
                 return jsonify({"error": "Fingerprint generation failed"}), 422
 
+            if isinstance(fingerprint, bytes):
+                fingerprint = fingerprint.decode("utf-8", errors="ignore")
+
             # Fall back to mutagen if fpcalc didn't report duration (very rare)
             if not duration or duration <= 0:
                 enhancer = get_metadata_enhancer()
