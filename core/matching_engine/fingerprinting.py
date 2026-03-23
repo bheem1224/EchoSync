@@ -81,6 +81,52 @@ class FingerprintGenerator:
             logger.warning(f"Failed to fingerprint {file_path}: {e}")
             return None
 
+    @staticmethod
+    def generate_with_duration(file_path: str) -> Tuple[Optional[str], Optional[int]]:
+        """Generate a Chromaprint fingerprint and return it together with the
+        fpcalc-computed duration (in whole seconds).
+
+        Using this avoids a second mutagen decode when both values are needed,
+        which is especially important for WAV files where mutagen duration
+        detection can be unreliable.
+
+        Returns:
+            ``(fingerprint, duration_seconds)`` — either value may be None on failure.
+        """
+        try:
+            import acoustid
+        except ImportError:
+            logger.warning(
+                "pyacoustid not installed. Fingerprinting unavailable. "
+                "Install with: pip install pyacoustid"
+            )
+            return None, None
+
+        if not FingerprintGenerator.can_fingerprint(file_path):
+            logger.warning(f"Cannot fingerprint {file_path}: unsupported format")
+            return None, None
+
+        try:
+            raw_duration, fingerprint = acoustid.fingerprint_file(file_path)
+            if not fingerprint:
+                logger.warning(f"Empty fingerprint generated for {file_path}")
+                return None, None
+            duration_sec = int(raw_duration) if raw_duration else None
+            logger.debug(
+                f"Generated fingerprint for {file_path}: "
+                f"length={len(fingerprint)}, duration={duration_sec}s"
+            )
+            return fingerprint, duration_sec
+        except FileNotFoundError as e:
+            logger.error(
+                f"fpcalc command not found. Install Chromaprint and add fpcalc to PATH, "
+                f"or set FPCALC environment variable. Error: {e}"
+            )
+            return None, None
+        except Exception as e:
+            logger.warning(f"Failed to fingerprint {file_path}: {e}")
+            return None, None
+
 
 class FingerprintMatcher:
     """Compare fingerprints to detect identical/similar audio"""

@@ -470,7 +470,20 @@ def stream_review_queue_item(task_id: int):
 
 @bp.post("/review-queue/<int:task_id>/lookup/acoustid")
 def lookup_review_queue_item_acoustid(task_id: int):
-    """Run acoustid fingerprint lookup and update detected metadata."""
+    """Run AcoustID fingerprint lookup and update detected metadata.
+
+    Flow
+    ----
+    1. Generate fingerprint + duration from fpcalc in a single pass.
+    2. Persist the raw fingerprint in the task immediately so it is always
+       available for later AcoustID / MusicBrainz submission even if the
+       lookup API returns no match.
+    3. Call AcoustID API.  If a match is found, populate acoustid_id and MBID
+       and enrich from MusicBrainz.
+    4. If no match exists yet (track not in the AcoustID library), return 200
+       with the stored fingerprint + duration so the UI can present the user
+       with a "submit to AcoustID" option rather than a hard error.
+    """
     db = get_working_database()
     try:
         with db.session_scope() as session:
@@ -487,27 +500,41 @@ def lookup_review_queue_item_acoustid(task_id: int):
             if not fingerprint_provider:
                 return jsonify({"error": "No fingerprint provider configured"}), 503
 
-            fingerprint = FingerprintGenerator.generate(str(file_path))
+            # ── Step 1: generate fingerprint + duration in one fpcalc call ──────
+            fingerprint, duration = FingerprintGenerator.generate_with_duration(str(file_path))
+
             if not fingerprint:
                 return jsonify({"error": "Fingerprint generation failed"}), 422
 
-            enhancer = get_metadata_enhancer()
-            duration = None
-            if hasattr(enhancer, "_get_audio_duration"):
-                try:
-                    duration = enhancer._get_audio_duration(file_path)
-                except Exception:
-                    duration = None
+            # Fall back to mutagen if fpcalc didn't report duration (very rare)
+            if not duration or duration <= 0:
+                enhancer = get_metadata_enhancer()
+                if hasattr(enhancer, "_get_audio_duration"):
+                    try:
+                        duration = enhancer._get_audio_duration(file_path)
+                    except Exception:
+                        duration = None
 
             if not duration or int(duration) <= 0:
                 return jsonify({"error": "Audio duration unavailable for lookup"}), 422
 
+            duration_int = int(duration)
+
+            # ── Step 2: persist the raw fingerprint NOW, before any API call ────
+            # This ensures it is always available for submission even if the
+            # AcoustID lookup returns no match (track not yet in their DB).
+            merged = _normalize_detected_metadata(task.detected_metadata) or {}
+            merged["acoustid_fingerprint"] = fingerprint
+            merged["acoustid_fingerprint_duration"] = duration_int
+            task.detected_metadata = merged
+
+            # ── Step 3: query AcoustID API ───────────────────────────────────────
             acoustid_id: Optional[str] = None
             mbids: List[str] = []
 
             if hasattr(fingerprint_provider, "resolve_fingerprint_details"):
                 try:
-                    details = fingerprint_provider.resolve_fingerprint_details(fingerprint, int(duration))
+                    details = fingerprint_provider.resolve_fingerprint_details(fingerprint, duration_int)
                     if isinstance(details, dict):
                         acoustid_id = str(details.get("acoustid_id") or "").strip() or None
                         raw_mbids = details.get("mbids") or []
@@ -515,14 +542,29 @@ def lookup_review_queue_item_acoustid(task_id: int):
                             mbids = [str(mbid).strip() for mbid in raw_mbids if str(mbid).strip()]
                 except Exception as lookup_error:
                     logger.warning(f"AcoustID detail lookup failed for task {task_id}: {lookup_error}")
+            else:
+                try:
+                    mbids = fingerprint_provider.resolve_fingerprint(fingerprint, duration_int) or []
+                except Exception as lookup_error:
+                    logger.warning(f"AcoustID resolve_fingerprint failed for task {task_id}: {lookup_error}")
 
-            if not mbids:
-                mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration))
-
+            # ── Step 4: no match → return 200 with fingerprint for submission ───
             if not acoustid_id and not mbids:
-                return jsonify({"error": "No AcoustID match found"}), 404
+                logger.info(
+                    f"AcoustID scan for task {task_id}: no match in database. "
+                    "Fingerprint stored for submission."
+                )
+                merged["source"] = "acoustid_no_match"
+                task.detected_metadata = merged
+                return jsonify({
+                    "success": True,
+                    "acoustid_match": False,
+                    "acoustid_fingerprint": fingerprint,
+                    "acoustid_fingerprint_duration": duration_int,
+                    "task": _serialize_task(task, detected_metadata=merged),
+                }), 200
 
-            merged = _normalize_detected_metadata(task.detected_metadata) or {}
+            # ── Step 5: match found → enrich metadata ────────────────────────────
             if acoustid_id:
                 merged["acoustid_id"] = acoustid_id
             merged["source"] = "acoustid_lookup"
@@ -545,6 +587,7 @@ def lookup_review_queue_item_acoustid(task_id: int):
 
             return jsonify({
                 "success": True,
+                "acoustid_match": True,
                 "task": _serialize_task(task, detected_metadata=merged),
             }), 200
     except Exception as e:
