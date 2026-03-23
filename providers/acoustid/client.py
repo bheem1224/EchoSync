@@ -86,6 +86,94 @@ class AcoustIDProvider(ProviderBase):
 
         return client_key or None, user_key or None
 
+    def resolve_fingerprint_details(self, fingerprint: str, duration: int) -> Dict[str, Any]:
+        """
+        Resolve fingerprint and return both AcoustID result ID and MBID candidates.
+
+        Returns:
+            {
+                "acoustid_id": Optional[str],
+                "mbids": List[str],
+                "score": Optional[float]
+            }
+        """
+        api_key = self._get_api_key()
+        if not api_key:
+            logger.warning("AcoustID API key not configured")
+            return {"acoustid_id": None, "mbids": [], "score": None}
+
+        if not fingerprint or not fingerprint.strip():
+            logger.warning("Empty fingerprint provided")
+            return {"acoustid_id": None, "mbids": [], "score": None}
+
+        duration = int(duration)
+        payload = {
+            'client': api_key,
+            'meta': 'recordingids',
+            'fingerprint': fingerprint.strip(),
+            'duration': duration
+        }
+
+        try:
+            logger.debug(f"AcoustID payload: fingerprint_len={len(fingerprint)}, duration={duration}, api_key_len={len(api_key)}")
+            response = self.http.post(f"{self.api_base}/lookup", data=payload)
+
+            if response.status_code != 200:
+                if response.status_code == 400:
+                    logger.warning(
+                        f"AcoustID lookup rejected (400). Response: {response.text[:200]}"
+                    )
+                else:
+                    logger.error(f"AcoustID API error: {response.status_code} - {response.text[:200]}")
+                return {"acoustid_id": None, "mbids": [], "score": None}
+
+            data = response.json()
+            if data.get('status') != 'ok':
+                logger.error(f"AcoustID API returned error status: {data}")
+                return {"acoustid_id": None, "mbids": [], "score": None}
+
+            results = data.get('results') or []
+            mbids: List[str] = []
+            seen_mbid = set()
+            best_result: Optional[Dict[str, Any]] = None
+            best_score = -1.0
+
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+
+                try:
+                    score = float(result.get('score') or 0.0)
+                except Exception:
+                    score = 0.0
+
+                if best_result is None or score > best_score:
+                    best_result = result
+                    best_score = score
+
+                for recording in result.get('recordings', []) or []:
+                    if not isinstance(recording, dict):
+                        continue
+                    mbid = str(recording.get('id') or '').strip()
+                    if mbid and mbid not in seen_mbid:
+                        seen_mbid.add(mbid)
+                        mbids.append(mbid)
+
+            acoustid_id = None
+            if isinstance(best_result, dict):
+                result_id = str(best_result.get('id') or '').strip()
+                if result_id:
+                    acoustid_id = result_id
+
+            return {
+                "acoustid_id": acoustid_id,
+                "mbids": mbids,
+                "score": best_score if best_score >= 0.0 else None,
+            }
+        except Exception as e:
+            logger.error(f"Failed to resolve fingerprint: {e}")
+            return {"acoustid_id": None, "mbids": [], "score": None}
+
     def resolve_fingerprint(self, fingerprint: str, duration: int) -> List[str]:
         """
         Exchange Chromaprint for MusicBrainz Recording IDs.
@@ -97,59 +185,9 @@ class AcoustIDProvider(ProviderBase):
         Returns:
             List of MusicBrainz Recording IDs (MBIDs)
         """
-        api_key = self._get_api_key()
-        if not api_key:
-            logger.warning("AcoustID API key not configured")
-            return []
-
-        # Validate fingerprint
-        if not fingerprint or not fingerprint.strip():
-            logger.warning("Empty fingerprint provided")
-            return []
-
-        # Force integer duration (API rejects floats)
-        duration = int(duration)
-
-        payload = {
-            'client': api_key,
-            'meta': 'recordingids',
-            'fingerprint': fingerprint.strip(),
-            'duration': duration
-        }
-
-        try:
-            # Debug: Log exact payload before sending
-            logger.debug(f"AcoustID payload: fingerprint_len={len(fingerprint)}, duration={duration}, api_key_len={len(api_key)}")
-            
-            # Use POST with data (not params) per AcoustID API docs
-            response = self.http.post(f"{self.api_base}/lookup", data=payload)
-
-            if response.status_code != 200:
-                if response.status_code == 400:
-                    logger.warning(
-                        f"AcoustID lookup rejected (400). Response: {response.text[:200]}"
-                    )
-                else:
-                    logger.error(f"AcoustID API error: {response.status_code} - {response.text[:200]}")
-                return []
-
-            data = response.json()
-            if data.get('status') != 'ok':
-                logger.error(f"AcoustID API returned error status: {data}")
-                return []
-
-            mbids = []
-            for result in data.get('results', []):
-                for recording in result.get('recordings', []):
-                    if 'id' in recording:
-                        mbids.append(recording['id'])
-
-            # Deduplicate
-            return list(set(mbids))
-
-        except Exception as e:
-            logger.error(f"Failed to resolve fingerprint: {e}")
-            return []
+        details = self.resolve_fingerprint_details(fingerprint, duration)
+        mbids = details.get('mbids') or []
+        return [str(mbid).strip() for mbid in mbids if str(mbid).strip()]
 
     def submit_fingerprint(self, fingerprint: str, duration: int, mbid: str) -> bool:
         """Submit fingerprint to AcoustID for community contribution."""

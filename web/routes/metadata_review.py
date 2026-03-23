@@ -502,15 +502,36 @@ def lookup_review_queue_item_acoustid(task_id: int):
             if not duration or int(duration) <= 0:
                 return jsonify({"error": "Audio duration unavailable for lookup"}), 422
 
-            mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration))
+            acoustid_id: Optional[str] = None
+            mbids: List[str] = []
+
+            if hasattr(fingerprint_provider, "resolve_fingerprint_details"):
+                try:
+                    details = fingerprint_provider.resolve_fingerprint_details(fingerprint, int(duration))
+                    if isinstance(details, dict):
+                        acoustid_id = str(details.get("acoustid_id") or "").strip() or None
+                        raw_mbids = details.get("mbids") or []
+                        if isinstance(raw_mbids, list):
+                            mbids = [str(mbid).strip() for mbid in raw_mbids if str(mbid).strip()]
+                except Exception as lookup_error:
+                    logger.warning(f"AcoustID detail lookup failed for task {task_id}: {lookup_error}")
+
             if not mbids:
+                mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration))
+
+            if not acoustid_id and not mbids:
                 return jsonify({"error": "No AcoustID match found"}), 404
 
             merged = _normalize_detected_metadata(task.detected_metadata) or {}
-            merged["acoustid_id"] = mbids[0]
+            if acoustid_id:
+                merged["acoustid_id"] = acoustid_id
             merged["source"] = "acoustid_lookup"
 
-            if metadata_provider and hasattr(metadata_provider, "get_metadata"):
+            if mbids:
+                merged["musicbrainz_id"] = mbids[0]
+                merged["recording_id"] = mbids[0]
+
+            if mbids and metadata_provider and hasattr(metadata_provider, "get_metadata"):
                 try:
                     fetched = metadata_provider.get_metadata(mbids[0])
                     if isinstance(fetched, dict):
@@ -519,7 +540,8 @@ def lookup_review_queue_item_acoustid(task_id: int):
                     logger.warning(f"AcoustID metadata enrichment failed for task {task_id}: {lookup_error}")
 
             task.detected_metadata = merged
-            task.confidence_score = max(float(task.confidence_score or 0.0), 0.9)
+            confidence_floor = 0.9 if mbids else 0.6
+            task.confidence_score = max(float(task.confidence_score or 0.0), confidence_floor)
 
             return jsonify({
                 "success": True,
