@@ -30,6 +30,8 @@
     disc_number: '',
     musicbrainz_id: '',
     acoustid_id: '',
+    acoustid_fingerprint: '',
+    acoustid_fingerprint_duration: '',
     isrc: '',
     comments: ''
   };
@@ -45,6 +47,8 @@
       disc_number: proposed.disc_number || '',
       musicbrainz_id: proposed.musicbrainz_id || '',
       acoustid_id: proposed.acoustid_id || '',
+      acoustid_fingerprint: proposed.acoustid_fingerprint || '',
+      acoustid_fingerprint_duration: proposed.acoustid_fingerprint_duration || '',
       isrc: proposed.isrc || '',
       comments: proposed.comments || ''
     };
@@ -126,6 +130,10 @@
       disc_number: source.disc_number ? Number(source.disc_number) || source.disc_number : '',
       musicbrainz_id: (source.musicbrainz_id || '').trim(),
       acoustid_id: (source.acoustid_id || '').trim(),
+      acoustid_fingerprint: (source.acoustid_fingerprint || '').trim(),
+      acoustid_fingerprint_duration: source.acoustid_fingerprint_duration
+        ? Number(source.acoustid_fingerprint_duration) || source.acoustid_fingerprint_duration
+        : '',
       isrc: (source.isrc || '').trim(),
       comments: (source.comments || '').trim()
     };
@@ -249,6 +257,12 @@
         newMetadata.acoustid_id ??
         newMetadata.acoustid ??
         proposedMetadata.acoustid_id,
+      acoustid_fingerprint:
+        newMetadata.acoustid_fingerprint ??
+        proposedMetadata.acoustid_fingerprint,
+      acoustid_fingerprint_duration:
+        newMetadata.acoustid_fingerprint_duration ??
+        proposedMetadata.acoustid_fingerprint_duration,
       isrc: newMetadata.isrc ?? proposedMetadata.isrc,
       comments: newMetadata.comments ?? proposedMetadata.comments
     };
@@ -258,6 +272,8 @@
       ...normalizedLookupMetadata,
       musicbrainz_id: normalizedLookupMetadata.musicbrainz_id || '',
       acoustid_id: normalizedLookupMetadata.acoustid_id || '',
+      acoustid_fingerprint: normalizedLookupMetadata.acoustid_fingerprint || '',
+      acoustid_fingerprint_duration: normalizedLookupMetadata.acoustid_fingerprint_duration || '',
       isrc: normalizedLookupMetadata.isrc || ''
     };
 
@@ -307,7 +323,12 @@
       const updatedMetadata = getLookupMetadata(response);
       if (updatedMetadata) {
         applyMetadataUpdate(updatedMetadata);
-        feedback.addToast('AcoustID metadata loaded', 'success');
+        const isMatch = response?.data?.acoustid_match;
+        if (isMatch === false) {
+          feedback.addToast('No AcoustID match yet. Fingerprint captured for later submission.', 'success');
+        } else {
+          feedback.addToast('AcoustID metadata loaded', 'success');
+        }
       } else {
         feedback.addToast('AcoustID scan returned no metadata', 'error');
       }
@@ -436,6 +457,24 @@
                   <label>
                     <span class="block text-xs text-slate-400 mb-1">AcoustID</span>
                     <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.acoustid_id} on:keydown={handleInputKeydown} />
+                  </label>
+
+                  <label>
+                    <span class="block text-xs text-slate-400 mb-1">Fingerprint Duration (s)</span>
+                    <input
+                      class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-300"
+                      value={proposedMetadata.acoustid_fingerprint_duration || ''}
+                      readonly
+                    />
+                  </label>
+
+                  <label class="sm:col-span-2">
+                    <span class="block text-xs text-slate-400 mb-1">AcoustID Fingerprint (Submission Payload)</span>
+                    <textarea
+                      class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-300 min-h-[90px]"
+                      value={proposedMetadata.acoustid_fingerprint || ''}
+                      readonly
+                    ></textarea>
                   </label>
 
                   <label class="sm:col-span-2">

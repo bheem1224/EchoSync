@@ -159,8 +159,27 @@ def activate_server():
 def test_connection():
     """Test connection to Plex server."""
     try:
-        base_url = config_manager.get('plex.base_url', '').strip()
-        token = config_manager.get('plex.token', '').strip()
+        payload = request.get_json(silent=True) or {}
+
+        plex_config = config_manager.get('plex', {})
+        base_url = str(
+            payload.get('base_url')
+            or plex_config.get('base_url')
+            or config_manager.get('plex.base_url', '')
+        ).strip()
+
+        from core.storage import get_storage_service
+        from core.security import decrypt_string
+
+        storage = get_storage_service()
+        accounts = storage.list_accounts('plex')
+
+        token = ''
+        if accounts:
+            account_id = accounts[0].get('id')
+            token_data = storage.get_account_token(account_id)
+            if token_data and token_data.get('access_token'):
+                token = decrypt_string(token_data.get('access_token'))
         
         if not base_url:
             return jsonify({'error': 'Server URL is required'}), 400

@@ -392,7 +392,13 @@ def approve_review_queue_item(task_id: int):
                     enhancer.tag_file(file_path, final_metadata)
 
                     # 2. Community Contribution (AcoustID)
-                    contribute_metadata = bool(config_manager.get("preferences.contribute_metadata", True))
+                    # Safety gate: keep auto-submission OFF unless explicitly enabled.
+                    # This remains disabled by default while contribution flow is tested.
+                    contribute_metadata_pref = bool(config_manager.get("preferences.contribute_metadata", True))
+                    auto_submit_enabled = bool(
+                        config_manager.get("preferences.enable_acoustid_auto_submission", False)
+                    )
+                    contribute_metadata = contribute_metadata_pref and auto_submit_enabled
                     acoustid_fingerprint = str(final_metadata.get("acoustid_fingerprint") or "").strip()
                     musicbrainz_id = str(final_metadata.get("musicbrainz_id") or "").strip()
 

@@ -159,7 +159,9 @@
   async function testConnection() {
     try {
       testing = true;
-      const response = await apiClient.post('/plex/test-connection');
+      const response = await apiClient.post('/plex/test-connection', {
+        base_url: baseUrl
+      });
       
       if (response.data?.connected) {
         feedback.addToast(`Connected to ${response.data.server_name}`, 'success');
@@ -242,7 +244,7 @@
             <button
               class="btn-secondary"
               on:click={testConnection}
-              disabled={testing}
+              disabled={testing || !baseUrl.trim()}
             >
               {testing ? 'Testing...' : 'Test Connection'}
             </button>
