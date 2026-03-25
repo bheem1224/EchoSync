@@ -30,7 +30,11 @@ class PlexWebhookParser(WebhookParser):
             user_id = account.get('id')
 
             if event_type == 'media.rate':
-                rating = float(metadata.get('userRating', 0))
+                # Plex wire format is 2× the displayed star rating (e.g. 4 stars → 8.0).
+                # Divide by 2 to normalise to display stars (0.5–5.0) before storing,
+                # so stars_to_ten_point() receives the correct scale.
+                raw_plex_rating = float(metadata.get('userRating', 0))
+                rating = raw_plex_rating / 2.0
                 event = {
                     "event": "TRACK_RATED",
                     "sync_id": sync_id,

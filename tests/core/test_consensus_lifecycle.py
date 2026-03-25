@@ -32,12 +32,13 @@ def test_consensus_maps_stars_to_delete_upgrade_keep(tmp_path, monkeypatch):
     with db.session_scope() as session:
         session.add_all(
             [
+                # DELETE: only the 0.5 half-star (internal score 1) triggers this.
                 UserRating(user_id=1, sync_id=base_delete, rating=0.5),
-                UserRating(user_id=2, sync_id=base_delete, rating=1.0),
-                UserRating(user_id=3, sync_id=base_upgrade, rating=1.5),
-                UserRating(user_id=4, sync_id=base_upgrade, rating=2.0),
-                UserRating(user_id=5, sync_id=base_keep, rating=4.5),
-                UserRating(user_id=6, sync_id=base_keep, rating=5.0),
+                # UPGRADE: exactly 1 whole star (internal score 2) is the explicit upgrade signal.
+                UserRating(user_id=3, sync_id=base_upgrade, rating=1.0),
+                # KEEP: 1.5-5 stars (internal 3-10) are the opinion zone for the suggestion engine.
+                UserRating(user_id=5, sync_id=base_keep, rating=2.0),
+                UserRating(user_id=6, sync_id=base_keep, rating=4.0),
             ]
         )
 

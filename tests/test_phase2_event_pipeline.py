@@ -226,7 +226,8 @@ def test_plex_webhook_publishes_event():
     published = _extract_payload_from_publish_call(event_bus.publish)
     assert published["event"] == "TRACK_RATED"
     assert published["sync_id"].startswith("ss:track:mbid:")
-    assert published["data"]["rating"] == 8.0
+    # userRating=8.0 is Plex wire format (4 displayed stars); parser halves it to 4.0 display stars
+    assert published["data"]["rating"] == 4.0
     assert published["data"]["user_id"] == 1
 
 

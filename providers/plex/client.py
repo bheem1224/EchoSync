@@ -1361,9 +1361,11 @@ class PlexClient(ProviderBase):
 
         if parsed <= 0.0:
             return None
-        if parsed > 10.0:
-            return 10.0
-        return parsed
+        # Plex wire format: userRating is 2× the displayed star count (0.5 stars → 1.0,
+        # 5 stars → 10.0).  Divide by 2 to normalise to display stars (0.5–5.0) so
+        # stars_to_ten_point() in consensus.py receives the correct input scale.
+        display_stars = parsed / 2.0
+        return min(5.0, display_stars)
 
     def _enrich_interactions_with_user_ratings(
         self,
