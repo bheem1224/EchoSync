@@ -475,12 +475,15 @@ class MusicDatabase:
         best_match = None
         best_score = 0.0
 
-        # Pass 2 Base String generation for broader database search
-        base_title = re.sub(r'[\(\[].*?[\)\]]', '', title)
-        base_title = re.sub(r'-.*$', '', base_title).strip()
-
-        base_artist = re.sub(r'[\(\[].*?[\)\]]', '', artist)
-        base_artist = re.sub(r'-.*$', '', base_artist).strip()
+        # Pass 2 Base String generation for broader database candidate pre-filter.
+        # generate_base_string() strips parentheticals and hyphen suffixes only when
+        # none of the stripped content contains version keywords (remix, mix, edit,
+        # extended, live, acoustic, vip, instrumental).  If a keyword is found the
+        # original string is returned unchanged, keeping the ILIKE query narrow and
+        # preventing 'Song (Remix)' from fetching every track named 'Song'.
+        from core.matching_engine.text_utils import generate_base_string
+        base_title = generate_base_string(title)
+        base_artist = generate_base_string(artist)
 
         with self.session_scope() as session:
             # Find candidates using the broader base strings

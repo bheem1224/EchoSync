@@ -52,6 +52,10 @@ class ScoringWeights:
     version_mismatch_penalty: float = 15.0  # Penalty if versions don't match (0-100 scale)
     edition_mismatch_penalty: float = 10.0  # Penalty if editions don't match (track_total, album type differ)
     duration_tolerance_ms: int = 3000  # Allow 3 second difference in duration
+    # Hard veto: if both durations are present and differ by more than this, reject
+    # outright regardless of text-match score.  Prevents near-equal-duration remixes
+    # (e.g. radio edit vs album version) from slipping through the Dual-Pass path.
+    duration_hard_veto_ms: int = 10_000  # 10 seconds – tune per profile if needed
     fuzzy_match_threshold: float = 0.85  # Fuzzy match must be >= this to pass gating
 
     # Minimum confidence thresholds
@@ -76,6 +80,7 @@ class ScoringWeights:
             0.0 <= self.quality_bonus <= 1.0,
             self.version_mismatch_penalty >= 0,
             self.edition_mismatch_penalty >= 0,
+            self.duration_hard_veto_ms > 0,
         ])
 
     def to_dict(self) -> Dict:
@@ -91,6 +96,7 @@ class ScoringWeights:
             'version_mismatch_penalty': self.version_mismatch_penalty,
             'edition_mismatch_penalty': self.edition_mismatch_penalty,
             'duration_tolerance_ms': self.duration_tolerance_ms,
+            'duration_hard_veto_ms': self.duration_hard_veto_ms,
             'fuzzy_match_threshold': self.fuzzy_match_threshold,
             'min_confidence_to_accept': self.min_confidence_to_accept,
             'text_match_fallback': self.text_match_fallback,
