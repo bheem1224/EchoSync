@@ -86,6 +86,9 @@ class PlaylistSyncService:
 
                 for acc in accounts:
                     try:
+                        if acc.get('is_active') is False:
+                            logger.debug(f"Skipping disabled spotify account {acc.get('id')}")
+                            continue
                         # Instantiate via Registry
                         client = ProviderRegistry.create_instance('spotify', account_id=acc.get('id'))
                         if client.is_configured():
@@ -571,7 +574,7 @@ class PlaylistSyncService:
                     "track": full_track,
                     # Legacy compatibility for existing consumers.
                     "fallback_metadata": full_track,
-                    "duration_ms": full_track.get("duration"),
+                    "duration_ms": full_track.get("duration_ms"),
                     "isrc": full_track.get("isrc"),
                     "timestamp": utc_isoformat(utc_now()),
                     "source": "playlist_sync"

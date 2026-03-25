@@ -43,8 +43,8 @@ def get_queue():
                 queue_items.append({
                     "id": download.id,
                     "title": track_data.get("title", "Unknown"),
-                    "artist": track_data.get("artist_name", "Unknown"),
-                    "album": track_data.get("album_name", ""),
+                    "artist": track_data.get("artist", "Unknown"),
+                    "album": track_data.get("album_title", ""),
                     "status": _to_ui_status(download.status),
                     "provider_id": download.provider_id,
                     "retry_count": download.retry_count,

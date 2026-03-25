@@ -9,7 +9,7 @@ from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.provider import DownloaderProvider, ProviderRegistry, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.soul_sync_track import SoulSyncTrack
-from core.request_manager import RequestManager, RateLimitConfig
+from core.request_manager import RequestManager, RateLimitConfig, HttpError
 
 logger = get_logger("slskd_provider")
 
@@ -318,13 +318,17 @@ class SlskdProvider(DownloaderProvider):
                 if not response.content:
                     return {}
                 return response.json()
+            # Fallback for any non-raising 2xx-adjacent path
+            return None
+
+        except HttpError as e:
+            # RequestManager raises HttpError for 4xx/5xx responses.
+            # 404 on a search DELETE is expected (search already expired on the slskd side).
+            if e.status == 404 and 'searches/' in url and method == 'DELETE':
+                logger.debug(f"Search not found for deletion (already expired on slskd): {url}")
             else:
-                # Reduce noise for expected 404s (e.g. search deletion)
-                if response.status_code == 404 and 'searches/' in url and method == 'DELETE':
-                    logger.debug(f"Search not found for deletion (expected): {url}")
-                else:
-                    logger.error(f"API request failed: {response.status_code} - {response.text}")
-                return None
+                logger.error(f"API request failed: {e}")
+            return None
 
         except Exception as e:
             logger.error(f"Error making API request: {e}")
@@ -476,10 +480,11 @@ class SlskdProvider(DownloaderProvider):
         - Phase 1 (0-45s): Poll every 5s for quick responsiveness
         - Phase 2 (45s+): Poll every 30s to minimize API calls
         - Exit immediately upon terminal state (completed, timedout, failed, etc.)
-        
+
+        Concurrency: Limited to 3 concurrent searches (Soulseek IP ban protection).
         Default timeout: 180 seconds (3 minutes) to allow extended waiting for slskd responses.
         """
-        # Acquire semaphore slot (max 3 concurrent searches for IP ban protection)
+        # Acquire semaphore slot (max 3 concurrent searches — Soulseek IP ban protection)
         async with self._search_semaphore:
             return await self._do_async_search(query, basic_filters, timeout, quality_profile)
 

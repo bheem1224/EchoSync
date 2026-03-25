@@ -279,7 +279,7 @@ class SoulSyncTrack:
             'title': self.title,
             'raw_title': self.raw_title,
             'display_title': self.display_title,
-            'artist_name': self.artist_name,
+            'artist': self.artist_name,
             'album_title': self.album_title,
             'edition': self.edition,
             'sort_title': self.sort_title,
@@ -287,7 +287,7 @@ class SoulSyncTrack:
             'album_sort_title': self.album_sort_title,
             'album_type': self.album_type,
             'album_release_group_id': self.album_release_group_id,
-            'duration': self.duration,
+            'duration_ms': self.duration,
             'track_number': self.track_number,
             'disc_number': self.disc_number,
             'bitrate': self.bitrate,
@@ -299,9 +299,9 @@ class SoulSyncTrack:
             'sample_rate': self.sample_rate,
             'bit_depth': self.bit_depth,
             'file_size_bytes': self.file_size_bytes,
-            'musicbrainz_id': self.musicbrainz_id,
+            'mbid': self.musicbrainz_id,
             'isrc': self.isrc,
-            'acoustid_id': self.acoustid_id,
+            'acoustid': self.acoustid_id,
             'mb_release_id': self.mb_release_id,
             'original_release_date': self.original_release_date.isoformat() if self.original_release_date else None,
             'fingerprint': self.fingerprint,
@@ -331,10 +331,10 @@ class SoulSyncTrack:
         if isinstance(identifiers, list):
              identifiers = {}
 
-        # Compatibility: accept either duration or duration_ms and hydrate ISRC from identifiers.
-        duration_value = data.get('duration')
+        # Compatibility: accept duration_ms (canonical) or legacy duration key.
+        duration_value = data.get('duration_ms')
         if duration_value is None:
-            duration_value = data.get('duration_ms')
+            duration_value = data.get('duration')
 
         isrc_value = data.get('isrc')
         if isrc_value is None and isinstance(identifiers, dict):
@@ -342,7 +342,7 @@ class SoulSyncTrack:
 
         track = cls(
             raw_title=raw_title,
-            artist_name=data.get('artist_name', 'Unknown Artist'),
+            artist_name=data.get('artist') or data.get('artist_name', 'Unknown Artist'),
             album_title=data.get('album_title', 'Unknown Album'),
             edition=data.get('edition'),
             sort_title=data.get('sort_title'),
@@ -362,9 +362,9 @@ class SoulSyncTrack:
             sample_rate=data.get('sample_rate'),
             bit_depth=data.get('bit_depth'),
             file_size_bytes=data.get('file_size_bytes'),
-            musicbrainz_id=data.get('musicbrainz_id'),
+            musicbrainz_id=data.get('mbid') or data.get('musicbrainz_id'),
             isrc=isrc_value,
-            acoustid_id=data.get('acoustid_id'),
+            acoustid_id=data.get('acoustid') or data.get('acoustid_id'),
             mb_release_id=data.get('mb_release_id'),
             original_release_date=original_release_date,
             fingerprint=data.get('fingerprint'),

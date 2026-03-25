@@ -12,6 +12,7 @@ This ensures:
 from __future__ import annotations
 import time
 import random
+import threading
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Callable
 
@@ -76,6 +77,7 @@ class RequestManager:
         self.retry = retry or RetryConfig()
         self.rate = rate or self._load_rate_limit_from_config()
         self._last_call_ts: float = 0.0
+        self._rate_lock = threading.Lock()  # Protects _last_call_ts for concurrent executor threads
 
     def _load_rate_limit_from_config(self) -> RateLimitConfig:
         """Load rate limit configuration from config_manager."""
@@ -88,15 +90,20 @@ class RequestManager:
             return RateLimitConfig()
 
     def _apply_rate_limit(self):
-        """Apply rate limiting before making a request."""
+        """Apply rate limiting before making a request.
+
+        Thread-safe: the lock serialises concurrent executor threads so that each
+        thread sees an up-to-date _last_call_ts before sleeping and updating it.
+        """
         if not self.rate.requests_per_second or self.rate.requests_per_second <= 0:
             return
         min_interval = 1.0 / self.rate.requests_per_second
-        now = time.time()
-        delta = now - self._last_call_ts
-        if delta < min_interval:
-            time.sleep(min_interval - delta)
-        self._last_call_ts = time.time()
+        with self._rate_lock:
+            now = time.time()
+            delta = now - self._last_call_ts
+            if delta < min_interval:
+                time.sleep(min_interval - delta)
+            self._last_call_ts = time.time()
 
     def _should_retry(self, resp: Optional[Response], exc: Optional[Exception], attempt: int) -> bool:
         """Determine if a request should be retried."""

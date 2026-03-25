@@ -28,8 +28,8 @@
     year: '',
     track_number: '',
     disc_number: '',
-    musicbrainz_id: '',
-    acoustid_id: '',
+    mbid: '',
+    acoustid: '',
     acoustid_fingerprint: '',
     acoustid_fingerprint_duration: '',
     isrc: '',
@@ -45,8 +45,8 @@
       year: proposed.year || '',
       track_number: proposed.track_number || '',
       disc_number: proposed.disc_number || '',
-      musicbrainz_id: proposed.musicbrainz_id || '',
-      acoustid_id: proposed.acoustid_id || '',
+      mbid: proposed.mbid || proposed.musicbrainz_id || '',
+      acoustid: proposed.acoustid || proposed.acoustid_id || '',
       acoustid_fingerprint: proposed.acoustid_fingerprint || '',
       acoustid_fingerprint_duration: proposed.acoustid_fingerprint_duration || '',
       isrc: proposed.isrc || '',
@@ -128,8 +128,8 @@
       year: source.year ? Number(source.year) || source.year : '',
       track_number: source.track_number ? Number(source.track_number) || source.track_number : '',
       disc_number: source.disc_number ? Number(source.disc_number) || source.disc_number : '',
-      musicbrainz_id: (source.musicbrainz_id || '').trim(),
-      acoustid_id: (source.acoustid_id || '').trim(),
+      mbid: (source.mbid || '').trim(),
+      acoustid: (source.acoustid || '').trim(),
       acoustid_fingerprint: (source.acoustid_fingerprint || '').trim(),
       acoustid_fingerprint_duration: source.acoustid_fingerprint_duration
         ? Number(source.acoustid_fingerprint_duration) || source.acoustid_fingerprint_duration
@@ -248,15 +248,15 @@
       year: newMetadata.year ?? newMetadata.date ?? proposedMetadata.year,
       track_number: newMetadata.track_number ?? proposedMetadata.track_number,
       disc_number: newMetadata.disc_number ?? proposedMetadata.disc_number,
-      musicbrainz_id:
+      mbid:
+        newMetadata.mbid ??
         newMetadata.musicbrainz_id ??
         newMetadata.recording_id ??
-        newMetadata.mbid ??
-        proposedMetadata.musicbrainz_id,
-      acoustid_id:
-        newMetadata.acoustid_id ??
+        proposedMetadata.mbid,
+      acoustid:
         newMetadata.acoustid ??
-        proposedMetadata.acoustid_id,
+        newMetadata.acoustid_id ??
+        proposedMetadata.acoustid,
       acoustid_fingerprint:
         newMetadata.acoustid_fingerprint ??
         proposedMetadata.acoustid_fingerprint,
@@ -270,8 +270,8 @@
     proposedMetadata = {
       ...proposedMetadata,
       ...normalizedLookupMetadata,
-      musicbrainz_id: normalizedLookupMetadata.musicbrainz_id || '',
-      acoustid_id: normalizedLookupMetadata.acoustid_id || '',
+      mbid: normalizedLookupMetadata.mbid || '',
+      acoustid: normalizedLookupMetadata.acoustid || '',
       acoustid_fingerprint: normalizedLookupMetadata.acoustid_fingerprint || '',
       acoustid_fingerprint_duration: normalizedLookupMetadata.acoustid_fingerprint_duration || '',
       isrc: normalizedLookupMetadata.isrc || ''
@@ -400,11 +400,11 @@
               </div>
               <div class="flex justify-between gap-4">
                 <span class="text-slate-400">MusicBrainz ID</span>
-                <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.musicbrainz_id)}</span>
+                <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.mbid || currentMetadata.musicbrainz_id)}</span>
               </div>
               <div class="flex justify-between gap-4">
                 <span class="text-slate-400">AcoustID</span>
-                <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.acoustid_id)}</span>
+                <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.acoustid || currentMetadata.acoustid_id)}</span>
               </div>
               <div class="flex justify-between gap-4">
                 <span class="text-slate-400">Comments</span>
@@ -451,12 +451,12 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
                   <label>
                     <span class="block text-xs text-slate-400 mb-1">MusicBrainz ID (MBID)</span>
-                    <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.musicbrainz_id} on:keydown={handleInputKeydown} />
+                    <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.mbid} on:keydown={handleInputKeydown} />
                   </label>
 
                   <label>
                     <span class="block text-xs text-slate-400 mb-1">AcoustID</span>
-                    <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.acoustid_id} on:keydown={handleInputKeydown} />
+                    <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.acoustid} on:keydown={handleInputKeydown} />
                   </label>
 
                   <label>

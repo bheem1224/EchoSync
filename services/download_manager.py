@@ -53,6 +53,21 @@ class DownloadManager:
         self._active_providers: Dict[str, ProviderBase] = {}
         self._quality_profile_cache = None
 
+        from core.event_bus import event_bus
+        event_bus.subscribe("DOWNLOAD_INTENT", self._on_download_intent)
+
+    def _on_download_intent(self, payload: dict) -> None:
+        """Handle a DOWNLOAD_INTENT event by queueing the described track."""
+        try:
+            track_data = payload.get("track") or payload.get("fallback_metadata")
+            if not track_data:
+                logger.warning("DOWNLOAD_INTENT received with no track data; ignoring")
+                return
+            track = SoulSyncTrack.from_dict(track_data)
+            self.queue_download(track)
+        except Exception as e:
+            logger.error(f"Error handling DOWNLOAD_INTENT: {e}", exc_info=True)
+
     @classmethod
     def get_instance(cls):
         if cls._instance is None:
