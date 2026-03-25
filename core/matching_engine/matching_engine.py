@@ -23,7 +23,6 @@ import logging
 from .soul_sync_track import SoulSyncTrack
 from .scoring_profile import ScoringProfile, ScoringWeights, ProfileType
 from .fingerprinting import FingerprintMatcher
-from .text_utils import generate_base_string
 
 logger = logging.getLogger(__name__)
 
@@ -388,31 +387,6 @@ class WeightedMatchingEngine:
         score += text_contribution
         max_possible_score += self.weights.text_weight * 100
 
-        # ===== STEP 3.5: HARD DURATION VETO =====
-        # Defense-in-depth: even if the Dual-Pass text score is high (e.g. a
-        # near-same-length radio edit vs the album version), a duration gap
-        # exceeding the veto threshold is definitive evidence of a different
-        # recording.  Return score=0 immediately so the Safe Duration Bonus
-        # later in this function cannot rescue a false positive.
-        if source.duration and candidate.duration:
-            _hard_veto_diff = abs(source.duration - candidate.duration)
-            if _hard_veto_diff > self.weights.duration_hard_veto_ms:
-                reasoning_parts.append(
-                    f"HARD DURATION VETO: diff={_hard_veto_diff}ms "
-                    f"> {self.weights.duration_hard_veto_ms}ms threshold – rejected"
-                )
-                return MatchResult(
-                    confidence_score=0.0,
-                    passed_version_check=version_match,
-                    passed_edition_check=edition_match,
-                    fuzzy_text_score=fuzzy_score,
-                    duration_match_score=0.0,
-                    quality_bonus_applied=0.0,
-                    version_penalty_applied=version_penalty,
-                    edition_penalty_applied=edition_penalty,
-                    reasoning=" | ".join(reasoning_parts),
-                )
-
         # ===== STEP 4: DURATION MATCHING =====
         duration_score = self._calculate_duration_match(source, candidate)
         duration_contribution = duration_score * self.weights.duration_weight * 100
@@ -654,6 +628,7 @@ class WeightedMatchingEngine:
             Score 0.0-1.0
         """
 
+        import re
         scores = []
 
         # Title match (most important)
@@ -661,27 +636,22 @@ class WeightedMatchingEngine:
             title_score = self._fuzzy_match(source.title, candidate.title)
 
             # Dual-Pass 'Base String' Matching for Title
-            # Pass 2 activates when Pass 1 is below 0.85 (e.g. 'Sunflower (Spider-Man OST)' vs
-            # 'Sunflower').  generate_base_string() strips parentheticals/hyphen suffixes ONLY
-            # when none of them contain version keywords (remix, mix, edit, extended, live,
-            # acoustic, vip, instrumental).  If a keyword is found the original string is
-            # returned unchanged, preventing 'Song (Remix)' from collapsing to 'Song'.
+            # If Pass 1 is below a high threshold (e.g. 0.85), strip parentheticals, brackets, and post-hyphen info
             if title_score < 0.85:
-                base_source = generate_base_string(source.title)
-                base_candidate = generate_base_string(candidate.title)
+                # Aggressively strip out anything inside (), [], and anything after -
+                base_source = re.sub(r'[\(\[].*?[\)\]]', '', source.title)
+                base_source = re.sub(r'-.*$', '', base_source)
 
-                # Only run the second pass if at least one string was actually simplified;
-                # if both keyword guards triggered, the originals are unchanged and a
-                # second pass would just repeat the same failing score.
-                if base_source != source.title or base_candidate != candidate.title:
-                    pass_2_score = self._fuzzy_match(base_source, base_candidate)
+                base_candidate = re.sub(r'[\(\[].*?[\)\]]', '', candidate.title)
+                base_candidate = re.sub(r'-.*$', '', base_candidate)
 
-                    # Apply 0.85 confidence penalty: a base-string match is less certain
-                    # than a direct title match.
-                    adjusted_pass_2_score = pass_2_score * 0.85
+                pass_2_score = self._fuzzy_match(base_source, base_candidate)
 
-                    if adjusted_pass_2_score > title_score:
-                        title_score = adjusted_pass_2_score
+                # Apply 0.85 penalty multiplier to the base string match score
+                adjusted_pass_2_score = pass_2_score * 0.85
+
+                if adjusted_pass_2_score > title_score:
+                    title_score = adjusted_pass_2_score
 
             scores.append(('title', title_score, self.weights.title_weight))
 
