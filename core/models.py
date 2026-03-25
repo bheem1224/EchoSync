@@ -316,3 +316,21 @@ class Track:
     title: Optional[str] = None
     artist: Optional[str] = None
     album: Optional[str] = None
+
+
+@dataclass
+class TrackAudioFeatures:
+    """
+    Audio feature vector for a track, sourced from a streaming/analytics provider.
+    Used by the suggestion engine to power similarity-based playlist generation.
+
+    All float fields are normalised to 0.0–1.0 except `tempo` (BPM).
+    """
+    track_id: str           # Corresponds to SoulSyncTrack.track_id
+    source: str             # Provider that supplied the data, e.g. "spotify", "listenbrainz"
+
+    tempo: Optional[float] = None           # Beats per minute (e.g. 120.4)
+    energy: Optional[float] = None          # 0.0–1.0  intensity / perceived loudness
+    valence: Optional[float] = None         # 0.0–1.0  musical positiveness
+    danceability: Optional[float] = None    # 0.0–1.0  suitability for dancing
+    acousticness: Optional[float] = None    # 0.0–1.0  acoustic confidence score

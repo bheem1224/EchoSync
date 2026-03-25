@@ -1,8 +1,11 @@
 """
 Discovery Engine for the Suggestion Engine.
-Discovers new tracks for monitored artists by fetching the full tracklist
-from the active metadata provider, diffing against the local database,
-and publishing DOWNLOAD_INTENTs for missing tracks.
+
+Two entry points:
+- ``suggest_from_library(artist_id)``  — surfaces tracks already in the local library.
+- ``discover_new_tracks(artist_id)``   — fetches the full tracklist from the metadata
+  provider, diffs against the local database, and publishes DOWNLOAD_INTENTs for
+  tracks that are missing and haven't been hard-deleted.
 """
 
 from typing import List, Set
@@ -14,13 +17,53 @@ from database.music_database import get_database as get_music_database, Track, A
 from core.matching_engine.text_utils import generate_deterministic_id
 
 
-def discover_tracks(artist_id: str) -> None:
+def suggest_from_library(artist_id: str) -> List[dict]:
+    """
+    Return tracks for *artist_id* that already exist in the local MusicDatabase.
+
+    Use this to re-surface owned content for playlist / suggestion use-cases
+    without triggering any new downloads.
+
+    Returns a list of plain dicts so callers never touch a detached ORM object.
+    """
+    music_db = get_music_database()
+
+    with music_db.session_scope() as session:
+        from sqlalchemy import func, or_
+
+        local_tracks = (
+            session.query(Track)
+            .join(Artist, Track.artist_id == Artist.id)
+            .filter(
+                or_(
+                    func.lower(Artist.name) == str(artist_id or "").lower(),
+                    Artist.musicbrainz_id == artist_id,
+                )
+            )
+            .all()
+        )
+
+        return [
+            {
+                "track_db_id": t.id,
+                "title": t.title,
+                "artist_name": t.artist.name if t.artist else None,
+                "album_name": t.album.title if t.album else None,
+                "duration_ms": t.duration,
+                "musicbrainz_id": t.musicbrainz_id,
+                "isrc": t.isrc,
+                "file_path": t.file_path,
+            }
+            for t in local_tracks
+        ]
+
+
+def discover_new_tracks(artist_id: str) -> None:
     """
     Fetches the full tracklist for a monitored artist from the metadata provider,
     runs a diff against the physical library and ghost tracks,
     and publishes a DOWNLOAD_INTENT for missing tracks.
     """
-    # Use internal registry to get the provider that can fetch metadata
     provider = get_provider(Capability.FETCH_METADATA)
 
     if not provider:
@@ -114,3 +157,7 @@ def discover_tracks(artist_id: str) -> None:
             "event": "DOWNLOAD_INTENT",
             "sync_id": full_id
         })
+
+
+# Backward-compatibility alias — prefer discover_new_tracks() in new code.
+discover_tracks = discover_new_tracks

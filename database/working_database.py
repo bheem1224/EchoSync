@@ -172,6 +172,45 @@ class UserAlbumRating(WorkingBase):
     user: Mapped[User] = relationship(back_populates="album_ratings")
 
 
+class MediaServerPlaylist(WorkingBase):
+    """Cache of playlists retrieved from media servers (Plex, Jellyfin, Navidrome)."""
+    __tablename__ = "media_server_playlists"
+    __table_args__ = (
+        UniqueConstraint("server_source", "playlist_id", name="uq_media_server_playlist"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    server_source: Mapped[str] = mapped_column(String, nullable=False)   # "plex" | "jellyfin" | "navidrome"
+    playlist_id: Mapped[str] = mapped_column(String, nullable=False)     # Provider's native playlist ID
+    name: Mapped[str] = mapped_column(String, nullable=False)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+    items: Mapped[list["MediaServerPlaylistItem"]] = relationship(
+        back_populates="playlist", cascade="all, delete-orphan"
+    )
+
+
+class MediaServerPlaylistItem(WorkingBase):
+    """Individual track membership record inside a cached media server playlist."""
+    __tablename__ = "media_server_playlist_items"
+    __table_args__ = (
+        UniqueConstraint("playlist_id", "provider_item_id", name="uq_playlist_item"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    playlist_id: Mapped[int] = mapped_column(
+        ForeignKey("media_server_playlists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # e.g. Plex ratingKey
+
+    playlist: Mapped["MediaServerPlaylist"] = relationship(back_populates="items")
+
+
 class ProviderStorageBox:
     """Sandbox wrapper for providers to create their own tables."""
 
@@ -254,6 +293,7 @@ class WorkingDatabase:
         self._drop_legacy_tables()
         self._ensure_user_rating_columns()
         self._ensure_user_track_state_columns()
+        self._ensure_media_server_playlist_columns()
 
     def _drop_legacy_tables(self) -> None:
         """Drop legacy working DB tables that are no longer part of the schema."""
@@ -301,6 +341,36 @@ class WorkingDatabase:
                         )
         except Exception:
             # Non-fatal; metadata create_all already guarantees fresh schemas include columns.
+            pass
+
+    def _ensure_media_server_playlist_columns(self) -> None:
+        """Best-effort migration: creates media server playlist tables for databases
+        created before the MediaServerPlaylist models were introduced (pre-v2.2).
+        ``WorkingBase.metadata.create_all`` is idempotent for *new* installs;
+        this helper handles the ALTER / CREATE path for *existing* databases."""
+        try:
+            with self.engine.begin() as conn:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS media_server_playlists (
+                        id          INTEGER PRIMARY KEY,
+                        server_source TEXT NOT NULL,
+                        playlist_id   TEXT NOT NULL,
+                        name          TEXT NOT NULL,
+                        updated_at    DATETIME,
+                        UNIQUE(server_source, playlist_id)
+                    )
+                """)
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS media_server_playlist_items (
+                        id               INTEGER PRIMARY KEY,
+                        playlist_id      INTEGER NOT NULL
+                            REFERENCES media_server_playlists(id) ON DELETE CASCADE,
+                        provider_item_id TEXT NOT NULL,
+                        UNIQUE(playlist_id, provider_item_id)
+                    )
+                """)
+        except Exception:
+            # Non-fatal — fresh installs are covered by create_all above.
             pass
 
     def drop_all(self) -> None:
@@ -374,6 +444,8 @@ __all__ = [
     "UserTrackState",
     "UserArtistRating",
     "UserAlbumRating",
+    "MediaServerPlaylist",
+    "MediaServerPlaylistItem",
     "WorkingDatabase",
     "get_working_database",
     "close_working_database",

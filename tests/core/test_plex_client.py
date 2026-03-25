@@ -277,14 +277,14 @@ def test_track_to_interaction_extracts_user_rating_and_play_count():
     plex_track = MagicMock()
     plex_track.ratingKey = '100'
     plex_track.viewCount = 11
-    plex_track.userRating = 8.0  # Plex-style 10-point rating
+    plex_track.userRating = 8.0  # Plex wire-format (1–10); display stars = wire / 2 = 4.0
     plex_track.lastViewedAt = None
 
     interaction = client._track_to_interaction(plex_track)
 
     assert interaction is not None
     assert interaction.play_count == 11
-    assert interaction.rating == 8.0
+    assert interaction.rating == 4.0
 
 
 def test_track_to_interaction_treats_zero_rating_as_unrated():
@@ -327,7 +327,7 @@ def test_enrich_interactions_with_user_ratings_fetches_missing_only():
     )
 
     rated_item = MagicMock()
-    rated_item.userRating = 9.0
+    rated_item.userRating = 9.0  # wire-format 9.0 → display 4.5
 
     target_server = MagicMock()
     target_server.fetchItem.return_value = rated_item
@@ -335,7 +335,7 @@ def test_enrich_interactions_with_user_ratings_fetches_missing_only():
     interactions = [missing_rating, existing_rating]
     client._enrich_interactions_with_user_ratings(interactions, target_server)
 
-    assert missing_rating.rating == 9.0
+    assert missing_rating.rating == 4.5
     assert existing_rating.rating == 7.0
     target_server.fetchItem.assert_called_once_with(100)
 
@@ -362,7 +362,7 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
     target_server.history.return_value = [history_item]
 
     rated_metadata = MagicMock()
-    rated_metadata.userRating = 8.5
+    rated_metadata.userRating = 8.5  # wire-format 8.5 → display 4.25
     target_server.fetchItem.return_value = rated_metadata
 
     server = MagicMock()
@@ -388,5 +388,5 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
     interactions = client.fetch_user_history(account_id=8, limit=10)
 
     assert len(interactions) == 1
-    assert interactions[0].rating == 8.5
+    assert interactions[0].rating == 4.25
     target_server.fetchItem.assert_called_once_with(123)

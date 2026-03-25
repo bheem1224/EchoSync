@@ -257,6 +257,43 @@ class SeasonalPlaylistAlgorithm(PlaylistAlgorithm):
         random.shuffle(matching_tracks)
         return matching_tracks[:limit]
 
+
+def is_track_in_media_server_playlist(
+    track_db_id: int,
+    target_playlist_id: int,
+    music_db,
+    working_db,
+) -> bool:
+    """
+    Fast path: check whether a library track is already present in a cached media
+    server playlist without invoking the WeightedMatchingEngine.
+
+    Resolution strategy:
+    1. Look up the Plex ratingKey (or equivalent ``provider_item_id``) for
+       *track_db_id* via ``ExternalIdentifier`` (provider = "plex").
+    2. Query ``MediaServerPlaylistItem`` for a matching row — O(1) indexed lookup.
+    3. Return ``True`` iff the row exists.
+
+    Returns ``False`` immediately if no ExternalIdentifier is found (the track has
+    never been synced to a Plex server, so it cannot appear in any server playlist).
+    """
+    from database.working_database import MediaServerPlaylistItem  # late import — avoids circular
+
+    rating_key = music_db.get_external_identifier("plex", track_db_id)
+    if not rating_key:
+        return False
+
+    with working_db.session_scope() as session:
+        return (
+            session.query(MediaServerPlaylistItem)
+            .filter(
+                MediaServerPlaylistItem.playlist_id == target_playlist_id,
+                MediaServerPlaylistItem.provider_item_id == rating_key,
+            )
+            .first()
+        ) is not None
+
+
 class PersonalizedPlaylistsService:
     """Service for generating personalized playlists from library and discovery pool"""
 
