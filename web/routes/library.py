@@ -31,22 +31,11 @@ def trigger_library_scan():
         active_server = config_manager.get_active_media_server()
         if not active_server:
             return jsonify({"error": "No active media server configured"}), 400
-        
-        # Try to get provider instance (prefer AdapterRegistry for instances)
-        provider = None
+
         try:
-            # Try AdapterRegistry first (instance-based)
-            provider = AdapterRegistry.create_instance(active_server)
+            provider = ProviderRegistry.create_instance(active_server)
         except Exception as e:
-            logger.debug(f"AdapterRegistry lookup failed for {active_server}: {e}")
-            # Fall back to ProviderRegistry (class-based instantiation)
-            try:
-                provider = ProviderRegistry.create_instance(active_server)
-            except Exception as e2:
-                logger.error(f"Failed to create provider instance for {active_server}: {e2}")
-                return jsonify({"error": f"Media server '{active_server}' not available"}), 500
-        
-        if not provider:
+            logger.error(f"Failed to create provider instance for {active_server}: {e}")
             return jsonify({"error": f"Media server '{active_server}' not available"}), 500
         
         # Check if it has scan capability
@@ -94,22 +83,11 @@ def get_library_scan_status():
         active_server = config_manager.get_active_media_server()
         if not active_server:
             return jsonify({"error": "No active media server configured"}), 400
-        
-        # Try to get provider instance (prefer AdapterRegistry for instances)
-        provider = None
+
         try:
-            # Try AdapterRegistry first (instance-based)
-            provider = AdapterRegistry.create_instance(active_server)
+            provider = ProviderRegistry.create_instance(active_server)
         except Exception as e:
-            logger.debug(f"AdapterRegistry lookup failed for {active_server}: {e}")
-            # Fall back to ProviderRegistry (class-based instantiation)
-            try:
-                provider = ProviderRegistry.create_instance(active_server)
-            except Exception as e2:
-                logger.error(f"Failed to create provider instance for {active_server}: {e2}")
-                return jsonify({"error": f"Media server '{active_server}' not available"}), 500
-        
-        if not provider:
+            logger.error(f"Failed to create provider instance for {active_server}: {e}")
             return jsonify({"error": f"Media server '{active_server}' not available"}), 500
         
         # Check if it has scan capability

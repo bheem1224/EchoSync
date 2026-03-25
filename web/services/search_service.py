@@ -24,21 +24,19 @@ class SearchAdapter:
             "playlists": "playlists",
         }
 
-        # Discover search-capable providers
-        providers = plugin_registry.list_all()
+        # Discover search-capable providers from the central registry.
         search_providers = []
-        for p in providers:
-            if not getattr(p, "enabled", True):
-                continue
+        for provider_name in ProviderRegistry.list_providers():
             try:
-                caps = get_provider_capabilities(p.name)
-            except KeyError:
+                provider = ProviderRegistry.create_instance(provider_name)
+                caps = get_provider_capabilities(provider.name)
+            except Exception:
                 continue
             if not any(getattr(caps.search, search_cap_keys[k], False) for k in search_types if k in search_cap_keys):
                 continue
-            if provider_names and p.name not in provider_names:
+            if provider_names and provider.name not in provider_names:
                 continue
-            search_providers.append((p, caps))
+            search_providers.append((provider, caps))
 
         results: List[Dict] = []
         for provider, caps in search_providers:

@@ -158,14 +158,15 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
 
 def test_download_missing_hydrates_from_full_source_track_payload(client, monkeypatch):
     queued = []
+    process_calls = []
 
     class FakeDownloadManager:
-        def ensure_background_task(self):
-            return None
-
         def queue_download(self, track):
             queued.append(track)
             return 123
+
+        def process_downloads_now(self):
+            process_calls.append(True)
 
     monkeypatch.setattr('services.download_manager.get_download_manager', lambda: FakeDownloadManager())
 
@@ -191,18 +192,20 @@ def test_download_missing_hydrates_from_full_source_track_payload(client, monkey
     assert len(queued) == 1
     assert queued[0].duration == 210000
     assert queued[0].isrc == 'USRC17607839'
+    assert process_calls == [True]
 
 
 def test_download_missing_preserves_duration_and_isrc_from_fallback_fields(client, monkeypatch):
     queued = []
+    process_calls = []
 
     class FakeDownloadManager:
-        def ensure_background_task(self):
-            return None
-
         def queue_download(self, track):
             queued.append(track)
             return 124
+
+        def process_downloads_now(self):
+            process_calls.append(True)
 
     monkeypatch.setattr('services.download_manager.get_download_manager', lambda: FakeDownloadManager())
 
@@ -222,3 +225,4 @@ def test_download_missing_preserves_duration_and_isrc_from_fallback_fields(clien
     assert queued[0].duration == 198000
     assert queued[0].isrc == 'GBUM71029604'
     assert queued[0].identifiers.get('spotify') == 'spotify-fallback-id'
+    assert process_calls == [True]

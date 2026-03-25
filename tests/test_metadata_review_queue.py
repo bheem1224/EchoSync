@@ -161,7 +161,7 @@ def test_acoustid_lookup_returns_acoustid_id_without_mbid(monkeypatch, mock_work
 
     monkeypatch.setattr(metadata_review, 'get_working_database', lambda: mock_work_db)
     monkeypatch.setattr(metadata_review, 'get_provider', fake_get_provider)
-    monkeypatch.setattr(metadata_review.FingerprintGenerator, 'generate', lambda _path: 'fake-fingerprint')
+        monkeypatch.setattr(metadata_review.FingerprintGenerator, 'generate_with_duration', staticmethod(lambda _path: ('fake-fingerprint', 180)))
     monkeypatch.setattr(metadata_review, 'get_metadata_enhancer', lambda: FakeEnhancer())
 
     app = _fake_app()

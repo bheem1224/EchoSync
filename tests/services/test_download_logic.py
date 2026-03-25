@@ -125,7 +125,7 @@ class TestDownloadManagerLogic:
         # Attempt process
         with patch('services.download_manager.get_database', return_value=mock_db):
             with patch('services.download_manager.get_working_database', return_value=mock_work_db):
-                manager._process_loop()
+                    await manager._process_queued_items()
 
         # Should still be failed_max_retries (not requeued or searching)
         with mock_work_db.session_scope() as session:

@@ -926,8 +926,6 @@ def download_missing_tracks():
         from core.matching_engine.soul_sync_track import SoulSyncTrack
         
         download_manager = get_download_manager()
-        download_manager.ensure_background_task()  # kick off processing loop
-        
         success_count = 0
         failed_count = 0
         
@@ -971,6 +969,12 @@ def download_missing_tracks():
             except Exception as e:
                 failed_count += 1
                 logger.error(f"Error queuing track: {e}")
+
+        if success_count > 0:
+            try:
+                download_manager.process_downloads_now()
+            except Exception as e:
+                logger.warning(f"Queued downloads but immediate processing trigger failed: {e}")
         
         return jsonify({
             "accepted": True,
