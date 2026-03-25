@@ -326,6 +326,9 @@ class SlskdProvider(DownloaderProvider):
             # 404 on a search DELETE is expected (search already expired on the slskd side).
             if e.status == 404 and 'searches/' in url and method == 'DELETE':
                 logger.debug(f"Search not found for deletion (already expired on slskd): {url}")
+            elif e.status == 409 and 'searches' in url and method == 'POST':
+                # 409 = search slots full; caller handles cleanup + retry.
+                raise
             else:
                 logger.error(f"API request failed: {e}")
             return None
@@ -488,6 +491,46 @@ class SlskdProvider(DownloaderProvider):
         async with self._search_semaphore:
             return await self._do_async_search(query, basic_filters, timeout, quality_profile)
 
+    async def _check_soulseek_connected(self) -> bool:
+        """Return True only if slskd reports it is connected and logged in to the Soulseek network."""
+        try:
+            app_state = await self._make_request('GET', 'application')
+            if not app_state:
+                return False
+            server_state = (app_state.get('server') or {}).get('state', '')
+            connected = 'loggedin' in server_state.lower() or (
+                'connected' in server_state.lower() and 'disconnected' not in server_state.lower()
+            )
+            if not connected:
+                logger.warning(f"slskd is not connected to the Soulseek network (state='{server_state}')")
+            return connected
+        except Exception as e:
+            logger.warning(f"Could not determine slskd network state: {e}")
+            return False
+
+    async def _cleanup_all_searches(self) -> int:
+        """DELETE every active search on slskd to free search slots. Returns number deleted."""
+        try:
+            searches = await self._make_request('GET', 'searches')
+            if not searches or not isinstance(searches, list):
+                return 0
+            deleted = 0
+            for s in searches:
+                sid = s.get('id') if isinstance(s, dict) else None
+                if not sid:
+                    continue
+                try:
+                    await self._make_request('DELETE', f'searches/{sid}')
+                    deleted += 1
+                except Exception:
+                    pass
+            if deleted:
+                logger.info(f"Cleaned up {deleted} stale search(es) from slskd")
+            return deleted
+        except Exception as e:
+            logger.warning(f"Failed to clean up stale searches: {e}")
+            return 0
+
     async def _do_async_search(
         self,
         query: str,
@@ -504,6 +547,11 @@ class SlskdProvider(DownloaderProvider):
         try:
             logger.info(f"Starting atomic search for: '{query}'")
 
+            # Guard: slskd must be connected to the Soulseek network.
+            if not await self._check_soulseek_connected():
+                logger.warning("Aborting search — slskd is not connected to the Soulseek network")
+                return []
+
             search_data = {
                 'searchText': query,
                 'timeout': timeout * 1000,
@@ -512,8 +560,20 @@ class SlskdProvider(DownloaderProvider):
                 'minimumPeerUploadSpeed': 0
             }
 
-            # 1. Post Search
-            response = await self._make_request('POST', 'searches', json=search_data)
+            # 1. Post Search (with one 409 recovery attempt)
+            async def _post_search():
+                return await self._make_request('POST', 'searches', json=search_data)
+
+            try:
+                response = await _post_search()
+            except HttpError as exc:
+                if exc.status == 409:
+                    logger.warning("Search slots full (HTTP 409) — clearing stale searches and retrying once")
+                    await self._cleanup_all_searches()
+                    await asyncio.sleep(1)
+                    response = await self._make_request('POST', 'searches', json=search_data)
+                else:
+                    raise
             if not response:
                 return []
 
