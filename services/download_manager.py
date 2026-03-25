@@ -48,6 +48,7 @@ class DownloadManager:
         self._loop_task = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._provider: Optional[ProviderBase] = None
+        self._active_providers: Dict[str, ProviderBase] = {}
         self._quality_profile_cache = None
 
     @classmethod
@@ -166,8 +167,9 @@ class DownloadManager:
             instances = []
             for provider_name in sorted_names:
                 try:
-                    instance = ProviderRegistry.create_instance(provider_name)
-                    instances.append(instance)
+                    if provider_name not in self._active_providers:
+                        self._active_providers[provider_name] = ProviderRegistry.create_instance(provider_name)
+                    instances.append(self._active_providers[provider_name])
                 except Exception as e:
                     logger.warning(f"Failed to instantiate provider '{provider_name}': {e}")
             
