@@ -1277,15 +1277,22 @@ class PlexClient(ProviderBase):
         return music_sections[0]
 
     def _resolve_history_context(self, account_id: Optional[int]):
-        """Resolve Plex server and library for an account-specific history query."""
+        """Resolve Plex server, library, and numeric Plex account ID for a history query.
+
+        Returns a 3-tuple: ``(target_server, target_library, plex_account_id_int)``.
+        ``plex_account_id_int`` is the integer Plex account ID required by
+        ``PlexServer.history(accountID=...)``.  All three values are ``None`` when
+        the context cannot be safely resolved — callers **must** treat that as a
+        hard refusal rather than falling back to the admin server.
+        """
         if not self.ensure_connection() or not self.server:
-            return None, None
+            return None, None, None
 
         target_server = self.server
         target_library = self.music_library
 
         if account_id is None:
-            return target_server, target_library
+            return None, None, None
 
         from core.storage import get_storage_service
 
@@ -1294,14 +1301,23 @@ class PlexClient(ProviderBase):
         account = next((item for item in accounts if item.get('id') == account_id), None)
         if not account:
             logger.warning(f"No Plex account found for history sync account_id={account_id}")
-            return target_server, target_library
+            return None, None, None
 
         target_user_id = account.get('user_id')
         if not target_user_id:
-            return target_server, target_library
+            logger.warning(f"Account account_id={account_id} has no Plex user_id — cannot scope history")
+            return None, None, None
 
         try:
             myplex_account = self.server.myPlexAccount()
+
+            # Resolve admin's numeric Plex ID for the accountID filter.
+            raw_admin_id = getattr(myplex_account, 'id', None)
+            try:
+                admin_plex_id_int: Optional[int] = int(raw_admin_id) if raw_admin_id is not None else None
+            except (TypeError, ValueError):
+                admin_plex_id_int = None
+
             admin_ids = {
                 str(value)
                 for value in [
@@ -1312,21 +1328,32 @@ class PlexClient(ProviderBase):
                 if value is not None
             }
             if str(target_user_id) in admin_ids:
-                return target_server, target_library
+                return target_server, target_library, admin_plex_id_int
 
             for user in myplex_account.users() or []:
                 candidate_id = getattr(user, 'id', None) or getattr(user, 'uuid', None)
                 if candidate_id is not None and str(candidate_id) == str(target_user_id):
-                    target_server = self.server.switchUser(user.title)
-                    target_library = self._find_music_library_for_server(target_server)
+                    switched_server = self.server.switchUser(user.title)
+                    switched_library = self._find_music_library_for_server(switched_server)
+                    try:
+                        managed_plex_id_int: Optional[int] = int(candidate_id)
+                    except (TypeError, ValueError):
+                        managed_plex_id_int = None
                     logger.info(
-                        f"Resolved Plex history context for account_id={account_id} to managed user '{user.title}'"
+                        f"Resolved Plex history context for account_id={account_id} "
+                        f"to managed user '{user.title}' (plex_id={managed_plex_id_int})"
                     )
-                    return target_server, target_library
+                    return switched_server, switched_library, managed_plex_id_int
         except Exception as e:
             logger.warning(f"Failed to resolve Plex history context for account_id={account_id}: {e}")
 
-        return target_server, target_library
+        # Could not resolve — return (None, None, None) so the caller refuses to
+        # execute an unscoped history() that would leak the admin's global history.
+        logger.warning(
+            f"Plex history context for account_id={account_id} could not be resolved; "
+            "refusing to fall back to unscoped admin history."
+        )
+        return None, None, None
 
     def _coerce_datetime(self, value: Any) -> Optional[datetime]:
         if value is None:
@@ -1436,17 +1463,37 @@ class PlexClient(ProviderBase):
 
     def fetch_user_history(self, account_id: Optional[int] = None, limit: int = 100) -> List[UserTrackInteraction]:
         """Fetch account-specific listening history from Plex using exact managed-user context when available."""
-        target_server, target_library = self._resolve_history_context(account_id)
-        if not target_server or not target_library:
-            logger.warning("Plex not connected or no music library for history")
+        # Guard 1: an explicit account_id is mandatory — an unscoped history() call
+        # silently returns the admin's global history and would contaminate the database.
+        if not account_id:
+            logger.warning("fetch_user_history: account_id is required; refusing unscoped history fetch")
+            return []
+
+        # Guard 2: enforce int — PlexAPI silently drops the accountID filter when it
+        # receives a string, falling back to global admin history with no error raised.
+        try:
+            account_id_int = int(account_id)
+        except (TypeError, ValueError):
+            logger.error(
+                f"fetch_user_history: account_id={account_id!r} cannot be coerced to int "
+                "— aborting to prevent admin history leak"
+            )
+            return []
+
+        target_server, target_library, plex_account_id = self._resolve_history_context(account_id_int)
+        if not target_server or not target_library or plex_account_id is None:
+            logger.warning(
+                f"fetch_user_history: could not resolve a scoped Plex context for "
+                f"account_id={account_id_int} — refusing to fall back to unscoped admin history"
+            )
             return []
 
         try:
             interactions: List[UserTrackInteraction] = []
 
             try:
-                logger.debug(f"Fetching Plex play history for account_id={account_id} (limit={limit})")
-                history_items = target_server.history(maxresults=limit)
+                logger.debug(f"Fetching Plex play history for account_id={account_id_int} plex_id={plex_account_id} (limit={limit})")
+                history_items = target_server.history(maxresults=limit, accountID=plex_account_id)
                 for item in history_items or []:
                     # Strictly filter for audio tracks to avoid crashing on photos/extras
                     if getattr(item, 'type', None) != 'track':

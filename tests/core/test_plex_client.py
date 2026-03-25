@@ -221,7 +221,7 @@ def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
     client.music_library = MagicMock()
 
     managed_user = MagicMock()
-    managed_user.id = 'managed-1'
+    managed_user.id = 42  # numeric Plex account ID — int() cast must succeed
     managed_user.uuid = None
     managed_user.title = 'Kiddo'
 
@@ -249,7 +249,7 @@ def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
 
     fake_storage = MagicMock()
     fake_storage.list_accounts.return_value = [
-        {'id': 8, 'display_name': 'Kiddo', 'user_id': 'managed-1'}
+        {'id': 8, 'display_name': 'Kiddo', 'user_id': '42'}  # matches managed_user.id
     ]
     monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
 
@@ -261,7 +261,7 @@ def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
 
     assert len(interactions) == 1
     server.switchUser.assert_called_once_with('Kiddo')
-    target_server.history.assert_called_once_with(maxresults=10)
+    target_server.history.assert_called_once_with(maxresults=10, accountID=42)
 
 
 def test_track_to_interaction_extracts_user_rating_and_play_count():
@@ -346,7 +346,7 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
     client.music_library = MagicMock()
 
     managed_user = MagicMock()
-    managed_user.id = 'managed-1'
+    managed_user.id = 42  # numeric Plex account ID
     managed_user.uuid = None
     managed_user.title = 'Kiddo'
 
@@ -381,7 +381,7 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
 
     fake_storage = MagicMock()
     fake_storage.list_accounts.return_value = [
-        {'id': 8, 'display_name': 'Kiddo', 'user_id': 'managed-1'}
+        {'id': 8, 'display_name': 'Kiddo', 'user_id': '42'}  # matches managed_user.id
     ]
     monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
 
