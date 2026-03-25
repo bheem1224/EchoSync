@@ -417,6 +417,9 @@
       error = 'Please select a source, target, and at least one playlist.';
       return;
     }
+    // Clear stale page-level messages from a previous sync run
+    error = '';
+    success = '';
     analysisModalOpen = true;
     runAnalysis();
   }
@@ -426,6 +429,14 @@
     analysisResult = null;
     analysisError = '';
     analysisStarted = false;
+    // Also clear any lingering sync-progress state so re-opening always shows a fresh analysis
+    if (syncEventPollingId) {
+      clearInterval(syncEventPollingId);
+      syncEventPollingId = null;
+    }
+    syncEventStream = [];
+    syncProgressEvent = null;
+    syncDownloadMissing = false;
   }
 
   async function startSync() {
