@@ -16,7 +16,9 @@
   $: searchingCount = queueItems.filter(t => t.status === 'SEARCHING').length;
   $: downloadingCount = queueItems.filter(t => t.status === 'DOWNLOADING').length;
   $: failedCount = queueItems.filter(t => t.status === 'FAILED' || t.status === 'NOT_FOUND').length;
-  $: progressPercent = totalTracks > 0 ? Math.round((completedCount / totalTracks) * 100) : 0;
+  $: queuedCount = queueItems.filter(t => t.status === 'QUEUED').length;
+  $: processedCount = completedCount + failedCount;
+  $: progressPercent = totalTracks > 0 ? Math.round((processedCount / totalTracks) * 100) : 0;
   $: allSelected = queueItems.length > 0 && selectedTrackIds.length === queueItems.length;
   $: hasSelection = selectedTrackIds.length > 0;
 
@@ -228,10 +230,14 @@
   </div>
 
   <!-- Stats -->
-  <div class="grid grid-cols-4 gap-3 px-4 py-3 bg-gray-850 border-b border-gray-700">
+  <div class="grid grid-cols-5 gap-2 px-4 py-3 bg-gray-850 border-b border-gray-700">
     <div class="text-center">
       <div class="text-lg font-bold text-white">{totalTracks}</div>
       <div class="text-xs text-gray-400">Total</div>
+    </div>
+    <div class="text-center">
+      <div class="text-lg font-bold text-gray-400">{queuedCount}</div>
+      <div class="text-xs text-gray-400">Queued</div>
     </div>
     <div class="text-center">
       <div class="text-lg font-bold text-blue-400">{searchingCount}</div>

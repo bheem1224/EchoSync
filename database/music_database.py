@@ -508,12 +508,12 @@ class MusicDatabase:
     def get_library_hierarchy(self) -> List[Dict]:
         """Fetch the entire library hierarchy (Artist -> Album -> Track)."""
         with self.session_scope() as session:
-            # Use selectin_load (separate SELECT per relationship) rather than joinedload
+            # Use selectinload (separate SELECT per relationship) rather than joinedload
             # (which emits a single Cartesian-product JOIN). For large libraries the JOIN
             # inflates row count to artists×albums×tracks, causing an OOM spike.
-            from sqlalchemy.orm import selectin_load
+            from sqlalchemy.orm import selectinload
             artists = session.query(Artist).options(
-                selectin_load(Artist.albums).selectin_load(Album.tracks)
+                selectinload(Artist.albums).selectinload(Album.tracks)
             ).order_by(Artist.name).all()
 
             hierarchy = []

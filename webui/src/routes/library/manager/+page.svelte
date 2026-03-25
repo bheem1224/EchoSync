@@ -20,6 +20,7 @@
 
     let loading = true;
     let pruneLoading = false;
+    let scanLoading = false;
     let savingSettings = false;
     let actionLoadingSyncId = null;
     let syncingManagedUsers = false;
@@ -174,6 +175,29 @@
             } else { alert('Prune Job Failed'); }
         } catch (e) { console.error(e); alert('Prune Job Error'); }
         finally { pruneLoading = false; }
+    }
+
+    async function runManagerScan() {
+        scanLoading = true;
+        try {
+            const res = await fetch('/api/manager/scan', { method: 'POST' });
+            if (res.ok) {
+                const result = await res.json();
+                const s = result.summary;
+                alert(
+                    `Scan Complete.\n` +
+                    `Duplicates (auto-resolve): ${s.duplicates_auto_resolve}\n` +
+                    `Duplicates (manual review): ${s.duplicates_manual_review}\n` +
+                    `Staged for deletion: ${s.staged_deletes}\n` +
+                    `Staged for upgrade: ${s.staged_upgrades}`
+                );
+                await refreshAll();
+            } else {
+                const payload = await res.json().catch(() => ({}));
+                alert(payload.error || 'Scan failed');
+            }
+        } catch (e) { console.error(e); alert('Scan Error'); }
+        finally { scanLoading = false; }
     }
 
     async function resolveConflict(keepId, tracks) {
@@ -356,6 +380,9 @@
             <div class="flex gap-4">
                 <button on:click={saveSettings} disabled={savingSettings} class="btn btn--primary">
                     {#if savingSettings}Saving...{:else}Save Settings{/if}
+                </button>
+                <button on:click={runManagerScan} disabled={scanLoading} class="btn btn--secondary">
+                    {#if scanLoading}Scanning...{:else}Run Manager Scan{/if}
                 </button>
                 <button on:click={runPruneJob} disabled={pruneLoading} class="btn btn--danger">
                     {#if pruneLoading}Running...{:else}Run Prune Job{/if}

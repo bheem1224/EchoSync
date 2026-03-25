@@ -8,7 +8,7 @@ from database.music_database import get_database, Track, Artist
 from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState, User
 from database.config_database import get_config_database
 from core.suggestion_engine.consensus import calculate_consensus
-from core.suggestion_engine.deletion import execute_delete_now, execute_upgrade_now
+from core.suggestion_engine.deletion import execute_delete_now, execute_upgrade_now, apply_lifecycle_action
 from core.matching_engine.text_utils import generate_deterministic_id
 from pathlib import Path
 from sqlalchemy import func, case
@@ -318,6 +318,65 @@ def toggle_suggestion_candidate_override():
     except Exception as e:
         logger.error(f"Error toggling suggestion candidate override for {sync_id}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+@bp.route("/scan", methods=["POST"])
+def run_manager_scan():
+    """Scan for duplicates and stage lifecycle actions — no actions are executed.
+
+    This always runs regardless of auto flags. Duplicates are returned for the
+    Duplicate Resolution queue. All rated tracks are re-evaluated and any
+    DELETE_MONTH_END / UPGRADE_WEEK_END actions are staged in the Pending Actions
+    queue for admin review. Admin must explicitly approve or auto flags must be
+    set for the scheduled job to act.
+    """
+    try:
+        # 1. Find duplicates (scan only — no deletions)
+        hygiene = DuplicateHygieneService()
+        dup_result = hygiene.find_duplicates()
+        auto_resolve_count = len(dup_result.get('auto_resolve', []))
+        manual_review_count = len(dup_result.get('manual_review', []))
+
+        # 2. Re-evaluate all rated tracks and stage lifecycle actions
+        work_db = get_working_database()
+        staged_deletes = 0
+        staged_upgrades = 0
+
+        with work_db.session_scope() as session:
+            rated_sync_ids = [
+                row[0]
+                for row in session.query(WorkingUserRating.sync_id).distinct().all()
+            ]
+
+        for sync_id in rated_sync_ids:
+            consensus = calculate_consensus(sync_id)
+            action = consensus.get("action", "KEEP")
+            if action in ("DELETE_MONTH_END", "UPGRADE_WEEK_END"):
+                apply_lifecycle_action(sync_id, consensus)
+                if action == "DELETE_MONTH_END":
+                    staged_deletes += 1
+                else:
+                    staged_upgrades += 1
+
+        logger.info(
+            f"Manager scan complete: {auto_resolve_count} auto-resolve duplicates, "
+            f"{manual_review_count} manual-review duplicates, "
+            f"{staged_deletes} staged deletes, {staged_upgrades} staged upgrades"
+        )
+
+        return jsonify({
+            "success": True,
+            "summary": {
+                "duplicates_auto_resolve": auto_resolve_count,
+                "duplicates_manual_review": manual_review_count,
+                "staged_deletes": staged_deletes,
+                "staged_upgrades": staged_upgrades,
+            }
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error running manager scan: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 
 @bp.route("/prune/run", methods=["POST"])
 def run_prune_job():
