@@ -81,3 +81,36 @@
 *   **File:** `core/job_queue.py`
 *   **Line:** 229 (`execute_job_now`)
 *   **Vulnerability:** If the `threading.Thread(target=_run_job_thread)` fails to spawn (e.g., hitting thread limits), the `_is_running[name]` lock is cleared in the `except` block. However, if the thread spawns but is killed by the OS before reaching the `finally` block, the lock remains `True` permanently, blocking all future executions of that job.
+## Semantic & Reference Audit
+
+### 1. Database Columns vs. ORM Attributes vs. JSON Payloads
+
+**Mismatched `duration` Types and Units**
+*   **Files:** `database/music_database.py:95`, `web/routes/metadata_review.py:245-260`
+*   **Inconsistency:** The `Track` SQLAlchemy model in `music_database.py` defines `duration` as milliseconds. However, `metadata_review.py`'s `_normalize_duration_seconds` coerces both `duration` and `duration_ms` keys from incoming metadata payloads and returns *seconds*. This converted value (in seconds) is then passed as `duration` to AcoustID (`_submit_acoustid_contribution_async`), but if this value were to accidentally leak back into the database creation loop, it would save a duration of e.g. `245` ms instead of `245000` ms.
+
+**Mismatched Search Payload Key: `acoustid` vs `acoustid_id`**
+*   **Files:** `database/music_database.py:108`, `web/routes/tracks.py:95`
+*   **Inconsistency:** The database column for `AudioFingerprint` and `Track` (as well as identifiers in `SoulSyncTrack`) is strictly named `acoustid_id`. However, the tracks search route (`/api/tracks`) looks for a query parameter specifically named `acoustid` (`request.args.get('acoustid')`) without the `_id` suffix, meaning search payloads using `acoustid_id` will fail to filter correctly.
+
+### 2. Status Flags & Enums
+
+**Mixed Hardcoded Strings and Enums for Statuses**
+*   **Files:** `database/working_database.py:98`, `database/working_database.py:111`, `web/routes/downloads.py:16`, `core/models.py:201`
+*   **Inconsistency:** Both `ReviewTask.status` and `Download.status` are mapped as raw `String` columns in the database and frequently checked against hardcoded strings like `"pending"`, `"queued"`, and `"downloading"`. Conversely, other areas of the codebase (e.g. `core/models.py:201` and `providers/jellyfin/adapter.py:187`) correctly utilize a formal `DownloadStatus` Enum (`DownloadStatus.VERIFIED`). This split brain means a typo in a string comparison (e.g., `status == 'pending'` vs `status == 'Pending'`) will silently skip processing logic.
+
+### 3. Provider Configuration Keys
+
+**Mismatched Metadata Preferences Hierarchy**
+*   **Files:** `web/routes/metadata_review.py:397-399`, `web/routes/system.py:403`
+*   **Inconsistency:** `metadata_review.py` attempts to retrieve auto-submission preferences using `config_manager.get("preferences.contribute_metadata")` and `config_manager.get("preferences.enable_acoustid_auto_submission")`. However, the `/settings/preferences` route in `system.py` strictly manages these preferences under a completely different top-level dictionary key via `config_manager.set('metadata_enhancement', updated)`. The reviewer will never read the true settings.
+
+### 4. Event Bus Topics
+
+**Orphaned Publish Intents (No Subscribers)**
+*   **Files:** `core/suggestion_engine/discovery.py:113`, `core/suggestion_engine/deletion.py:68, 96, 229`
+*   **Inconsistency:** The core engine publishes numerous critical intents to the event bus, including `"DOWNLOAD_INTENT"`, `"HARD_DELETE_INTENT"`, `"QUALITY_UPGRADE_INTENT"`, and `"PREFERENCE_MODEL_FEEDBACK"`. However, a codebase scan reveals exactly ZERO `event_bus.subscribe()` calls for these topics. They are shouted into the void, meaning the discovery and deletion engines are effectively decoupled from any actual download or deletion executors.
+
+**Legacy vs. Lightweight Topic Signatures**
+*   **Files:** `web/routes/playlists.py:652`, `core/suggestion_engine/discovery.py:113`
+*   **Inconsistency:** `web/routes/playlists.py` heavily utilizes the legacy Phase-1 `publish` signature (`event_bus.publish(job_name, "sync_started", payload)`). Meanwhile, `discovery.py` uses the modern Phase-2 lightweight signature (`event_bus.publish({"event": "DOWNLOAD_INTENT", ...})`). While the `EventBus` class attempts to bridge these internally, it leads to messy channel/topic string overlaps and confusing traceback origins.
