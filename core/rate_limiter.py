@@ -6,10 +6,12 @@ This module provides a generic rate limiter and a decorator for rate-limiting fu
 
 import time
 import asyncio
+import threading
 from typing import Callable, Optional
 
 # Global dictionary to track last call times for the decorator
 _last_call = {}
+_last_call_lock = threading.Lock()
 
 def rate_limited(key: str, min_interval_sec: float) -> Callable:
     """
@@ -25,11 +27,11 @@ def rate_limited(key: str, min_interval_sec: float) -> Callable:
     def decorator(fn):
         def wrapper(*args, **kwargs):
             now = time.time()
-            prev = _last_call.get(key, 0)
-            if now - prev < min_interval_sec:
-                # skip/deny for now; production should return 429 or handle retry
-                return {"rate_limited": True}
-            _last_call[key] = now
+            with _last_call_lock:
+                prev = _last_call.get(key, 0)
+                if now - prev < min_interval_sec:
+                    return {"rate_limited": True}
+                _last_call[key] = now
             return fn(*args, **kwargs)
         return wrapper
     return decorator
@@ -45,13 +47,15 @@ class RateLimiter:
 
     async def wait(self):
         """Wait if necessary to respect rate limiting."""
-        self._clean_old_timestamps()
-        if len(self.timestamps) >= self.max_requests:
+        while True:
+            self._clean_old_timestamps()
+            if len(self.timestamps) < self.max_requests:
+                break
             oldest_timestamp = self.timestamps[0]
             wait_time = oldest_timestamp + self.window_seconds - time.time()
             if wait_time > 0:
                 await asyncio.sleep(wait_time)
-                self._clean_old_timestamps()
+            # Re-check after sleep: another coroutine may have consumed a slot
         self.timestamps.append(time.time())
 
     def _clean_old_timestamps(self):

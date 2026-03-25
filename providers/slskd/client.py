@@ -742,7 +742,6 @@ class SlskdProvider(DownloaderProvider):
         """Synchronous wrapper for atomic search"""
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
                 results = loop.run_until_complete(
                     self._async_search(query, basic_filters, quality_profile=quality_profile)
@@ -758,7 +757,6 @@ class SlskdProvider(DownloaderProvider):
         """Synchronous wrapper for download"""
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
                 return loop.run_until_complete(self._async_download(username, filename, file_size))
             finally:
@@ -771,7 +769,6 @@ class SlskdProvider(DownloaderProvider):
         """Synchronous wrapper for status"""
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
                 return loop.run_until_complete(self._async_get_download_status(download_id))
             finally:
@@ -798,13 +795,13 @@ class SlskdProvider(DownloaderProvider):
         # Simple health check
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
                 res = loop.run_until_complete(self._make_request('GET', 'session'))
                 return res is not None
             finally:
                 loop.close()
-        except:
+        except Exception as e:
+            logger.debug(f"Slskd authenticate check failed: {e}")
             return False
 
     def is_configured(self) -> bool:

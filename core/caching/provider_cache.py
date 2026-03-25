@@ -11,6 +11,7 @@ This module provides:
 import functools
 import json
 import logging
+import threading
 from datetime import timedelta
 from typing import Any, Callable, Optional, TypeVar, cast
 from pathlib import Path
@@ -196,13 +197,16 @@ class ProviderCache:
 
 # Global cache instance
 _cache_instance: Optional[ProviderCache] = None
+_cache_lock = threading.Lock()
 
 
 def get_cache() -> ProviderCache:
     """Get or create global cache instance"""
     global _cache_instance
     if _cache_instance is None:
-        _cache_instance = ProviderCache()
+        with _cache_lock:
+            if _cache_instance is None:
+                _cache_instance = ProviderCache()
     return _cache_instance
 
 

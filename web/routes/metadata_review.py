@@ -394,9 +394,11 @@ def approve_review_queue_item(task_id: int):
                     # 2. Community Contribution (AcoustID)
                     # Safety gate: keep auto-submission OFF unless explicitly enabled.
                     # This remains disabled by default while contribution flow is tested.
-                    contribute_metadata_pref = bool(config_manager.get("preferences.contribute_metadata", True))
+                    # Preferences are stored under the 'metadata_enhancement' config key
+                    # (set by /api/settings/preferences in system.py).
+                    contribute_metadata_pref = bool(config_manager.get("metadata_enhancement.contribute_metadata", True))
                     auto_submit_enabled = bool(
-                        config_manager.get("preferences.enable_acoustid_auto_submission", False)
+                        config_manager.get("metadata_enhancement.enable_acoustid_auto_submission", False)
                     )
                     contribute_metadata = contribute_metadata_pref and auto_submit_enabled
                     acoustid_fingerprint = str(final_metadata.get("acoustid_fingerprint") or "").strip()
@@ -425,15 +427,6 @@ def approve_review_queue_item(task_id: int):
             job_queue.register_job(job_name, _background_approval_task, interval_seconds=None)
             job_queue.execute_job_now(job_name)
 
-            # Register a dynamic one-off job for this task
-            job_name = f"approve_review_task_{task_id}"
-            job_queue.register_job(
-                name=job_name,
-                func=lambda: _process_approval_background(task_id, final_metadata),
-                interval_seconds=None,  # One-off job
-                start_after=0.0
-            )
-
             return jsonify(
                 {
                     "success": True,
@@ -458,20 +451,22 @@ def stream_review_queue_item(task_id: int):
             file_path = _resolve_task_file(task)
             if not file_path:
                 return jsonify({"error": "File does not exist"}), 404
-
-            # Use Flask's native send_file with conditional=True to automatically
-            # handle 'Accept-Ranges: bytes' and safe streaming without holding locks
-            from flask import send_file
-            return send_file(
-                file_path,
-                mimetype="audio/mpeg" if file_path.suffix.lower() == ".mp3" else "audio/flac",
-                as_attachment=False,
-                conditional=True,
-                download_name=file_path.name
-            )
     except Exception as e:
         logger.error(f"Failed to stream review task {task_id}: {e}", exc_info=True)
         return jsonify({"error": "Failed to stream review file"}), 500
+
+    # Use Flask's native send_file with conditional=True to automatically
+    # handle 'Accept-Ranges: bytes' and safe streaming without holding locks.
+    # Called outside the session_scope so the DB connection is released before
+    # the (potentially long-running) streaming response begins.
+    from flask import send_file
+    return send_file(
+        file_path,
+        mimetype="audio/mpeg" if file_path.suffix.lower() == ".mp3" else "audio/flac",
+        as_attachment=False,
+        conditional=True,
+        download_name=file_path.name
+    )
 
 
 @bp.post("/review-queue/<int:task_id>/lookup/acoustid")

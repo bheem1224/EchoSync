@@ -121,17 +121,20 @@ class PlaylistSyncService:
         if not self.plex_client:
             try:
                 self.plex_client = ProviderRegistry.create_instance('plex')
-            except: pass
+            except Exception as e:
+                logger.warning(f"Plex client unavailable at SyncService init: {e}")
 
         if not self.jellyfin_client:
             try:
                 self.jellyfin_client = ProviderRegistry.create_instance('jellyfin')
-            except: pass
+            except Exception as e:
+                logger.warning(f"Jellyfin client unavailable at SyncService init: {e}")
 
         if not self.navidrome_client:
             try:
                 self.navidrome_client = ProviderRegistry.create_instance('navidrome')
-            except: pass
+            except Exception as e:
+                logger.warning(f"Navidrome client unavailable at SyncService init: {e}")
 
         self.download_manager = get_download_manager()
         self.progress_callbacks = {}  # Playlist-specific progress callbacks

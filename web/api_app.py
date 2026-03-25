@@ -251,6 +251,18 @@ def create_app() -> Flask:
 
         return "Frontend build not found", 404
 
+    @app.teardown_appcontext
+    def _teardown_db_sessions(exc):  # noqa: ARG001
+        """Return idle DB connections to the pool at the end of each request context."""
+        try:
+            get_working_database().engine.dispose(close=False)
+        except Exception:
+            pass
+        try:
+            get_database().engine.dispose(close=False)
+        except Exception:
+            pass
+
     return app
 
 if __name__ == "__main__":

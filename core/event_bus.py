@@ -13,45 +13,42 @@ class EventBus:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._events: Dict[str, List[Dict[str, Any]]] = {}
+        self._subscribers: Dict[str, List] = {}
 
 
     def subscribe(self, event_name_or_handler, handler=None):
-        if not hasattr(self, "_subscribers"):
-            self._subscribers = {}
-
         if handler is None:
-            # lightweight subscribe: subscribe(handler) -> subscribes to all
             event_name = "*"
             h = event_name_or_handler
         else:
             event_name = event_name_or_handler
             h = handler
 
-        if event_name not in self._subscribers:
-            self._subscribers[event_name] = []
-        self._subscribers[event_name].append(h)
+        with self._lock:
+            if event_name not in self._subscribers:
+                self._subscribers[event_name] = []
+            self._subscribers[event_name].append(h)
 
     def publish_lightweight(self, payload: dict):
-        if not hasattr(self, "_subscribers"):
-            self._subscribers = {}
-
         event_name = payload.get("event", "UNKNOWN")
 
-        # Call specific subscribers
-        for handler in self._subscribers.get(event_name, []):
-            try:
-                handler(payload)
-            except Exception as e:
-                import logging
-                logging.getLogger("event_bus").error(f"Error in event handler for {event_name}: {e}")
+        with self._lock:
+            specific = list(self._subscribers.get(event_name, []))
+            universal = list(self._subscribers.get("*", []))
 
-        # Call universal subscribers
-        for handler in self._subscribers.get("*", []):
+        for handler in specific:
             try:
                 handler(payload)
             except Exception as e:
                 import logging
-                logging.getLogger("event_bus").error(f"Error in universal event handler: {e}")
+                logging.getLogger("event_bus").error(f"Error in event handler for {event_name}: {e}", exc_info=True)
+
+        for handler in universal:
+            try:
+                handler(payload)
+            except Exception as e:
+                import logging
+                logging.getLogger("event_bus").error(f"Error in universal event handler: {e}", exc_info=True)
 
     def publish(self, *args, **kwargs):
         # Handle Phase-2 target API: publish(payload_dict)

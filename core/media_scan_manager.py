@@ -359,12 +359,13 @@ class MediaScanManager:
             if self._timer:
                 self._timer.cancel()
                 self._timer = None
-                
+
             if self._periodic_update_timer:
                 self._periodic_update_timer.cancel()
                 self._periodic_update_timer = None
-                
+
             self._is_doing_periodic_updates = False
+            self._scan_completion_callbacks.clear()
             logger.info("MediaScanManager shutdown - cancelled all pending timers")
     
     def update_local_database(self):

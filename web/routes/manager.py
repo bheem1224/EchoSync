@@ -94,6 +94,7 @@ def _resolve_working_user_for_trends():
         if requested_user_id:
             resolved_user = session.query(User).filter(User.id == requested_user_id).first()
             if resolved_user:
+                session.expunge(resolved_user)
                 return resolved_user, None, "user_id"
 
         if requested_account_id:
@@ -115,6 +116,7 @@ def _resolve_working_user_for_trends():
                     if display_name:
                         resolved_user = session.query(User).filter(User.username == display_name).first()
                 if resolved_user:
+                    session.expunge(resolved_user)
                     return resolved_user, resolved_account_id, "account_id"
 
         plex_service_id = config_db.get_or_create_service_id("plex")
@@ -132,6 +134,11 @@ def _resolve_working_user_for_trends():
                 display_name = (fallback_account.get("display_name") or fallback_account.get("account_name") or "").strip()
                 if display_name:
                     resolved_user = session.query(User).filter(User.username == display_name).first()
+
+        # Expunge before the session closes so commit() does not expire the object's
+        # attributes and callers can safely access .id / .username after this function returns.
+        if resolved_user is not None:
+            session.expunge(resolved_user)
 
     return resolved_user, resolved_account_id, "active_account"
 

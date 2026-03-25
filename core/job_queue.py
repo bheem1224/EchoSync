@@ -123,6 +123,10 @@ class JobQueue:
 
         Checks config for any saved interval overrides for this job.
         """
+        # Clamp max_retries to a safe upper bound to prevent a misconfigured job from
+        # permanently tying up a worker thread in an infinite retry spiral.
+        _MAX_RETRIES_CAP = 10
+        max_retries = max(0, min(max_retries, _MAX_RETRIES_CAP))
         with self._lock:
             # Check for saved overrides in config
             saved_config = config_manager.get(f"jobs.{name}")

@@ -105,16 +105,16 @@ class DatabaseUpdateWorker:
             logger.info("Database update worker finished")
 
     def start(self):
-        """Dispatch run() in a daemon thread for fire-and-forget use (e.g. HTTP routes).
+        """Dispatch run() via the centralized job queue for fire-and-forget use (e.g. HTTP routes).
 
-        Stores the thread in ``self.thread`` so callers can check ``is_alive()``.
-        For the JobQueue path call ``run()`` directly — it is already executing in a
-        JobQueue worker thread and does not need an additional thread.
+        Uses the shared JobQueue worker pool rather than a raw daemon thread so the
+        job is visible in the scheduler and benefits from the pool's lifecycle management.
         """
-        t = threading.Thread(target=self.run, daemon=True)
-        self.thread = t
-        t.start()
-        logger.info(f"DatabaseUpdateWorker thread started for {self.server_type}")
+        from core.job_queue import job_queue
+        job_name = f"db_update_worker_{self.server_type}_{id(self)}"
+        job_queue.register_job(name=job_name, func=self.run, interval_seconds=None)
+        job_queue.execute_job_now(job_name)
+        logger.info(f"DatabaseUpdateWorker queued via job_queue for {self.server_type}")
 
     def stop(self):
         """Signal the worker to stop processing."""

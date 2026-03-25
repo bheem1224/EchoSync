@@ -302,6 +302,11 @@ def poll_oauth(session_id: str):
             if resp_data.get('authToken'):
                 is_logged_in = True
                 auth_token = resp_data.get('authToken')
+        except requests.exceptions.RequestException as e:
+            # Network-level failure (DNS, timeout, connection refused). Return 503 so the
+            # frontend applies backoff rather than hammering a potentially unreachable endpoint.
+            logger.warning(f"Plex PIN API unreachable: {e}")
+            return jsonify({'completed': False, 'error': 'Plex authorization service temporarily unavailable'}), 503
         except Exception as e:
             logger.debug(f"Plex poll API check failed: {e}")
 

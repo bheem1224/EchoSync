@@ -18,6 +18,7 @@ import asyncio
 import inspect
 import logging
 import re
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -39,6 +40,7 @@ class DownloadManager:
     """
 
     _instance = None
+    _instance_lock = threading.Lock()
 
     def __init__(self):
         self.db = get_database()
@@ -54,7 +56,9 @@ class DownloadManager:
     @classmethod
     def get_instance(cls):
         if cls._instance is None:
-            cls._instance = DownloadManager()
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = DownloadManager()
         return cls._instance
 
     def _get_provider(self) -> Optional[ProviderBase]:

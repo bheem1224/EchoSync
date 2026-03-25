@@ -318,6 +318,88 @@ class MusicDatabase:
 
         return results
 
+    def search_canonical_fuzzy(self, title: str, artist: Optional[str] = None, limit: int = 10) -> List:
+        """Fuzzy search canonical tracks by title and optional artist substring.
+
+        Returns a list of ``SoulSyncTrack`` objects (each has a ``to_dict()`` method).
+        """
+        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        results = []
+        with self.session_scope() as session:
+            query = (
+                session.query(Track)
+                .join(Artist)
+                .join(Album, isouter=True)
+                .filter(Track.title.ilike(f"%{title}%"))
+            )
+            if artist:
+                query = query.filter(Artist.name.ilike(f"%{artist}%"))
+            tracks = query.limit(limit).all()
+            for t in tracks:
+                results.append(SoulSyncTrack(
+                    raw_title=t.title,
+                    artist_name=t.artist.name,
+                    album_title=t.album.title if t.album else "",
+                    duration=t.duration,
+                    track_number=t.track_number,
+                    disc_number=t.disc_number,
+                    bitrate=t.bitrate,
+                    file_path=t.file_path,
+                    file_format=t.file_format,
+                    musicbrainz_id=t.musicbrainz_id,
+                    isrc=t.isrc,
+                    acoustid_id=t.acoustid_id,
+                ))
+        return results
+
+    def search_canonical_by_ids(
+        self,
+        isrc: Optional[str] = None,
+        musicbrainz_recording_id: Optional[str] = None,
+        acoustid: Optional[str] = None,
+    ) -> List:
+        """Search canonical tracks by global identifiers (ISRC, MBID, AcoustID).
+
+        The ``acoustid`` parameter maps to the ``Track.acoustid_id`` DB column.
+        Returns a list of ``SoulSyncTrack`` objects.
+        """
+        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        from sqlalchemy import or_
+        results = []
+        filters = []
+        if isrc:
+            filters.append(Track.isrc == isrc)
+        if musicbrainz_recording_id:
+            filters.append(Track.musicbrainz_id == musicbrainz_recording_id)
+        if acoustid:
+            filters.append(Track.acoustid_id == acoustid)
+        if not filters:
+            return results
+        with self.session_scope() as session:
+            tracks = (
+                session.query(Track)
+                .join(Artist)
+                .join(Album, isouter=True)
+                .filter(or_(*filters))
+                .all()
+            )
+            for t in tracks:
+                results.append(SoulSyncTrack(
+                    raw_title=t.title,
+                    artist_name=t.artist.name,
+                    album_title=t.album.title if t.album else "",
+                    duration=t.duration,
+                    track_number=t.track_number,
+                    disc_number=t.disc_number,
+                    bitrate=t.bitrate,
+                    file_path=t.file_path,
+                    file_format=t.file_format,
+                    musicbrainz_id=t.musicbrainz_id,
+                    isrc=t.isrc,
+                    acoustid_id=t.acoustid_id,
+                ))
+        return results
+
     def get_external_identifier_map(self, provider_source: str, track_ids: List[int]) -> Dict[int, str]:
         """Return a map of track_id -> provider_item_id for a provider.
 
@@ -426,11 +508,12 @@ class MusicDatabase:
     def get_library_hierarchy(self) -> List[Dict]:
         """Fetch the entire library hierarchy (Artist -> Album -> Track)."""
         with self.session_scope() as session:
-            # Query all artists with their albums and tracks
-            # We use joinedload to avoid N+1 query problems
-            from sqlalchemy.orm import joinedload
+            # Use selectin_load (separate SELECT per relationship) rather than joinedload
+            # (which emits a single Cartesian-product JOIN). For large libraries the JOIN
+            # inflates row count to artists×albums×tracks, causing an OOM spike.
+            from sqlalchemy.orm import selectin_load
             artists = session.query(Artist).options(
-                joinedload(Artist.albums).joinedload(Album.tracks)
+                selectin_load(Artist.albums).selectin_load(Album.tracks)
             ).order_by(Artist.name).all()
 
             hierarchy = []

@@ -60,8 +60,9 @@ class _DBWriter:
             pass
 
     def stop(self):
+        self._tasks.join()          # drain all pending writes before stopping
         self._stop.set()
-        self._thread.join(timeout=1.0)
+        self._thread.join(timeout=5.0)
 
 
 _writers: dict[str, _DBWriter] = {}

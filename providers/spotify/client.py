@@ -61,7 +61,7 @@ class ConfigCacheHandler(CacheHandler):
                 'token_type': 'Bearer'
             }
         except Exception as e:
-            logger.error(f"Error loading cached Spotify token for account {self.account_id}: {e}")
+            logger.error(f"Error loading cached Spotify token for account {self.account_id}: {e}", exc_info=True)
             return None
 
     def save_token_to_cache(self, token_info):

@@ -27,6 +27,7 @@ logger = get_logger("services.auto_importer")
 
 class AutoImportService:
     _instance = None
+    _instance_lock = threading.Lock()
 
     def __init__(self):
         self.library_root = config_manager.get_library_dir()
@@ -40,7 +41,9 @@ class AutoImportService:
     @classmethod
     def get_instance(cls):
         if cls._instance is None:
-            cls._instance = AutoImportService()
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = AutoImportService()
         return cls._instance
 
     def _register_jobs(self):
@@ -145,17 +148,20 @@ class AutoImportService:
         auto_import = meta_config.get('auto_import', False)
         confidence_threshold = meta_config.get('confidence_threshold', 90) / 100.0
 
+        # Purge all stale entries from _recently_completed in one pass before iterating
+        # (without this, unique files processed once accumulate forever)
+        now = time.time()
+        stale = [k for k, ts in self._recently_completed.items() if now - ts >= 10]
+        for k in stale:
+            del self._recently_completed[k]
+
         for file_path in files:
             file_key = str(file_path)
-            
+
             # Check if file was recently completed (within last 10 seconds)
             if file_key in self._recently_completed:
-                if time.time() - self._recently_completed[file_key] < 10:
-                    logger.debug(f"File recently processed, skipping: {file_path}")
-                    continue
-                else:
-                    # Cleanup old entries
-                    del self._recently_completed[file_key]
+                logger.debug(f"File recently processed, skipping: {file_path}")
+                continue
             
             with self._processing_lock:
                 if file_key in self._processing_files:
