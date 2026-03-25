@@ -460,6 +460,7 @@ class MusicDatabase:
         from core.matching_engine.scoring_profile import ExactSyncProfile
         from core.matching_engine.soul_sync_track import SoulSyncTrack
         from sqlalchemy import or_
+        import re
 
         profile = ExactSyncProfile()
         engine = WeightedMatchingEngine(profile)
@@ -474,12 +475,19 @@ class MusicDatabase:
         best_match = None
         best_score = 0.0
 
+        # Pass 2 Base String generation for broader database search
+        base_title = re.sub(r'[\(\[].*?[\)\]]', '', title)
+        base_title = re.sub(r'-.*$', '', base_title).strip()
+
+        base_artist = re.sub(r'[\(\[].*?[\)\]]', '', artist)
+        base_artist = re.sub(r'-.*$', '', base_artist).strip()
+
         with self.session_scope() as session:
-            # Find candidates
+            # Find candidates using the broader base strings
             candidates = session.query(Track).join(Artist).filter(
                 or_(
-                    Artist.name.ilike(f"%{artist}%"),
-                    Track.title.ilike(f"%{title}%")
+                    Artist.name.ilike(f"%{base_artist}%"),
+                    Track.title.ilike(f"%{base_title}%")
                 )
             ).limit(50).all()
 

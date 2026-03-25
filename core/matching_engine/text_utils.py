@@ -24,6 +24,10 @@ def normalize_text(text: Optional[str]) -> str:
     if not text:
         return ""
     
+    # Standardize smart quotes and dashes
+    text = re.sub(r'[‘’´`]', "'", text)
+    text = re.sub(r'[‐—–]', "-", text)
+
     # Convert to lowercase
     text = text.lower().strip()
     
@@ -44,7 +48,7 @@ def remove_accents(text: str) -> str:
     """Remove diacritical marks from text."""
     import unicodedata
     return ''.join(
-        c for c in unicodedata.normalize('NFD', text)
+        c for c in unicodedata.normalize('NFKD', text)
         if unicodedata.category(c) != 'Mn'
     )
 

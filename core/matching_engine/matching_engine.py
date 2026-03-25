@@ -622,17 +622,37 @@ class WeightedMatchingEngine:
     def _calculate_fuzzy_text_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> float:
         """
         Calculate fuzzy text match score for title, artist, album.
-        Includes artist subset rescue mechanism.
+        Includes artist subset rescue mechanism and dual-pass base string matching.
 
         Returns:
             Score 0.0-1.0
         """
 
+        import re
         scores = []
 
         # Title match (most important)
         if source.title and candidate.title:
             title_score = self._fuzzy_match(source.title, candidate.title)
+
+            # Dual-Pass 'Base String' Matching for Title
+            # If Pass 1 is below a high threshold (e.g. 0.85), strip parentheticals, brackets, and post-hyphen info
+            if title_score < 0.85:
+                # Aggressively strip out anything inside (), [], and anything after -
+                base_source = re.sub(r'[\(\[].*?[\)\]]', '', source.title)
+                base_source = re.sub(r'-.*$', '', base_source)
+
+                base_candidate = re.sub(r'[\(\[].*?[\)\]]', '', candidate.title)
+                base_candidate = re.sub(r'-.*$', '', base_candidate)
+
+                pass_2_score = self._fuzzy_match(base_source, base_candidate)
+
+                # Apply 0.85 penalty multiplier to the base string match score
+                adjusted_pass_2_score = pass_2_score * 0.85
+
+                if adjusted_pass_2_score > title_score:
+                    title_score = adjusted_pass_2_score
+
             scores.append(('title', title_score, self.weights.title_weight))
 
         # Artist match with subset rescue
@@ -714,6 +734,13 @@ class WeightedMatchingEngine:
         ratio = SequenceMatcher(None, a_norm, b_norm).ratio()
         return ratio
 
+    def _romanize_text(self, text: str) -> str:
+        """
+        Stub for i18n transliteration architecture.
+        In the future, use libraries like `anyascii` or `unidecode` here to map CJK/Cyrillic to Latin.
+        """
+        return text
+
     def _normalize_string_for_comparison(self, s: str) -> str:
         """
         Normalize string for comparison (lowercase, remove special chars, strip featured artists)
@@ -721,6 +748,7 @@ class WeightedMatchingEngine:
 
         import re
         s = s.lower()
+        s = self._romanize_text(s)
         # Strip featured artist markers first
         s = re.sub(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+.*?[\]\)]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$", "", s, flags=re.IGNORECASE)
         # Remove special characters but keep spaces
