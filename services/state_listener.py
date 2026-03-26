@@ -23,13 +23,13 @@ class StateListenerService:
     def _resolve_user_id(self, session, provider_user_id, provider_name):
         provider_user_id = str(provider_user_id)
         user = session.query(User).filter(
-            User.plex_id == provider_user_id,
+            User.provider_identifier == provider_user_id,
             User.provider == provider_name
         ).first()
         if not user:
             user = User(
                 username=f"{provider_name}_{provider_user_id}",
-                plex_id=provider_user_id,
+                provider_identifier=provider_user_id,
                 provider=provider_name
             )
             session.add(user)

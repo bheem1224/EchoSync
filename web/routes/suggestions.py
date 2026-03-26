@@ -175,7 +175,7 @@ def get_suggestion_accounts():
                 with working_db.session_scope() as work_session:
                     with music_db.session_scope() as music_session:
                         user = work_session.query(User).filter(
-                            User.plex_id == account.get('user_id')
+                            User.provider_identifier == account.get('user_id')
                         ).first() if account.get('user_id') else None
                     
                         if user:
@@ -260,7 +260,7 @@ def get_pending_suggestions(account_id: int):
         try:
             with working_db.session_scope() as session:
                 user = session.query(User).filter(
-                    User.plex_id == account.get('user_id')
+                    User.provider_identifier == account.get('user_id')
                 ).first() if account.get('user_id') else None
             
             if user:

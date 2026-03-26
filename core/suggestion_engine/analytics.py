@@ -40,7 +40,12 @@ class PlaybackAnalytics:
 
     @classmethod
     def get_trending_provider_ids(cls, days: int = 7, limit: int = 50) -> dict[str, int]:
-        """Get a dictionary of {provider_item_id: count} for the most played tracks recently."""
+        """Get a dictionary of {provider_item_id: count} for the most played tracks recently.
+
+        This calculates SERVER-WIDE popularity and must never be filtered by user_id.
+        It is the authoritative data source for the Popularity Veto gate.
+        For per-user history, query PlaybackHistory directly with a user_id filter.
+        """
         try:
             working_db = get_working_database()
             with working_db.session_scope() as session:

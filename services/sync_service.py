@@ -454,28 +454,34 @@ class PlaylistSyncService:
                 
                 if db_track and confidence >= 0.7:
                     logger.debug(f"✔️ Database match found for '{original_title}' by '{artist_name}': '{db_track.title}' with confidence {confidence:.2f}")
-                    
-                    # Extract the track ID from the database
-                    track_id = str(db_track.id)
-                    
-                    # For Plex, validate that the track ID is numeric and fetchable
-                    if server_type == "plex":
-                        try:
-                            track_id_int = int(track_id)
-                            actual_plex_track = media_client.server.fetchItem(track_id_int)
-                            if actual_plex_track and hasattr(actual_plex_track, 'ratingKey'):
-                                logger.debug(f"✔️ Successfully validated Plex track for '{db_track.title}' (ratingKey: {actual_plex_track.ratingKey})")
-                                return str(actual_plex_track.ratingKey), confidence
-                            else:
-                                logger.warning(f"❌ Fetched Plex track for '{db_track.title}' lacks ratingKey attribute")
-                                return None, 0.0
-                        except ValueError:
-                            logger.warning(f"❌ Invalid Plex track ID format for '{db_track.title}' (ID: {db_track.id}) - skipping this track")
-                            return None, 0.0
-                    else:
-                        # For Jellyfin and Navidrome, use the database ID directly
-                        logger.debug(f"✔️ Using database track ID for '{server_type}': {track_id}")
-                        return track_id, confidence
+
+                    # Resolve the provider-specific item ID from ExternalIdentifiers.
+                    # db_track.id is the internal MusicDatabase PK — never pass it to a
+                    # media server directly, as it is unrelated to any provider's track ID.
+                    provider_item_id = db.get_external_identifier(server_type, db_track.id)
+                    if not provider_item_id:
+                        logger.warning(
+                            f"❌ No {server_type} ExternalIdentifier for '{db_track.title}' "
+                            f"(db_id={db_track.id}) — track has not been synced to this server yet"
+                        )
+                        return None, 0.0
+
+                    # Validate the ID is live on the server via the uniform ProviderBase
+                    # interface.  Each provider handles any internal casting (e.g. int() for
+                    # Plex ratingKeys) inside its own get_track() implementation.
+                    validated = media_client.get_track(provider_item_id)
+                    if not validated:
+                        logger.warning(
+                            f"❌ {server_type} could not resolve provider_item_id='{provider_item_id}' "
+                            f"for '{db_track.title}'"
+                        )
+                        return None, 0.0
+
+                    logger.debug(
+                        f"✔️ Validated '{db_track.title}' on {server_type} "
+                        f"(provider_item_id={provider_item_id})"
+                    )
+                    return provider_item_id, confidence
 
             except Exception as db_error:
                 logger.error(f"Error checking track existence for '{original_title}' by '{artist_name}': {db_error}")

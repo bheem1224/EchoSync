@@ -46,7 +46,7 @@ class MatchResult:
     edition_penalty_applied: float
     reasoning: str  # Human-readable explanation
     target_source: Optional[str] = None  # e.g., plex, jellyfin
-    target_identifier: Optional[str] = None  # e.g., Plex ratingKey
+    target_identifier: Optional[str] = None  # Provider-opaque item ID (e.g. provider_item_id; ratingKey for Plex, item Id UUID for Jellyfin)
     target_exists: bool = False  # True if identifier is present for target
 
 

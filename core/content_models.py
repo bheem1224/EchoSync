@@ -13,11 +13,11 @@ class Artist:
     pass
 
 class Album:
-    parentRatingKey: Optional[str] = None
+    parent_id: Optional[str] = None  # Provider-agnostic parent (artist) ID
 
 class Track:
-    parentRatingKey: Optional[str] = None
-    grandparentRatingKey: Optional[str] = None
+    parent_id: Optional[str] = None          # Provider-agnostic parent (album) ID
+    grandparent_id: Optional[str] = None     # Provider-agnostic grandparent (artist) ID
 
 @dataclass
 class ContentChanges:
@@ -36,17 +36,17 @@ class ContentChanges:
     def albums_for_artist(self, artist_id: str) -> List[Album]:
         """Get all albums belonging to a specific artist"""
         tiered_logger.log("debug", logging.INFO, f"Filtering albums for artist_id: {artist_id}")
-        return [a for a in self.albums if str(getattr(a, 'parentRatingKey', None)) == artist_id]
+        return [a for a in self.albums if str(getattr(a, 'parent_id', None)) == artist_id]
 
     def tracks_for_album(self, album_id: str) -> List[Track]:
         """Get all tracks belonging to a specific album"""
         tiered_logger.log("debug", logging.INFO, f"Filtering tracks for album_id: {album_id}")
-        return [t for t in self.tracks if str(getattr(t, 'parentRatingKey', None)) == album_id]
+        return [t for t in self.tracks if str(getattr(t, 'parent_id', None)) == album_id]
 
     def tracks_for_artist(self, artist_id: str) -> List[Track]:
         """Get all tracks belonging to a specific artist"""
         tiered_logger.log("debug", logging.INFO, f"Filtering tracks for artist_id: {artist_id}")
-        return [t for t in self.tracks if str(getattr(t, 'grandparentRatingKey', None)) == artist_id]
+        return [t for t in self.tracks if str(getattr(t, 'grandparent_id', None)) == artist_id]
 
     @property
     def total_items(self) -> int:

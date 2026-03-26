@@ -32,7 +32,7 @@ def test_sync_active_plex_users_to_working_db_creates_day1_users(mock_work_db):
     with mock_work_db.session_scope() as work_session:
         users = work_session.query(User).order_by(User.username).all()
         assert [u.username for u in users] == ["Kid A", "Kid B"]
-        assert [u.plex_id for u in users] == ["plex-user-1", "plex-user-2"]
+        assert [u.provider_identifier for u in users] == ["plex-user-1", "plex-user-2"]
 
 
 def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, mock_work_db):
