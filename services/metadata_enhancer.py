@@ -26,14 +26,6 @@ from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from database.working_database import get_working_database, ReviewTask
 
-# Mutagen is used only for audio-duration probing; all tag I/O goes via tagging_io.
-try:
-    import mutagen
-    MUTAGEN_AVAILABLE = True
-except ImportError:
-    mutagen = None  # type: ignore[assignment]
-    MUTAGEN_AVAILABLE = False
-
 logger = get_logger("services.metadata_enhancer")
 
 class MetadataEnhancerService:
@@ -94,7 +86,7 @@ class MetadataEnhancerService:
                 new_isrc = None
 
                 # Step 2 (Local File Parsing): Read physical file tags first
-                tags = self.read_tags(local_path)
+                tags = _tagging_read(local_path)
                 if tags:
                     tag_mbid = tags.get('musicbrainz_id') or tags.get('recording_id')
                     tag_isrc = tags.get('isrc')
@@ -107,7 +99,7 @@ class MetadataEnhancerService:
                         continue  # Move to next track, DB updated
 
                 # Prepare for identification
-                duration = track.duration or self._get_audio_duration(local_path)
+                duration = track.duration or _tagging_read(local_path).get("duration")
 
                 # Step 3 (DB AcoustID Fast-Path):
                 if track.acoustid_id and fingerprint_provider and duration:
@@ -197,7 +189,7 @@ class MetadataEnhancerService:
                         update_tags['acoustid_id'] = track.acoustid_id
 
                     if update_tags:
-                        self.tag_file(local_path, update_tags)
+                        _tagging_write(local_path, update_tags)
 
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
         """
@@ -216,17 +208,19 @@ class MetadataEnhancerService:
             # Step A: Fingerprint via AcoustID
             try:
                 fingerprint = FingerprintGenerator.generate(str(file_path))
-                duration = self._get_audio_duration(file_path)
+                # read_tags returns duration in ms
+                duration_ms = _tagging_read(file_path).get("duration")
+                duration_sec = int(duration_ms / 1000) if duration_ms else None
 
-                if fingerprint and duration and fingerprint_provider:
+                if fingerprint and duration_sec and fingerprint_provider:
                     # Clean debug output showing what's being sent to AcoustID
                     logger.debug(
                         f"→ AcoustID Lookup: {file_path.name}\n"
-                        f"  Duration: {duration}s | Fingerprint: {len(fingerprint)} chars"
+                        f"  Duration: {duration_sec}s | Fingerprint: {len(fingerprint)} chars"
                     )
                     
                     try:
-                        mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration))
+                        mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration_sec))
                         
                         if mbids and metadata_provider:
                             mbid = mbids[0]
@@ -257,14 +251,14 @@ class MetadataEnhancerService:
                     query = file_path.stem.replace('_', ' ').replace('-', ' ')
                     
                     # Get duration for matching
-                    duration = self._get_audio_duration(file_path)
+                    duration_ms = _tagging_read(file_path).get("duration")
                     
                     # Search MusicBrainz
                     results = metadata_provider.search_metadata(query, limit=10)
                     
                     if results:
                         # Convert file to SoulSyncTrack for matching
-                        file_track = self._filename_to_track(file_path, duration)
+                        file_track = self._filename_to_track(file_path, duration_ms)
                         
                         # Convert search results to SoulSyncTracks
                         candidate_tracks = []
@@ -325,14 +319,6 @@ class MetadataEnhancerService:
 
         return metadata, confidence
 
-    def tag_file(self, file_path: Path, metadata: Dict[str, Any]):
-        """Write tags via the dedicated tagging_io module (jail + lock included)."""
-        _tagging_write(file_path, metadata)
-
-    def read_tags(self, file_path: Path) -> Dict[str, Any]:
-        """Read and normalise tags via the dedicated tagging_io module (jail + lock included)."""
-        return _tagging_read(file_path)
-
     def create_or_update_review_task(self, file_path: Path, metadata: Optional[Dict[str, Any]], confidence: float, status='pending'):
         """Create or update a task in the review queue."""
         try:
@@ -369,19 +355,7 @@ class MetadataEnhancerService:
         auto_importer = get_auto_importer()
         auto_importer.finalize_import(file_path, metadata)
 
-    def _get_audio_duration(self, file_path: Path) -> Optional[int]:
-        """Get audio duration in seconds using Mutagen."""
-        if not MUTAGEN_AVAILABLE:
-            return None
-        try:
-            audio = mutagen.File(str(file_path))
-            if audio and audio.info:
-                return int(audio.info.length)
-        except Exception:
-            return None
-        return None
-
-    def _filename_to_track(self, file_path: Path, duration: Optional[int]) -> SoulSyncTrack:
+    def _filename_to_track(self, file_path: Path, duration_ms: Optional[int]) -> SoulSyncTrack:
         """Convert filename to SoulSyncTrack for matching using provider_base helper."""
         from core.track_parser import TrackParser
         from core.provider_base import ProviderBase
@@ -395,7 +369,7 @@ class MetadataEnhancerService:
             title=parsed.title or file_path.stem,
             artist=parsed.artist_name or 'Unknown Artist',
             album=parsed.album_title or '',
-            duration_ms=duration * 1000 if duration else None,
+            duration_ms=duration_ms,
             provider_id=str(file_path),
             source='local_file'
         )
