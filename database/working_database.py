@@ -59,6 +59,18 @@ class User(WorkingBase):
     album_ratings: Mapped[list["UserAlbumRating"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
+class PlaybackHistory(WorkingBase):
+    __tablename__ = "playback_history"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider_item_id", "listened_at", name="uq_playback_history"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    listened_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+
+
 class UserRating(WorkingBase):
     __tablename__ = "user_ratings"
     __table_args__ = (
@@ -446,6 +458,7 @@ __all__ = [
     "UserAlbumRating",
     "MediaServerPlaylist",
     "MediaServerPlaylistItem",
+    "PlaybackHistory",
     "WorkingDatabase",
     "get_working_database",
     "close_working_database",

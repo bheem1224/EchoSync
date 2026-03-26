@@ -216,6 +216,8 @@ def test_plex_webhook_publishes_event():
             "title": "Song Title",
             "grandparentTitle": "Artist Name",
             "guid": "mbid://123",
+            "ratingKey": "12345",
+            "type": "track",
             "userRating": 8.0,
         },
         "Account": {"id": 1},
@@ -228,7 +230,8 @@ def test_plex_webhook_publishes_event():
     assert published["sync_id"].startswith("ss:track:mbid:")
     # userRating=8.0 is Plex wire format (4 displayed stars); parser halves it to 4.0 display stars
     assert published["data"]["rating"] == 4.0
-    assert published["data"]["user_id"] == 1
+    assert published["data"]["user_id"] == "1"
+    assert published["data"]["provider_item_id"] == "12345"
 
 
 def test_state_listener_writes_to_db():
@@ -404,6 +407,8 @@ def test_plex_webhook_publishes_event():
             "title": "Song Title",
             "grandparentTitle": "Artist Name",
             "guid": "mbid://123",
+            "ratingKey": "12345",
+            "type": "track",
             "userRating": 8.0,
         },
         "Account": {"id": 1},
@@ -415,7 +420,8 @@ def test_plex_webhook_publishes_event():
     assert published["event"] == "TRACK_RATED"
     assert published["sync_id"].startswith("ss:track:mbid:")
     assert published["data"]["rating"] == 4.0  # wire 8.0 ÷ 2 = 4.0 display stars
-    assert published["data"]["user_id"] == 1
+    assert published["data"]["user_id"] == "1"
+    assert published["data"]["provider_item_id"] == "12345"
 
 
 def test_state_listener_writes_to_db():
