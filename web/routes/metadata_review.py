@@ -209,7 +209,7 @@ def _build_track_from_metadata(file_path: Path, metadata: Dict[str, Any]):
     album = metadata.get("album") or ""
 
     source = metadata.get("source") or "manual_review"
-    provider_id = metadata.get("provider_item_id") or metadata.get("rating_key") or metadata.get("plex_rating_key")
+    provider_id = metadata.get("provider_item_id") or metadata.get("rating_key")
 
     release_year = _coerce_int(metadata.get("year"))
     if release_year is None and metadata.get("date"):

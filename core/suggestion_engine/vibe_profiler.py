@@ -1,23 +1,50 @@
 import math
+from datetime import timedelta
 from typing import Dict, Optional
 
-from core.suggestion_engine.analytics import PlaybackAnalytics
-from database.music_database import get_database, ExternalIdentifier, Track, TrackAudioFeatures
+from sqlalchemy import func
+
+from database.music_database import get_database, ExternalIdentifier, TrackAudioFeatures
+from database.working_database import get_working_database, PlaybackHistory
 from core.matching_engine.text_utils import generate_deterministic_id
 from core.tiered_logger import get_logger
+from time_utils import utc_now
 
 logger = get_logger("vibe_profiler")
 
 def calculate_user_vibe(user_id: str, days: int = 30) -> Optional[Dict[str, float]]:
     """
     Calculate a user's 'Vibe Signature' based on recent playback history.
+
+    Uses a strict two-step cross-database pattern:
+      Step 1 — Query working.db directly with user_id filter to get provider_item_ids.
+      Step 2 — Batch-fetch ExternalIdentifiers and TrackAudioFeatures from music.db
+               using .in_() to avoid N+1 query loops.
     """
-    # 1. Get recent trending provider_item_ids and their play counts
-    trending_items = PlaybackAnalytics.get_trending_provider_ids(days=days, limit=100, user_id=user_id)
-    if not trending_items:
+    # Step 1: Fetch user-specific provider_item_ids from working.db.
+    cutoff_date = utc_now() - timedelta(days=days)
+    working_db = get_working_database()
+    with working_db.session_scope() as w_session:
+        rows = w_session.query(
+            PlaybackHistory.provider_item_id,
+            func.count(PlaybackHistory.id).label('play_count')
+        ).filter(
+            PlaybackHistory.user_id == str(user_id),
+            PlaybackHistory.listened_at >= cutoff_date
+        ).group_by(
+            PlaybackHistory.provider_item_id
+        ).order_by(
+            func.count(PlaybackHistory.id).desc()
+        ).limit(100).all()
+        user_play_counts = {row.provider_item_id: row.play_count for row in rows}
+
+    if not user_play_counts:
         logger.debug(f"No recent playback history found for user_id={user_id} in the last {days} days.")
         return None
 
+    provider_ids_list = list(user_play_counts.keys())
+
+    # Step 2: Batch-fetch all required records from music.db — one query each, no N+1 loop.
     music_db = get_database()
     features_accumulator = {
         'tempo': 0.0,
@@ -29,28 +56,39 @@ def calculate_user_vibe(user_id: str, days: int = 30) -> Optional[Dict[str, floa
     total_weight = 0
 
     with music_db.session_scope() as session:
-        for provider_item_id, count in trending_items.items():
-            # Find the track through ExternalIdentifier
-            identifier = session.query(ExternalIdentifier).filter_by(
-                provider_item_id=provider_item_id
-            ).first()
+        # Single batch query for all external identifiers.
+        identifiers = session.query(ExternalIdentifier).filter(
+            ExternalIdentifier.provider_item_id.in_(provider_ids_list)
+        ).all()
 
-            if not identifier:
-                continue
-
+        # Build pid -> sync_id mapping entirely in Python — no per-item DB calls.
+        pid_to_sync_id: Dict[str, str] = {}
+        for identifier in identifiers:
             track = identifier.track
             if not track or not track.artist:
                 continue
-
-            # Reconstruct the sync_id
             base_sync_id = f"ss:track:meta:{generate_deterministic_id(track.artist.name, track.title)}"
+            pid_to_sync_id[identifier.provider_item_id] = base_sync_id
 
-            # Fetch the audio features
-            features = session.query(TrackAudioFeatures).filter_by(sync_id=base_sync_id).first()
+        if not pid_to_sync_id:
+            logger.debug(f"Could not map any provider IDs to tracks for user_id={user_id}.")
+            return None
+
+        # Single batch query for all audio features.
+        unique_sync_ids = list(set(pid_to_sync_id.values()))
+        all_features = session.query(TrackAudioFeatures).filter(
+            TrackAudioFeatures.sync_id.in_(unique_sync_ids)
+        ).all()
+        features_by_sync_id = {f.sync_id: f for f in all_features}
+
+        # Accumulate weighted features in Python — zero additional DB calls.
+        for pid, count in user_play_counts.items():
+            sync_id = pid_to_sync_id.get(pid)
+            if not sync_id:
+                continue
+            features = features_by_sync_id.get(sync_id)
             if not features:
                 continue
-
-            # Accumulate the weighted features (only if all features are present)
             if all(v is not None for v in [features.tempo, features.energy, features.valence, features.danceability, features.acousticness]):
                 features_accumulator['tempo'] += features.tempo * count
                 features_accumulator['energy'] += features.energy * count
@@ -63,7 +101,6 @@ def calculate_user_vibe(user_id: str, days: int = 30) -> Optional[Dict[str, floa
         logger.debug(f"Could not calculate vibe signature for user_id={user_id}. No valid audio features found for recent tracks.")
         return None
 
-    # Calculate weighted average
     return {
         'tempo': features_accumulator['tempo'] / total_weight,
         'energy': features_accumulator['energy'] / total_weight,

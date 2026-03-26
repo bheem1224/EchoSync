@@ -63,7 +63,7 @@ def test_deletion_respects_admin_exempt_and_force_upgrade(tmp_path, monkeypatch)
     sync_force = "ss:track:meta:force"
 
     with db.session_scope() as session:
-        user = User(username="u1", plex_id="1", provider="plex")
+        user = User(username="u1", provider_identifier="1", provider="plex")
         session.add(user)
         session.flush()
 

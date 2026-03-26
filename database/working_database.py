@@ -45,7 +45,7 @@ class User(WorkingBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
-    plex_id: Mapped[Optional[str]] = mapped_column(String, unique=True)
+    provider_identifier: Mapped[Optional[str]] = mapped_column(String, unique=True)  # External user ID from any provider (e.g. Plex account ID, Jellyfin user GUID)
     provider: Mapped[Optional[str]] = mapped_column(String)
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
@@ -218,7 +218,7 @@ class MediaServerPlaylistItem(WorkingBase):
         nullable=False,
         index=True,
     )
-    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # e.g. Plex ratingKey
+    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # Provider-opaque string ID; never assumed to be numeric
 
     playlist: Mapped["MediaServerPlaylist"] = relationship(back_populates="items")
 
@@ -413,7 +413,7 @@ class WorkingDatabase:
             # Create system user
             system_user = User(
                 username="SoulSync System",
-                plex_id="system_local_admin",
+                provider_identifier="system_local_admin",
                 provider="local"
             )
             session.add(system_user)

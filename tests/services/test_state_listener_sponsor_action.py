@@ -35,7 +35,7 @@ def test_sponsor_rating_removes_from_suggestions_playlist(tmp_path, monkeypatch)
     base_sync_id = "ss:track:meta:sponsor-track"
 
     with db.session_scope() as session:
-        user = User(username="plex_42", plex_id="42", provider="plex")
+        user = User(username="plex_42", provider_identifier="42", provider="plex")
         session.add(user)
         session.flush()
 

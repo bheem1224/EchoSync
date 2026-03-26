@@ -39,8 +39,13 @@ class PlaybackAnalytics:
             return 0
 
     @classmethod
-    def get_trending_provider_ids(cls, days: int = 7, limit: int = 50, user_id: str = None) -> dict[str, int]:
-        """Get a dictionary of {provider_item_id: count} for the most played tracks recently."""
+    def get_trending_provider_ids(cls, days: int = 7, limit: int = 50) -> dict[str, int]:
+        """Get a dictionary of {provider_item_id: count} for the most played tracks recently.
+
+        This calculates SERVER-WIDE popularity and must never be filtered by user_id.
+        It is the authoritative data source for the Popularity Veto gate.
+        For per-user history, query PlaybackHistory directly with a user_id filter.
+        """
         try:
             working_db = get_working_database()
             with working_db.session_scope() as session:
@@ -49,17 +54,12 @@ class PlaybackAnalytics:
                     return {}
 
                 cutoff_date = utc_now() - timedelta(days=days)
-                query = session.query(
+                results = session.query(
                     PlaybackHistory.provider_item_id,
                     func.count(PlaybackHistory.id).label('play_count')
                 ).filter(
                     PlaybackHistory.listened_at >= cutoff_date
-                )
-
-                if user_id:
-                    query = query.filter(PlaybackHistory.user_id == str(user_id))
-
-                results = query.group_by(
+                ).group_by(
                     PlaybackHistory.provider_item_id
                 ).order_by(
                     func.count(PlaybackHistory.id).desc()

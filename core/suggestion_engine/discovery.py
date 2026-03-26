@@ -30,18 +30,30 @@ def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
     """
     vibe_signature = calculate_user_vibe(user_id, days=30)
 
-    # Identify top artists in recent history to apply a score bonus
+    # Identify top artists in recent history to apply a score bonus.
+    # Query working.db directly — get_trending_provider_ids is global/server-wide and must
+    # not be called with a user filter. User-specific lookup goes straight to PlaybackHistory.
     recent_artists_set = set()
-    trending_items = PlaybackAnalytics.get_trending_provider_ids(days=30, limit=100, user_id=user_id)
     working_db = get_working_database()
     music_db = get_music_database()
 
-    if trending_items:
+    from sqlalchemy import func as sa_func
+    from database.music_database import ExternalIdentifier
+    thirty_days_ago = utc_now() - datetime.timedelta(days=30)
+    with working_db.session_scope() as w_session:
+        user_recent_pids = [
+            row.provider_item_id for row in w_session.query(PlaybackHistory.provider_item_id).filter(
+                PlaybackHistory.user_id == user_id,
+                PlaybackHistory.listened_at >= thirty_days_ago
+            ).group_by(PlaybackHistory.provider_item_id).limit(100).all()
+        ]
+    if user_recent_pids:
         with music_db.session_scope() as session:
-            from database.music_database import ExternalIdentifier
-            for pid in trending_items.keys():
-                identifier = session.query(ExternalIdentifier).filter_by(provider_item_id=pid).first()
-                if identifier and identifier.track and identifier.track.artist:
+            recent_identifiers = session.query(ExternalIdentifier).filter(
+                ExternalIdentifier.provider_item_id.in_(user_recent_pids)
+            ).all()
+            for identifier in recent_identifiers:
+                if identifier.track and identifier.track.artist:
                     recent_artists_set.add(identifier.track.artist.name.lower())
 
     # Get "rarely played" tracks:
@@ -157,19 +169,36 @@ def discover_new_tracks(user_id: str) -> List[dict]:
     """
     Discovers new tracks not in the local MusicDatabase based on the user's recent history.
     """
-    # 1. Identify the top 3 artists from the user's 30-day playback history
+    # 1. Identify the top 3 artists from the user's 30-day playback history.
+    # Query working.db directly — get_trending_provider_ids is global/server-wide and must
+    # not be called with a user filter. User-specific lookup goes straight to PlaybackHistory.
     recent_artists_counts = {}
-    trending_items = PlaybackAnalytics.get_trending_provider_ids(days=30, limit=200, user_id=user_id)
     music_db = get_music_database()
 
-    if trending_items:
+    from sqlalchemy import func as sa_func
+    from database.music_database import ExternalIdentifier
+    thirty_days_ago = utc_now() - datetime.timedelta(days=30)
+    working_db = get_working_database()
+    with working_db.session_scope() as w_session:
+        user_play_rows = w_session.query(
+            PlaybackHistory.provider_item_id,
+            sa_func.count(PlaybackHistory.id).label('play_count')
+        ).filter(
+            PlaybackHistory.user_id == user_id,
+            PlaybackHistory.listened_at >= thirty_days_ago
+        ).group_by(PlaybackHistory.provider_item_id).order_by(
+            sa_func.count(PlaybackHistory.id).desc()
+        ).limit(200).all()
+        pid_counts = {row.provider_item_id: row.play_count for row in user_play_rows}
+    if pid_counts:
         with music_db.session_scope() as session:
-            from database.music_database import ExternalIdentifier
-            for pid, count in trending_items.items():
-                identifier = session.query(ExternalIdentifier).filter_by(provider_item_id=pid).first()
-                if identifier and identifier.track and identifier.track.artist:
+            discover_identifiers = session.query(ExternalIdentifier).filter(
+                ExternalIdentifier.provider_item_id.in_(list(pid_counts.keys()))
+            ).all()
+            for identifier in discover_identifiers:
+                if identifier.track and identifier.track.artist:
                     artist_name = identifier.track.artist.name
-                    recent_artists_counts[artist_name] = recent_artists_counts.get(artist_name, 0) + count
+                    recent_artists_counts[artist_name] = recent_artists_counts.get(artist_name, 0) + pid_counts.get(identifier.provider_item_id, 0)
 
     # Sort artists by play count
     sorted_artists = sorted(recent_artists_counts.items(), key=lambda x: x[1], reverse=True)

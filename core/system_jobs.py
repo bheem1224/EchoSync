@@ -63,7 +63,7 @@ def _get_top_listened_artists(limit: int = 5):
 
             user = None
             if plex_user_id:
-                user = session.query(User).filter(User.plex_id == plex_user_id).first()
+                user = session.query(User).filter(User.provider_identifier == plex_user_id).first()
             if not user and account_name:
                 user = session.query(User).filter(User.username == account_name).first()
 

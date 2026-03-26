@@ -173,10 +173,10 @@ class UserHistoryService:
         """
         try:
             with self.working_db.session_scope() as session:
-                # Try to find existing user by plex_id
+                # Try to find existing user by provider_identifier
                 if plex_user_id:
                     user = session.query(User).filter(
-                        User.plex_id == plex_user_id
+                        User.provider_identifier == plex_user_id
                     ).first()
                     if user:
                         return user
@@ -192,7 +192,7 @@ class UserHistoryService:
                 # Create new user
                 user = User(
                     username=account_name,
-                    plex_id=plex_user_id,
+                    provider_identifier=plex_user_id,
                     provider='plex'
                 )
                 session.add(user)
@@ -279,19 +279,18 @@ class UserHistoryService:
                             music_session.query(ExternalIdentifier, Track)
                             .join(Track, ExternalIdentifier.track_id == Track.id)
                             .filter(
-                                ExternalIdentifier.provider_source == 'plex',
                                 ExternalIdentifier.provider_item_id.in_(list(provider_item_ids))
                             )
                             .all()
                         )
 
-                    plex_id_to_track: Dict[str, Track] = {}
+                    provider_id_to_track: Dict[str, Track] = {}
                     for ext_ident, track in ext_idents:
                         raw_ext_id = str(ext_ident.provider_item_id)
-                        plex_id_to_track[raw_ext_id] = track
+                        provider_id_to_track[raw_ext_id] = track
                         normalized_ext_id = self._normalize_provider_item_id(raw_ext_id)
                         if normalized_ext_id:
-                            plex_id_to_track[normalized_ext_id] = track
+                            provider_id_to_track[normalized_ext_id] = track
 
                     # 1) Record playback history catch-up
                     playback_payloads = []
@@ -301,11 +300,11 @@ class UserHistoryService:
                             interaction_provider_id = self._normalize_provider_item_id(extracted_id) or extracted_id
 
                             user_record = work_session.query(User).filter_by(id=user_id).first()
-                            plex_user_id = user_record.plex_id if user_record and user_record.plex_id else str(user_id)
+                            playback_user_id = user_record.provider_identifier if user_record and user_record.provider_identifier else str(user_id)
 
                             if interaction_provider_id:
                                 playback_payloads.append({
-                                    "user_id": str(plex_user_id),
+                                    "user_id": str(playback_user_id),
                                     "provider_item_id": str(interaction_provider_id),
                                     "listened_at": interaction.last_played_at or utc_now()
                                 })
@@ -326,8 +325,8 @@ class UserHistoryService:
                             extracted_id = self._extract_provider_item_id(interaction)
                             interaction_provider_id = self._normalize_provider_item_id(extracted_id) or extracted_id
 
-                            if interaction_provider_id in plex_id_to_track:
-                                track = plex_id_to_track[interaction_provider_id]
+                            if interaction_provider_id in provider_id_to_track:
+                                track = provider_id_to_track[interaction_provider_id]
                                 sync_id = f"ss:track:meta:{generate_deterministic_id(track.artist.name, track.title)}"
                                 interaction_records.append({
                                     "interaction": interaction,
@@ -426,9 +425,12 @@ class UserHistoryService:
 
         identifiers = getattr(interaction, 'identifiers', None)
         if isinstance(identifiers, dict):
-            plex_id = str(identifiers.get('plex', '') or '').strip()
-            if plex_id:
-                return plex_id
+            # Iterate all known provider keys; 'plex' is kept for legacy dict shapes
+            for key in (getattr(interaction, 'provider', None), 'plex', 'jellyfin', 'navidrome'):
+                if key:
+                    provider_id = str(identifiers.get(key, '') or '').strip()
+                    if provider_id:
+                        return provider_id
 
         source_item_id = str(getattr(interaction, 'source_item_id', '') or '').strip()
         if source_item_id:
