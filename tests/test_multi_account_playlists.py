@@ -124,7 +124,7 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
             self.account_id = account_id
         def is_configured(self):
             return True
-        def get_playlist_tracks(self, playlist_id):
+        def get_playlist_tracks(self, playlist_id, **kwargs):
             # record invocation for assertion
             called.append((self.account_id, playlist_id))
             # return a minimal track object with attributes used in analysis
