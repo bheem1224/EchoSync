@@ -19,38 +19,47 @@ class PlexWebhookParser(WebhookParser):
                 return
 
             metadata = payload.get('Metadata', {})
-            # Use guid strictly as requested by test
+            if metadata.get('type') != 'track':
+                return
+
+            provider_item_id = metadata.get('ratingKey')
+            if not provider_item_id:
+                return
+
+            provider_item_id = str(provider_item_id)
+
+            # Keep guid parsing for legacy compatibility if available
             guid = metadata.get('guid', '')
+            sync_id = None
             if guid.startswith('mbid://'):
                 sync_id = f"ss:track:mbid:{guid.split('mbid://')[1]}"
-            else:
-                return
 
             account = payload.get('Account', {})
             user_id = account.get('id')
+            if user_id is not None:
+                user_id = str(user_id)
 
             if event_type == 'media.rate':
-                # Plex wire format is 2× the displayed star rating (e.g. 4 stars → 8.0).
-                # Divide by 2 to normalise to display stars (0.5–5.0) before storing,
-                # so stars_to_ten_point() receives the correct scale.
                 raw_plex_rating = float(metadata.get('userRating', 0))
                 rating = raw_plex_rating / 2.0
                 event = {
                     "event": "TRACK_RATED",
-                    "sync_id": sync_id,
+                    "sync_id": sync_id,  # May be None, that is fine
                     "data": {
                         "rating": rating,
                         "user_id": user_id,
-                        "provider": "plex"
+                        "provider": "plex",
+                        "provider_item_id": provider_item_id
                     }
                 }
             elif event_type == 'media.scrobble':
                 event = {
                     "event": "TRACK_PLAYED",
-                    "sync_id": sync_id,
+                    "sync_id": sync_id,  # May be None, that is fine
                     "data": {
                         "user_id": user_id,
-                        "provider": "plex"
+                        "provider": "plex",
+                        "provider_item_id": provider_item_id
                     }
                 }
             else:
@@ -62,7 +71,40 @@ class PlexWebhookParser(WebhookParser):
             pass
 
     def parse(self, request) -> Optional[Dict[str, Any]]:
-        pass
+        try:
+            if not request.form or 'payload' not in request.form:
+                return None
+
+            payload_str = request.form.get('payload')
+            if not payload_str:
+                return None
+
+            payload = json.loads(payload_str)
+
+            event_type = payload.get('event')
+            if event_type != "media.scrobble":
+                return None
+
+            metadata = payload.get('Metadata', {})
+            if metadata.get('type') != 'track':
+                return None
+
+            provider_item_id = metadata.get('ratingKey')
+            if not provider_item_id:
+                return None
+
+            account = payload.get('Account', {})
+            user_id = account.get('id')
+
+            if user_id is None:
+                return None
+
+            return {
+                "user_id": str(user_id),
+                "provider_item_id": str(provider_item_id)
+            }
+        except Exception:
+            return None
 
 class NavidromeWebhookParser(WebhookParser):
     def __init__(self, event_bus=None):

@@ -9,7 +9,7 @@ from typing import Optional, Dict, List, Set
 import re
 from core.tiered_logger import get_logger
 from database.config_database import get_config_database
-from database.working_database import get_working_database, UserRating, User
+from database.working_database import get_working_database, UserRating, User, PlaybackHistory
 from database.music_database import get_database as get_music_database, Track, Artist
 from core.matching_engine.text_utils import generate_deterministic_id
 from core.user_history import UserTrackInteraction
@@ -293,6 +293,34 @@ class UserHistoryService:
                         if normalized_ext_id:
                             plex_id_to_track[normalized_ext_id] = track
 
+                    # 1) Record playback history catch-up
+                    playback_payloads = []
+                    for interaction in interactions:
+                        try:
+                            extracted_id = self._extract_provider_item_id(interaction)
+                            interaction_provider_id = self._normalize_provider_item_id(extracted_id) or extracted_id
+
+                            user_record = work_session.query(User).filter_by(id=user_id).first()
+                            plex_user_id = user_record.plex_id if user_record and user_record.plex_id else str(user_id)
+
+                            if interaction_provider_id:
+                                playback_payloads.append({
+                                    "user_id": str(plex_user_id),
+                                    "provider_item_id": str(interaction_provider_id),
+                                    "listened_at": interaction.last_played_at or utc_now()
+                                })
+                        except Exception as e:
+                            self.logger.warning(f"Error preparing playback history for interaction: {e}")
+
+                    if playback_payloads:
+                        if self.working_db.engine.dialect.name == 'sqlite':
+                            insert_stmt = sqlite_insert(PlaybackHistory).values(playback_payloads)
+                            upsert_stmt = insert_stmt.on_conflict_do_nothing(
+                                index_elements=['user_id', 'provider_item_id', 'listened_at']
+                            )
+                            work_session.execute(upsert_stmt)
+
+                    # 2) Continue with UserRatings matching
                     for interaction in interactions:
                         try:
                             extracted_id = self._extract_provider_item_id(interaction)
