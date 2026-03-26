@@ -32,5 +32,6 @@ dependencies = [
     "yt-dlp>=2024.12.13",
     "redis>=4.5.0",
     "rapidfuzz>=3.14.3",
+    "watchdog>=4.0.0",
     "werkzeug>=3.1.6",
 ]

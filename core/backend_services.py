@@ -19,6 +19,7 @@ from typing import Any, Iterable
 from core.settings import config_manager
 from core.tiered_logger import setup_logging, get_logger
 from services.download_manager import get_download_manager
+from services.library_watcher import get_library_watcher
 
 logger = get_logger("backend")
 
@@ -156,6 +157,10 @@ async def start_services() -> None:
     else:
         logger.info("Download Manager auto-start is disabled (downloads will not run on startup)")
 
+    # Start real-time library file watcher
+    library_watcher = get_library_watcher()
+    library_watcher.start()
+
     # Keep services alive indefinitely
     try:
         shutdown_event = asyncio.Event()
@@ -163,6 +168,7 @@ async def start_services() -> None:
     except asyncio.CancelledError:
         logger.info("Backend shutdown signal received")
     finally:
+        library_watcher.stop()
         await download_manager.stop_background_task()
         active_clients = [c for c in [soulseek_client, plex_client, jellyfin_client, navidrome_client] if c is not None]
         await _graceful_close(active_clients)
