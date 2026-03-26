@@ -60,6 +60,8 @@ def test_review_queue_includes_current_metadata(monkeypatch, mock_work_db, tmp_p
 
 def test_metadata_enhancer_reads_riff_info_for_wav(monkeypatch, tmp_path):
     import services.metadata_enhancer as metadata_enhancer
+    import core.file_handling.tagging_io as tagging_io
+    from core.file_handling.jail import file_jail
 
     wav_path = tmp_path / 'riff-info.wav'
     wav_path.write_bytes(b'RIFF')
@@ -98,10 +100,18 @@ def test_metadata_enhancer_reads_riff_info_for_wav(monkeypatch, tmp_path):
             )
             self.root = FakeChunk('RIFF', name='WAVE', children=[info_chunk])
 
-    monkeypatch.setattr(metadata_enhancer, 'MUTAGEN_AVAILABLE', True)
-    monkeypatch.setattr(metadata_enhancer.mutagen, 'File', lambda *args, **kwargs: FakeAudio())
-    monkeypatch.setattr(metadata_enhancer, 'WAVE', lambda _path: FakeAudio())
-    monkeypatch.setattr(metadata_enhancer, 'RiffFile', FakeRiffFile)
+    class FakeMutagen:
+        @staticmethod
+        def File(*args, **kwargs):
+            return FakeAudio()
+
+    # Redirect all Mutagen I/O through tagging_io module (where read_tags is implemented)
+    monkeypatch.setattr(tagging_io, 'MUTAGEN_AVAILABLE', True)
+    monkeypatch.setattr(tagging_io, 'mutagen', FakeMutagen)
+    monkeypatch.setattr(tagging_io, 'WAVE', lambda _path: FakeAudio())
+    monkeypatch.setattr(tagging_io, 'RiffFile', FakeRiffFile)
+    # Allow the path jail to accept tmp_path so the security check does not block test files
+    monkeypatch.setattr(file_jail, 'validate', lambda resolved: None)
 
     metadata = metadata_enhancer.MetadataEnhancerService().read_tags(wav_path)
 

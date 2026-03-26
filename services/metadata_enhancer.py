@@ -16,6 +16,8 @@ from typing import Optional, Dict, Any, Tuple, List
 import datetime
 
 from core.enums import Capability
+from core.file_handling.local_io import LocalFileHandler
+from core.file_handling.tagging_io import read_tags as _tagging_read, write_tags as _tagging_write
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from core.matching_engine.fingerprinting import FingerprintGenerator
@@ -24,23 +26,13 @@ from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from database.working_database import get_working_database, ReviewTask
 
-# Optional Mutagen imports
+# Mutagen is used only for audio-duration probing; all tag I/O goes via tagging_io.
 try:
     import mutagen
-    from mutagen.easyid3 import EasyID3
-    from mutagen.id3 import ID3, TXXX, APIC, TIT2, TPE1, TALB, TDRC, TRCK, TPOS
-    from mutagen.flac import FLAC, Picture
-    from mutagen.oggvorbis import OggVorbis
-    from mutagen.mp4 import MP4, MP4Cover
-    from mutagen.wave import WAVE
-    try:
-        from mutagen._riff import RiffFile
-    except Exception:
-        RiffFile = None
     MUTAGEN_AVAILABLE = True
 except ImportError:
+    mutagen = None  # type: ignore[assignment]
     MUTAGEN_AVAILABLE = False
-    RiffFile = None
 
 logger = get_logger("services.metadata_enhancer")
 
@@ -66,7 +58,7 @@ class MetadataEnhancerService:
         Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
         """
         from database.music_database import get_database, Track
-        from core.path_mapper import PathMapper
+        from core.file_handling.path_mapper import PathMapper
         from core.matching_engine.scoring_profile import ExactSyncProfile
         from core.matching_engine.fingerprinting import FingerprintGenerator
         from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -142,17 +134,20 @@ class MetadataEnhancerService:
                         logger.warning(f"Fingerprint generation/resolution failed: {e}")
 
                 # Step 5 (Text Fallback & Write):
-                if not new_musicbrainz_id and metadata_provider and track.artist_name and track.title:
-                    logger.debug(f"Step 5 (Text Fallback): Searching MusicBrainz for {track.artist_name} - {track.title}")
+                # Resolve artist name from the ORM relationship — Track has no
+                # artist_name column; artist_name lives on the related Artist row.
+                artist_name_str = track.artist.name if track.artist else None
+                if not new_musicbrainz_id and metadata_provider and artist_name_str and track.title:
+                    logger.debug(f"Step 5 (Text Fallback): Searching MusicBrainz for {artist_name_str} - {track.title}")
                     try:
-                        query = f"{track.artist_name} {track.title}"
+                        query = f"{artist_name_str} {track.title}"
                         # Ensure we use standard search which returns List[SoulSyncTrack]
                         results = metadata_provider.search(query, type="track", limit=5)
                         if results:
                             # Strict match evaluation
                             file_track = SoulSyncTrack(
                                 raw_title=track.title,
-                                artist_name=track.artist_name,
+                                artist_name=artist_name_str,
                                 album_title=track.album.title if track.album else "",
                                 duration=duration
                             )
@@ -331,14 +326,12 @@ class MetadataEnhancerService:
         return metadata, confidence
 
     def tag_file(self, file_path: Path, metadata: Dict[str, Any]):
-        """
-        Write tags to file (abstracted).
-        """
-        _TaggingHelper.write_tags(file_path, metadata)
+        """Write tags via the dedicated tagging_io module (jail + lock included)."""
+        _tagging_write(file_path, metadata)
 
     def read_tags(self, file_path: Path) -> Dict[str, Any]:
-        """Read and normalize metadata tags from a local audio file."""
-        return _TaggingHelper.read_tags(file_path)
+        """Read and normalise tags via the dedicated tagging_io module (jail + lock included)."""
+        return _tagging_read(file_path)
 
     def create_or_update_review_task(self, file_path: Path, metadata: Optional[Dict[str, Any]], confidence: float, status='pending'):
         """Create or update a task in the review queue."""
@@ -427,309 +420,8 @@ class MetadataEnhancerService:
             return None
 
 
-class _TaggingHelper:
-    """
-    Internal helper class to abstract raw mutagen logic.
-    Supports Tier 1 Auto-Write.
-    """
-    @staticmethod
-    def write_tags(file_path: Path, metadata: Dict[str, Any]):
-        if not MUTAGEN_AVAILABLE:
-            logger.warning("Mutagen not available, skipping tagging")
-            return
-
-        try:
-            ext = file_path.suffix.lower()
-            if ext == '.mp3':
-                _TaggingHelper._tag_mp3(file_path, metadata)
-            elif ext == '.flac':
-                _TaggingHelper._tag_flac(file_path, metadata)
-
-            logger.info(f"Tagged {file_path.name}")
-        except Exception as e:
-            logger.error(f"Failed to tag {file_path}: {e}")
-
-    @staticmethod
-    def read_tags(file_path: Path) -> Dict[str, Any]:
-        if not MUTAGEN_AVAILABLE:
-            return {}
-
-        metadata: Dict[str, Any] = {
-            'file_format': file_path.suffix.lower().lstrip('.'),
-        }
-
-        try:
-            easy_audio = mutagen.File(str(file_path), easy=True)
-            metadata = _TaggingHelper._merge_metadata(metadata, _TaggingHelper._extract_easy_tags(easy_audio))
-            metadata = _TaggingHelper._merge_metadata(metadata, _TaggingHelper._extract_audio_info(easy_audio))
-        except Exception as e:
-            logger.debug(f"Failed easy tag read for {file_path}: {e}")
-
-        try:
-            detailed_audio = mutagen.File(str(file_path))
-            metadata = _TaggingHelper._merge_metadata(metadata, _TaggingHelper._extract_detailed_tags(detailed_audio))
-            metadata = _TaggingHelper._merge_metadata(metadata, _TaggingHelper._extract_audio_info(detailed_audio))
-        except Exception as e:
-            logger.debug(f"Failed detailed tag read for {file_path}: {e}")
-
-        if file_path.suffix.lower() == '.wav':
-            metadata = _TaggingHelper._merge_metadata(metadata, _TaggingHelper._read_wav_tags(file_path))
-
-        if not metadata.get('year') and metadata.get('date'):
-            date_value = str(metadata['date']).strip()
-            if len(date_value) >= 4 and date_value[:4].isdigit():
-                metadata['year'] = date_value[:4]
-
-        return {key: value for key, value in metadata.items() if value not in (None, '', [], {})}
-
-    @staticmethod
-    def _merge_metadata(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
-        merged = dict(base)
-        for key, value in (update or {}).items():
-            if value not in (None, '', [], {}):
-                merged[str(key)] = value
-        return merged
-
-    @staticmethod
-    def _extract_audio_info(audio: Any) -> Dict[str, Any]:
-        info = getattr(audio, 'info', None)
-        if not info:
-            return {}
-
-        metadata: Dict[str, Any] = {}
-        length = getattr(info, 'length', None)
-        bitrate = getattr(info, 'bitrate', None)
-        sample_rate = getattr(info, 'sample_rate', None)
-        channels = getattr(info, 'channels', None)
-
-        if length is not None:
-            metadata['duration_seconds'] = int(length)
-        if bitrate is not None:
-            metadata['bitrate_kbps'] = int(bitrate / 1000)
-        if sample_rate is not None:
-            metadata['sample_rate_hz'] = int(sample_rate)
-        if channels is not None:
-            metadata['channels'] = int(channels)
-        return metadata
-
-    @staticmethod
-    def _extract_easy_tags(audio: Any) -> Dict[str, Any]:
-        tags = getattr(audio, 'tags', None) or {}
-        return _TaggingHelper._map_simple_tags(tags)
-
-    @staticmethod
-    def _extract_detailed_tags(audio: Any) -> Dict[str, Any]:
-        tags = getattr(audio, 'tags', None)
-        if not tags:
-            return {}
-
-        if hasattr(tags, 'getall'):
-            metadata = {
-                'title': _TaggingHelper._id3_text(tags, 'TIT2'),
-                'artist': _TaggingHelper._id3_text(tags, 'TPE1'),
-                'album': _TaggingHelper._id3_text(tags, 'TALB'),
-                'date': _TaggingHelper._id3_text(tags, 'TDRC'),
-                'track_number': _TaggingHelper._id3_text(tags, 'TRCK'),
-                'disc_number': _TaggingHelper._id3_text(tags, 'TPOS'),
-                'isrc': _TaggingHelper._id3_text(tags, 'TSRC'),
-                'comments': _TaggingHelper._id3_text(tags, 'COMM'),
-            }
-
-            for frame in tags.getall('TXXX'):
-                desc = str(getattr(frame, 'desc', '') or '').strip().lower()
-                text = _TaggingHelper._frame_text(frame)
-                if desc == 'musicbrainz track id':
-                    metadata['recording_id'] = text
-                    metadata['musicbrainz_id'] = text
-                elif desc == 'musicbrainz artist id':
-                    metadata['artist_id'] = text
-                elif desc == 'musicbrainz release id':
-                    metadata['release_id'] = text
-                elif desc == 'acoustid id':
-                    metadata['acoustid_id'] = text
-
-            if not metadata.get('musicbrainz_id') and metadata.get('recording_id'):
-                metadata['musicbrainz_id'] = metadata['recording_id']
-
-            return {key: value for key, value in metadata.items() if value not in (None, '', [], {})}
-
-        return _TaggingHelper._map_simple_tags(tags)
-
-    @staticmethod
-    def _map_simple_tags(tags: Any) -> Dict[str, Any]:
-        normalized: Dict[str, Any] = {}
-        if not hasattr(tags, 'items'):
-            return normalized
-
-        lowered = {str(key).lower(): value for key, value in tags.items()}
-        normalized['title'] = _TaggingHelper._first_value(lowered, 'title', 'inam')
-        normalized['artist'] = _TaggingHelper._first_value(lowered, 'artist', 'iart')
-        normalized['album'] = _TaggingHelper._first_value(lowered, 'album', 'iprd')
-        normalized['date'] = _TaggingHelper._first_value(lowered, 'date', 'year', 'icrd')
-        normalized['track_number'] = _TaggingHelper._first_value(lowered, 'tracknumber', 'track_number', 'trck', 'itrk')
-        normalized['disc_number'] = _TaggingHelper._first_value(lowered, 'discnumber', 'disc_number', 'tpos')
-        normalized['isrc'] = _TaggingHelper._first_value(lowered, 'isrc', 'tsrc')
-        normalized['comments'] = _TaggingHelper._first_value(lowered, 'comment', 'comments', 'comm', 'icmt')
-        normalized['recording_id'] = _TaggingHelper._first_value(
-            lowered,
-            'musicbrainz_trackid',
-            'musicbrainz track id',
-            'recording_id',
-            'musicbrainz_id',
-        )
-        normalized['musicbrainz_id'] = normalized['recording_id']
-        normalized['artist_id'] = _TaggingHelper._first_value(lowered, 'musicbrainz_artistid', 'musicbrainz artist id', 'artist_id')
-        normalized['release_id'] = _TaggingHelper._first_value(lowered, 'musicbrainz_albumid', 'musicbrainz release id', 'release_id')
-        normalized['acoustid_id'] = _TaggingHelper._first_value(lowered, 'acoustid id', 'acoustid_id')
-
-        return {key: value for key, value in normalized.items() if value not in (None, '', [], {})}
-
-    @staticmethod
-    def _first_value(mapping: Dict[str, Any], *keys: str) -> Optional[str]:
-        for key in keys:
-            if key not in mapping:
-                continue
-            value = _TaggingHelper._coerce_value(mapping[key])
-            if value not in (None, ''):
-                return value
-        return None
-
-    @staticmethod
-    def _coerce_value(value: Any) -> Optional[str]:
-        if value is None:
-            return None
-        if isinstance(value, (list, tuple)):
-            for item in value:
-                coerced = _TaggingHelper._coerce_value(item)
-                if coerced not in (None, ''):
-                    return coerced
-            return None
-        if isinstance(value, bytes):
-            return value.decode('utf-8', errors='replace').replace('\x00', '').strip() or None
-        text = getattr(value, 'text', None)
-        if text is not None:
-            return _TaggingHelper._coerce_value(text)
-        return str(value).replace('\x00', '').strip() or None
-
-    @staticmethod
-    def _frame_text(frame: Any) -> Optional[str]:
-        return _TaggingHelper._coerce_value(frame)
-
-    @staticmethod
-    def _id3_text(tags: Any, frame_id: str) -> Optional[str]:
-        frames = tags.getall(frame_id)
-        if not frames:
-            return None
-        return _TaggingHelper._frame_text(frames[0])
-
-    @staticmethod
-    def _read_wav_tags(file_path: Path) -> Dict[str, Any]:
-        metadata: Dict[str, Any] = {}
-
-        try:
-            audio = WAVE(str(file_path))
-            metadata = _TaggingHelper._merge_metadata(metadata, _TaggingHelper._extract_audio_info(audio))
-            metadata = _TaggingHelper._merge_metadata(metadata, _TaggingHelper._extract_detailed_tags(audio))
-            metadata = _TaggingHelper._merge_metadata(metadata, _TaggingHelper._map_simple_tags(getattr(audio, 'tags', None) or {}))
-        except Exception as e:
-            logger.debug(f"Failed WAVE parser tag read for {file_path}: {e}")
-
-        if RiffFile is None:
-            return metadata
-
-        try:
-            with file_path.open('rb') as handle:
-                riff = RiffFile(handle)
-                info_chunk = None
-                for chunk in riff.root.subchunks():
-                    if getattr(chunk, 'id', None) == 'LIST' and getattr(chunk, 'name', None) == 'INFO':
-                        info_chunk = chunk
-                        break
-
-                if info_chunk is None:
-                    return metadata
-
-                riff_tags: Dict[str, Any] = {}
-                for chunk in info_chunk.subchunks():
-                    chunk_id = str(getattr(chunk, 'id', '') or '').lower()
-                    if not chunk_id:
-                        continue
-                    riff_tags[chunk_id] = chunk.read()
-
-                metadata = _TaggingHelper._merge_metadata(metadata, _TaggingHelper._map_simple_tags(riff_tags))
-        except Exception as e:
-            logger.debug(f"Failed RIFF INFO tag read for {file_path}: {e}")
-
-        return metadata
-
-    @staticmethod
-    def _tag_mp3(file_path: Path, metadata: Dict[str, Any]):
-        """Tag MP3 with ID3v2.4"""
-        try:
-            try:
-                audio = ID3(str(file_path))
-            except Exception:
-                audio = ID3()
-
-            if metadata.get('title'):
-                audio.add(TIT2(encoding=3, text=metadata['title']))
-            if metadata.get('artist'):
-                audio.add(TPE1(encoding=3, text=metadata['artist']))
-            if metadata.get('album'):
-                audio.add(TALB(encoding=3, text=metadata['album']))
-            if metadata.get('date'):
-                audio.add(TDRC(encoding=3, text=metadata['date']))
-            if metadata.get('track_number'):
-                audio.add(TRCK(encoding=3, text=str(metadata['track_number'])))
-            if metadata.get('disc_number'):
-                audio.add(TPOS(encoding=3, text=str(metadata['disc_number'])))
-            if metadata.get('isrc'):
-                from mutagen.id3 import TSRC
-                audio.add(TSRC(encoding=3, text=metadata['isrc']))
-            if metadata.get('recording_id'):
-                audio.add(TXXX(encoding=3, desc='MusicBrainz Track Id', text=metadata['recording_id']))
-            if metadata.get('artist_id'):
-                audio.add(TXXX(encoding=3, desc='MusicBrainz Artist Id', text=metadata['artist_id']))
-            if metadata.get('release_id'):
-                audio.add(TXXX(encoding=3, desc='MusicBrainz Release Id', text=metadata['release_id']))
-
-            audio.save(str(file_path), v2_version=4)
-        except Exception as e:
-            logger.error(f"Error tagging MP3: {e}")
-
-    @staticmethod
-    def _tag_flac(file_path: Path, metadata: Dict[str, Any]):
-        """Tag FLAC with Vorbis Comments"""
-        try:
-            audio = FLAC(str(file_path))
-
-            if metadata.get('title'):
-                audio['TITLE'] = metadata['title']
-            if metadata.get('artist'):
-                audio['ARTIST'] = metadata['artist']
-            if metadata.get('album'):
-                audio['ALBUM'] = metadata['album']
-            if metadata.get('date'):
-                audio['DATE'] = metadata['date']
-            if metadata.get('track_number'):
-                audio['TRACKNUMBER'] = str(metadata['track_number'])
-            if metadata.get('disc_number'):
-                audio['DISCNUMBER'] = str(metadata['disc_number'])
-            if metadata.get('isrc'):
-                audio['ISRC'] = metadata['isrc']
-            if metadata.get('recording_id'):
-                audio['MUSICBRAINZ_TRACKID'] = metadata['recording_id']
-            if metadata.get('artist_id'):
-                audio['MUSICBRAINZ_ARTISTID'] = metadata['artist_id']
-            if metadata.get('release_id'):
-                audio['MUSICBRAINZ_ALBUMID'] = metadata['release_id']
-
-            audio.save()
-        except Exception as e:
-            logger.error(f"Error tagging FLAC: {e}")
-
     def _sanitize(self, filename: str) -> str:
-        """Sanitize filename components (Helper for internal usage if needed)"""
+        """Sanitize filename components."""
         import re
         return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename).strip()
 

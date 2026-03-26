@@ -9,13 +9,13 @@ This service is responsible for:
 """
 
 import os
-import shutil
 import logging
 import threading
 from pathlib import Path
 from typing import List, Dict, Any
 import datetime
 
+from core.file_handling.local_io import LocalFileHandler
 from core.settings import config_manager
 from core.job_queue import register_job
 from core.tiered_logger import get_logger
@@ -288,10 +288,8 @@ class AutoImportService:
                     dest_path = parent / f"{stem} ({counter}){ext_with_dot}"
                     counter += 1
 
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
-
-            shutil.move(str(file_path), str(dest_path))
-            logger.info(f"Moved {file_path.name} -> {dest_path}")
+            moved_to = LocalFileHandler.get_instance().safe_move(file_path, dest_path)
+            logger.info(f"Moved {file_path.name} → {moved_to}")
 
         except Exception as e:
             logger.error(f"Failed to move file {file_path}: {e}")

@@ -344,7 +344,7 @@ class MusicBrainzClient(ProviderBase):
         client falls back to anonymous / read-only API access.
         """
         try:
-            from core.storage import get_storage_service
+            from core.file_handling.storage import get_storage_service
             from core.security import decrypt_string
             from database.config_database import get_config_database
 

@@ -6,7 +6,7 @@ from sqlalchemy import func
 
 from core.settings import config_manager
 from core.provider import ProviderRegistry
-from core.path_mapper import PathMapper
+from core.file_handling.path_mapper import PathMapper
 from core.event_bus import event_bus
 from database.music_database import get_database, Track, Artist
 from core.tiered_logger import get_logger

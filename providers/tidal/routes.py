@@ -1,6 +1,6 @@
 """Tidal provider routes."""
 from flask import Blueprint, request, jsonify
-from core.storage import get_storage_service
+from core.file_handling.storage import get_storage_service
 from core.tiered_logger import get_logger
 
 logger = get_logger("tidal_routes")

@@ -23,7 +23,7 @@ def _get_provider_for_account(provider_name, acc_id=None):
 
     if provider_name in ['spotify', 'tidal']:
         if acc_id is None:
-            from core.storage import get_storage_service
+            from core.file_handling.storage import get_storage_service
 
             storage = get_storage_service()
             accounts = storage.list_accounts(provider_name)

@@ -10,7 +10,7 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
-from core.storage import get_storage_service
+from core.file_handling.storage import get_storage_service
 
 logger = get_logger("spotify_adapter")
 

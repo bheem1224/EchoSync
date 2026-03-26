@@ -55,7 +55,7 @@ def begin_auth():
             return jsonify({'error': 'account_id parameter is required'}), 400
         
         # Read client credentials from storage (service config)
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
         storage = get_storage_service()
 
         from core.security import decrypt_string
@@ -127,7 +127,7 @@ def oauth_callback():
         except (ValueError, TypeError):
             account_id = None
 
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
         storage = get_storage_service()
 
         from core.security import decrypt_string

@@ -3,7 +3,7 @@ from core.provider_base import ProviderBase
 from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.settings import config_manager
-from core.storage import get_storage_service
+from core.file_handling.storage import get_storage_service
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.tiered_logger import get_logger
 

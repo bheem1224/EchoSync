@@ -26,7 +26,7 @@ def get_settings():
         server_name = plex_config.get('server_name') or config_manager.get('plex.server_name', '')
         
         # Retrieve token from Singleton Account
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
         from core.security import decrypt_string
         storage = get_storage_service()
         accounts = storage.list_accounts('plex')
@@ -99,7 +99,7 @@ def save_settings():
         if 'token' in data:
             # We don't save tokens to config_manager anymore. We save them to account_tokens
             token = data['token'].strip()
-            from core.storage import get_storage_service
+            from core.file_handling.storage import get_storage_service
             from core.security import encrypt_string
             from providers.plex.client import PlexClient
             import time
@@ -168,7 +168,7 @@ def test_connection():
             or config_manager.get('plex.base_url', '')
         ).strip()
 
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
         from core.security import decrypt_string
 
         storage = get_storage_service()
@@ -311,7 +311,7 @@ def poll_oauth(session_id: str):
             logger.debug(f"Plex poll API check failed: {e}")
 
         if is_logged_in and auth_token:
-            from core.storage import get_storage_service
+            from core.file_handling.storage import get_storage_service
             from core.security import encrypt_string
             from providers.plex.client import PlexClient
             storage = get_storage_service()
