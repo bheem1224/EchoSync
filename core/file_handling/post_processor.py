@@ -34,7 +34,7 @@ try:
 except ImportError:
     MUTAGEN_AVAILABLE = False
 
-from .matching_engine import SoulSyncTrack
+from ..matching_engine import SoulSyncTrack
 
 logger = logging.getLogger(__name__)
 

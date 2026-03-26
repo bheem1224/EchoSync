@@ -196,7 +196,7 @@ def get_provider_playlists(provider_name):
         multi_account_providers = ['spotify', 'tidal']
         if provider_name in multi_account_providers:
             try:
-                from core.storage import get_storage_service
+                from core.file_handling.storage import get_storage_service
                 storage = get_storage_service()
                 plex_user_map = _build_active_plex_user_map()
 

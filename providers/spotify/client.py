@@ -33,7 +33,7 @@ class ConfigCacheHandler(CacheHandler):
                 logger.debug("No account_id specified, cannot load token")
                 return None
             
-            from core.storage import get_storage_service
+            from core.file_handling.storage import get_storage_service
             from core.security import decrypt_string
             storage = get_storage_service()
             token_data = storage.get_account_token(self.account_id)
@@ -79,7 +79,7 @@ class ConfigCacheHandler(CacheHandler):
                 logger.warning(f"No token_info provided to save for account {self.account_id}")
                 return
             
-            from core.storage import get_storage_service
+            from core.file_handling.storage import get_storage_service
             storage = get_storage_service()
             
             access_token = token_info.get('access_token')
@@ -167,7 +167,7 @@ class SpotifyClient(SyncServiceProvider):
             # If still None, try to find the first available account
             if account_id is None:
                 try:
-                    from core.storage import get_storage_service
+                    from core.file_handling.storage import get_storage_service
                     storage = get_storage_service()
                     accounts = storage.list_accounts('spotify')
                     if accounts:
@@ -257,7 +257,7 @@ class SpotifyClient(SyncServiceProvider):
                     # if anything goes wrong, we'll fall back to global values
                     pass
 
-            from core.storage import get_storage_service
+            from core.file_handling.storage import get_storage_service
             from core.security import decrypt_string
             storage = get_storage_service()
             # if we still haven't obtained values from the account, read global
@@ -416,7 +416,7 @@ class SpotifyClient(SyncServiceProvider):
         """Handle the OAuth callback redirect from the Spotify authorization page."""
         from flask import jsonify, redirect
         import time
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
         from spotipy.oauth2 import SpotifyOAuth
 
         try:
@@ -508,7 +508,7 @@ class SpotifyClient(SyncServiceProvider):
         if self.sp is not None:
              return True
         # Check storage if we can potentially configure it
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
         storage = get_storage_service()
         return bool(storage.get_service_config('spotify', 'client_id') and
                     storage.get_service_config('spotify', 'client_secret'))

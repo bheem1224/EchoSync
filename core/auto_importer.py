@@ -35,7 +35,7 @@ from time_utils import utc_isoformat, utc_now
 
 from .matching_engine import parse_file, SoulSyncTrack
 from services.match_service import MatchService, MatchContext
-from .post_processor import PostProcessor
+from .file_handling.post_processor import PostProcessor
 from core.tiered_logger import tiered_logger
 from core.error_handler import error_handler
 from core.tiered_logger import get_logger

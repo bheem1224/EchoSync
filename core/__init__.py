@@ -31,7 +31,7 @@ from .caching import (
     clear_cache,
     cleanup_expired_cache,
 )
-from .post_processor import (
+from .file_handling.post_processor import (
     PostProcessor,
     AudioFormat,
     TagWriteResult,

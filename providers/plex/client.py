@@ -7,7 +7,7 @@ from core.provider_base import ProviderBase
 from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.settings import config_manager
-from core.path_mapper import PathMapper
+from core.file_handling.path_mapper import PathMapper
 from core.health_check import register_health_check_job, HealthCheckResult
 from plexapi.server import PlexServer
 from plexapi.library import MusicSection

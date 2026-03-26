@@ -1,5 +1,6 @@
 """Dynamic plugin loader for SoulSync providers and plugins."""
 
+import ast
 import importlib
 import importlib.util
 import os
@@ -16,6 +17,81 @@ from core.tiered_logger import get_logger
 from core.settings import config_manager
 
 logger = get_logger("plugin_loader")
+
+# ---------------------------------------------------------------------------
+# Zero-Trust Plugin Security Scanner
+# ---------------------------------------------------------------------------
+# Forbidden bare-name calls (Python builtins used for direct file I/O)
+_FORBIDDEN_BARE_CALLS: frozenset = frozenset({"open"})
+
+# Forbidden module.method() patterns
+_FORBIDDEN_MODULE_CALLS: dict = {
+    "os":     frozenset({"remove", "unlink", "rename"}),
+    "shutil": frozenset({"move", "copy", "rmtree"}),
+}
+
+# Forbidden method names on *any* receiver.
+# pathlib.Path is the primary target; AST-only scanning cannot resolve types,
+# so we match conservatively — plugins must not call these directly regardless
+# of receiver type.  All legitimate I/O must go through LocalFileHandler.
+_FORBIDDEN_METHOD_CALLS: frozenset = frozenset({"unlink", "write_text", "open"})
+
+
+class PluginSecurityScanner(ast.NodeVisitor):
+    """
+    AST-based pre-load security scanner for community plugins.
+
+    Walks the parse tree of each .py source file *before* importlib touches it
+    and flags any raw file-I/O calls that bypass the LocalFileHandler gateway.
+
+    Forbidden patterns detected
+    ---------------------------
+    - ``open(...)``                              bare builtin
+    - ``os.remove/unlink/rename(...)``           direct OS-level ops
+    - ``shutil.move/copy/rmtree(...)``           shutil destructive ops
+    - ``<any>.unlink()``                         pathlib.Path.unlink
+    - ``<any>.write_text()``                     pathlib.Path.write_text
+    - ``<any>.open()``                           pathlib.Path.open (and builtin
+                                                 open accessed as an attribute)
+    """
+
+    def __init__(self) -> None:
+        # Each entry is (line_number, human_readable_description)
+        self.violations: list = []
+
+    def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
+        func = node.func
+
+        if isinstance(func, ast.Name):
+            # Pattern 1: bare open(...)
+            if func.id in _FORBIDDEN_BARE_CALLS:
+                self.violations.append(
+                    (node.lineno, f"bare call to {func.id}()")
+                )
+
+        elif isinstance(func, ast.Attribute):
+            attr = func.attr
+            receiver = func.value
+
+            # Pattern 2: module.method() — e.g. os.remove(), shutil.move()
+            if isinstance(receiver, ast.Name):
+                module = receiver.id
+                forbidden_attrs = _FORBIDDEN_MODULE_CALLS.get(module)
+                if forbidden_attrs and attr in forbidden_attrs:
+                    self.violations.append(
+                        (node.lineno, f"{module}.{attr}()")
+                    )
+
+            # Pattern 3: .unlink() / .write_text() / .open() on any receiver
+            # (pathlib.Path is the primary target; conservative match is
+            # intentional — plugins must not perform raw I/O at all)
+            if attr in _FORBIDDEN_METHOD_CALLS:
+                self.violations.append(
+                    (node.lineno, f".{attr}() method call")
+                )
+
+        # Recurse into all child expressions
+        self.generic_visit(node)
 
 
 class PluginLoader:
@@ -74,7 +150,57 @@ class PluginLoader:
                 logger.debug(f"Skipping {provider_name}: no __init__.py found")
                 continue
 
+            # Zero-Trust gate: scan community plugin source before importing
+            if source_type == 'community':
+                if not self._security_scan_package(item, provider_name):
+                    logger.warning(
+                        f"Plugin '{provider_name}' rejected by security scanner. Skipping."
+                    )
+                    continue
+
             self._load_provider_package(provider_name, directory.name, source_type)
+
+    def _security_scan_package(self, package_dir: Path, plugin_name: str) -> bool:
+        """
+        Scan every .py file in *package_dir* with PluginSecurityScanner.
+
+        Returns True if the package is clean, False on the first violation
+        (fail-closed: any unreadable or unparseable source also returns False).
+        All violations found across all files are logged before returning.
+        """
+        clean = True
+        for py_file in sorted(package_dir.rglob("*.py")):
+            try:
+                source = py_file.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                logger.warning(
+                    f"[SECURITY] Could not read '{py_file}' while scanning "
+                    f"plugin '{plugin_name}': {exc}. Refusing to load."
+                )
+                return False  # fail closed
+
+            try:
+                tree = ast.parse(source, filename=str(py_file))
+            except SyntaxError as exc:
+                logger.warning(
+                    f"[SECURITY] Syntax error in '{py_file}' for plugin "
+                    f"'{plugin_name}': {exc}. Refusing to load."
+                )
+                return False  # fail closed
+
+            scanner = PluginSecurityScanner()
+            scanner.visit(tree)
+
+            for line, description in scanner.violations:
+                logger.critical(
+                    f"[SECURITY] Refusing to load plugin '{plugin_name}'. "
+                    f"Forbidden raw file I/O detected at line {line} "
+                    f"in '{py_file.name}' ({description}). "
+                    f"Plugins MUST use core.file_handling."
+                )
+                clean = False
+
+        return clean
 
     def _load_provider_package(self, name: str, parent_dir_name: str, source_type: str):
         """

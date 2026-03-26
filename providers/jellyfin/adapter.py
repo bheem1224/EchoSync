@@ -8,7 +8,7 @@ and attaches Jellyfin ProviderRef. Adheres to Track-centric architecture.
 from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
-from core.storage import get_storage_service
+from core.file_handling.storage import get_storage_service
 from core.provider_base import ProviderBase
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 

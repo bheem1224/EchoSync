@@ -19,12 +19,18 @@ from typing import Optional, Tuple
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 import logging
+import os
 
 from .soul_sync_track import SoulSyncTrack
 from .scoring_profile import ScoringProfile, ScoringWeights, ProfileType
 from .fingerprinting import FingerprintMatcher
 
 logger = logging.getLogger(__name__)
+
+# DEV_MODE killswitch: set SOULSYNC_DEV_MODE=1 (or "true"/"yes") in the environment
+# to bypass the ISRC instant-match fast-path during development/testing.
+# Uses .get() with a safe default so the app never raises if the variable is absent.
+_ISRC_FAST_PATH_ENABLED = os.environ.get("SOULSYNC_DEV_MODE", "").strip().lower() not in ("1", "true", "yes")
 
 
 @dataclass
@@ -112,38 +118,43 @@ class WeightedMatchingEngine:
         reasoning_parts = []
 
         # ===== STEP 0a: ISRC INSTANT MATCH or AUTO-FAIL (highest confidence) =====
-        # If both tracks have valid ISRCs and they match exactly, instant 100% confidence
-        # If both have valid ISRCs and they differ, auto-fail (score 0)
-        src_isrc = getattr(source, "isrc", None)
-        cand_isrc = getattr(candidate, "isrc", None)
-        src_valid = self.is_valid_isrc(src_isrc)
-        cand_valid = self.is_valid_isrc(cand_isrc)
-        if src_valid and cand_valid:
-            if src_isrc.strip().upper() == cand_isrc.strip().upper():
-                return self._attach_target_context(MatchResult(
-                    confidence_score=100.0,
-                    passed_version_check=True,
-                    passed_edition_check=True,
-                    fuzzy_text_score=1.0,
-                    duration_match_score=1.0,
-                    quality_bonus_applied=0.0,
-                    version_penalty_applied=0.0,
-                    edition_penalty_applied=0.0,
-                    reasoning="ISRC match (identical recording - instant 100% confidence)"
-                ), target_source, target_identifier)
-            else:
-                reasoning_parts.append("ISRC mismatch (both present, different codes) - auto-fail")
-                return self._attach_target_context(MatchResult(
-                    confidence_score=0.0,
-                    passed_version_check=False,
-                    passed_edition_check=False,
-                    fuzzy_text_score=0.0,
-                    duration_match_score=0.0,
-                    quality_bonus_applied=0.0,
-                    version_penalty_applied=0.0,
-                    edition_penalty_applied=0.0,
-                    reasoning=" | ".join(reasoning_parts)
-                ), target_source, target_identifier)
+        # If both tracks have valid ISRCs and they match exactly, instant 100% confidence.
+        # If both have valid ISRCs and they differ, auto-fail (score 0).
+        # Guarded by _ISRC_FAST_PATH_ENABLED so this step can be disabled in DEV_MODE
+        # without throwing an exception if the env var is absent.
+        if _ISRC_FAST_PATH_ENABLED:
+            src_isrc = getattr(source, "isrc", None)
+            cand_isrc = getattr(candidate, "isrc", None)
+            src_valid = self.is_valid_isrc(src_isrc)
+            cand_valid = self.is_valid_isrc(cand_isrc)
+            if src_valid and cand_valid:
+                # is_valid_isrc() already confirmed both are non-None, non-empty strings
+                # that match the ISRC regex — .strip().upper() is safe here.
+                if src_isrc.strip().upper() == cand_isrc.strip().upper():
+                    return self._attach_target_context(MatchResult(
+                        confidence_score=100.0,
+                        passed_version_check=True,
+                        passed_edition_check=True,
+                        fuzzy_text_score=1.0,
+                        duration_match_score=1.0,
+                        quality_bonus_applied=0.0,
+                        version_penalty_applied=0.0,
+                        edition_penalty_applied=0.0,
+                        reasoning="ISRC match (identical recording - instant 100% confidence)"
+                    ), target_source, target_identifier)
+                else:
+                    reasoning_parts.append("ISRC mismatch (both present, different codes) - auto-fail")
+                    return self._attach_target_context(MatchResult(
+                        confidence_score=0.0,
+                        passed_version_check=False,
+                        passed_edition_check=False,
+                        fuzzy_text_score=0.0,
+                        duration_match_score=0.0,
+                        quality_bonus_applied=0.0,
+                        version_penalty_applied=0.0,
+                        edition_penalty_applied=0.0,
+                        reasoning=" | ".join(reasoning_parts)
+                    ), target_source, target_identifier)
 
         # Continue with standard matching...
         return self._attach_target_context(

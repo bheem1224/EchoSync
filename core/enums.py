@@ -7,3 +7,6 @@ class Capability(Enum):
     """
     RESOLVE_FINGERPRINT = auto()  # Can resolve audio fingerprints (e.g., AcoustID)
     FETCH_METADATA = auto()       # Can fetch metadata (e.g., MusicBrainz)
+    TAG_FILES = auto()            # Can write metadata tags to local audio files
+    STREAM_AUDIO = auto()         # Can stream / play back audio locally
+    SYNC_LIBRARY = auto()         # Can sync a full media-server library

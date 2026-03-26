@@ -80,7 +80,7 @@ class PlaylistSyncService:
         else:
             # Use ProviderRegistry to load all spotify clients
             try:
-                from core.storage import get_storage_service
+                from core.file_handling.storage import get_storage_service
                 storage = get_storage_service()
                 accounts = storage.list_accounts('spotify') or []
 
