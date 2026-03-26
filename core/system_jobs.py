@@ -433,6 +433,33 @@ def register_user_history_sync_job(interval_seconds: int = 43200, enabled: bool 
     )
 
 
+def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400, enabled: bool = True, batch_size: int = 100):
+    """Register a daily job to fill in missing MusicBrainz IDs for library tracks."""
+
+    def run_metadata_enhancement():
+        try:
+            logger.info("Starting scheduled retroactive metadata enhancement job")
+            from services.metadata_enhancer import get_metadata_enhancer
+            get_metadata_enhancer().enhance_library_metadata(batch_size=batch_size)
+            logger.info("Retroactive metadata enhancement job complete")
+        except Exception as e:
+            logger.error(f"Retroactive metadata enhancement job failed: {e}", exc_info=True)
+
+    job_queue.register_job(
+        name="retroactive_metadata_enhancement",
+        func=run_metadata_enhancement,
+        interval_seconds=interval_seconds,
+        enabled=enabled,
+        tags=["system", "metadata", "library"],
+        max_retries=1,
+    )
+
+    logger.info(
+        f"Retroactive metadata enhancement job registered "
+        f"(interval: {interval_seconds}s = {interval_seconds / 3600:.1f}h, enabled={enabled}, batch_size={batch_size})"
+    )
+
+
 def register_all_system_jobs():
     """
     Register all system jobs with the global job_queue.
@@ -462,6 +489,9 @@ def register_all_system_jobs():
 
         # User history sync for Suggestion Engine baseline data (every 12 hours).
         register_user_history_sync_job(interval_seconds=43200, enabled=True)
+
+        # Daily retroactive metadata enhancement for tracks missing MusicBrainz IDs.
+        register_retroactive_metadata_enhancement_job(interval_seconds=86400, enabled=True)
 
         logger.info("All system jobs registered successfully")
     except Exception as e:
