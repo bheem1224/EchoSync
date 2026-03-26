@@ -159,6 +159,19 @@ class SoulSyncTrack:
         """
         Auto-clean and normalize data upon instantiation.
         """
+        # 0a. Normalize Unicode character variants on raw string fields so that
+        #     EVERY SoulSyncTrack — whether built from a streaming provider or
+        #     directly from a raw DB row — carries consistent characters before
+        #     any regex, fuzzy-matching, or SQL search runs on them.
+        #     (e.g. smart apostrophe ' U+2019 → plain ' U+0027, em-dash → hyphen)
+        from core.matching_engine.text_utils import normalize_chars
+        if self.raw_title:
+            self.raw_title = normalize_chars(self.raw_title)
+        if self.artist_name:
+            self.artist_name = normalize_chars(self.artist_name)
+        if self.album_title:
+            self.album_title = normalize_chars(self.album_title)
+
         # 0. Handle legacy identifiers (List[Dict]) -> Dict[str, str]
         if isinstance(self.identifiers, list):
             new_identifiers = {}

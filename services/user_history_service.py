@@ -9,7 +9,7 @@ from typing import Optional, Dict, List, Set
 import re
 from core.tiered_logger import get_logger
 from database.config_database import get_config_database
-from database.working_database import get_working_database, UserRating, User
+from database.working_database import get_working_database, UserRating, User, PlaybackHistory
 from database.music_database import get_database as get_music_database, Track, Artist
 from core.matching_engine.text_utils import generate_deterministic_id
 from core.user_history import UserTrackInteraction
@@ -96,9 +96,22 @@ class UserHistoryService:
             
             # Sync history for each account
             for account in accounts:
-                account_id = account['id']
+                account_id_raw = account['id']
                 account_name = account.get('display_name') or account.get('account_name') or 'Unknown'
-                
+
+                # Explicit int cast: PlexAPI silently falls back to global admin history
+                # when accountID is a string — guard here so a misconfigured config DB
+                # row (e.g. after a JSON round-trip) never poisons the data.
+                try:
+                    account_id = int(account_id_raw)
+                except (TypeError, ValueError):
+                    self.logger.error(
+                        f"Skipping account '{account_name}': account_id {account_id_raw!r} "
+                        "cannot be cast to int — would risk leaking admin history"
+                    )
+                    stats['errors'].append(f"Bad account_id for {account_name}: {account_id_raw!r}")
+                    continue
+
                 try:
                     self.logger.info(f"Syncing history for account {account_name} (ID: {account_id})")
                     
@@ -173,10 +186,10 @@ class UserHistoryService:
         """
         try:
             with self.working_db.session_scope() as session:
-                # Try to find existing user by plex_id
+                # Try to find existing user by provider_identifier
                 if plex_user_id:
                     user = session.query(User).filter(
-                        User.plex_id == plex_user_id
+                        User.provider_identifier == plex_user_id
                     ).first()
                     if user:
                         return user
@@ -192,7 +205,7 @@ class UserHistoryService:
                 # Create new user
                 user = User(
                     username=account_name,
-                    plex_id=plex_user_id,
+                    provider_identifier=plex_user_id,
                     provider='plex'
                 )
                 session.add(user)
@@ -279,27 +292,54 @@ class UserHistoryService:
                             music_session.query(ExternalIdentifier, Track)
                             .join(Track, ExternalIdentifier.track_id == Track.id)
                             .filter(
-                                ExternalIdentifier.provider_source == 'plex',
                                 ExternalIdentifier.provider_item_id.in_(list(provider_item_ids))
                             )
                             .all()
                         )
 
-                    plex_id_to_track: Dict[str, Track] = {}
+                    provider_id_to_track: Dict[str, Track] = {}
                     for ext_ident, track in ext_idents:
                         raw_ext_id = str(ext_ident.provider_item_id)
-                        plex_id_to_track[raw_ext_id] = track
+                        provider_id_to_track[raw_ext_id] = track
                         normalized_ext_id = self._normalize_provider_item_id(raw_ext_id)
                         if normalized_ext_id:
-                            plex_id_to_track[normalized_ext_id] = track
+                            provider_id_to_track[normalized_ext_id] = track
 
+                    # 1) Record playback history catch-up
+                    playback_payloads = []
                     for interaction in interactions:
                         try:
                             extracted_id = self._extract_provider_item_id(interaction)
                             interaction_provider_id = self._normalize_provider_item_id(extracted_id) or extracted_id
 
-                            if interaction_provider_id in plex_id_to_track:
-                                track = plex_id_to_track[interaction_provider_id]
+                            user_record = work_session.query(User).filter_by(id=user_id).first()
+                            playback_user_id = user_record.provider_identifier if user_record and user_record.provider_identifier else str(user_id)
+
+                            if interaction_provider_id:
+                                playback_payloads.append({
+                                    "user_id": str(playback_user_id),
+                                    "provider_item_id": str(interaction_provider_id),
+                                    "listened_at": interaction.last_played_at or utc_now()
+                                })
+                        except Exception as e:
+                            self.logger.warning(f"Error preparing playback history for interaction: {e}")
+
+                    if playback_payloads:
+                        if self.working_db.engine.dialect.name == 'sqlite':
+                            insert_stmt = sqlite_insert(PlaybackHistory).values(playback_payloads)
+                            upsert_stmt = insert_stmt.on_conflict_do_nothing(
+                                index_elements=['user_id', 'provider_item_id', 'listened_at']
+                            )
+                            work_session.execute(upsert_stmt)
+
+                    # 2) Continue with UserRatings matching
+                    for interaction in interactions:
+                        try:
+                            extracted_id = self._extract_provider_item_id(interaction)
+                            interaction_provider_id = self._normalize_provider_item_id(extracted_id) or extracted_id
+
+                            if interaction_provider_id in provider_id_to_track:
+                                track = provider_id_to_track[interaction_provider_id]
                                 sync_id = f"ss:track:meta:{generate_deterministic_id(track.artist.name, track.title)}"
                                 interaction_records.append({
                                     "interaction": interaction,
@@ -398,9 +438,12 @@ class UserHistoryService:
 
         identifiers = getattr(interaction, 'identifiers', None)
         if isinstance(identifiers, dict):
-            plex_id = str(identifiers.get('plex', '') or '').strip()
-            if plex_id:
-                return plex_id
+            # Iterate all known provider keys; 'plex' is kept for legacy dict shapes
+            for key in (getattr(interaction, 'provider', None), 'plex', 'jellyfin', 'navidrome'):
+                if key:
+                    provider_id = str(identifiers.get(key, '') or '').strip()
+                    if provider_id:
+                        return provider_id
 
         source_item_id = str(getattr(interaction, 'source_item_id', '') or '').strip()
         if source_item_id:

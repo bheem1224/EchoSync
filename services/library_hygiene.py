@@ -280,3 +280,82 @@ class DuplicateHygieneService:
 
         dm = get_download_manager()
         return dm.queue_download(soul_track, quality_profile_id=upgrade_quality_profile_id)
+
+    def is_track_trending(
+        self,
+        provider_item_id: str,
+        days: int = 30,
+        threshold: int = 2,
+    ) -> bool:
+        """
+        Return True if ``provider_item_id`` has been played at least ``threshold``
+        times in the last ``days`` days across all users.
+
+        Uses a single COUNT query against ``PlaybackHistory`` in working.db.
+        """
+        from database.working_database import get_working_database, PlaybackHistory
+        from time_utils import utc_now
+        from datetime import timedelta
+
+        cutoff = utc_now() - timedelta(days=days)
+        working_db = get_working_database()
+        with working_db.session_scope() as session:
+            play_count = (
+                session.query(func.count(PlaybackHistory.id))
+                .filter(
+                    PlaybackHistory.provider_item_id == provider_item_id,
+                    PlaybackHistory.listened_at >= cutoff,
+                )
+                .scalar()
+                or 0
+            )
+        return play_count >= threshold
+
+    def scan_for_stale_tracks(self, inactive_days: int = 90) -> Dict[str, Any]:
+        """
+        Scan for tracks with > 0 all-time listens but 0 listens in the last X days.
+        Updates their UserTrackState lifecycle_action to 'STALE'.
+        """
+        from core.suggestion_engine.analytics import PlaybackAnalytics
+        from database.working_database import get_working_database, UserTrackState
+        from database.music_database import ExternalIdentifier
+        from time_utils import utc_now
+
+        logger.info(f"Starting stale track scan (inactive_days={inactive_days})")
+
+        stale_provider_ids = PlaybackAnalytics.get_stale_provider_ids(inactive_days=inactive_days)
+        if not stale_provider_ids:
+            return {"status": "no_stale_tracks", "count": 0}
+
+        working_db = get_working_database()
+        now = utc_now()
+        updated_count = 0
+
+        with self.db.session_scope() as music_session:
+            with working_db.session_scope() as work_session:
+                # Find corresponding track IDs
+                ext_idents = music_session.query(ExternalIdentifier, Track).join(
+                    Track, ExternalIdentifier.track_id == Track.id
+                ).filter(
+                    ExternalIdentifier.provider_item_id.in_(stale_provider_ids)
+                ).all()
+
+                for ext, track in ext_idents:
+                    # Resolve to sync_id
+                    from core.matching_engine.text_utils import generate_deterministic_id
+                    sync_id = f"ss:track:meta:{generate_deterministic_id(track.artist.name, track.title)}"
+
+                    states = work_session.query(UserTrackState).filter(
+                        UserTrackState.sync_id == sync_id
+                    ).all()
+
+                    for state in states:
+                        # Only mark stale if it's not already staged for deletion/upgrade or exempt
+                        if not state.lifecycle_action and not state.admin_exempt_deletion:
+                            state.lifecycle_action = 'STALE'
+                            state.lifecycle_queued_at = now
+                            updated_count += 1
+                            logger.info(f"Marked track '{track.title}' (sync_id: {sync_id}) as STALE.")
+
+        logger.info(f"Stale track scan completed. Marked {updated_count} states as STALE.")
+        return {"status": "success", "count": updated_count}

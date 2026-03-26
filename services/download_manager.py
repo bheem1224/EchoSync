@@ -404,6 +404,21 @@ class DownloadManager:
             self._update_status(download_id, "failed")
             return
 
+        # Re-check library existence immediately before searching. A track can enter the
+        # library between enqueue-time and the moment this job fires (e.g. auto-import,
+        # manual import, or a previous download cycle completing). Catching it here avoids
+        # a redundant provider search and a duplicate file on disk.
+        album_name = getattr(target_track, 'album_title', None) or getattr(target_track, 'album', None)
+        duration_ms = getattr(target_track, 'duration', None)
+        if self._track_exists_in_library(target_track.artist_name, target_track.title,
+                                          album=album_name, duration=duration_ms):
+            logger.info(
+                f"Skipping download {download_id}: '{target_track.artist_name} – {target_track.title}' "
+                f"already present in library (detected at search-time)."
+            )
+            self._update_status(download_id, "skipped_exists")
+            return
+
         # Keep provider query broad; matching engine handles duration scoring/gating.
         target_duration_ms = target_track.duration if target_track.duration else None
 

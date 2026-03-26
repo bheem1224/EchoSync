@@ -9,6 +9,17 @@
   let selectedIds = new Set();
   let selectAll = false;
 
+  // Completed/failed rows are shown briefly then evicted so they never appear
+  // frozen in the active queue.
+  const STALE_TERMINAL_MS = 5000;
+  const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'completed', 'failed']);
+
+  function isActiveItem(item) {
+    if (!TERMINAL_STATUSES.has(item.status)) return true;
+    const finishedAt = item.updated_at ? new Date(item.updated_at).getTime() : 0;
+    return Date.now() - finishedAt < STALE_TERMINAL_MS;
+  }
+
   // Status colors
   const statusColors = {
     QUEUED: '#6366f1',
@@ -34,10 +45,18 @@
     try {
       const response = await apiClient.get('/downloads/queue');
       if (response.data && response.data.items) {
-        queueItems = response.data.items.map(item => ({
-          ...item,
-          selected: selectedIds.has(item.id)
-        }));
+        // Replace the array reference so Svelte detects the change, and strip
+        // terminal jobs that have been finished long enough to be considered stale.
+        queueItems = response.data.items
+          .map(item => ({ ...item, selected: selectedIds.has(item.id) }))
+          .filter(isActiveItem);
+
+        // Evict selections for items that no longer exist in the visible list.
+        const visibleIds = new Set(queueItems.map(i => i.id));
+        const pruned = new Set([...selectedIds].filter(id => visibleIds.has(id)));
+        if (pruned.size !== selectedIds.size) {
+          selectedIds = pruned;
+        }
       }
       loading = false;
     } catch (error) {
@@ -48,22 +67,22 @@
   }
 
   function toggleSelection(id) {
-    if (selectedIds.has(id)) {
-      selectedIds.delete(id);
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
     } else {
-      selectedIds.add(id);
+      next.add(id);
     }
-    selectedIds = selectedIds; // Trigger reactivity
+    selectedIds = next;
     updateSelectAll();
   }
 
   function toggleSelectAll() {
     if (selectAll) {
-      queueItems.forEach(item => selectedIds.add(item.id));
+      selectedIds = new Set(queueItems.map(item => item.id));
     } else {
-      selectedIds.clear();
+      selectedIds = new Set();
     }
-    selectedIds = selectedIds; // Trigger reactivity
   }
 
   function updateSelectAll() {

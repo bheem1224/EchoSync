@@ -15,7 +15,7 @@ def test_get_settings_uses_storage(monkeypatch):
 
     fake_storage = MagicMock()
     fake_storage.get_service_config.return_value = 'secretkey'
-    monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
+    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
 
     # ensure config_manager.get still returns some values
     with patch('core.settings.config_manager.get', side_effect=lambda k, d=None: {
@@ -39,7 +39,7 @@ def test_save_settings_writes_api_key_to_db(monkeypatch):
     client = make_client()
 
     fake_storage = MagicMock()
-    monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
+    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
 
     payload = {
         'slskd_url': 'http://example',
@@ -67,7 +67,7 @@ def test_save_settings_writes_api_key_to_db(monkeypatch):
 def test_save_settings_does_not_overwrite_empty_key(monkeypatch):
     client = make_client()
     fake_storage = MagicMock()
-    monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
+    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
     sets = []
     monkeypatch.setattr('core.settings.config_manager.set', lambda k, v: sets.append((k, v)))
 

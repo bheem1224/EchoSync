@@ -1,148 +1,129 @@
 <script>
-  import { onMount } from 'svelte';
+  // ─── AudioPlayer.svelte ────────────────────────────────────────────────────
+  // Pure view component for the global audio singleton.
+  //
+  // There is NO <audio> element here. The HTMLAudioElement is owned entirely
+  // by the player store (player.js), which also drives isPlaying / currentTime
+  // / duration via DOM event listeners. This component only reads store state
+  // and calls store actions — it cannot accidentally create a second audio
+  // instance regardless of how many times it is mounted.
+  // ──────────────────────────────────────────────────────────────────────────
   import { player } from '../stores/player';
 
-  let audio;
-  let duration = 0;
-  let currentTime = 0;
+  // ── Scrub / seek interaction ───────────────────────────────────────────────
+  // While the user is dragging the seek thumb, we freeze the displayed time at
+  // the drag position so timeupdate events don't fight the thumb back to the
+  // real playback position.
+  let scrubbing = false;
+  let scrubTime = 0;
 
-  // React to store changes for Play/Pause
-  $: if (audio) {
-    if ($player.isPlaying && audio.paused) {
-      audio.play().catch(e => {
-        console.error("Playback error:", e);
-        player.pause(); // Revert state if play fails
-      });
-    } else if (!$player.isPlaying && !audio.paused) {
-      audio.pause();
-    }
-
-    // Volume control
-    if (Math.abs(audio.volume - $player.volume) > 0.01) {
-        audio.volume = $player.volume;
-    }
+  function onScrubStart(e) {
+    scrubbing = true;
+    scrubTime = parseFloat(e.target.value);
   }
 
-  // React to seek request from store (if different from current)
-  // But wait, bind:currentTime handles reading. Writing?
-  // If I drag slider, it updates audio.currentTime.
-  // If store updates (e.g. skip), I need to update audio.
-  // But store.currentTime is updated by audio timeupdate.
-  // Let's use bind:currentTime for the read-loop, and seek method for write.
-
-  function handleTimeUpdate() {
-    // Only update store if difference is significant to avoid churn?
-    // Actually Svelte stores are cheap.
-    player.setCurrentTime(currentTime);
+  function onScrubMove(e) {
+    scrubTime = parseFloat(e.target.value);
   }
 
-  function handleDurationChange() {
-    player.setDuration(duration);
+  function onScrubEnd(e) {
+    scrubbing = false;
+    player.seek(parseFloat(e.target.value));
   }
 
-  function handleEnded() {
-    player.pause();
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function formatTime(t) {
+    if (!t || isNaN(t)) return '0:00';
+    const m = Math.floor(t / 60);
+    const s = Math.floor(t % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
-  function handlePlay() {
-      if (!$player.isPlaying) player.play();
-  }
-
-  function handlePause() {
-      if ($player.isPlaying) player.pause();
-  }
-
-  function formatTime(seconds) {
-    if (!seconds || isNaN(seconds)) return '0:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  }
-
-  function handleSeek(e) {
-      const time = parseFloat(e.target.value);
-      currentTime = time; // Updates audio immediately via binding? No, bind:currentTime is two-way.
-      // Actually, if I bind value={currentTime}, input updates variable.
-      // Variable updates audio because of bind:currentTime={currentTime} on audio.
-  }
-
-  function handleVolume(e) {
-      const vol = parseFloat(e.target.value);
-      player.setVolume(vol);
-  }
-
-  // Reactive src
-  $: src = $player.currentTrack ? player.getStreamUrl($player.currentTrack.id) : '';
-
-  // Auto-play when track changes (src updates)
-  $: if (src && audio && $player.isPlaying) {
-      // Small timeout to allow audio element to load new src
-      setTimeout(() => {
-          audio.play().catch(console.error);
-      }, 50);
-  }
+  // The seek thumb value: frozen to scrub position while dragging, otherwise
+  // follows the live store position.
+  $: sliderTime = scrubbing ? scrubTime : $player.currentTime;
 </script>
 
 {#if $player.showPlayer && $player.currentTrack}
   <div class="player-bar">
-    <audio
-      bind:this={audio}
-      bind:currentTime={currentTime}
-      bind:duration={duration}
-      on:timeupdate={handleTimeUpdate}
-      on:durationchange={handleDurationChange}
-      on:ended={handleEnded}
-      on:play={handlePlay}
-      on:pause={handlePause}
-      {src}
-      preload="auto"
-    ></audio>
 
+    <!-- Track identity -->
     <div class="track-info">
-        <div class="cover-placeholder">🎵</div>
-        <div class="meta">
-            <span class="title">{$player.currentTrack.title}</span>
-            <span class="artist">{$player.currentTrack.artist}</span>
-        </div>
+      <div class="cover-placeholder">🎵</div>
+      <div class="meta">
+        <span class="title">{$player.currentTrack.title ?? 'Unknown title'}</span>
+        <span class="artist">{$player.currentTrack.artist ?? 'Unknown artist'}</span>
+      </div>
     </div>
 
+    <!-- Transport controls: Play/Pause + Stop -->
     <div class="controls">
-        <button class="ctrl-btn" on:click={() => player.toggle()} title={$player.isPlaying ? "Pause" : "Play"}>
-            {#if $player.isPlaying}
-                <!-- Pause Icon -->
-                <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-            {:else}
-                <!-- Play Icon -->
-                <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            {/if}
-        </button>
+      <button
+        class="ctrl-btn play-pause"
+        on:click={() => player.toggle()}
+        title={$player.isPlaying ? 'Pause' : 'Play'}
+        aria-label={$player.isPlaying ? 'Pause' : 'Play'}
+      >
+        {#if $player.isPlaying}
+          <!-- Pause icon -->
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+          </svg>
+        {:else}
+          <!-- Play icon -->
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+        {/if}
+      </button>
+
+      <button
+        class="ctrl-btn stop"
+        on:click={() => player.stop()}
+        title="Stop"
+        aria-label="Stop"
+      >
+        <!-- Stop (square) icon -->
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+          <path d="M6 6h12v12H6z"/>
+        </svg>
+      </button>
     </div>
 
+    <!-- Seek bar -->
     <div class="progress">
-        <span class="time">{formatTime(currentTime)}</span>
-        <input
-            type="range"
-            min="0"
-            max={duration || 100}
-            value={currentTime}
-            on:input={handleSeek}
-            class="seek-slider"
-        />
-        <span class="time">{formatTime(duration)}</span>
+      <span class="time">{formatTime(sliderTime)}</span>
+      <input
+        type="range"
+        class="seek-slider"
+        min="0"
+        max={$player.duration || 100}
+        step="0.1"
+        value={sliderTime}
+        on:mousedown={onScrubStart}
+        on:touchstart={onScrubStart}
+        on:input={onScrubMove}
+        on:change={onScrubEnd}
+        aria-label="Seek"
+      />
+      <span class="time">{formatTime($player.duration)}</span>
     </div>
 
+    <!-- Volume -->
     <div class="volume">
-        <span class="vol-icon">🔊</span>
-        <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={$player.volume}
-            on:input={handleVolume}
-            class="vol-slider"
-        />
+      <span class="vol-icon" aria-hidden="true">🔊</span>
+      <input
+        type="range"
+        class="vol-slider"
+        min="0"
+        max="1"
+        step="0.01"
+        value={$player.volume}
+        on:input={e => player.setVolume(parseFloat(e.target.value))}
+        aria-label="Volume"
+      />
     </div>
+
   </div>
 {/if}
 
@@ -212,6 +193,26 @@
       display: flex;
       justify-content: center;
       align-items: center;
+      gap: 8px;
+  }
+
+  /* Play/Pause — larger, filled circle (primary colour) */
+  .ctrl-btn.play-pause {
+      width: 40px;
+      height: 40px;
+  }
+
+  /* Stop — smaller, muted ghost circle */
+  .ctrl-btn.stop {
+      width: 32px;
+      height: 32px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-muted);
+  }
+
+  .ctrl-btn.stop:hover {
+      background: rgba(255, 255, 255, 0.18);
+      color: #fff;
   }
 
   .ctrl-btn {

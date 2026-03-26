@@ -276,7 +276,7 @@
     }}
 />
 
-<section class="mx-auto w-full max-w-7xl space-y-8 text-slate-100" style="font-family: 'Space Grotesk', 'Segoe UI', sans-serif;">
+<section class="mx-auto w-full max-w-7xl flex flex-col h-full min-h-0 text-slate-100" style="font-family: 'Space Grotesk', 'Segoe UI', sans-serif;">
     <header class="relative overflow-hidden rounded-3xl border border-teal-300/20 bg-gradient-to-br from-slate-950 via-cyan-950/60 to-emerald-950/40 p-6 shadow-[0_20px_55px_rgba(2,132,199,0.25)] md:p-8">
         <div class="pointer-events-none absolute -right-16 top-4 h-44 w-44 rounded-full bg-cyan-400/20 blur-3xl"></div>
         <div class="pointer-events-none absolute -left-14 bottom-0 h-36 w-36 rounded-full bg-emerald-300/15 blur-3xl"></div>
@@ -310,6 +310,7 @@
         </div>
     </header>
 
+    <div class="flex-1 min-h-0 overflow-y-auto space-y-8 pt-2 pb-4">
     <section class="space-y-4">
         <div class="flex items-center justify-between">
             <h2 class="text-xl font-bold text-white md:text-2xl">Managed Accounts</h2>
@@ -414,6 +415,7 @@
             </div>
         {/if}
     </section>
+    </div>
 </section>
 
 {#if modalOpen && selectedAccount}

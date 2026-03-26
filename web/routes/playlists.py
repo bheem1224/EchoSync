@@ -104,7 +104,9 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
 
         try:
             logger.info(f"Fetching tracks for playlist: {playlist_name} (id: {playlist_id})")
-            source_tracks = source_provider.get_playlist_tracks(playlist_id)
+            # force_refresh=True: the UI is explicitly requesting this playlist, so we
+            # bypass the background-job cache limit and always serve current data.
+            source_tracks = source_provider.get_playlist_tracks(playlist_id, force_refresh=True)
 
             for source_track in source_tracks:
                 track_title = source_track.title
@@ -120,6 +122,13 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     return cleaned.strip() or title
 
                 search_title = _strip_feat(track_title)
+                # Base title: strip parentheticals, brackets, and post-hyphen suffixes so that
+                # e.g. "Wellerman - Sea Shanty" also queries for "Wellerman" and finds the DB
+                # row stored as "Wellerman (Sea Shanty)".
+                base_search_title = re.sub(r'\s*[\(\[].*?[\)\]]', '', search_title).strip()
+                base_search_title = re.sub(r'\s+-.*$', '', base_search_title).strip()
+                if not base_search_title:
+                    base_search_title = search_title
                 library_match = "Not Found"
                 best_score = 0
 
@@ -136,6 +145,16 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) = LOWER(:title_exact))
                                 OR
                                 (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) LIKE LOWER(:title_pattern))
+                                OR
+                                (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) LIKE LOWER(:base_title_pattern))
+                                OR
+                                (LOWER(a.name) = LOWER(:artist_exact) AND LOWER(t.title) LIKE LOWER(:base_title_pattern))
+                                OR
+                                (LOWER(a.name) = LOWER(:artist_exact)
+                                    AND LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) LIKE LOWER(:title_norm_pattern))
+                                OR
+                                (LOWER(a.name) LIKE LOWER(:artist_pattern)
+                                    AND LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) LIKE LOWER(:title_norm_pattern))
                             )
                             ORDER BY 
                                 (LOWER(a.name) = LOWER(:artist_exact)) DESC,
@@ -144,18 +163,30 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             LIMIT 20
                         """)
 
+                        # Normalise apostrophes in the search term so that
+                        # "Gangsta's Paradise" (plain ') matches the DB row
+                        # stored as "Gangsta\u2019s Paradise" (curly '), and vice-versa.
+                        title_norm = search_title.replace("\u2019", "'").replace("\u2018", "'")
+
                         result = conn.execute(tier1_query, {
                             "artist_exact": track_artist,
                             "artist_pattern": f"%{track_artist}%",
                             "title_exact": search_title,
                             "title_pattern": f"%{search_title}%",
+                            "base_title_pattern": f"%{base_search_title}%",
+                            "title_norm_pattern": f"%{title_norm}%",
                             "duration": track_duration or 0,
                         })
                         candidates = result.fetchall()
                         tier2_mode = False
 
                         if not candidates and track_duration:
-                            sql_duration_tolerance_ms = 2000
+                            # Wide net: ±5000ms. No artist anchor here — the scoring
+                            # engine's Rescue A (title+artist ≥0.95) and Rescue B
+                            # (title+duration ≤2s) reject false positives. A tight 2s
+                            # window silently drops mastering-length variants, e.g.
+                            # Gangsta’s Paradise: Spotify 240693ms vs local 243800ms = 3107ms.
+                            sql_duration_tolerance_ms = 5000
                             duration_min = track_duration - sql_duration_tolerance_ms
                             duration_max = track_duration + sql_duration_tolerance_ms
 
@@ -170,7 +201,8 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 LEFT JOIN albums al ON t.album_id = al.id
                                 WHERE (
                                     LOWER(t.title) = LOWER(:title_exact)
-                                    OR LOWER(REPLACE(REPLACE(t.title, '''', ''), '’', '')) = LOWER(REPLACE(REPLACE(:title_exact, '''', ''), '’', ''))
+                                    OR LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) = LOWER(:title_exact)
+                                    OR LOWER(t.title) = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))
                                 )
                                   AND t.duration IS NOT NULL
                                   AND t.duration BETWEEN :duration_min AND :duration_max
@@ -199,6 +231,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     best_match_track_id = None
                     best_match_target_id = None
                     candidate_diagnostics = []
+                    near_miss_candidate_id = None
 
                     for candidate_row in candidates:
                         candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
@@ -272,6 +305,9 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             best_match_track_id = candidate_row[0]
                             best_match_target_id = candidate_target_id
 
+                        if result.is_near_miss and near_miss_candidate_id is None:
+                            near_miss_candidate_id = candidate_row[0]
+
                     tier2_needed_due_to_version = (
                         not tier2_mode and len(candidates) > 0 and best_score == 0.0 and
                         all(not d["result"]["passed_version"] for d in candidate_diagnostics)
@@ -291,9 +327,13 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         candidate_diagnostics = []
                         best_score = 0
                         best_match = None
+                        near_miss_candidate_id = None
 
                         if track_duration:
-                            sql_duration_tolerance_ms = 2000
+                            # Escalation Tier 2: widen to ±5000ms for the same reason as the
+                            # initial Tier 2 — artist is already known to be unreliable here,
+                            # so use a wide duration net and let the engine score discriminate.
+                            sql_duration_tolerance_ms = 5000
                             duration_min = track_duration - sql_duration_tolerance_ms
                             duration_max = track_duration + sql_duration_tolerance_ms
 
@@ -303,7 +343,11 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                     FROM tracks t
                                     JOIN artists a ON t.artist_id = a.id
                                     LEFT JOIN albums al ON t.album_id = al.id
-                                    WHERE LOWER(t.title) = LOWER(:title_exact)
+                                    WHERE (
+                                        LOWER(t.title) = LOWER(:title_exact)
+                                        OR LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))
+                                        OR LOWER(t.title) = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))
+                                    )
                                     AND t.duration IS NOT NULL
                                     AND t.duration BETWEEN :duration_min AND :duration_max
                                     ORDER BY ABS(t.duration - :duration) ASC
@@ -390,6 +434,9 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         best_match_track_id = candidate_row[0]
                                         best_match_target_id = candidate_target_id
 
+                                    if result.is_near_miss and near_miss_candidate_id is None:
+                                        near_miss_candidate_id = candidate_row[0]
+
                                 tier2_mode = True
 
                     if best_score >= 85:
@@ -401,6 +448,25 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     else:
                         library_match = "Not Found"
                         missing_count += 1
+                        if near_miss_candidate_id is not None:
+                            try:
+                                from core.suggestion_engine.discovery import recommend_near_miss
+                                recommend_near_miss(
+                                    user_id=acc_id if acc_id else source,
+                                    music_db_track_id=near_miss_candidate_id,
+                                    context={
+                                        "source_title": track_title,
+                                        "source_artist": track_artist,
+                                        "source_duration_ms": track_duration,
+                                        "target_context": f"{target_source or source} sync",
+                                    },
+                                )
+                                logger.debug(
+                                    f"Near-miss suggestion queued for '{track_title}' "
+                                    f"-> track_id={near_miss_candidate_id}"
+                                )
+                            except Exception as nm_err:
+                                logger.warning(f"Failed to queue near-miss suggestion: {nm_err}")
                         if logger.isEnabledFor(logging.DEBUG):
                             try:
                                 src_dur = source_track.duration or 0

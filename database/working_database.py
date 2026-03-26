@@ -45,7 +45,7 @@ class User(WorkingBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
-    plex_id: Mapped[Optional[str]] = mapped_column(String, unique=True)
+    provider_identifier: Mapped[Optional[str]] = mapped_column(String, unique=True)  # External user ID from any provider (e.g. Plex account ID, Jellyfin user GUID)
     provider: Mapped[Optional[str]] = mapped_column(String)
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
@@ -57,6 +57,18 @@ class User(WorkingBase):
     )
     artist_ratings: Mapped[list["UserArtistRating"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     album_ratings: Mapped[list["UserAlbumRating"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class PlaybackHistory(WorkingBase):
+    __tablename__ = "playback_history"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider_item_id", "listened_at", name="uq_playback_history"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    listened_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
 
 
 class UserRating(WorkingBase):
@@ -206,9 +218,85 @@ class MediaServerPlaylistItem(WorkingBase):
         nullable=False,
         index=True,
     )
-    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # e.g. Plex ratingKey
+    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # Provider-opaque string ID; never assumed to be numeric
 
     playlist: Mapped["MediaServerPlaylist"] = relationship(back_populates="items")
+
+
+class SuggestionStagingQueue(WorkingBase):
+    """
+    Staging queue for tracks that the Suggestion Engine wants to surface to a user.
+
+    Each row is a single suggestion -- de-duplicated per the appropriate key depending
+    on the entry-point that created it:
+
+    - Tracks *found* in the local library (near-miss, vibe discovery): deduplicated on
+      ``(user_id, music_db_track_id, reason)``.
+    - Tracks *missing* from the local library (playlist-gap mining): deduplicated on
+      ``(user_id, sync_id, reason)`` -- ``music_db_track_id`` is NULL for these rows.
+
+    Populated by:
+    - ``discovery.recommend_near_miss()``  -- duration-miss alternate editions.
+    - ``discovery.mine_cached_playlists()`` -- tracks absent from the library and not
+      already sitting in the Download queue.
+    - Future entry points: vibe-based discovery, gap analysis, etc.
+
+    Canonical ``reason`` values:
+    - ``"near_miss_alternate_edition"`` -- duration-miss but text was near-perfect
+    - ``"vibe_discovery"``              -- vibe-engine surfaced a rarely-played track
+    - ``"playlist_gap"``                -- track is in a Spotify playlist but absent
+                                           from the local library and the download queue
+
+    Consumed by the UI layer (e.g. ``GET /api/suggestions``) which reads pending rows,
+    presents them to the user, and marks them as accepted / dismissed.
+    """
+    __tablename__ = "suggestion_staging_queue"
+    __table_args__ = (
+        # Dedup for locally-matched tracks (near-miss, vibe).
+        UniqueConstraint(
+            "user_id", "music_db_track_id", "reason",
+            name="uq_suggestion_per_user_track_reason"
+        ),
+        # Dedup for missing tracks (playlist-gap).  SQLite treats NULL as distinct in
+        # unique indexes, so rows with NULL sync_id are never caught by this constraint
+        # and rows with a real sync_id are correctly deduplicated.
+        UniqueConstraint(
+            "user_id", "sync_id", "reason",
+            name="uq_suggestion_per_user_sync_reason"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # The internal user identifier (string form; mirrors PlaybackHistory.user_id).
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    # Primary key of the matching local track in music.db's ``tracks`` table.
+    # NULL for playlist-gap suggestions where the track does not yet exist locally.
+    music_db_track_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
+    # Deterministic SoulSync sync_id (``ss:track:meta:{hash}``) used to identify a
+    # track that is absent from the local library.  NULL for near-miss / vibe rows
+    # where ``music_db_track_id`` is the canonical identifier instead.
+    sync_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+
+    # Short machine-readable reason tag used for UI grouping / filtering.
+    reason: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    # Human-readable label shown in the UI alongside the suggestion.
+    ui_label: Mapped[str] = mapped_column(String, nullable=False)
+
+    # Free-form JSON blob -- callers may store extra context (matched source title,
+    # duration diff, sync context, playlist name, etc.) to help the user decide.
+    context_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # Lifecycle: "pending" -> "accepted" | "dismissed"
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
+
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
 
 
 class ProviderStorageBox:
@@ -401,7 +489,7 @@ class WorkingDatabase:
             # Create system user
             system_user = User(
                 username="SoulSync System",
-                plex_id="system_local_admin",
+                provider_identifier="system_local_admin",
                 provider="local"
             )
             session.add(system_user)
@@ -446,6 +534,7 @@ __all__ = [
     "UserAlbumRating",
     "MediaServerPlaylist",
     "MediaServerPlaylistItem",
+    "PlaybackHistory",
     "WorkingDatabase",
     "get_working_database",
     "close_working_database",

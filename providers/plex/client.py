@@ -108,7 +108,7 @@ class PlexClient(ProviderBase):
         if not self.account_id:
             return False
 
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
         from core.settings import config_manager
         storage = get_storage_service()
 
@@ -653,17 +653,27 @@ class PlexClient(ProviderBase):
             return []
     
     def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
-        """Fetch single track by Plex ratingKey."""
+        """Fetch single track by Plex ratingKey.
+
+        Plex identifies tracks by an integer ratingKey.  The int() cast lives
+        here so that callers remain blind to Plex's integer requirement.
+        """
         if not self.ensure_connection() or not self.music_library:
             return None
-        
+
         try:
-            track = self.music_library.fetchItem(int(track_id))
+            rk_int = int(track_id)
+        except (ValueError, TypeError):
+            logger.warning(f"get_track: '{track_id}' is not a valid Plex ratingKey (expected integer string)")
+            return None
+
+        try:
+            track = self.music_library.fetchItem(rk_int)
             if isinstance(track, PlexTrack):
                 return self._convert_track_to_soulsync(track)
         except Exception as e:
-            logger.error(f"Error fetching track {track_id}: {e}")
-        
+            logger.error(f"Error fetching Plex track ratingKey={rk_int}: {e}")
+
         return None
     
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
@@ -1113,7 +1123,7 @@ class PlexClient(ProviderBase):
             logger.warning("No Plex account_id provided to setup connection")
             return
 
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
         from core.security import decrypt_string
         storage = get_storage_service()
 
@@ -1169,7 +1179,7 @@ class PlexClient(ProviderBase):
             logger.error("Cannot import Plex managed users without an active Plex connection")
             return []
 
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
 
         storage = get_storage_service()
         token_data = storage.get_account_token(self.account_id) if self.account_id else None
@@ -1294,7 +1304,7 @@ class PlexClient(ProviderBase):
         if account_id is None:
             return None, None, None
 
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
 
         storage = get_storage_service()
         accounts = storage.list_accounts('plex') or []

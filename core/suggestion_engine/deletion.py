@@ -187,6 +187,9 @@ def process_lifecycle_actions() -> Dict[str, Any]:
 
 def apply_lifecycle_action(sync_id: str, consensus_result: Dict[str, Any]) -> Dict[str, Any]:
     """Stage lifecycle actions for timed execution with admin override awareness."""
+    from core.suggestion_engine.analytics import PlaybackAnalytics
+    from core.tiered_logger import get_logger
+    logger = get_logger("deletion")
     base_sync_id = _normalize_sync_id(sync_id)
 
     db = get_working_database()
@@ -198,6 +201,43 @@ def apply_lifecycle_action(sync_id: str, consensus_result: Dict[str, Any]) -> Di
 
         action = (consensus_result or {}).get("action", "KEEP")
         now = utc_now()
+
+        # Analytics Veto Logic
+        if action == DELETE_MONTH_END and not admin_exempt_deletion:
+            from database.music_database import get_database, ExternalIdentifier, Track
+            music_db = get_database()
+            with music_db.session_scope() as music_session:
+                # Find the provider_item_id using base_sync_id to lookup tracks
+                # Since base_sync_id is ss:track:meta:..., we'll look up by deterministic hash
+                # Wait, DuplicateHygieneService has `_resolve_track_by_sync_id`, we can duplicate the lookup logic
+                # or just look it up. Let's use a simple lookup:
+                track_id = None
+                if base_sync_id.startswith("ss:track:meta:"):
+                    import base64
+                    try:
+                        encoded = base_sync_id.split("ss:track:meta:", 1)[1]
+                        decoded = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
+                        artist_name, title = decoded.split("|", 1)
+                        from database.music_database import Artist
+                        from sqlalchemy import func
+                        track = music_session.query(Track).join(Artist, Track.artist_id == Artist.id).filter(
+                            func.lower(Artist.name) == artist_name.lower(),
+                            func.lower(Track.title) == title.lower()
+                        ).first()
+                        if track:
+                            track_id = track.id
+                    except Exception:
+                        pass
+
+                if track_id:
+                    ext_ident = music_session.query(ExternalIdentifier).filter(ExternalIdentifier.track_id == track_id).first()
+                    if ext_ident and ext_ident.provider_item_id:
+                        recent_listens = PlaybackAnalytics.get_listen_count(str(ext_ident.provider_item_id), days=30)
+                        if recent_listens >= 5: # Threshold of 5 listens in last 30 days
+                            admin_exempt_deletion = True
+                            for state in states:
+                                state.admin_exempt_deletion = True
+                            logger.info(f"Vetoed Deletion: Track '{ext_ident.provider_item_id}' is actively trending ({recent_listens} listens/30d).")
 
         # Force-upgrade override wins.
         if admin_force_upgrade:

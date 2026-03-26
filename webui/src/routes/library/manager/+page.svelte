@@ -287,7 +287,7 @@
     }
 </script>
 
-<div class="animate-fade-in grid-layout">
+<div class="animate-fade-in grid-layout h-full min-h-0 overflow-y-auto">
 
     <!-- Settings Panel -->
     <div class="card p-6">

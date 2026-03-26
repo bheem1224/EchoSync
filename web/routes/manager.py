@@ -110,7 +110,7 @@ def _resolve_working_user_for_trends():
                 resolved_account_id = account.get("id")
                 plex_user_id = str(account.get("user_id") or "").strip()
                 if plex_user_id:
-                    resolved_user = session.query(User).filter(User.plex_id == plex_user_id).first()
+                    resolved_user = session.query(User).filter(User.provider_identifier == plex_user_id).first()
                 if not resolved_user:
                     display_name = (account.get("display_name") or account.get("account_name") or "").strip()
                     if display_name:
@@ -129,7 +129,7 @@ def _resolve_working_user_for_trends():
             resolved_account_id = fallback_account.get("id")
             plex_user_id = str(fallback_account.get("user_id") or "").strip()
             if plex_user_id:
-                resolved_user = session.query(User).filter(User.plex_id == plex_user_id).first()
+                resolved_user = session.query(User).filter(User.provider_identifier == plex_user_id).first()
             if not resolved_user:
                 display_name = (fallback_account.get("display_name") or fallback_account.get("account_name") or "").strip()
                 if display_name:

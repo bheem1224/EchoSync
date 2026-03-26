@@ -33,6 +33,11 @@ setup_logging(level=log_level, log_file=logging_config.get("path"))
 from core.migrations import run_migrations
 run_migrations()
 
+# Run Phase 2: working.db column migrations (must run after working DB engine is initialised)
+from database.working_database import get_working_database
+from core.migrations import run_working_db_migrations
+run_working_db_migrations(get_working_database().engine)
+
 from web.api_app import create_app
 
 # Ensure SSL certs exist and start OAuth sidecar
