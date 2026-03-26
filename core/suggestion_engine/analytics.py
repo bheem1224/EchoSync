@@ -39,7 +39,7 @@ class PlaybackAnalytics:
             return 0
 
     @classmethod
-    def get_trending_provider_ids(cls, days: int = 7, limit: int = 50) -> dict[str, int]:
+    def get_trending_provider_ids(cls, days: int = 7, limit: int = 50, user_id: str = None) -> dict[str, int]:
         """Get a dictionary of {provider_item_id: count} for the most played tracks recently."""
         try:
             working_db = get_working_database()
@@ -49,12 +49,17 @@ class PlaybackAnalytics:
                     return {}
 
                 cutoff_date = utc_now() - timedelta(days=days)
-                results = session.query(
+                query = session.query(
                     PlaybackHistory.provider_item_id,
                     func.count(PlaybackHistory.id).label('play_count')
                 ).filter(
                     PlaybackHistory.listened_at >= cutoff_date
-                ).group_by(
+                )
+
+                if user_id:
+                    query = query.filter(PlaybackHistory.user_id == str(user_id))
+
+                results = query.group_by(
                     PlaybackHistory.provider_item_id
                 ).order_by(
                     func.count(PlaybackHistory.id).desc()

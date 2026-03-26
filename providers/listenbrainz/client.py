@@ -267,3 +267,22 @@ class ListenBrainzClient:
         except Exception as e:
             logger.error(f"Error searching playlists: {e}")
             return []
+
+    def get_similar_artists(self, artists: List[str]) -> List[Dict]:
+        """
+        Stub method to fetch similar artists/top tracks by those artists.
+        For now, returns a mock list of dictionary track objects.
+        """
+        logger.info(f"Stub get_similar_artists called for: {artists}")
+        return [
+            {
+                "title": "Mock Track 1",
+                "artist_name": "Mock Similar Artist A",
+                "musicbrainz_id": "mock-mbid-1"
+            },
+            {
+                "title": "Mock Track 2",
+                "artist_name": "Mock Similar Artist B",
+                "musicbrainz_id": "mock-mbid-2"
+            }
+        ]

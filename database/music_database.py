@@ -154,6 +154,17 @@ class AudioFingerprint(Base):
     track: Mapped[Track] = relationship(back_populates="audio_fingerprints")
 
 
+class TrackAudioFeatures(Base):
+    __tablename__ = "track_audio_features"
+
+    sync_id: Mapped[str] = mapped_column(String, primary_key=True)
+    tempo: Mapped[Optional[float]] = mapped_column(Float)
+    energy: Mapped[Optional[float]] = mapped_column(Float)
+    valence: Mapped[Optional[float]] = mapped_column(Float)
+    danceability: Mapped[Optional[float]] = mapped_column(Float)
+    acousticness: Mapped[Optional[float]] = mapped_column(Float)
+
+
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     # ensure foreign keys are enforced
@@ -631,6 +642,7 @@ __all__ = [
     "Track",
     "ExternalIdentifier",
     "AudioFingerprint",
+    "TrackAudioFeatures",
     "MusicDatabase",
     "get_database",
     "close_database",
