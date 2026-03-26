@@ -113,7 +113,7 @@ def test_metadata_enhancer_reads_riff_info_for_wav(monkeypatch, tmp_path):
     # Allow the path jail to accept tmp_path so the security check does not block test files
     monkeypatch.setattr(file_jail, 'validate', lambda resolved: None)
 
-    metadata = metadata_enhancer.MetadataEnhancerService().read_tags(wav_path)
+    metadata = tagging_io.read_tags(wav_path)
 
     assert metadata['title'] == 'Wave Title'
     assert metadata['artist'] == 'Wave Artist'
