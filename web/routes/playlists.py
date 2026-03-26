@@ -149,10 +149,10 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 (LOWER(a.name) = LOWER(:artist_exact) AND LOWER(t.title) LIKE LOWER(:base_title_pattern))
                                 OR
                                 (LOWER(a.name) = LOWER(:artist_exact)
-                                    AND LOWER(REPLACE(REPLACE(t.title, '’', '''''), '‘', ''''')) LIKE LOWER(:title_norm_pattern))
+                                    AND LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) LIKE LOWER(:title_norm_pattern))
                                 OR
                                 (LOWER(a.name) LIKE LOWER(:artist_pattern)
-                                    AND LOWER(REPLACE(REPLACE(t.title, '’', '''''), '‘', ''''')) LIKE LOWER(:title_norm_pattern))
+                                    AND LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) LIKE LOWER(:title_norm_pattern))
                             )
                             ORDER BY 
                                 (LOWER(a.name) = LOWER(:artist_exact)) DESC,
@@ -199,8 +199,8 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 LEFT JOIN albums al ON t.album_id = al.id
                                 WHERE (
                                     LOWER(t.title) = LOWER(:title_exact)
-                                    OR LOWER(REPLACE(REPLACE(t.title, '’', ''''), '‘', '''')) = LOWER(:title_exact)
-                                    OR LOWER(t.title) = LOWER(REPLACE(REPLACE(:title_exact, '’', ''''), '‘', ''''))
+                                    OR LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) = LOWER(:title_exact)
+                                    OR LOWER(t.title) = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))
                                 )
                                   AND t.duration IS NOT NULL
                                   AND t.duration BETWEEN :duration_min AND :duration_max
@@ -338,8 +338,8 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                     LEFT JOIN albums al ON t.album_id = al.id
                                     WHERE (
                                         LOWER(t.title) = LOWER(:title_exact)
-                                        OR LOWER(REPLACE(REPLACE(t.title, '’', '''''), '‘', ''''')) = LOWER(REPLACE(REPLACE(:title_exact, '’', '''''), '‘', '''''))
-                                        OR LOWER(t.title) = LOWER(REPLACE(REPLACE(:title_exact, '’', '''''), '‘', '''''))
+                                        OR LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))
+                                        OR LOWER(t.title) = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))
                                     )
                                     AND t.duration IS NOT NULL
                                     AND t.duration BETWEEN :duration_min AND :duration_max
