@@ -27,6 +27,15 @@ class PathMapper:
             return ""
         return path.replace('\\', '/')
 
+    @classmethod
+    def to_local(cls, remote_path: str) -> str:
+        """
+        Convenience method to map a remote path to a local path using current config.
+        """
+        from core.settings import config_manager
+        mappings = config_manager.get('path_mappings', [])
+        return cls(mappings).map_to_local(remote_path)
+
     def map_to_local(self, remote_path: str) -> str:
         """
         Map a remote path to a local path based on configured mappings.

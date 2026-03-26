@@ -61,6 +61,149 @@ class MetadataEnhancerService:
         from core.plugin_loader import get_provider
         return get_provider(capability)
 
+    def enhance_library_metadata(self, batch_size=100):
+        """
+        Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
+        """
+        from database.music_database import get_database, Track
+        from core.path_mapper import PathMapper
+        from core.matching_engine.scoring_profile import ExactSyncProfile
+        from core.matching_engine.fingerprinting import FingerprintGenerator
+        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        from core.matching_engine.matching_engine import WeightedMatchingEngine
+        from pathlib import Path
+
+        db = get_database()
+
+        fingerprint_provider = self._get_provider(Capability.RESOLVE_FINGERPRINT)
+        metadata_provider = self._get_provider(Capability.FETCH_METADATA)
+
+        with db.session_scope() as session:
+            # Step 1 (Path Mapping): Query DB for tracks where musicbrainz_id IS NULL
+            tracks_to_process = session.query(Track).filter(Track.musicbrainz_id.is_(None)).limit(batch_size).all()
+
+            if not tracks_to_process:
+                logger.info("No tracks missing MusicBrainz ID. Enhancement complete.")
+                return
+
+            logger.info(f"Processing batch of {len(tracks_to_process)} tracks for metadata enhancement.")
+
+            for track in tracks_to_process:
+                local_path_str = PathMapper.to_local(track.file_path)
+                local_path = Path(local_path_str)
+
+                if not local_path.exists():
+                    logger.warning(f"File not found for track {track.id}: {local_path}")
+                    track.musicbrainz_id = "NOT_FOUND"
+                    continue
+
+                found_new_data = False
+                new_musicbrainz_id = None
+                new_isrc = None
+
+                # Step 2 (Local File Parsing): Read physical file tags first
+                tags = self.read_tags(local_path)
+                if tags:
+                    tag_mbid = tags.get('musicbrainz_id') or tags.get('recording_id')
+                    tag_isrc = tags.get('isrc')
+
+                    if tag_mbid and tag_isrc:
+                        logger.info(f"Step 2 (Local Tags): Found MBID {tag_mbid} and ISRC {tag_isrc} for {local_path.name}")
+                        track.musicbrainz_id = tag_mbid
+                        if not track.isrc:
+                            track.isrc = tag_isrc
+                        continue  # Move to next track, DB updated
+
+                # Prepare for identification
+                duration = track.duration or self._get_audio_duration(local_path)
+
+                # Step 3 (DB AcoustID Fast-Path):
+                if track.acoustid_id and fingerprint_provider and duration:
+                    logger.debug(f"Step 3 (DB AcoustID Fast-Path): Resolving existing AcoustID for {local_path.name}")
+                    try:
+                        mbids = fingerprint_provider.resolve_fingerprint(track.acoustid_id, int(duration / 1000) if duration > 10000 else duration)
+                        if mbids:
+                            new_musicbrainz_id = mbids[0]
+                    except Exception as e:
+                        logger.warning(f"AcoustID fast-path resolution failed: {e}")
+
+                # Step 4 (Generate AcoustID):
+                if not new_musicbrainz_id and not track.acoustid_id and fingerprint_provider and duration:
+                    logger.debug(f"Step 4 (Generate AcoustID): Fingerprinting {local_path.name}")
+                    try:
+                        fingerprint = FingerprintGenerator.generate(str(local_path))
+                        if fingerprint:
+                            track.acoustid_id = fingerprint
+                            found_new_data = True
+                            mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration / 1000) if duration > 10000 else duration)
+                            if mbids:
+                                new_musicbrainz_id = mbids[0]
+                    except Exception as e:
+                        logger.warning(f"Fingerprint generation/resolution failed: {e}")
+
+                # Step 5 (Text Fallback & Write):
+                if not new_musicbrainz_id and metadata_provider and track.artist_name and track.title:
+                    logger.debug(f"Step 5 (Text Fallback): Searching MusicBrainz for {track.artist_name} - {track.title}")
+                    try:
+                        query = f"{track.artist_name} {track.title}"
+                        # Ensure we use standard search which returns List[SoulSyncTrack]
+                        results = metadata_provider.search(query, type="track", limit=5)
+                        if results:
+                            # Strict match evaluation
+                            file_track = SoulSyncTrack(
+                                raw_title=track.title,
+                                artist_name=track.artist_name,
+                                album_title=track.album.title if track.album else "",
+                                duration=duration
+                            )
+                            matcher = WeightedMatchingEngine(ExactSyncProfile())
+                            best_score = 0.0
+
+                            for candidate in results:
+                                if candidate:
+                                    match_result = matcher.calculate_match(file_track, candidate)
+                                    if match_result.confidence_score > best_score:
+                                        best_score = match_result.confidence_score
+                                        if best_score >= 85.0:
+                                            new_musicbrainz_id = candidate.musicbrainz_id
+                                            new_isrc = candidate.isrc
+                    except Exception as e:
+                        logger.warning(f"Text fallback search failed: {e}", exc_info=True)
+
+                # Handle found data
+                if new_musicbrainz_id:
+                    track.musicbrainz_id = new_musicbrainz_id
+                    found_new_data = True
+                    logger.info(f"Identified MBID {new_musicbrainz_id} for {local_path.name}")
+
+                    if not track.isrc and new_isrc:
+                        track.isrc = new_isrc
+                    elif not track.isrc and metadata_provider:
+                        # Optionally fetch detailed metadata to grab ISRC if missing
+                        try:
+                            meta = metadata_provider.get_metadata(new_musicbrainz_id)
+                            if meta and meta.get('isrc'):
+                                track.isrc = meta.get('isrc')
+                        except Exception:
+                            pass
+                else:
+                    logger.warning(f"Failed to identify track {track.id}: {local_path.name}")
+                    track.musicbrainz_id = "NOT_FOUND"
+
+                # Tag physical file if new data was found
+                if found_new_data:
+                    update_tags = {}
+                    if track.musicbrainz_id and track.musicbrainz_id != "NOT_FOUND":
+                        update_tags['musicbrainz_id'] = track.musicbrainz_id
+                        update_tags['recording_id'] = track.musicbrainz_id
+                    if track.isrc:
+                        update_tags['isrc'] = track.isrc
+                    if track.acoustid_id:
+                        update_tags['acoustid_id'] = track.acoustid_id
+
+                    if update_tags:
+                        self.tag_file(local_path, update_tags)
+
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
         """
         Identify a file using Fingerprinting and/or Metadata Search.
