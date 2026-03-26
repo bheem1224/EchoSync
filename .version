@@ -1,4 +1,4 @@
-v2.0.1
+v2.1.0
 
 # update as needed to track the version of the project for automatic image tagging put the version number in the git commit message and the image will be tagged with that version number when built and pushed to the registry.
 # example: git commit -m "version: v2.0.0"

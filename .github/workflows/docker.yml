@@ -28,12 +28,13 @@ jobs:
 
       - name: Determine Docker Tags
         id: extract_tags
+        env:
+          # CRITICAL FIX 1: Pass commit message securely to handle multiline markdown and quotes
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          # Grab the commit message
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
           BASE_IMAGE="ghcr.io/${{ github.repository_owner }}/soulsync"
           
-          # Check for version string
+          # Check for version string securely using the env var
           if echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then
             EXTRACTED_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -n 1 | sed -E 's/version:\s*//i')
             
@@ -63,6 +64,7 @@ jobs:
         with:
           tag_name: ${{ steps.extract_tags.outputs.version }}
           name: Release ${{ steps.extract_tags.outputs.version }}
-          generate_release_notes: true # Automatically generates a changelog based on PRs!
+          # CRITICAL FIX 2: Explicitly set the release body to your commit message
+          body: ${{ github.event.head_commit.message }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
