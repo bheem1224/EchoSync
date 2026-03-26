@@ -108,7 +108,7 @@ class PlexClient(ProviderBase):
         if not self.account_id:
             return False
 
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
         from core.settings import config_manager
         storage = get_storage_service()
 
@@ -1113,7 +1113,7 @@ class PlexClient(ProviderBase):
             logger.warning("No Plex account_id provided to setup connection")
             return
 
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
         from core.security import decrypt_string
         storage = get_storage_service()
 
@@ -1169,7 +1169,7 @@ class PlexClient(ProviderBase):
             logger.error("Cannot import Plex managed users without an active Plex connection")
             return []
 
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
 
         storage = get_storage_service()
         token_data = storage.get_account_token(self.account_id) if self.account_id else None
@@ -1294,7 +1294,7 @@ class PlexClient(ProviderBase):
         if account_id is None:
             return None, None, None
 
-        from core.storage import get_storage_service
+        from core.file_handling.storage import get_storage_service
 
         storage = get_storage_service()
         accounts = storage.list_accounts('plex') or []
