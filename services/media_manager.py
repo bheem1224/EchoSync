@@ -150,6 +150,94 @@ class MediaManagerService:
         logger.warning(f"File path for track {track_id} does not exist: {file_path}")
         return None
 
+    def deduce_path_mapping(self, local_path: str, provider_path: str) -> Optional[tuple]:
+        """
+        Calculates and saves the container-to-host directory mapping.
+        Steps backward through a confirmed local file path and a Plex/Jellyfin
+        file path to find the divergence point.
+        """
+        import os
+        from pathlib import Path
+
+        if not local_path or not provider_path:
+            return None
+
+        # Normalize paths
+        local_parts = Path(local_path).parts
+        # provider path might be from a different OS, normalize separators
+        prov_path = provider_path.replace('\\', '/')
+        prov_parts = Path(prov_path).parts
+
+        # Step backwards
+        local_idx = len(local_parts) - 1
+        prov_idx = len(prov_parts) - 1
+
+        while local_idx >= 0 and prov_idx >= 0:
+            if local_parts[local_idx] == prov_parts[prov_idx]:
+                local_idx -= 1
+                prov_idx -= 1
+            else:
+                break
+
+        # If no common suffix is found (paths don't overlap at all)
+        if local_idx == len(local_parts) - 1 or prov_idx == len(prov_parts) - 1:
+            logger.warning(f"No path overlap found between local '{local_path}' and remote '{provider_path}'")
+            return None
+
+        # Extract the prefixes
+        # Build local_prefix using os.path.join, but handle empty parts safely
+        if local_idx >= 0:
+            local_prefix = os.path.join(*local_parts[:local_idx + 1])
+        else:
+            local_prefix = '/'
+
+        if prov_idx >= 0:
+            # Join the provider path correctly avoiding double slashes like //path
+            prov_prefix_parts = prov_parts[:prov_idx + 1]
+            if prov_prefix_parts[0] == '/':
+                prov_prefix = '/' + '/'.join(prov_prefix_parts[1:])
+            else:
+                prov_prefix = '/'.join(prov_prefix_parts)
+        else:
+            prov_prefix = '/'
+
+        mapping = {"local": local_prefix, "remote": prov_prefix}
+        logger.info(f"Deduced path mapping: {mapping}")
+
+        # Save to active media server config
+        try:
+            active_server = config_manager.get_active_media_server()
+            if active_server:
+                # Update config in database using set_service_credentials
+                from database.config_database import get_config_database
+                db = get_config_database()
+                service_id = db.get_or_create_service_id(active_server)
+
+                # Retrieve current path_mappings
+                current_mappings = db.get_service_config(service_id, 'path_mappings')
+                if not current_mappings:
+                    current_mappings = []
+                elif isinstance(current_mappings, str):
+                    import json
+                    try:
+                        current_mappings = json.loads(current_mappings)
+                    except json.JSONDecodeError:
+                        current_mappings = []
+
+                # Check if this mapping already exists
+                exists = any(m.get('local') == mapping['local'] and m.get('remote') == mapping['remote'] for m in current_mappings)
+
+                if not exists:
+                    current_mappings.append(mapping)
+                    # Convert to JSON string before saving
+                    import json
+                    db.set_service_config(service_id, 'path_mappings', json.dumps(current_mappings), is_sensitive=False)
+                    logger.info(f"Saved new path mapping for {active_server}")
+        except Exception as e:
+            logger.error(f"Failed to save deduced path mapping: {e}")
+
+        return (local_prefix, prov_prefix)
+
     def delete_track(self, track_id: int) -> bool:
         """
         Delete a track from the media server (if applicable) and local database.

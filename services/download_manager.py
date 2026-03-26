@@ -55,6 +55,55 @@ class DownloadManager:
 
         from core.event_bus import event_bus
         event_bus.subscribe("DOWNLOAD_INTENT", self._on_download_intent)
+        event_bus.subscribe("TRACK_IMPORTED", self._on_track_imported)
+
+    def _on_track_imported(self, payload: dict) -> None:
+        """
+        Handle a TRACK_IMPORTED event by cancelling active/pending downloads
+        matching the imported track's signature.
+        """
+        try:
+            track_data = payload.get("track")
+            if not track_data:
+                logger.warning("TRACK_IMPORTED received with no track data; ignoring")
+                return
+
+            track = SoulSyncTrack.from_dict(track_data)
+            logger.info(f"TRACK_IMPORTED: {track.artist_name} - {track.title}. Checking queue for duplicates.")
+
+            target_sig = self._normalize_track_signature(track.to_dict())
+            if not any(target_sig):
+                logger.warning("Cannot build signature for imported track")
+                return
+
+            active_states = {"queued", "searching", "downloading"}
+            cancelled_count = 0
+
+            with self.work_db.session_scope() as session:
+                items = session.query(Download).filter(Download.status.in_(active_states)).all()
+                for item in items:
+                    item_sig = self._normalize_track_signature(item.soul_sync_track or {})
+                    # Match on ISRC if present
+                    target_isrc = track.isrc
+                    item_isrc = (item.soul_sync_track or {}).get("isrc")
+
+                    if (target_isrc and item_isrc and target_isrc == item_isrc) or (target_sig[:2] == item_sig[:2] and any(target_sig[:2])):
+                        # Soft Cancel
+                        item.status = "cancelled"
+                        item.updated_at = utc_now()
+                        # Append a cancellation message to the track JSON to preserve why it was cancelled
+                        track_json = dict(item.soul_sync_track)
+                        track_json["cancellation_reason"] = "Job cancelled: Track already confirmed in local library."
+                        item.soul_sync_track = track_json
+
+                        logger.info(f"Silently cancelled download {item.id} matching imported track '{track.title}'")
+                        cancelled_count += 1
+
+            if cancelled_count > 0:
+                logger.info(f"Cancelled {cancelled_count} queued downloads for newly imported track.")
+
+        except Exception as e:
+            logger.error(f"Error handling TRACK_IMPORTED: {e}", exc_info=True)
 
     def _on_download_intent(self, payload: dict) -> None:
         """Handle a DOWNLOAD_INTENT event by queueing the described track."""
