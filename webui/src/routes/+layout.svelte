@@ -3,7 +3,7 @@
   import Sidebar from '../components/Sidebar.svelte';
   import BottomNav from '../components/BottomNav.svelte';
   import Toast from '../components/Toast.svelte';
-  import AudioPlayer from '../components/AudioPlayer.svelte';
+  import BottomPlayer from '../components/BottomPlayer.svelte';
   import EncryptionKeyWarning from '../components/EncryptionKeyWarning.svelte';
   import MigrationModal from '../components/MigrationModal.svelte';
   import { providers } from '../stores/providers';
@@ -65,7 +65,7 @@
     </main>
     <BottomNav />
   {/if}
-  <AudioPlayer />
+  <BottomPlayer />
   <Toast />
   
   {#if showEncryptionWarning}

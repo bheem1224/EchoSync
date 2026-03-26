@@ -98,8 +98,10 @@ class LocalServerProvider(ProviderBase):
     def get_stream_url(self, track_id_or_path: str) -> str:
         """
         Returns a formatted internal API route string for streaming.
+        All characters including '/' are percent-encoded so the value is
+        unambiguous as a query parameter and safe through reverse proxies.
         """
-        encoded_path = urllib.parse.quote(track_id_or_path)
+        encoded_path = urllib.parse.quote(track_id_or_path, safe='')
         return f"/api/local_server/stream?path={encoded_path}"
 
     def authenticate(self, **kwargs) -> bool:
