@@ -45,6 +45,7 @@ from web.routes.manager import bp as manager_bp
 from web.routes.downloads import bp as downloads_bp
 from web.routes.suggestions import bp as suggestions_bp
 from web.routes.webhooks import bp as webhooks_bp
+from web.routes.local_metadata import bp as local_metadata_bp
 
 from core.plugin_loader import PluginLoader
 from core.settings import config_manager
@@ -109,6 +110,7 @@ def create_app() -> Flask:
     app.register_blueprint(downloads_bp)
     app.register_blueprint(suggestions_bp)
     app.register_blueprint(webhooks_bp)
+    app.register_blueprint(local_metadata_bp)
     
     # Initialize databases (triggers v2.1.0 migration if needed)
     try:
