@@ -96,9 +96,22 @@ class UserHistoryService:
             
             # Sync history for each account
             for account in accounts:
-                account_id = account['id']
+                account_id_raw = account['id']
                 account_name = account.get('display_name') or account.get('account_name') or 'Unknown'
-                
+
+                # Explicit int cast: PlexAPI silently falls back to global admin history
+                # when accountID is a string — guard here so a misconfigured config DB
+                # row (e.g. after a JSON round-trip) never poisons the data.
+                try:
+                    account_id = int(account_id_raw)
+                except (TypeError, ValueError):
+                    self.logger.error(
+                        f"Skipping account '{account_name}': account_id {account_id_raw!r} "
+                        "cannot be cast to int — would risk leaking admin history"
+                    )
+                    stats['errors'].append(f"Bad account_id for {account_name}: {account_id_raw!r}")
+                    continue
+
                 try:
                     self.logger.info(f"Syncing history for account {account_name} (ID: {account_id})")
                     

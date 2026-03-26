@@ -23,7 +23,7 @@ def test_is_configured_false(plex_client):
 
 def test_is_configured_true(plex_client):
     plex_client.account_id = 1
-    with patch('core.storage.get_storage_service') as mock_get_storage, \
+    with patch('core.file_handling.storage.get_storage_service') as mock_get_storage, \
          patch('core.settings.config_manager.get') as mock_config_get:
         mock_storage = MagicMock()
 
@@ -51,7 +51,7 @@ def test_auto_detect_prefers_token_backed_account(monkeypatch):
     ]
     fake_storage.get_account_token.side_effect = lambda account_id: None if account_id == 11 else {'access_token': 'token'}
 
-    monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
+    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
 
     client = PlexClient()
     assert client.account_id == 22
@@ -88,7 +88,7 @@ def test_import_managed_users_upserts_admin_and_managed(monkeypatch):
         {'id': 8, 'display_name': 'Kiddo', 'user_id': 'managed-1'},
     ]
 
-    monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
+    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
 
     accounts = client.import_managed_users()
 
@@ -251,7 +251,7 @@ def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
     fake_storage.list_accounts.return_value = [
         {'id': 8, 'display_name': 'Kiddo', 'user_id': '42'}  # matches managed_user.id
     ]
-    monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
+    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
 
     # Add type track so the interaction is included
     mock_history_item = MagicMock()
@@ -383,7 +383,7 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
     fake_storage.list_accounts.return_value = [
         {'id': 8, 'display_name': 'Kiddo', 'user_id': '42'}  # matches managed_user.id
     ]
-    monkeypatch.setattr('core.storage.get_storage_service', lambda: fake_storage)
+    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
 
     interactions = client.fetch_user_history(account_id=8, limit=10)
 
