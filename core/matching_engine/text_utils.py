@@ -11,6 +11,83 @@ import base64
 
 
 
+def normalize_chars(text: Optional[str]) -> str:
+    """
+    Normalize Unicode character variants to their plain ASCII canonical equivalents.
+
+    This is a lightweight, case-preserving, structure-preserving pass — no lowercasing,
+    no accent removal, no word removal.  It is safe to apply to display-facing strings
+    and is called from SoulSyncTrack.__post_init__ so that EVERY track (whether created
+    from a streaming provider or from a raw DB row) carries consistent characters before
+    entering the matching engine or SQL search layer.
+
+    Covered categories
+    ------------------
+    Apostrophes / single-quote variants → plain apostrophe (U+0027)
+        U+2018  LEFT SINGLE QUOTATION MARK       '
+        U+2019  RIGHT SINGLE QUOTATION MARK      '
+        U+02BC  MODIFIER LETTER APOSTROPHE       ʼ
+        U+02BB  MODIFIER LETTER TURNED COMMA     ʻ
+        U+2032  PRIME                            ′
+        U+0060  GRAVE ACCENT                     `
+        U+00B4  ACUTE ACCENT                     ´
+        U+FF07  FULLWIDTH APOSTROPHE             ＇
+
+    Dashes / hyphens → standard hyphen-minus (U+002D)
+        U+2010  HYPHEN                           ‐
+        U+2011  NON-BREAKING HYPHEN              ‑
+        U+2012  FIGURE DASH                      ‒
+        U+2013  EN DASH                          –
+        U+2014  EM DASH                          —
+        U+2015  HORIZONTAL BAR                   ―
+        U+2212  MINUS SIGN                       −
+        U+FE63  SMALL HYPHEN-MINUS               ﹣
+        U+FF0D  FULLWIDTH HYPHEN-MINUS           －
+        U+2043  HYPHEN BULLET                    ⁃
+
+    Double quotes → plain double quote (U+0022)
+        U+201C  LEFT DOUBLE QUOTATION MARK       "
+        U+201D  RIGHT DOUBLE QUOTATION MARK      "
+        U+201E  DOUBLE LOW-9 QUOTATION MARK      „
+        U+201F  DOUBLE HIGH-REVERSED-9 Q. MARK   ‟
+        U+2033  DOUBLE PRIME                     ″
+
+    Whitespace variants → regular space (U+0020)
+        U+00A0  NO-BREAK SPACE
+        U+202F  NARROW NO-BREAK SPACE
+        U+2009  THIN SPACE
+        U+2008  PUNCTUATION SPACE
+        U+2007  FIGURE SPACE
+        U+2006  SIX-PER-EM SPACE
+        U+2005  FOUR-PER-EM SPACE
+        U+2004  THREE-PER-EM SPACE
+        U+2003  EM SPACE
+        U+2002  EN SPACE
+
+    Ellipsis
+        U+2026  HORIZONTAL ELLIPSIS → '...'
+    """
+    if not text:
+        return text or ""
+
+    # Apostrophe / single-quote variants → plain apostrophe
+    text = re.sub(r"[\u2018\u2019\u02bc\u02bb\u2032\u0060\u00b4\uff07]", "'", text)
+
+    # Dash / hyphen variants → standard hyphen-minus
+    text = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d\u2043]", "-", text)
+
+    # Double quote variants → plain double quote
+    text = re.sub(r"[\u201c\u201d\u201e\u201f\u2033]", '"', text)
+
+    # Whitespace variants → regular space
+    text = re.sub(r"[\u00a0\u202f\u2009\u2008\u2007\u2006\u2005\u2004\u2003\u2002]", " ", text)
+
+    # Ellipsis → three dots
+    text = text.replace("\u2026", "...")
+
+    return text
+
+
 def normalize_text(text: Optional[str]) -> str:
     """
     Normalize text for comparison: lowercase, remove extra spaces, standardize characters.
@@ -23,10 +100,9 @@ def normalize_text(text: Optional[str]) -> str:
     """
     if not text:
         return ""
-    
-    # Standardize smart quotes and dashes
-    text = re.sub(r'[‘’´`]', "'", text)
-    text = re.sub(r'[‐—–]', "-", text)
+
+    # Standardize all Unicode character variants (smart quotes, fancy dashes, etc.)
+    text = normalize_chars(text)
 
     # Convert to lowercase
     text = text.lower().strip()

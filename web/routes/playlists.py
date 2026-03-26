@@ -147,6 +147,12 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) LIKE LOWER(:base_title_pattern))
                                 OR
                                 (LOWER(a.name) = LOWER(:artist_exact) AND LOWER(t.title) LIKE LOWER(:base_title_pattern))
+                                OR
+                                (LOWER(a.name) = LOWER(:artist_exact)
+                                    AND LOWER(REPLACE(REPLACE(t.title, '’', '''''), '‘', ''''')) LIKE LOWER(:title_norm_pattern))
+                                OR
+                                (LOWER(a.name) LIKE LOWER(:artist_pattern)
+                                    AND LOWER(REPLACE(REPLACE(t.title, '’', '''''), '‘', ''''')) LIKE LOWER(:title_norm_pattern))
                             )
                             ORDER BY 
                                 (LOWER(a.name) = LOWER(:artist_exact)) DESC,
@@ -155,19 +161,30 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             LIMIT 20
                         """)
 
+                        # Normalise apostrophes in the search term so that
+                        # "Gangsta's Paradise" (plain ') matches the DB row
+                        # stored as "Gangsta\u2019s Paradise" (curly '), and vice-versa.
+                        title_norm = search_title.replace("\u2019", "'").replace("\u2018", "'")
+
                         result = conn.execute(tier1_query, {
                             "artist_exact": track_artist,
                             "artist_pattern": f"%{track_artist}%",
                             "title_exact": search_title,
                             "title_pattern": f"%{search_title}%",
                             "base_title_pattern": f"%{base_search_title}%",
+                            "title_norm_pattern": f"%{title_norm}%",
                             "duration": track_duration or 0,
                         })
                         candidates = result.fetchall()
                         tier2_mode = False
 
                         if not candidates and track_duration:
-                            sql_duration_tolerance_ms = 2000
+                            # Wide net: ±5000ms. No artist anchor here — the scoring
+                            # engine's Rescue A (title+artist ≥0.95) and Rescue B
+                            # (title+duration ≤2s) reject false positives. A tight 2s
+                            # window silently drops mastering-length variants, e.g.
+                            # Gangsta’s Paradise: Spotify 240693ms vs local 243800ms = 3107ms.
+                            sql_duration_tolerance_ms = 5000
                             duration_min = track_duration - sql_duration_tolerance_ms
                             duration_max = track_duration + sql_duration_tolerance_ms
 
@@ -182,7 +199,8 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 LEFT JOIN albums al ON t.album_id = al.id
                                 WHERE (
                                     LOWER(t.title) = LOWER(:title_exact)
-                                    OR LOWER(REPLACE(REPLACE(t.title, '''', ''), '’', '')) = LOWER(REPLACE(REPLACE(:title_exact, '''', ''), '’', ''))
+                                    OR LOWER(REPLACE(REPLACE(t.title, '’', ''''), '‘', '''')) = LOWER(:title_exact)
+                                    OR LOWER(t.title) = LOWER(REPLACE(REPLACE(:title_exact, '’', ''''), '‘', ''''))
                                 )
                                   AND t.duration IS NOT NULL
                                   AND t.duration BETWEEN :duration_min AND :duration_max
@@ -305,7 +323,10 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         best_match = None
 
                         if track_duration:
-                            sql_duration_tolerance_ms = 2000
+                            # Escalation Tier 2: widen to ±5000ms for the same reason as the
+                            # initial Tier 2 — artist is already known to be unreliable here,
+                            # so use a wide duration net and let the engine score discriminate.
+                            sql_duration_tolerance_ms = 5000
                             duration_min = track_duration - sql_duration_tolerance_ms
                             duration_max = track_duration + sql_duration_tolerance_ms
 
@@ -315,7 +336,11 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                     FROM tracks t
                                     JOIN artists a ON t.artist_id = a.id
                                     LEFT JOIN albums al ON t.album_id = al.id
-                                    WHERE LOWER(t.title) = LOWER(:title_exact)
+                                    WHERE (
+                                        LOWER(t.title) = LOWER(:title_exact)
+                                        OR LOWER(REPLACE(REPLACE(t.title, '’', '''''), '‘', ''''')) = LOWER(REPLACE(REPLACE(:title_exact, '’', '''''), '‘', '''''))
+                                        OR LOWER(t.title) = LOWER(REPLACE(REPLACE(:title_exact, '’', '''''), '‘', '''''))
+                                    )
                                     AND t.duration IS NOT NULL
                                     AND t.duration BETWEEN :duration_min AND :duration_max
                                     ORDER BY ABS(t.duration - :duration) ASC
