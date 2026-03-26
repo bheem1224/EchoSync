@@ -9,7 +9,7 @@ Two entry points:
 """
 
 import datetime
-from typing import List, Set
+from typing import List, Optional, Set
 from core.plugin_loader import get_provider
 from core.enums import Capability
 from core.event_bus import event_bus
@@ -274,3 +274,224 @@ def discover_new_tracks(user_id: str) -> List[dict]:
 
 # Backward-compatibility alias — prefer discover_new_tracks() in new code.
 discover_tracks = discover_new_tracks
+
+
+def recommend_near_miss(
+    user_id: str,
+    music_db_track_id: int,
+    context: Optional[dict] = None,
+) -> bool:
+    """
+    Insert a near-miss suggestion into the staging queue.
+
+    Called by the playlist sync loop when the Matching Engine signals
+    ``MatchResult.is_near_miss = True`` — i.e. the text match was
+    near-perfect (title ≥ 0.95, artist ≥ 0.95) but the duration
+    exceeded the strict tolerance, indicating an alternate edition
+    (Radio Edit, Single Mix, Club Version, Album Version, etc.) rather
+    than a genuine mismatch.
+
+    The match is *not* created (score remains 0.0 in the engine).  This
+    function only records the suggestion so the UI can surface it to the
+    user for manual review.
+
+    Args:
+        user_id:           User whose suggestion queue to write to.
+        music_db_track_id: ``tracks.id`` PK from music.db for the local
+                           candidate that was a near-miss.
+        context:           Optional free-form dict with debugging context
+                           (e.g. source title, duration diff, sync origin).
+
+    Returns:
+        True  — new suggestion inserted.
+        False — already existed (idempotent; not an error).
+    """
+    import logging
+    from database.working_database import get_working_database, SuggestionStagingQueue
+    from sqlalchemy.exc import IntegrityError
+
+    logger = logging.getLogger("suggestion_engine.discovery")
+
+    working_db = get_working_database()
+    try:
+        with working_db.session_scope() as session:
+            suggestion = SuggestionStagingQueue(
+                user_id=str(user_id),
+                music_db_track_id=music_db_track_id,
+                reason="near_miss_alternate_edition",
+                ui_label="Alternate Edition / Near Miss",
+                context_data=context or {},
+                status="pending",
+            )
+            session.add(suggestion)
+            # flush triggers the UNIQUE constraint check immediately
+            session.flush()
+        logger.info(
+            "Near-miss suggestion queued: user=%s track_id=%s ctx=%s",
+            user_id, music_db_track_id, context,
+        )
+        return True
+    except IntegrityError:
+        # Already queued for this (user, track, reason) triplet — idempotent.
+        logger.debug(
+            "Near-miss suggestion already exists: user=%s track_id=%s",
+            user_id, music_db_track_id,
+        )
+        return False
+    except Exception:
+        logger.exception(
+            "Failed to queue near-miss suggestion: user=%s track_id=%s",
+            user_id, music_db_track_id,
+        )
+        return False
+
+
+def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
+    """
+    Scan all locally-cached Spotify playlist tracks for library gaps and queue
+    suggestions for tracks that are genuinely absent and not already being handled.
+
+    Two-gate filter applied per track:
+
+    Gate 1 -- MusicDatabase check
+        Query ``music.db`` by ISRC (exact) then by title + artist name (exact).
+        If the track is already in the library, skip it.
+
+    Gate 2 -- Download queue check
+        Generate the track's deterministic ``sync_id`` and look for a row in the
+        ``downloads`` table with ``status IN ('queued', 'searching', 'downloading')``.
+        If an active job exists the track is already being fetched from Slskd -- skip it.
+
+    Tracks that pass both gates are inserted into ``SuggestionStagingQueue`` with
+    ``reason="playlist_gap"``.  The ``sync_id`` column is used for deduplication
+    (``music_db_track_id`` is NULL because the track is absent from the local library).
+
+    Args:
+        user_id: User whose suggestion queue to write to.
+        limit:   Maximum new suggestions to insert per call.  Acts as a safety cap
+                 against bulk-inserting hundreds of rows in a single sweep.
+
+    Returns:
+        Number of new suggestion rows inserted.
+    """
+    import logging
+    from sqlalchemy.exc import IntegrityError
+    from providers.spotify.cache_manager import SpotifyCacheManager
+    from database.working_database import get_working_database, SuggestionStagingQueue, Download
+    from database.music_database import get_database as get_music_database, Track, Artist
+
+    logger = logging.getLogger("suggestion_engine.discovery")
+
+    # Download statuses that mean the track is already being handled.
+    ACTIVE_STATUSES = {"queued", "searching", "downloading"}
+
+    cm = SpotifyCacheManager()
+    cached_playlists = cm.list_cached_playlists()
+    if not cached_playlists:
+        logger.debug("mine_cached_playlists: no cached Spotify playlists found.")
+        return 0
+
+    music_db = get_music_database()
+    working_db = get_working_database()
+    inserted = 0
+
+    for pl in cached_playlists:
+        if inserted >= limit:
+            break
+
+        playlist_id = pl["playlist_id"]
+        playlist_name = pl.get("name", playlist_id)
+        tracks = cm.get_cached_tracks(playlist_id)
+        if not tracks:
+            continue
+
+        for track in tracks:
+            if inserted >= limit:
+                break
+
+            title = getattr(track, "title", None) or getattr(track, "raw_title", None)
+            artist_name = getattr(track, "artist_name", None)
+            isrc = getattr(track, "isrc", None)
+
+            if not title or not artist_name:
+                continue
+
+            # --- Gate 1: already in MusicDatabase? ---
+            with music_db.session_scope() as m_session:
+                in_library = False
+                if isrc:
+                    in_library = bool(
+                        m_session.query(Track.id).filter(Track.isrc == isrc).first()
+                    )
+                if not in_library:
+                    in_library = bool(
+                        m_session.query(Track.id).join(Artist).filter(
+                            Track.title == title,
+                            Artist.name == artist_name,
+                        ).first()
+                    )
+
+            if in_library:
+                continue
+
+            # --- Gate 2: active Download job exists? ---
+            sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
+            with working_db.session_scope() as w_session:
+                active_job = w_session.query(Download.id).filter(
+                    Download.sync_id == sync_id,
+                    Download.status.in_(ACTIVE_STATUSES),
+                ).first()
+
+            if active_job:
+                logger.debug(
+                    "mine_cached_playlists: '%s' by '%s' skipped -- active download job (sync_id=%s).",
+                    title, artist_name, sync_id,
+                )
+                continue
+
+            # --- Both gates passed: queue the suggestion ---
+            with working_db.session_scope() as w_session:
+                # Explicit pre-check so we get a clean skip log rather than relying
+                # purely on IntegrityError (sync_id UNIQUE handles non-NULL dedup).
+                already_queued = w_session.query(SuggestionStagingQueue.id).filter(
+                    SuggestionStagingQueue.user_id == str(user_id),
+                    SuggestionStagingQueue.sync_id == sync_id,
+                    SuggestionStagingQueue.reason == "playlist_gap",
+                ).first()
+                if already_queued:
+                    continue
+
+                try:
+                    row = SuggestionStagingQueue(
+                        user_id=str(user_id),
+                        music_db_track_id=None,
+                        sync_id=sync_id,
+                        reason="playlist_gap",
+                        ui_label="Missing from Library",
+                        context_data={
+                            "title": title,
+                            "artist_name": artist_name,
+                            "isrc": isrc,
+                            "playlist_id": playlist_id,
+                            "playlist_name": playlist_name,
+                        },
+                        status="pending",
+                    )
+                    w_session.add(row)
+                    w_session.flush()
+                    inserted += 1
+                    logger.info(
+                        "mine_cached_playlists: suggestion queued '%s' by '%s' (sync_id=%s).",
+                        title, artist_name, sync_id,
+                    )
+                except IntegrityError:
+                    logger.debug(
+                        "mine_cached_playlists: duplicate skipped '%s' by '%s'.",
+                        title, artist_name,
+                    )
+
+    logger.info(
+        "mine_cached_playlists: complete for user=%s -- %d new suggestion(s) inserted.",
+        user_id, inserted,
+    )
+    return inserted

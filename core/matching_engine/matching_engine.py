@@ -48,6 +48,12 @@ class MatchResult:
     target_source: Optional[str] = None  # e.g., plex, jellyfin
     target_identifier: Optional[str] = None  # Provider-opaque item ID (e.g. provider_item_id; ratingKey for Plex, item Id UUID for Jellyfin)
     target_exists: bool = False  # True if identifier is present for target
+    # Signals that this failed match is a likely alternate edition (Radio Edit vs.
+    # Album Version, etc.) — the text was an exceptional match but the duration
+    # exceeded the strict tolerance.  The score is still 0.0 (match REJECTED), but
+    # this flag allows the caller to route the track to the Suggestion Engine
+    # instead of silently discarding it.
+    is_near_miss: bool = False
 
 
 class WeightedMatchingEngine:
@@ -482,6 +488,36 @@ class WeightedMatchingEngine:
         reasoning_parts.append(
             f"Duration match: {duration_score:.1%} × {self.weights.duration_weight:.1%} = {duration_contribution:.1f} points"
         )
+
+        # ── Near-miss detection ────────────────────────────────────────────────
+        # If duration hard-failed (score=0.0) but the text match was exceptionally
+        # strong (title ≥ 0.95 AND artist ≥ 0.95), this is almost certainly an
+        # alternate edition (Radio Edit, Single Mix, Album Version) rather than a
+        # wrong track.  Flag it so the caller can route it to the Suggestion Engine.
+        # The match MUST still fail — we return 0.0 confidence.
+        if duration_score == 0.0 and title_fuzzy_score >= 0.95 and artist_fuzzy_score >= 0.95:
+            dur_diff_ms = (
+                abs(source.duration - candidate.duration)
+                if source.duration and candidate.duration
+                else None
+            )
+            reasoning_parts.append(
+                f"NEAR-MISS: duration outside tolerance (diff={dur_diff_ms}ms) "
+                f"but title={title_fuzzy_score:.2f} artist={artist_fuzzy_score:.2f} — "
+                f"likely alternate edition; flagged for Suggestion Engine"
+            )
+            return MatchResult(
+                confidence_score=0.0,
+                passed_version_check=version_match,
+                passed_edition_check=edition_match,
+                fuzzy_text_score=fuzzy_score,
+                duration_match_score=0.0,
+                quality_bonus_applied=0.0,
+                version_penalty_applied=version_penalty,
+                edition_penalty_applied=edition_penalty,
+                reasoning=" | ".join(reasoning_parts),
+                is_near_miss=True,
+            )
 
         score += duration_contribution
         max_possible_score += self.weights.duration_weight * 100

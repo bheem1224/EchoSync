@@ -159,7 +159,7 @@
   onMount(loadQueue);
 </script>
 
-<div class="space-y-4">
+<div class="flex flex-col h-full min-h-0">
   <div class="flex items-center justify-between">
     <div>
       <p class="text-xs uppercase tracking-wide text-cyan-300/80 font-semibold">Metadata Workflow</p>
@@ -174,7 +174,7 @@
     </button>
   </div>
 
-  <div class="rounded-xl border border-slate-700/60 bg-slate-900/70 overflow-hidden">
+  <div class="mt-4 flex-1 min-h-0 overflow-y-auto rounded-xl border border-slate-700/60 bg-slate-900/70">
     {#if loading}
       <div class="p-8 text-center text-slate-300">Loading review queue...</div>
     {:else if error}

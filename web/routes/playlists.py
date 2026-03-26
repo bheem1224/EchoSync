@@ -104,7 +104,9 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
 
         try:
             logger.info(f"Fetching tracks for playlist: {playlist_name} (id: {playlist_id})")
-            source_tracks = source_provider.get_playlist_tracks(playlist_id)
+            # force_refresh=True: the UI is explicitly requesting this playlist, so we
+            # bypass the background-job cache limit and always serve current data.
+            source_tracks = source_provider.get_playlist_tracks(playlist_id, force_refresh=True)
 
             for source_track in source_tracks:
                 track_title = source_track.title
@@ -229,6 +231,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     best_match_track_id = None
                     best_match_target_id = None
                     candidate_diagnostics = []
+                    near_miss_candidate_id = None
 
                     for candidate_row in candidates:
                         candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
@@ -302,6 +305,9 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             best_match_track_id = candidate_row[0]
                             best_match_target_id = candidate_target_id
 
+                        if result.is_near_miss and near_miss_candidate_id is None:
+                            near_miss_candidate_id = candidate_row[0]
+
                     tier2_needed_due_to_version = (
                         not tier2_mode and len(candidates) > 0 and best_score == 0.0 and
                         all(not d["result"]["passed_version"] for d in candidate_diagnostics)
@@ -321,6 +327,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         candidate_diagnostics = []
                         best_score = 0
                         best_match = None
+                        near_miss_candidate_id = None
 
                         if track_duration:
                             # Escalation Tier 2: widen to ±5000ms for the same reason as the
@@ -427,6 +434,9 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         best_match_track_id = candidate_row[0]
                                         best_match_target_id = candidate_target_id
 
+                                    if result.is_near_miss and near_miss_candidate_id is None:
+                                        near_miss_candidate_id = candidate_row[0]
+
                                 tier2_mode = True
 
                     if best_score >= 85:
@@ -438,6 +448,25 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     else:
                         library_match = "Not Found"
                         missing_count += 1
+                        if near_miss_candidate_id is not None:
+                            try:
+                                from core.suggestion_engine.discovery import recommend_near_miss
+                                recommend_near_miss(
+                                    user_id=acc_id if acc_id else source,
+                                    music_db_track_id=near_miss_candidate_id,
+                                    context={
+                                        "source_title": track_title,
+                                        "source_artist": track_artist,
+                                        "source_duration_ms": track_duration,
+                                        "target_context": f"{target_source or source} sync",
+                                    },
+                                )
+                                logger.debug(
+                                    f"Near-miss suggestion queued for '{track_title}' "
+                                    f"-> track_id={near_miss_candidate_id}"
+                                )
+                            except Exception as nm_err:
+                                logger.warning(f"Failed to queue near-miss suggestion: {nm_err}")
                         if logger.isEnabledFor(logging.DEBUG):
                             try:
                                 src_dur = source_track.duration or 0

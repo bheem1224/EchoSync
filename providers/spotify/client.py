@@ -659,7 +659,8 @@ class SpotifyClient(SyncServiceProvider):
                         'track_count': item['tracks']['total'],
                         'owner': item['owner']['display_name'],
                         'public': item.get('public'),
-                        'collaborative': item.get('collaborative')
+                        'collaborative': item.get('collaborative'),
+                        'snapshot_id': item.get('snapshot_id'),
                     }
                 # Check for next page
                 if results['next']:
@@ -670,9 +671,26 @@ class SpotifyClient(SyncServiceProvider):
             logger.error(f"Error getting user playlists: {e}")
             return
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
+    def get_playlist_tracks(self, playlist_id: str, force_refresh: bool = False) -> List[SoulSyncTrack]:
+        """Return the tracks for *playlist_id*.
+
+        When *force_refresh* is False (default, used by the background job), the
+        method returns cached tracks immediately if the playlist is already cached,
+        avoiding an API call entirely.  The background throttle job is responsible
+        for deciding when to refresh stale playlists.
+
+        When *force_refresh* is True (used by on-demand UI requests), the method
+        always hits the Spotify API, re-caches the result, and returns fresh data.
+        """
         if not self.is_authenticated():
             return []
+
+        # Serve from cache unless the caller explicitly wants a fresh fetch.
+        if not force_refresh and self.cache_manager:
+            cached = self.cache_manager.get_cached_tracks(playlist_id)
+            if cached is not None:
+                logger.debug(f"Serving playlist {playlist_id} from cache ({len(cached)} tracks).")
+                return cached
 
         tracks = []
         try:

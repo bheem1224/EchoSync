@@ -731,6 +731,133 @@ class PlaylistSyncService:
 
         return all_playlists
 
+    def refresh_playlist_cache_throttled(self, max_per_run: int = 5) -> Dict[str, Any]:
+        """Incrementally refresh the Spotify playlist track cache without hammering the API.
+
+        Algorithm
+        ---------
+        1. Fetch the lightweight *playlist list* for every active account -- this is a
+           single paginated API call that now includes ``snapshot_id`` per playlist.
+        2. For each playlist, compare the remote ``snapshot_id`` against the value
+           stored in ``working.db`` (one bulk DB lookup, zero extra API calls).
+        3. Split into two buckets:
+
+           - **up_to_date** -- snapshot matches; skip entirely.
+           - **stale_or_missing** -- snapshot changed or not cached yet; needs refresh.
+
+        4. **Throttle**: only process the first *max_per_run* stale playlists.
+           Call ``get_playlist_tracks(force_refresh=True)`` for each of those,
+           which re-fetches from Spotify and writes to the cache.
+        5. Log how many remain for the next scheduled run.
+
+        Returns a summary dict with counts for monitoring.
+        """
+        from core.settings import config_manager
+        from core.provider import ProviderRegistry
+
+        summary = {
+            "total": 0,
+            "up_to_date": 0,
+            "stale_or_missing": 0,
+            "refreshed": 0,
+            "remaining_for_next_run": 0,
+            "errors": 0,
+        }
+
+        try:
+            accounts = config_manager.get_spotify_accounts() or []
+        except Exception as e:
+            logger.error(f"refresh_playlist_cache_throttled: failed to load accounts: {e}")
+            return summary
+
+        for account in accounts:
+            # Respect is_active / enabled flags (same logic as _get_all_spotify_playlists)
+            is_active = account.get('is_active') or account.get('enabled')
+            if not is_active and is_active is not None:
+                continue
+            if 'is_active' in account and not account['is_active']:
+                continue
+
+            account_id = account.get('id')
+            account_name = account.get('name', f"Account {account_id}")
+
+            try:
+                client = ProviderRegistry.create_instance('spotify', account_id=account_id)
+                if not client.is_configured():
+                    continue
+
+                # Step 1 — Lightweight list fetch (snapshot_id included, no track data)
+                remote_playlists = list(client.get_user_playlists() or [])
+                if not remote_playlists:
+                    continue
+
+                # Step 2 — Bulk snapshot_id lookup against the local cache
+                playlist_ids = [p['id'] for p in remote_playlists]
+                cache_manager = getattr(client, 'cache_manager', None)
+                if cache_manager is None:
+                    logger.warning(
+                        f"SpotifyClient for account '{account_name}' has no cache_manager; skipping."
+                    )
+                    continue
+
+                cached_snapshots: Dict[str, str | None] = cache_manager.get_snapshot_ids_bulk(playlist_ids)
+
+                # Step 3 — Bucket into up_to_date vs stale_or_missing
+                up_to_date = []
+                stale_or_missing = []
+                for p in remote_playlists:
+                    pid = p['id']
+                    remote_snap = p.get('snapshot_id')
+                    if remote_snap and cached_snapshots.get(pid) == remote_snap:
+                        up_to_date.append(p)
+                    else:
+                        stale_or_missing.append(p)
+
+                summary["total"] += len(remote_playlists)
+                summary["up_to_date"] += len(up_to_date)
+                summary["stale_or_missing"] += len(stale_or_missing)
+
+                # Step 4 — Throttle: only refresh up to max_per_run stale playlists
+                to_refresh = stale_or_missing[:max_per_run]
+                remaining = len(stale_or_missing) - len(to_refresh)
+
+                if remaining > 0:
+                    logger.info(
+                        f"[{account_name}] Throttling cache updates: "
+                        f"{remaining} playlist(s) remaining for next run."
+                    )
+
+                for p in to_refresh:
+                    try:
+                        tracks = client.get_playlist_tracks(p['id'], force_refresh=True)
+                        logger.debug(
+                            f"[{account_name}] Refreshed cache for '{p['name']}' "
+                            f"({len(tracks)} tracks, snapshot={p.get('snapshot_id')})."
+                        )
+                        summary["refreshed"] += 1
+                    except Exception as refresh_err:
+                        logger.warning(
+                            f"[{account_name}] Failed to refresh '{p['name']}': {refresh_err}"
+                        )
+                        summary["errors"] += 1
+
+                summary["remaining_for_next_run"] += remaining
+
+            except Exception as account_err:
+                logger.error(
+                    f"refresh_playlist_cache_throttled: error for account '{account_name}': {account_err}"
+                )
+                summary["errors"] += 1
+                continue
+
+        logger.info(
+            f"Playlist cache refresh complete — "
+            f"total={summary['total']}, up_to_date={summary['up_to_date']}, "
+            f"refreshed={summary['refreshed']}, remaining={summary['remaining_for_next_run']}, "
+            f"errors={summary['errors']}"
+        )
+        return summary
+
     def get_library_comparison(self) -> Dict[str, Any]:
         try:
             # Re-implementing logic synchronously for compatibility with multi-account support

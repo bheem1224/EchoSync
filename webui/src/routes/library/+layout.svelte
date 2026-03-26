@@ -62,7 +62,8 @@
 
 <style>
     .page {
-        min-height: 100vh;
+        height: 100vh;
+        overflow: hidden;
         padding: 24px;
         background: transparent; /* Allow layout background */
     }
@@ -73,12 +74,23 @@
         display: flex;
         flex-direction: column;
         gap: 24px;
+        height: 100%;
+        min-height: 0;
     }
 
     .page__header {
         display: flex;
         justify-content: space-between;
         margin-bottom: 0;
+    }
+
+    /* Content slot receives all remaining height after the header. */
+    .content-area {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
     }
 
     h1 {
