@@ -340,6 +340,33 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
     )
 
 
+def register_stale_track_scan_job(interval_seconds: int = 604800, enabled: bool = True):
+    """Register weekly stale track scan job for library hygiene."""
+
+    def run_stale_track_scan():
+        try:
+            logger.info("Starting stale track scan job")
+            service = DuplicateHygieneService()
+            result = service.scan_for_stale_tracks(inactive_days=90)
+            logger.info(f"Stale track scan complete: {result}")
+        except Exception as e:
+            logger.error(f"Stale track scan job failed: {e}", exc_info=True)
+
+    job_queue.register_job(
+        name="stale_track_scan_job",
+        func=run_stale_track_scan,
+        interval_seconds=interval_seconds,
+        enabled=enabled,
+        tags=["system", "stale_tracks", "hygiene"],
+        max_retries=1,
+    )
+
+    logger.info(
+        f"Stale track scan job registered "
+        f"(interval: {interval_seconds}s = {interval_seconds/3600:.1f}h, enabled={enabled})"
+    )
+
+
 def register_process_lifecycle_actions_job(interval_seconds: int = 86400, enabled: bool = True):
     """Register daily lifecycle queue processing job."""
 
@@ -423,6 +450,9 @@ def register_all_system_jobs():
 
         # Daily duplicate scan for hygiene signals.
         register_duplicate_scan_job(interval_seconds=86400, enabled=True)
+
+        # Weekly stale track scan for hygiene signals.
+        register_stale_track_scan_job(interval_seconds=604800, enabled=True)
 
         # Daily lifecycle staging queue processing.
         register_process_lifecycle_actions_job(interval_seconds=86400, enabled=True)

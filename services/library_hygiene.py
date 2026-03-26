@@ -280,3 +280,52 @@ class DuplicateHygieneService:
 
         dm = get_download_manager()
         return dm.queue_download(soul_track, quality_profile_id=upgrade_quality_profile_id)
+
+    def scan_for_stale_tracks(self, inactive_days: int = 90) -> Dict[str, Any]:
+        """
+        Scan for tracks with > 0 all-time listens but 0 listens in the last X days.
+        Updates their UserTrackState lifecycle_action to 'STALE'.
+        """
+        from core.suggestion_engine.analytics import PlaybackAnalytics
+        from database.working_database import get_working_database, UserTrackState
+        from database.music_database import ExternalIdentifier
+        from time_utils import utc_now
+
+        logger.info(f"Starting stale track scan (inactive_days={inactive_days})")
+
+        stale_provider_ids = PlaybackAnalytics.get_stale_provider_ids(inactive_days=inactive_days)
+        if not stale_provider_ids:
+            return {"status": "no_stale_tracks", "count": 0}
+
+        working_db = get_working_database()
+        now = utc_now()
+        updated_count = 0
+
+        with self.db.session_scope() as music_session:
+            with working_db.session_scope() as work_session:
+                # Find corresponding track IDs
+                ext_idents = music_session.query(ExternalIdentifier, Track).join(
+                    Track, ExternalIdentifier.track_id == Track.id
+                ).filter(
+                    ExternalIdentifier.provider_item_id.in_(stale_provider_ids)
+                ).all()
+
+                for ext, track in ext_idents:
+                    # Resolve to sync_id
+                    from core.matching_engine.text_utils import generate_deterministic_id
+                    sync_id = f"ss:track:meta:{generate_deterministic_id(track.artist.name, track.title)}"
+
+                    states = work_session.query(UserTrackState).filter(
+                        UserTrackState.sync_id == sync_id
+                    ).all()
+
+                    for state in states:
+                        # Only mark stale if it's not already staged for deletion/upgrade or exempt
+                        if not state.lifecycle_action and not state.admin_exempt_deletion:
+                            state.lifecycle_action = 'STALE'
+                            state.lifecycle_queued_at = now
+                            updated_count += 1
+                            logger.info(f"Marked track '{track.title}' (sync_id: {sync_id}) as STALE.")
+
+        logger.info(f"Stale track scan completed. Marked {updated_count} states as STALE.")
+        return {"status": "success", "count": updated_count}
