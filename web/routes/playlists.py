@@ -120,6 +120,13 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     return cleaned.strip() or title
 
                 search_title = _strip_feat(track_title)
+                # Base title: strip parentheticals, brackets, and post-hyphen suffixes so that
+                # e.g. "Wellerman - Sea Shanty" also queries for "Wellerman" and finds the DB
+                # row stored as "Wellerman (Sea Shanty)".
+                base_search_title = re.sub(r'\s*[\(\[].*?[\)\]]', '', search_title).strip()
+                base_search_title = re.sub(r'\s+-.*$', '', base_search_title).strip()
+                if not base_search_title:
+                    base_search_title = search_title
                 library_match = "Not Found"
                 best_score = 0
 
@@ -136,6 +143,10 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) = LOWER(:title_exact))
                                 OR
                                 (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) LIKE LOWER(:title_pattern))
+                                OR
+                                (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) LIKE LOWER(:base_title_pattern))
+                                OR
+                                (LOWER(a.name) = LOWER(:artist_exact) AND LOWER(t.title) LIKE LOWER(:base_title_pattern))
                             )
                             ORDER BY 
                                 (LOWER(a.name) = LOWER(:artist_exact)) DESC,
@@ -149,6 +160,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             "artist_pattern": f"%{track_artist}%",
                             "title_exact": search_title,
                             "title_pattern": f"%{search_title}%",
+                            "base_title_pattern": f"%{base_search_title}%",
                             "duration": track_duration or 0,
                         })
                         candidates = result.fetchall()

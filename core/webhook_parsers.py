@@ -115,3 +115,28 @@ class NavidromeWebhookParser(WebhookParser):
 
     def parse(self, request) -> Optional[Dict[str, Any]]:
         pass
+
+
+_PROVIDER_PARSERS = {
+    "plex": PlexWebhookParser,
+    "navidrome": NavidromeWebhookParser,
+}
+
+
+def parse_media_server_webhook(request, provider: str = "plex") -> Optional[Dict[str, Any]]:
+    """
+    Module-level dispatcher: parse an inbound webhook request from any supported
+    media server and return a normalised ``{user_id, provider_item_id}`` dict on
+    a ``media.scrobble`` / track event, or ``None`` for unrecognised events.
+
+    Args:
+        request: The Flask ``request`` object.
+        provider: Lowercase provider name (e.g. ``"plex"``, ``"navidrome"``).
+
+    Returns:
+        ``{"user_id": str, "provider_item_id": str}`` or ``None``.
+    """
+    parser_cls = _PROVIDER_PARSERS.get((provider or "").lower())
+    if parser_cls is None:
+        return None
+    return parser_cls().parse(request)

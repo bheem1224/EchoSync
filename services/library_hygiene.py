@@ -281,6 +281,36 @@ class DuplicateHygieneService:
         dm = get_download_manager()
         return dm.queue_download(soul_track, quality_profile_id=upgrade_quality_profile_id)
 
+    def is_track_trending(
+        self,
+        provider_item_id: str,
+        days: int = 30,
+        threshold: int = 2,
+    ) -> bool:
+        """
+        Return True if ``provider_item_id`` has been played at least ``threshold``
+        times in the last ``days`` days across all users.
+
+        Uses a single COUNT query against ``PlaybackHistory`` in working.db.
+        """
+        from database.working_database import get_working_database, PlaybackHistory
+        from time_utils import utc_now
+        from datetime import timedelta
+
+        cutoff = utc_now() - timedelta(days=days)
+        working_db = get_working_database()
+        with working_db.session_scope() as session:
+            play_count = (
+                session.query(func.count(PlaybackHistory.id))
+                .filter(
+                    PlaybackHistory.provider_item_id == provider_item_id,
+                    PlaybackHistory.listened_at >= cutoff,
+                )
+                .scalar()
+                or 0
+            )
+        return play_count >= threshold
+
     def scan_for_stale_tracks(self, inactive_days: int = 90) -> Dict[str, Any]:
         """
         Scan for tracks with > 0 all-time listens but 0 listens in the last X days.

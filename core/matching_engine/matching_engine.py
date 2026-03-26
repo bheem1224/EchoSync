@@ -376,8 +376,85 @@ class WeightedMatchingEngine:
         if source.artist_name and candidate.artist_name:
             artist_fuzzy_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
 
+        # Title score — computed here (once) so both the strong-pair rescues below
+        # and the safe duration bonus further down share a single _fuzzy_match call.
+        title_fuzzy_score = 0.0
+        if source.title and candidate.title:
+            title_fuzzy_score = self._fuzzy_match(source.title, candidate.title)
+
         if fuzzy_score < self.weights.fuzzy_match_threshold:
-            # If fuzzy match is below threshold, fail this match
+            # ── Strong-pair rescues ────────────────────────────────────────────
+            # The combined fuzzy average can fall below the threshold when album
+            # data is absent from the source (playlists rarely surface it) or
+            # wrong (compilations, re-releases).  Rather than hard-failing, check
+            # whether two mutually-independent high-confidence signals agree.
+            # Both rescues require the version gate to have already passed.
+
+            # Rescue A — Title + Artist (both ≥ 0.95, album discounted)
+            # A near-exact title AND near-exact artist independently identify the
+            # recording.  Album mismatches drag the combined score below threshold
+            # but are not probative when the other two dimensions are near-perfect.
+            if title_fuzzy_score >= 0.95 and artist_fuzzy_score >= 0.95:
+                ta_total_w = self.weights.title_weight + self.weights.artist_weight
+                ta_norm = (
+                    title_fuzzy_score * self.weights.title_weight
+                    + artist_fuzzy_score * self.weights.artist_weight
+                ) / ta_total_w
+                dur_score_a = self._calculate_duration_match(source, candidate)
+                # Score is album-free text component + duration component
+                rescued_a = (
+                    ta_norm * self.weights.text_weight * 100
+                    + dur_score_a * self.weights.duration_weight * 100
+                ) / ((self.weights.text_weight + self.weights.duration_weight) * 100) * 100
+                rescued_a = max(0.0, min(100.0, rescued_a))
+                if rescued_a >= self.weights.min_confidence_to_accept:
+                    reasoning_parts.append(
+                        f"Title+Artist exact-pair rescue (album discounted): "
+                        f"title={title_fuzzy_score:.2f} artist={artist_fuzzy_score:.2f} "
+                        f"dur={dur_score_a:.2f} → {rescued_a:.1f}%"
+                    )
+                    return MatchResult(
+                        confidence_score=rescued_a,
+                        passed_version_check=version_match,
+                        passed_edition_check=edition_match,
+                        fuzzy_text_score=ta_norm,
+                        duration_match_score=dur_score_a,
+                        quality_bonus_applied=0.0,
+                        version_penalty_applied=version_penalty,
+                        edition_penalty_applied=edition_penalty,
+                        reasoning=" | ".join(reasoning_parts),
+                    )
+
+            # Rescue B — Title + Duration (title ≥ 0.95 AND duration ≤ 2 s)
+            # When artist metadata is unreliable (featured-artist suffixes,
+            # romanised names, compilation credits) a near-exact title with a
+            # tight duration window uniquely identifies the recording without
+            # needing artist or album agreement.
+            if title_fuzzy_score >= 0.95 and source.duration and candidate.duration:
+                dur_diff_ms = abs(source.duration - candidate.duration)
+                if dur_diff_ms <= 2000:
+                    td_dur_score = 1.0 - (dur_diff_ms / 2000) * 0.5
+                    rescued_b = 88.0 + td_dur_score * 5.0  # 88 – 93 range
+                    rescued_b = max(0.0, min(100.0, rescued_b))
+                    reasoning_parts.append(
+                        f"Title+Duration exact-pair rescue (artist discounted): "
+                        f"title={title_fuzzy_score:.2f} dur_diff={dur_diff_ms}ms ≤ 2000ms "
+                        f"→ {rescued_b:.1f}%"
+                    )
+                    return MatchResult(
+                        confidence_score=rescued_b,
+                        passed_version_check=version_match,
+                        passed_edition_check=edition_match,
+                        fuzzy_text_score=title_fuzzy_score,
+                        duration_match_score=td_dur_score,
+                        quality_bonus_applied=0.0,
+                        version_penalty_applied=version_penalty,
+                        edition_penalty_applied=edition_penalty,
+                        reasoning=" | ".join(reasoning_parts),
+                    )
+
+            # ── End rescues — fall through to hard fail ────────────────────────
+            # If fuzzy match is below threshold and no rescue applied, fail this match
             reasoning_parts.append(
                 f"FAILED: Fuzzy text score below threshold "
                 f"({fuzzy_score:.1%} < {self.weights.fuzzy_match_threshold:.1%})"
