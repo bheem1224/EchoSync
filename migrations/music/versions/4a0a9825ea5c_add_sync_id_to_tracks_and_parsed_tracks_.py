@@ -20,6 +20,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    conn = op.get_bind()
+
     # Create the new parsed_tracks cache table (drop legacy raw-SQL version first if it exists)
     op.execute("DROP TABLE IF EXISTS parsed_tracks")
     op.create_table('parsed_tracks',
@@ -30,12 +32,14 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('raw_string')
     )
 
-    # Step 1: add sync_id as nullable so existing rows don't violate the constraint
-    with op.batch_alter_table('tracks', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('sync_id', sa.String(), nullable=True))
+    track_cols = {row[1] for row in conn.execute(sa.text("PRAGMA table_info('tracks')"))}
 
-    # Step 2: back-fill existing rows with a stable placeholder; the app will
-    # recompute correct sync_ids on the next library import.
+    # Step 1: add sync_id as nullable only if it doesn't already exist
+    if 'sync_id' not in track_cols:
+        with op.batch_alter_table('tracks', schema=None) as batch_op:
+            batch_op.add_column(sa.Column('sync_id', sa.String(), nullable=True))
+
+    # Step 2: back-fill any rows that still have NULL
     op.execute(
         "UPDATE tracks SET sync_id = 'ss:track:legacy:' || CAST(id AS TEXT) "
         "WHERE sync_id IS NULL"
