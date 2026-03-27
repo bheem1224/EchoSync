@@ -8,7 +8,7 @@ from spotipy.oauth2 import SpotifyOAuth
 import time
 
 logger = get_logger("spotify_routes")
-bp = Blueprint("spotify_routes", __name__, url_prefix="/api/spotify")
+bp = Blueprint("spotify_routes", __name__)
 
 
 def _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_uri):

@@ -6,7 +6,7 @@ from core.tiered_logger import get_logger
 
 logger = get_logger("navidrome_routes")
 
-bp = Blueprint('navidrome_routes', __name__, url_prefix='/api/navidrome')
+bp = Blueprint('navidrome_routes', __name__)
 
 
 @bp.get('/settings')

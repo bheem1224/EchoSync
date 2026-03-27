@@ -6,25 +6,32 @@ logger = get_logger("accounts_route")
 bp = Blueprint("accounts", __name__, url_prefix="/api/accounts")
 
 
-@bp.post("/plex/sync_users")
-def sync_plex_users():
-    """Sync Plex admin and managed users into config.db and return the updated list."""
+@bp.post("/<provider_name>/sync_users")
+def sync_provider_users(provider_name):
+    """Sync managed users for a provider and return the updated account list."""
     try:
-        from providers.plex.client import PlexClient
+        from core.provider import ProviderRegistry
 
-        client = PlexClient()
-        client.import_managed_users()
+        provider = ProviderRegistry.create_instance(provider_name)
+        if provider is None:
+            return jsonify({'error': f'Unknown provider: {provider_name}'}), 404
+
+        sync_users = getattr(provider, 'import_managed_users', None)
+        if not callable(sync_users):
+            return jsonify({'error': f'Provider does not support sync_users: {provider_name}'}), 400
+
+        sync_users()
 
         storage = get_storage_service()
-        accounts = storage.list_accounts('plex')
+        accounts = storage.list_accounts(provider_name)
         return jsonify({
-            'service': 'plex',
+            'service': provider_name,
             'accounts': accounts,
             'total': len(accounts),
             'success': True,
         }), 200
     except Exception as e:
-        logger.error(f"Error syncing Plex users: {e}", exc_info=True)
+        logger.error(f"Error syncing users for {provider_name}: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @bp.get("/<service_name>")

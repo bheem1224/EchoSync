@@ -5,7 +5,7 @@ import asyncio
 import aiohttp
 
 logger = get_logger("slskd_routes")
-bp = Blueprint("soulseek_routes", __name__, url_prefix="/api/providers/soulseek")
+bp = Blueprint("soulseek_routes", __name__)
 
 
 @bp.route("/settings", methods=["GET"])

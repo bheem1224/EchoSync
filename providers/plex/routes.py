@@ -9,7 +9,7 @@ from core.settings import config_manager
 logger = get_logger("plex_routes")
 
 # Create a single blueprint for all Plex routes
-bp = Blueprint('plex_routes', __name__, url_prefix='/api/plex')
+bp = Blueprint('plex_routes', __name__)
 
 # --- Settings Logic (from web/routes/plex_settings.py) ---
 

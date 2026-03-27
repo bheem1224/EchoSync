@@ -9,6 +9,8 @@ import re
 from typing import Optional, Tuple
 import base64
 
+from core.plugins.hook_manager import hook_manager
+
 
 
 def normalize_chars(text: Optional[str]) -> str:
@@ -100,6 +102,12 @@ def normalize_text(text: Optional[str]) -> str:
     """
     if not text:
         return ""
+
+    # Allow plugins (e.g. the CJK Language Pack) to transliterate non-Latin
+    # scripts to their Romaji/Pinyin equivalents before the core engine strips
+    # diacritics and punctuation.  This call is a no-op when no filters are
+    # registered under this hook.
+    text = hook_manager.apply_filters("pre_normalize_text", text)
 
     # Standardize all Unicode character variants (smart quotes, fancy dashes, etc.)
     text = normalize_chars(text)

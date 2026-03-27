@@ -9,7 +9,7 @@ import urllib.parse
 import time
 
 logger = get_logger("tidal_oauth")
-bp = Blueprint("tidal_oauth", __name__, url_prefix="/api/tidal")
+bp = Blueprint("tidal_oauth", __name__)
 
 
 @bp.get('/auth')

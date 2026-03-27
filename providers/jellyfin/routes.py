@@ -6,7 +6,7 @@ from core.tiered_logger import get_logger
 
 logger = get_logger("jellyfin_routes")
 
-bp = Blueprint('jellyfin_routes', __name__, url_prefix='/api/jellyfin')
+bp = Blueprint('jellyfin_routes', __name__)
 
 
 @bp.get('/settings')

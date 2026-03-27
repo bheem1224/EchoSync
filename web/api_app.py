@@ -143,9 +143,19 @@ def create_app() -> Flask:
     
     # Scan and Load Providers/Plugins
     loader.load_all()
-    
-    # Register Dynamic Blueprints from Providers/Plugins
-    for bp in loader.get_all_blueprints():
+
+    # Register provider blueprints at a unified dynamic mount path.
+    for provider_name, bp in loader.get_provider_blueprints():
+        try:
+            app.register_blueprint(
+                bp,
+                url_prefix=f"/api/providers/{provider_name.lower()}"
+            )
+        except Exception as e:
+            print(f"[ERROR] Failed to register provider blueprint {bp.name}: {e}")
+
+    # Register community plugin blueprints using their blueprint-defined routes.
+    for bp in loader.get_plugin_blueprints():
         try:
             app.register_blueprint(bp)
         except Exception as e:

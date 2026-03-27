@@ -4,7 +4,7 @@ from core.file_handling.storage import get_storage_service
 from core.tiered_logger import get_logger
 
 logger = get_logger("tidal_routes")
-bp = Blueprint("tidal_routes", __name__, url_prefix="/api/accounts/tidal")
+bp = Blueprint("tidal_routes", __name__)
 
 
 @bp.get('')

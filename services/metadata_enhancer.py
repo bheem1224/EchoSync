@@ -24,6 +24,7 @@ from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.plugins.hook_manager import hook_manager
 from database.working_database import get_working_database, ReviewTask
 
 logger = get_logger("services.metadata_enhancer")
@@ -165,12 +166,16 @@ class MetadataEnhancerService:
 
                     if not track.isrc and new_isrc:
                         track.isrc = new_isrc
-                    elif not track.isrc and metadata_provider:
-                        # Optionally fetch detailed metadata to grab ISRC if missing
+                    if metadata_provider:
+                        # Fetch full metadata record for ISRC fill and plugin hooks
                         try:
                             meta = metadata_provider.get_metadata(new_musicbrainz_id)
-                            if meta and meta.get('isrc'):
-                                track.isrc = meta.get('isrc')
+                            if meta:
+                                if not track.isrc and meta.get('isrc'):
+                                    track.isrc = meta.get('isrc')
+                                hook_manager.apply_filters(
+                                    'post_musicbrainz_fetch', track, mb_data=meta
+                                )
                         except Exception:
                             pass
                 else:

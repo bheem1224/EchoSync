@@ -24,7 +24,7 @@ from core.tiered_logger import get_logger
 
 logger = get_logger("musicbrainz_routes")
 
-bp = Blueprint("musicbrainz_routes", __name__, url_prefix="/api/musicbrainz")
+bp = Blueprint("musicbrainz_routes", __name__)
 
 _AUTH_URL = "https://musicbrainz.org/oauth2/authorize"
 _TOKEN_URL = "https://musicbrainz.org/oauth2/token"

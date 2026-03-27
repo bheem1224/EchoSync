@@ -1,0 +1,16 @@
+{
+  "name": "CJK Language Pack",
+  "version": "1.0.0",
+  "author": "SoulSync",
+  "description": "Transliterates Chinese (Simplified/Traditional), Japanese (Kanji/Kana), and Korean (Hangul) text to Romaji/Pinyin so the matching engine can compare CJK track titles against their Latin-script counterparts.",
+  "entrypoint": "plugin",
+  "dependencies": [
+    "opencc-python-reimplemented",
+    "pypinyin",
+    "hangul-romanize",
+    "pykakasi"
+  ],
+  "hooks": [
+    "pre_normalize_text"
+  ]
+}

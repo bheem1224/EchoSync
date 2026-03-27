@@ -55,6 +55,9 @@ class Artist(Base):
     tracks: Mapped[List["Track"]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
     )
+    aliases: Mapped[List["ArtistAlias"]] = relationship(
+        back_populates="artist", cascade="all, delete-orphan", lazy="select"
+    )
 
 
 class Album(Base):
@@ -116,6 +119,9 @@ class Track(Base):
     audio_fingerprints: Mapped[List["AudioFingerprint"]] = relationship(
         back_populates="track", cascade="all, delete-orphan"
     )
+    aliases: Mapped[List["TrackAlias"]] = relationship(
+        back_populates="track", cascade="all, delete-orphan", lazy="select"
+    )
 
     @hybrid_property
     def get_consensus_rating(self) -> int:
@@ -152,6 +158,38 @@ class AudioFingerprint(Base):
     acoustid_id: Mapped[Optional[str]] = mapped_column(String)
 
     track: Mapped[Track] = relationship(back_populates="audio_fingerprints")
+
+
+class ArtistAlias(Base):
+    __tablename__ = "artist_aliases"
+    __table_args__ = (
+        UniqueConstraint("artist_id", "alias", name="uq_artist_alias"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artist_id: Mapped[int] = mapped_column(
+        ForeignKey("artists.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    alias: Mapped[str] = mapped_column(String, nullable=False)
+    locale: Mapped[Optional[str]] = mapped_column(String)
+
+    artist: Mapped["Artist"] = relationship(back_populates="aliases")
+
+
+class TrackAlias(Base):
+    __tablename__ = "track_aliases"
+    __table_args__ = (
+        UniqueConstraint("track_id", "alias", name="uq_track_alias"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    track_id: Mapped[int] = mapped_column(
+        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    alias: Mapped[str] = mapped_column(String, nullable=False)
+    locale: Mapped[Optional[str]] = mapped_column(String)
+
+    track: Mapped["Track"] = relationship(back_populates="aliases")
 
 
 class TrackAudioFeatures(Base):
@@ -640,6 +678,8 @@ __all__ = [
     "Artist",
     "Album",
     "Track",
+    "ArtistAlias",
+    "TrackAlias",
     "ExternalIdentifier",
     "AudioFingerprint",
     "TrackAudioFeatures",
