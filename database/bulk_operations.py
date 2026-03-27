@@ -300,6 +300,14 @@ class LibraryManager:
             Tuple of (Track object, is_new: bool)
             is_new is True if track was newly created, False if updated
         """
+        # Strict guard: every track ingested through this path must carry a sync_id.
+        if not track_data.sync_id:
+            logger.error(
+                f"Rejecting track '{track_data.title}' by '{track_data.artist_name}' "
+                "due to missing sync_id"
+            )
+            return None, False
+
         # FIRST: Check for existing external identifiers (provider-agnostic deduplication)
         # This prevents duplicates across ALL providers (Plex ratingKey, Jellyfin ID, Navidrome ID, etc.)
         # If same external ID exists, it must be the same track - update it instead of creating new
@@ -351,6 +359,7 @@ class LibraryManager:
         if track is None:
             # Create new track
             track = Track(
+                sync_id=track_data.sync_id,
                 title=track_data.title,
                 sort_title=track_data.sort_title,
                 edition=track_data.edition,
@@ -432,6 +441,8 @@ class LibraryManager:
                 track.musicbrainz_id = track_data.musicbrainz_id
             if track_data.isrc is not None:
                 track.isrc = track_data.isrc
+            if track.sync_id != track_data.sync_id:
+                track.sync_id = track_data.sync_id
 
             # NOTE: Explicitly NOT updating added_at to preserve original import time
             

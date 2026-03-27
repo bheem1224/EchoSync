@@ -88,6 +88,18 @@ def upgrade() -> None:
     track_cols = {row[1] for row in conn.execute(sa.text("PRAGMA table_info('tracks')"))}
 
     if 'acoustid_id' in track_cols or True:  # always run batch rebuild for isrc type fix
+        # Preserve AcoustID values into audio_fingerprints before dropping the column
+        if 'acoustid_id' in track_cols:
+            op.execute('''
+                INSERT INTO audio_fingerprints (track_id, fingerprint_hash, acoustid_id)
+                SELECT id, 'legacy:migration:' || id, acoustid_id
+                FROM tracks
+                WHERE acoustid_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM audio_fingerprints WHERE track_id = tracks.id
+                  )
+            ''')
+
         with op.batch_alter_table('tracks', schema=None) as batch_op:
             batch_op.alter_column('isrc',
                    existing_type=sa.TEXT(),

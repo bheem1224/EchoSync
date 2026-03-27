@@ -12,12 +12,19 @@ from database.config_database import get_config_database
 logger = get_logger("migrations")
 
 
-def run_alembic_startup_migrations(sections: Iterable[str] = ("music", "working", "config")) -> None:
+def run_auto_migrations(databases: list[str] | None = None) -> None:
     """Run Alembic upgrades for all configured database environments.
 
-    This is safe to call on every startup; ``upgrade head`` is a no-op when
-    the target database is already current.
+    Safe to call on every startup — ``upgrade head`` is a no-op when the
+    target database is already at the current revision.
+
+    Args:
+        databases: Ordered list of alembic.ini section names to migrate.
+                   Defaults to ["config", "working", "music"].
     """
+    if databases is None:
+        databases = ["config", "working", "music"]
+
     try:
         from alembic import command
         from alembic.config import Config
@@ -30,15 +37,19 @@ def run_alembic_startup_migrations(sections: Iterable[str] = ("music", "working"
         logger.warning(f"Alembic config not found at {ini_path}; skipping startup migrations")
         return
 
-    for section in sections:
-        logger.info(f"Running Alembic upgrade for '{section}' database")
+    for db_name in databases:
+        logger.info(f"Checking migrations for database: {db_name}")
         try:
-            cfg = Config(str(ini_path), ini_section=section)
-            command.upgrade(cfg, "head")
-            logger.info(f"Alembic '{section}' database is at head")
+            alembic_cfg = Config(str(ini_path), ini_section=db_name)
+            command.upgrade(alembic_cfg, "head")
+            logger.info(f"Database '{db_name}' is at head")
         except Exception as e:
-            logger.error(f"Alembic startup migration failed for '{section}': {e}", exc_info=True)
-            raise
+            logger.critical(f"Failed to migrate {db_name} database: {e}", exc_info=True)
+            raise e
+
+
+# Backwards-compatible alias for any external callers.
+run_alembic_startup_migrations = run_auto_migrations
 
 # Minimum SQLite version required for ALTER TABLE ... RENAME COLUMN (3.25.0).
 _MIN_SQLITE_RENAME_COLUMN = (3, 25, 0)
