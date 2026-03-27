@@ -51,6 +51,14 @@ class MetadataEnhancerService:
     def enhance_library_metadata(self, batch_size=100):
         """
         Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
+
+        If any loaded plugins have registered requirements via the
+        ``register_metadata_requirements`` hook, this method runs a *targeted*
+        pass: it queries already-identified tracks and calls
+        :meth:`ensure_metadata` for the declared keys.  If no plugin declares
+        requirements it falls through to the standard 5-step fingerprint /
+        identification pipeline for tracks that are still missing a
+        ``musicbrainz_id``.
         """
         from database.music_database import get_database, Track
         from core.file_handling.path_mapper import PathMapper
@@ -61,6 +69,48 @@ class MetadataEnhancerService:
         from pathlib import Path
 
         db = get_database()
+
+        # ── Ask plugins what metadata they need ───────────────────────────
+        required_keys: list[str] = hook_manager.apply_filters(
+            'register_metadata_requirements', []
+        )
+
+        if required_keys:
+            # Targeted pass: process already-identified tracks.
+            # ensure_metadata() checks metadata_status internally, so tracks
+            # that already have all keys populated are skipped cheaply.
+            logger.info(
+                "enhance_library_metadata: targeted pass for keys=%s (batch_size=%d)",
+                required_keys, batch_size,
+            )
+            with db.session_scope() as session:
+                tracks_to_process = (
+                    session.query(Track)
+                    .filter(
+                        Track.musicbrainz_id.isnot(None),
+                        ~Track.musicbrainz_id.in_(["NOT_FOUND"]),
+                    )
+                    .limit(batch_size)
+                    .all()
+                )
+                if not tracks_to_process:
+                    logger.info("enhance_library_metadata: no identified tracks to process.")
+                    return
+                for track in tracks_to_process:
+                    try:
+                        self.ensure_metadata(session, track, required_keys)
+                    except Exception as exc:
+                        logger.warning(
+                            "enhance_library_metadata: ensure_metadata failed for "
+                            "track %d: %s", track.id, exc
+                        )
+            return
+
+        # ── No plugin declared requirements — run standard pipeline ───────
+        logger.info(
+            "enhance_library_metadata: no targeted metadata requirements from plugins. "
+            "Running standard identification scan."
+        )
 
         fingerprint_provider = self._get_provider(Capability.RESOLVE_FINGERPRINT)
         metadata_provider = self._get_provider(Capability.FETCH_METADATA)

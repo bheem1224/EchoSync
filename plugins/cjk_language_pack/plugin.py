@@ -369,6 +369,32 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Metadata requirements declaration
+# ---------------------------------------------------------------------------
+
+def declare_requirements(keys: list[str], *args: Any, **kwargs: Any) -> list[str]:
+    """
+    Filter registered on the ``register_metadata_requirements`` hook.
+
+    Declares that this plugin requires the ``musicbrainz_aliases`` metadata
+    category.  The retroactive enhancement job collects these declarations
+    before scanning the library so it can run targeted fetches instead of
+    the full identification pipeline.
+
+    Args:
+        keys:     Accumulator list passed through the filter chain.
+        *args:    Ignored positional extras forwarded by ``apply_filters``.
+        **kwargs: Ignored keyword extras forwarded by ``apply_filters``.
+
+    Returns:
+        *keys* with ``"musicbrainz_aliases"`` appended if absent.
+    """
+    if "musicbrainz_aliases" not in keys:
+        keys.append("musicbrainz_aliases")
+    return keys
+
+
+# ---------------------------------------------------------------------------
 # Plugin entry point
 # ---------------------------------------------------------------------------
 
@@ -386,15 +412,22 @@ def setup(hm: "HookManager") -> None:
     so that CJK-locale aliases from MusicBrainz are persisted to the DB
     whenever new metadata is fetched by the enhancer service.
 
+    Also registers :func:`declare_requirements` on
+    ``register_metadata_requirements`` so the retroactive enhancement job
+    knows to run a targeted alias-fetch pass.
+
     Args:
         hm:  The process-wide :class:`core.plugins.hook_manager.HookManager`
              instance passed by the loader.
     """
     hm.add_filter("pre_normalize_text", transliterate_cjk, priority=10)
     hm.add_filter("post_musicbrainz_fetch", extract_mb_aliases, priority=10)
+    hm.add_filter("register_metadata_requirements", declare_requirements, priority=10)
     logger.info(
-        "CJK Language Pack: registered 'pre_normalize_text' filter (priority=10) "
-        "and 'post_musicbrainz_fetch' filter (priority=10). "
+        "CJK Language Pack: registered 'pre_normalize_text' filter (priority=10), "
+        "'post_musicbrainz_fetch' filter (priority=10), "
+        "and 'register_metadata_requirements' filter (priority=10). "
         "Chinese/Japanese/Korean track titles will be transliterated before matching, "
-        "and CJK aliases from MusicBrainz will be stored to the database."
+        "CJK aliases from MusicBrainz will be stored to the database, "
+        "and the retroactive enhancement job will run a targeted alias-fetch pass."
     )
