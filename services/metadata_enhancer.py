@@ -264,7 +264,13 @@ class MetadataEnhancerService:
                     if results:
                         # Convert file to SoulSyncTrack for matching
                         file_track = self._filename_to_track(file_path, duration_ms)
-                        
+
+                        if file_track is None:
+                            logger.warning(
+                                f"Fallback filename search failed: could not build track object for '{file_path.name}' (no parseable artist/title)"
+                            )
+                            return None, 0.0
+
                         # Convert search results to SoulSyncTracks
                         candidate_tracks = []
                         for result in results:
@@ -360,7 +366,7 @@ class MetadataEnhancerService:
         auto_importer = get_auto_importer()
         auto_importer.finalize_import(file_path, metadata)
 
-    def _filename_to_track(self, file_path: Path, duration_ms: Optional[int]) -> SoulSyncTrack:
+    def _filename_to_track(self, file_path: Path, duration_ms: Optional[int]) -> Optional[SoulSyncTrack]:
         """Convert filename to SoulSyncTrack for matching using provider_base helper."""
         from core.track_parser import TrackParser
         from core.provider_base import ProviderBase

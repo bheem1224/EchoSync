@@ -114,6 +114,24 @@ class WeightedMatchingEngine:
             MatchResult with confidence score (0-100) and detailed breakdown
         """
 
+        # Guard against None inputs from callers that may return None from factory methods
+        if source is None or candidate is None:
+            return self._attach_target_context(
+                MatchResult(
+                    confidence_score=0.0,
+                    passed_version_check=False,
+                    passed_edition_check=False,
+                    fuzzy_text_score=0.0,
+                    duration_match_score=0.0,
+                    quality_bonus_applied=0.0,
+                    version_penalty_applied=0.0,
+                    edition_penalty_applied=0.0,
+                    reasoning="source or candidate track is None",
+                ),
+                target_source,
+                target_identifier,
+            )
+
         # Initialize scoring components
         score = 0.0
         max_possible_score = 0.0
