@@ -265,6 +265,17 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
     except Exception as e:
         print(f"Failed to setup file logging: {e}")
 
+    # Silence verbose third-party filesystem watcher debug noise while keeping
+    # warnings and errors visible.
+    for logger_name in (
+        "watchdog",
+        "watchdog.observers",
+        "watchdog.observers.inotify_buffer",
+        "watchdog.observers.inotify_c",
+        "watchdog.events",
+    ):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
     return root_logger
 
 def get_logger(name: str) -> logging.Logger:
