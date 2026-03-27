@@ -227,10 +227,25 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
     if hasattr(console_handler.stream, 'reconfigure'):
         console_handler.stream.reconfigure(encoding='utf-8', errors='replace')
 
-    console_formatter = ColoredFormatter(
-        fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+    # Use the colored formatter when the output is a real TTY or when
+    # FORCE_COLOR / COLORTERM is set (e.g. docker-compose with tty:true, or
+    # the user's terminal).  Fall back to plain text otherwise so Docker log
+    # pipelines don't spray ANSI escape codes into their output.
+    _force_color = (
+        os.getenv('FORCE_COLOR', '0') not in ('0', '')
+        or os.getenv('COLORTERM', '') != ''
+        or (hasattr(console_handler.stream, 'isatty') and console_handler.stream.isatty())
     )
+    if _force_color:
+        console_formatter = ColoredFormatter(
+            fmt='%(levelname)-5.5s [%(name)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+    else:
+        console_formatter = SafeFormatter(
+            fmt='%(levelname)-5.5s [%(name)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
 

@@ -20,12 +20,17 @@ dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
 from core.settings import config_manager
 
 # Setup logging from config.json settings (loaded via config_manager)
-# DEV_MODE determines the log level override
+# Priority: LOG_LEVEL env var > DEV_MODE=true > config.json level > INFO
 from core.tiered_logger import setup_logging
 logging_config = config_manager.get_logging_config()
 
-# Task 2: DEV_MODE=true -> Level DEBUG. DEV_MODE=false -> Level INFO (Production).
-log_level = "DEBUG" if dev_mode else logging_config.get("level", "INFO")
+_env_log_level = os.getenv('LOG_LEVEL', '').upper()
+if _env_log_level in ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'):
+    log_level = _env_log_level
+elif dev_mode:
+    log_level = 'DEBUG'
+else:
+    log_level = logging_config.get('level', 'INFO')
 
 setup_logging(level=log_level, log_file=logging_config.get("path"))
 

@@ -35,6 +35,11 @@ class DatabaseUpdateWorker:
         self.force_sequential = force_sequential
         self.should_stop = False
 
+        # Tracks whether run() is currently executing. Exposes is_alive() so
+        # the HTTP status route works regardless of whether a thread or the
+        # job queue is used to dispatch the worker.
+        self._running = False
+
         # Statistics tracking
         self.processed_artists = 0
         self.processed_albums = 0
@@ -50,6 +55,7 @@ class DatabaseUpdateWorker:
 
     def run(self):
         """Main execution loop for the worker thread."""
+        self._running = True
         logger.info(f"Starting database update worker for {self.server_type}")
         try:
             # Initialize database with SQLAlchemy
@@ -95,14 +101,23 @@ class DatabaseUpdateWorker:
                 len(all_tracks),
                 imported_count,
             )
-            self.processed_tracks = imported_count
-            self.successful_operations = imported_count
+            # Note: processed_tracks / successful_operations are already
+            # maintained live by _on_progress() callback — don't overwrite here.
             
         except Exception as e:
             logger.error(f"Error in DatabaseUpdateWorker: {e}", exc_info=True)
             self.failed_operations += 1
         finally:
             logger.info("Database update worker finished")
+            self._running = False
+
+    def is_alive(self) -> bool:
+        """Return True while run() is actively executing.
+
+        This allows the HTTP status route to work correctly whether the worker
+        was dispatched via a raw thread or the shared JobQueue pool.
+        """
+        return self._running
 
     def start(self):
         """Dispatch run() via the centralized job queue for fire-and-forget use (e.g. HTTP routes).
