@@ -368,12 +368,20 @@ class MetadataEnhancerService:
         # Use TrackParser to extract artist/title from filename
         parser = TrackParser()
         parsed = parser.parse_filename(file_path.stem)
+
+        title = file_path.stem
+        artist = None
+        album = ''
+        if parsed is not None:
+            title = parsed.title or file_path.stem
+            artist = parsed.artist_name
+            album = parsed.album_title or ''
         
         # Use the standard factory method from ProviderBase
         return ProviderBase.create_soul_sync_track(
-            title=parsed.title or file_path.stem,
-            artist=parsed.artist_name or 'Unknown Artist',
-            album=parsed.album_title or '',
+            title=title,
+            artist=artist,
+            album=album,
             duration_ms=duration_ms,
             provider_id=str(file_path),
             source='local_file'

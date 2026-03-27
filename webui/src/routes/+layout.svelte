@@ -15,6 +15,7 @@
   let encryptionKeyValue = '';
   let showMigrationModal = false;
   let migrationMessage = '';
+  let showDevModeBanner = false;
 
   onMount(async () => {
     providers.load();
@@ -40,6 +41,13 @@
     } catch (error) {
       console.error('Failed to check migration status:', error);
     }
+
+    try {
+      const response = await apiClient.get('/status');
+      showDevModeBanner = Boolean(response.data?.dev_mode);
+    } catch (error) {
+      console.error('Failed to check runtime mode:', error);
+    }
   });
 
   function dismissEncryptionWarning() {
@@ -57,10 +65,22 @@
   {#if innerWidth >= 768}
     <Sidebar />
     <main class="app-content">
+      {#if showDevModeBanner}
+        <div class="dev-mode-banner" role="alert" aria-live="polite">
+          <strong>Development Mode Enabled</strong>
+          <span>DEV_MODE is active. This web UI is running in a development-only configuration and should not be used in production.</span>
+        </div>
+      {/if}
       <slot />
     </main>
   {:else}
     <main class="app-content">
+      {#if showDevModeBanner}
+        <div class="dev-mode-banner" role="alert" aria-live="polite">
+          <strong>Development Mode Enabled</strong>
+          <span>DEV_MODE is active. This web UI is running in a development-only configuration and should not be used in production.</span>
+        </div>
+      {/if}
       <slot />
     </main>
     <BottomNav />
@@ -97,6 +117,37 @@
     padding-bottom: 100px; /* Add padding for player */
   }
 
+  .dev-mode-banner {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 12px;
+    background:
+      linear-gradient(135deg, rgba(127, 29, 29, 0.95), rgba(69, 10, 10, 0.92));
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+    color: #fee2e2;
+    backdrop-filter: blur(8px);
+  }
+
+  .dev-mode-banner strong {
+    color: #fecaca;
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .dev-mode-banner span {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
   @media (max-width: 900px) {
     .app-shell {
       flex-direction: column;
@@ -105,6 +156,12 @@
     .app-content {
       padding: 16px;
       padding-bottom: 140px; /* Add padding for player + bottom nav */
+    }
+
+    .dev-mode-banner {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
     }
   }
 </style>

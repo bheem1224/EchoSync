@@ -28,11 +28,13 @@ def health_check():
 def system_status():
     """System health check and service status."""
     try:
+        dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
         return jsonify({
             "status": "online",
             "platform": platform.system(),
             "python_version": platform.python_version(),
             "uptime": None,  # TODO: track app start time
+            "dev_mode": dev_mode,
         }), 200
     except Exception as e:
         logger.error(f"Error getting system status: {e}")

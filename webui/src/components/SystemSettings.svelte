@@ -15,12 +15,36 @@
   };
 
   let providerStates = [];
+  let pluginStates = [];
+  let nonPluginStates = [];
   let loadingProviders = true;
   let isRebuildingDatabase = false;
 
   onMount(async () => {
-    await loadProviders();
+    await Promise.all([loadPlugins(), loadProviders()]);
   });
+
+  async function loadPlugins() {
+    try {
+      const response = await apiClient.get('/plugins');
+      if (response.data?.plugins && Array.isArray(response.data.plugins)) {
+        pluginStates = response.data.plugins
+          .map((plugin) => ({
+            id: plugin.id || plugin.name,
+            name: plugin.display_name || plugin.name || plugin.id,
+            configured: plugin.is_configured ?? true,
+            disabled: plugin.disabled || false,
+            category: 'plugin'
+          }))
+          .sort((left, right) => left.name.localeCompare(right.name));
+      } else {
+        pluginStates = [];
+      }
+    } catch (error) {
+      console.error('Failed to load plugins:', error);
+      pluginStates = [];
+    }
+  }
 
   async function loadProviders() {
     try {
@@ -34,6 +58,11 @@
           disabled: provider.disabled || false,
           category: provider.category || 'provider'
         }));
+
+        const sortedStates = [...providerStates].sort((left, right) =>
+          left.name.localeCompare(right.name)
+        );
+        nonPluginStates = sortedStates.filter((entry) => entry.category !== 'plugin');
       }
     } catch (error) {
       console.error('Failed to load providers:', error);
@@ -151,7 +180,7 @@
     </article>
 
     <article class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm">
-      <h2 class="text-base font-semibold mb-4">Installed Providers</h2>
+      <h2 class="text-base font-semibold mb-4">Installed Extensions</h2>
 
       {#if loadingProviders}
         <div class="flex items-center justify-center py-8">
@@ -159,45 +188,89 @@
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span class="ml-3 text-gray-400">Loading providers...</span>
+          <span class="ml-3 text-gray-400">Loading plugins and providers...</span>
         </div>
       {:else if providerStates.length === 0}
         <div class="text-center py-6">
-          <p class="text-sm text-gray-400">No providers found</p>
+          <p class="text-sm text-gray-400">No plugins or providers found</p>
         </div>
       {:else}
-        <div class="space-y-3">
-          {#each providerStates as provider (provider.id)}
-            <div class="flex items-center justify-between bg-gray-900/60 border border-gray-700/40 rounded-lg px-4 py-3">
-              <div>
-                <p class="font-medium text-gray-100">{provider.name}</p>
-                <p class="text-xs text-gray-400">
-                  {#if provider.disabled}
-                    <span class="text-red-400">Disabled</span>
-                  {:else if provider.configured}
-                    <span class="text-emerald-400">Configured</span>
-                  {:else}
-                    <span class="text-amber-400">Not Configured</span>
-                  {/if}
-                </p>
-              </div>
+        <div class="space-y-6">
+          {#if pluginStates.length > 0}
+            <div>
+              <h3 class="text-sm font-semibold uppercase tracking-[0.12em] text-violet-300 mb-3">Plugins</h3>
+              <div class="space-y-3">
+                {#each pluginStates as provider (provider.id)}
+                  <div class="flex items-center justify-between bg-gray-900/60 border border-gray-700/40 rounded-lg px-4 py-3">
+                    <div>
+                      <p class="font-medium text-gray-100">{provider.name}</p>
+                      <p class="text-xs text-gray-400">
+                        {#if provider.disabled}
+                          <span class="text-red-400">Disabled</span>
+                        {:else if provider.configured}
+                          <span class="text-emerald-400">Configured</span>
+                        {:else}
+                          <span class="text-amber-400">Not Configured</span>
+                        {/if}
+                      </p>
+                    </div>
 
-              <div class="flex items-center gap-3">
-                <span class="text-xs text-gray-400 capitalize px-2 py-1 bg-gray-800 rounded">
-                  {provider.category}
-                </span>
-                <div class="relative">
-                  {#if provider.configured}
-                    <div class="w-3 h-3 bg-emerald-500 rounded-full"></div>
-                  {:else if provider.disabled}
-                    <div class="w-3 h-3 bg-red-500 rounded-full"></div>
-                  {:else}
-                    <div class="w-3 h-3 bg-amber-500 rounded-full"></div>
-                  {/if}
-                </div>
+                    <div class="flex items-center gap-3">
+                      <span class="text-xs text-gray-300 capitalize px-2 py-1 bg-violet-950/50 border border-violet-800/40 rounded">
+                        {provider.category}
+                      </span>
+                      <div class="relative">
+                        {#if provider.configured}
+                          <div class="w-3 h-3 bg-emerald-500 rounded-full"></div>
+                        {:else if provider.disabled}
+                          <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+                        {:else}
+                          <div class="w-3 h-3 bg-amber-500 rounded-full"></div>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                {/each}
               </div>
             </div>
-          {/each}
+          {/if}
+
+          <div>
+            <h3 class="text-sm font-semibold uppercase tracking-[0.12em] text-cyan-300 mb-3">Providers</h3>
+            <div class="space-y-3">
+              {#each nonPluginStates as provider (provider.id)}
+                <div class="flex items-center justify-between bg-gray-900/60 border border-gray-700/40 rounded-lg px-4 py-3">
+                  <div>
+                    <p class="font-medium text-gray-100">{provider.name}</p>
+                    <p class="text-xs text-gray-400">
+                      {#if provider.disabled}
+                        <span class="text-red-400">Disabled</span>
+                      {:else if provider.configured}
+                        <span class="text-emerald-400">Configured</span>
+                      {:else}
+                        <span class="text-amber-400">Not Configured</span>
+                      {/if}
+                    </p>
+                  </div>
+
+                  <div class="flex items-center gap-3">
+                    <span class="text-xs text-gray-400 capitalize px-2 py-1 bg-gray-800 rounded">
+                      {provider.category}
+                    </span>
+                    <div class="relative">
+                      {#if provider.configured}
+                        <div class="w-3 h-3 bg-emerald-500 rounded-full"></div>
+                      {:else if provider.disabled}
+                        <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+                      {:else}
+                        <div class="w-3 h-3 bg-amber-500 rounded-full"></div>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
         </div>
       {/if}
 
