@@ -57,6 +57,7 @@ import ast
 import importlib
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -496,7 +497,29 @@ class PluginLoader:
             for plugin_dir in sorted(self.plugins_dir.iterdir()):
                 if not plugin_dir.is_dir() or plugin_dir.name.startswith("_"):
                     continue
-                self._load_single_community_plugin(plugin_dir)
+
+                # Read manifest first so dependency installation can happen
+                # before any AST/security scan and import operations.
+                manifest = self._read_manifest(plugin_dir, plugin_dir.name)
+                if manifest is None:
+                    continue
+
+                dependencies = manifest.get("dependencies", [])
+                if not isinstance(dependencies, list):
+                    logger.warning(
+                        "Plugin '%s': manifest 'dependencies' must be a list; skipping.",
+                        plugin_dir.name,
+                    )
+                    continue
+
+                if dependencies and not self._install_dependencies(plugin_dir.name, dependencies):
+                    logger.critical(
+                        "Plugin '%s': dependency installation failed; skipping plugin load.",
+                        plugin_dir.name,
+                    )
+                    continue
+
+                self._load_single_community_plugin(plugin_dir, manifest=manifest)
         except Exception as exc:
             # Outer catch for truly unexpected errors (e.g. filesystem failure
             # mid-iteration).  Keep lock alive.
@@ -508,7 +531,53 @@ class PluginLoader:
                 exc_info=True,
             )
 
-    def _load_single_community_plugin(self, plugin_dir: Path) -> None:
+    def _install_dependencies(self, plugin_name: str, dependencies: list[str]) -> bool:
+        """Install plugin dependencies via uv before plugin import."""
+        if not dependencies:
+            return True
+
+        try:
+            result = subprocess.run(
+                ["uv", "pip", "install"] + dependencies,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            logger.critical(
+                "Plugin '%s': dependency installation timed out after 300 seconds.",
+                plugin_name,
+            )
+            return False
+        except Exception as exc:
+            logger.critical(
+                "Plugin '%s': dependency installation crashed: %s",
+                plugin_name,
+                exc,
+                exc_info=True,
+            )
+            return False
+
+        if result.returncode == 0:
+            logger.info(
+                "Plugin '%s': installed %d dependency(s) successfully.",
+                plugin_name,
+                len(dependencies),
+            )
+            return True
+
+        logger.critical(
+            "Plugin '%s': dependency installation failed: %s",
+            plugin_name,
+            result.stderr,
+        )
+        return False
+
+    def _load_single_community_plugin(
+        self,
+        plugin_dir: Path,
+        manifest: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         Load one community plugin.  Any exception marks the boot as dirty.
 
@@ -523,7 +592,7 @@ class PluginLoader:
         plugin_name = plugin_dir.name
         try:
             # â”€â”€ Step 1: Read manifest â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            manifest = self._read_manifest(plugin_dir, plugin_name)
+            manifest = manifest or self._read_manifest(plugin_dir, plugin_name)
             if manifest is None:
                 return  # already logged; skip without marking boot dirty
 
