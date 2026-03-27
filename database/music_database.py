@@ -85,6 +85,7 @@ class Track(Base):
     __tablename__ = "tracks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    sync_id: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False, index=True)
     sort_title: Mapped[Optional[str]] = mapped_column(String)
     edition: Mapped[Optional[str]] = mapped_column(String)  # remaster, live, remix, deluxe, acoustic, etc.
@@ -202,6 +203,16 @@ class TrackAudioFeatures(Base):
     acousticness: Mapped[Optional[float]] = mapped_column(Float)
 
 
+class ParsedTrack(Base):
+    """Database-backed cache for parsed track strings (provider_cache)."""
+    __tablename__ = "parsed_tracks"
+
+    raw_string: Mapped[str] = mapped_column(String, primary_key=True)
+    parsed_json: Mapped[Optional[str]] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    ttl_expires_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime())
+
+
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     # ensure foreign keys are enforced
@@ -248,6 +259,7 @@ class MusicDatabase:
     def create_all(self) -> None:
         Base.metadata.create_all(self.engine)
         self._ensure_track_columns()
+        self._ensure_external_identifier_columns()
         self._drop_legacy_tables()
 
     def _ensure_track_columns(self) -> None:
@@ -259,6 +271,7 @@ class MusicDatabase:
         """
         required_columns = {
             "isrc": "TEXT",
+            "sync_id": "TEXT",
         }
 
         try:
@@ -273,6 +286,25 @@ class MusicDatabase:
                         )
         except Exception:
             # Non-fatal; metadata create_all already guarantees fresh schemas include columns.
+            pass
+
+    def _ensure_external_identifier_columns(self) -> None:
+        """Best-effort migration for external_identifiers columns added after initial rollout."""
+        required_columns = {
+            "raw_data": "TEXT",  # JSON stored as TEXT; nullable
+        }
+        try:
+            with self.engine.begin() as conn:
+                existing_rows = conn.exec_driver_sql(
+                    "PRAGMA table_info('external_identifiers')"
+                ).fetchall()
+                existing = {str(row[1]) for row in existing_rows}
+                for column_name, ddl in required_columns.items():
+                    if column_name not in existing:
+                        conn.exec_driver_sql(
+                            f"ALTER TABLE external_identifiers ADD COLUMN {column_name} {ddl}"
+                        )
+        except Exception:
             pass
 
     def _drop_legacy_tables(self) -> None:
@@ -698,6 +730,7 @@ __all__ = [
     "ExternalIdentifier",
     "AudioFingerprint",
     "TrackAudioFeatures",
+    "ParsedTrack",
     "MusicDatabase",
     "get_database",
     "close_database",

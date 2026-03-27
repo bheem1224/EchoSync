@@ -11,6 +11,7 @@ This module provides:
 import functools
 import json
 import logging
+import os
 import threading
 from datetime import timedelta
 from typing import Any, Callable, Optional, TypeVar, cast
@@ -18,8 +19,7 @@ from pathlib import Path
 import hashlib
 
 from time_utils import utc_now
-from sqlalchemy import text
-from database.music_database import MusicDatabase
+from database.music_database import MusicDatabase, ParsedTrack
 
 logger = logging.getLogger(__name__)
 
@@ -38,119 +38,73 @@ class ProviderCache:
             db_path: Path to music_library.db (defaults to standard location)
         """
         if db_path is None:
-            # Standard location
-            # Note: This assumes relative path from this file
-            # core/caching/provider_cache.py -> .../data/music_library.db
-            db_path = Path(__file__).parent.parent.parent / "data" / "music_library.db"
+            data_dir = os.getenv("SOULSYNC_DATA_DIR")
+            base = Path(data_dir) if data_dir else Path("data")
+            db_path = base / "music_library.db"
 
         self.db_path = db_path
         self.db = MusicDatabase(db_path)
-        self._ensure_table()
-
-    def _ensure_table(self):
-        """Ensure the cache table exists."""
-        try:
-            with self.db.engine.connect() as conn:
-                conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS parsed_tracks (
-                        raw_string TEXT PRIMARY KEY,
-                        parsed_json TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        ttl_expires_at TIMESTAMP
-                    )
-                """))
-                conn.commit()
-        except Exception as e:
-            logger.error(f"Error ensuring cache table: {e}")
+        # ParsedTrack is part of Base; create_all() is idempotent.
+        self.db.create_all()
 
     def get(self, key: str, ttl_seconds: int = 3600) -> Optional[Any]:
         """
-        Get value from cache if it exists and hasn't expired
-
-        Args:
-            key: Cache key
-            ttl_seconds: Time-to-live in seconds
-
-        Returns:
-            Cached value or None if not found/expired
+        Get value from cache if it exists and hasn't expired.
         """
         try:
-            query = text("""
-                SELECT parsed_json FROM parsed_tracks
-                WHERE raw_string = :key
-                AND (ttl_expires_at IS NULL OR ttl_expires_at > CURRENT_TIMESTAMP)
-                LIMIT 1
-            """)
-
-            with self.db.engine.connect() as conn:
-                result = conn.execute(query, {"key": key}).fetchone()
-
-            if result:
-                try:
-                    return json.loads(result[0])
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Failed to decode cached value for key: {key}")
-                    return None
-
-            return None
-
+            now = utc_now()
+            with self.db.session_scope() as session:
+                row = (
+                    session.query(ParsedTrack)
+                    .filter(
+                        ParsedTrack.raw_string == key,
+                        (ParsedTrack.ttl_expires_at == None)  # noqa: E711
+                        | (ParsedTrack.ttl_expires_at > now),
+                    )
+                    .first()
+                )
+            if row is None:
+                return None
+            try:
+                return json.loads(row.parsed_json)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(f"Failed to decode cached value for key: {key}")
+                return None
         except Exception as e:
             logger.error(f"Error retrieving from cache: {e}")
             return None
 
     def set(self, key: str, value: Any, ttl_seconds: int = 3600) -> bool:
         """
-        Store value in cache with TTL
-
-        Args:
-            key: Cache key
-            value: Value to cache (should be JSON-serializable)
-            ttl_seconds: Time-to-live in seconds
-
-        Returns:
-            True if successful, False otherwise
+        Store value in cache with TTL.
         """
         try:
-            # Serialize value to JSON
             json_value = json.dumps(value, default=str)
-
-            # Calculate expiration time
             expires_at = utc_now() + timedelta(seconds=ttl_seconds)
-
-            query = text("""
-                INSERT OR REPLACE INTO parsed_tracks
-                (raw_string, parsed_json, created_at, ttl_expires_at)
-                VALUES (:key, :value, CURRENT_TIMESTAMP, :expires)
-            """)
-
-            with self.db.engine.connect() as conn:
-                conn.execute(query, {
-                    "key": key,
-                    "value": json_value,
-                    "expires": expires_at
-                })
-                conn.commit()
+            with self.db.session_scope() as session:
+                row = session.query(ParsedTrack).filter(ParsedTrack.raw_string == key).first()
+                if row is None:
+                    row = ParsedTrack(
+                        raw_string=key,
+                        parsed_json=json_value,
+                        ttl_expires_at=expires_at,
+                    )
+                    session.add(row)
+                else:
+                    row.parsed_json = json_value
+                    row.ttl_expires_at = expires_at
             return True
-
         except Exception as e:
             logger.error(f"Error storing in cache: {e}")
             return False
 
     def delete(self, key: str) -> bool:
         """
-        Delete value from cache
-
-        Args:
-            key: Cache key
-
-        Returns:
-            True if successful, False otherwise
+        Delete value from cache.
         """
         try:
-            query = text("DELETE FROM parsed_tracks WHERE raw_string = :key")
-            with self.db.engine.connect() as conn:
-                conn.execute(query, {"key": key})
-                conn.commit()
+            with self.db.session_scope() as session:
+                session.query(ParsedTrack).filter(ParsedTrack.raw_string == key).delete()
             return True
         except Exception as e:
             logger.error(f"Error deleting from cache: {e}")
@@ -158,37 +112,31 @@ class ProviderCache:
 
     def clear_expired(self) -> int:
         """
-        Clear all expired entries
-
-        Returns:
-            Number of entries deleted
+        Clear all expired entries.
         """
         try:
-            query = text("""
-                DELETE FROM parsed_tracks
-                WHERE ttl_expires_at IS NOT NULL
-                AND ttl_expires_at <= CURRENT_TIMESTAMP
-            """)
-            with self.db.engine.connect() as conn:
-                result = conn.execute(query)
-                conn.commit()
-                return result.rowcount
+            now = utc_now()
+            with self.db.session_scope() as session:
+                count = (
+                    session.query(ParsedTrack)
+                    .filter(
+                        ParsedTrack.ttl_expires_at != None,  # noqa: E711
+                        ParsedTrack.ttl_expires_at <= now,
+                    )
+                    .delete()
+                )
+            return count
         except Exception as e:
             logger.error(f"Error clearing expired cache: {e}")
             return 0
 
     def clear_all(self) -> bool:
         """
-        Clear all cache entries
-
-        Returns:
-            True if successful
+        Clear all cache entries.
         """
         try:
-            query = text("DELETE FROM parsed_tracks")
-            with self.db.engine.connect() as conn:
-                conn.execute(query)
-                conn.commit()
+            with self.db.session_scope() as session:
+                session.query(ParsedTrack).delete()
             return True
         except Exception as e:
             logger.error(f"Error clearing cache: {e}")

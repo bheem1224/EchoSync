@@ -16,6 +16,7 @@ from .music_database import (
     ExternalIdentifier,
     AudioFingerprint,
     TrackAudioFeatures,
+    ParsedTrack,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "ExternalIdentifier",
     "AudioFingerprint",
     "TrackAudioFeatures",
+    "ParsedTrack",
 ]

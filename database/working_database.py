@@ -333,8 +333,32 @@ class ProviderStorageBox:
         return table
 
     def execute(self) -> None:
-        """Execute the table creations."""
+        """Create tables and patch any missing columns on existing tables."""
         self.metadata.create_all(self.engine)
+        # For tables that already existed, create_all() won't add new columns.
+        # Walk every Table registered by this provider and ALTER TABLE for any
+        # column that is present in the metadata definition but absent in the DB.
+        prefix = f"prv_{self.provider_name}_"
+        try:
+            with self.engine.begin() as conn:
+                for table_name, table_obj in self.metadata.tables.items():
+                    if not table_name.startswith(prefix):
+                        continue
+                    rows = conn.exec_driver_sql(
+                        f"PRAGMA table_info('{table_name}')"
+                    ).fetchall()
+                    existing_cols = {str(r[1]) for r in rows}
+                    for col in table_obj.columns:
+                        if col.name not in existing_cols:
+                            nullable = col.nullable
+                            col_type = str(col.type.compile())
+                            ddl = f"{col.name} {col_type}{'' if nullable else ' NOT NULL'}"
+                            conn.exec_driver_sql(
+                                f"ALTER TABLE {table_name} ADD COLUMN {ddl}"
+                            )
+        except Exception:
+            # Non-fatal: fresh databases are covered by create_all above.
+            pass
 
 
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
