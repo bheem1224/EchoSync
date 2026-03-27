@@ -236,6 +236,24 @@ class MetadataEnhancerService:
                                 track.metadata_status = {"musicbrainz_aliases": True}
                         except Exception:
                             pass
+
+                    # Re-mint the sync_id payload with the new metadata so the
+                    # EventBus and working-db lookup tables carry the enriched URI.
+                    ext_identifiers = (
+                        {ext.provider_source: ext.provider_item_id for ext in track.external_identifiers}
+                        if hasattr(track, 'external_identifiers') else {}
+                    )
+                    updated_sst = SoulSyncTrack(
+                        raw_title=track.title,
+                        artist_name=artist_name_str,
+                        album_title=track.album.title if track.album else "",
+                        duration=duration,
+                        musicbrainz_id=track.musicbrainz_id,
+                        isrc=track.isrc,
+                        identifiers=ext_identifiers,
+                    )
+                    track.sync_id = updated_sst.sync_id
+                    logger.debug(f"Upgraded sync_id payload: {track.sync_id}")
                 else:
                     logger.warning(f"Failed to identify track {track.id}: {local_path.name}")
                     track.musicbrainz_id = "NOT_FOUND"
