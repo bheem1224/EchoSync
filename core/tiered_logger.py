@@ -256,16 +256,11 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
     if hasattr(console_handler.stream, 'reconfigure'):
         console_handler.stream.reconfigure(encoding='utf-8', errors='replace')
 
-    # Use the colored formatter when the output is a real TTY or when
-    # FORCE_COLOR / COLORTERM is set (e.g. docker-compose with tty:true, or
-    # the user's terminal).  Fall back to plain text otherwise so Docker log
-    # pipelines don't spray ANSI escape codes into their output.
-    _force_color = (
-        os.getenv('FORCE_COLOR', '0') not in ('0', '')
-        or os.getenv('COLORTERM', '') != ''
-        or (hasattr(console_handler.stream, 'isatty') and console_handler.stream.isatty())
-    )
-    if _force_color:
+    # Use ColorFormatter by default. Only suppress ANSI codes when the caller
+    # explicitly sets NO_COLOR=1 (https://no-color.org) — e.g. to keep log
+    # pipelines / file captures free of escape sequences.
+    _no_color = os.getenv('NO_COLOR', '0') not in ('0', '')
+    if not _no_color:
         console_formatter = ColorFormatter()
     else:
         console_formatter = SafeFormatter(
