@@ -3,12 +3,42 @@ import sqlite3
 import contextlib
 import os
 from pathlib import Path
+from typing import Iterable
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from core.security import decrypt_string, encrypt_string
 from database.config_database import get_config_database
 
 logger = get_logger("migrations")
+
+
+def run_alembic_startup_migrations(sections: Iterable[str] = ("music", "working", "config")) -> None:
+    """Run Alembic upgrades for all configured database environments.
+
+    This is safe to call on every startup; ``upgrade head`` is a no-op when
+    the target database is already current.
+    """
+    try:
+        from alembic import command
+        from alembic.config import Config
+    except Exception as e:
+        logger.warning(f"Alembic is not available; skipping startup migrations: {e}")
+        return
+
+    ini_path = Path(__file__).resolve().parent.parent / "alembic.ini"
+    if not ini_path.exists():
+        logger.warning(f"Alembic config not found at {ini_path}; skipping startup migrations")
+        return
+
+    for section in sections:
+        logger.info(f"Running Alembic upgrade for '{section}' database")
+        try:
+            cfg = Config(str(ini_path), ini_section=section)
+            command.upgrade(cfg, "head")
+            logger.info(f"Alembic '{section}' database is at head")
+        except Exception as e:
+            logger.error(f"Alembic startup migration failed for '{section}': {e}", exc_info=True)
+            raise
 
 # Minimum SQLite version required for ALTER TABLE ... RENAME COLUMN (3.25.0).
 _MIN_SQLITE_RENAME_COLUMN = (3, 25, 0)

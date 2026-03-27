@@ -1066,6 +1066,32 @@ class ConfigManager:
     def get_media_db_path(self) -> Path:
         """Get the media library database path."""
         return self.media_db_path
+
+    @staticmethod
+    def _sqlite_url_for(path: Path) -> str:
+        """Build a SQLAlchemy SQLite URL for a filesystem path."""
+        resolved = path.resolve().as_posix()
+        return f"sqlite:///{resolved}"
+
+    def get_database_url(self) -> str:
+        """Get SQLAlchemy URL for the media library database."""
+        return self._sqlite_url_for(self.media_db_path)
+
+    def get_music_database_url(self) -> str:
+        """Get SQLAlchemy URL for the music library database."""
+        return self._sqlite_url_for(self.media_db_path)
+
+    def get_working_db_path(self) -> Path:
+        """Get the working database path."""
+        return self.data_dir / "working.db"
+
+    def get_working_database_url(self) -> str:
+        """Get SQLAlchemy URL for the working database."""
+        return self._sqlite_url_for(self.get_working_db_path())
+
+    def get_config_database_url(self) -> str:
+        """Get SQLAlchemy URL for the config database."""
+        return self._sqlite_url_for(self.database_path)
     
     def get_plugins_dir(self) -> Path:
         """Get the plugins directory path."""

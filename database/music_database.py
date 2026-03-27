@@ -108,7 +108,6 @@ class Track(Base):
 
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     isrc: Mapped[Optional[str]] = mapped_column(String)
-    acoustid_id: Mapped[Optional[str]] = mapped_column(String)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
 
     album: Mapped[Optional[Album]] = relationship(back_populates="tracks")
@@ -260,7 +259,6 @@ class MusicDatabase:
         """
         required_columns = {
             "isrc": "TEXT",
-            "acoustid_id": "TEXT",
         }
 
         try:
@@ -385,6 +383,14 @@ class MusicDatabase:
                 query = query.filter(Artist.name.ilike(f"%{artist}%"))
             tracks = query.limit(limit).all()
             for t in tracks:
+                acoustid = next(
+                    (
+                        af.acoustid_id
+                        for af in t.audio_fingerprints
+                        if af.acoustid_id
+                    ),
+                    None,
+                )
                 results.append(SoulSyncTrack(
                     raw_title=t.title,
                     artist_name=t.artist.name,
@@ -397,7 +403,7 @@ class MusicDatabase:
                     file_format=t.file_format,
                     musicbrainz_id=t.musicbrainz_id,
                     isrc=t.isrc,
-                    acoustid_id=t.acoustid_id,
+                    acoustid_id=acoustid,
                 ))
         return results
 
@@ -409,7 +415,7 @@ class MusicDatabase:
     ) -> List:
         """Search canonical tracks by global identifiers (ISRC, MBID, AcoustID).
 
-        The ``acoustid`` parameter maps to the ``Track.acoustid_id`` DB column.
+        The ``acoustid`` parameter maps to ``AudioFingerprint.acoustid_id``.
         Returns a list of ``SoulSyncTrack`` objects.
         """
         from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -421,7 +427,7 @@ class MusicDatabase:
         if musicbrainz_recording_id:
             filters.append(Track.musicbrainz_id == musicbrainz_recording_id)
         if acoustid:
-            filters.append(Track.acoustid_id == acoustid)
+            filters.append(AudioFingerprint.acoustid_id == acoustid)
         if not filters:
             return results
         with self.session_scope() as session:
@@ -429,10 +435,19 @@ class MusicDatabase:
                 session.query(Track)
                 .join(Artist)
                 .join(Album, isouter=True)
+                .join(AudioFingerprint, AudioFingerprint.track_id == Track.id, isouter=True)
                 .filter(or_(*filters))
                 .all()
             )
             for t in tracks:
+                acoustid = next(
+                    (
+                        af.acoustid_id
+                        for af in t.audio_fingerprints
+                        if af.acoustid_id
+                    ),
+                    None,
+                )
                 results.append(SoulSyncTrack(
                     raw_title=t.title,
                     artist_name=t.artist.name,
@@ -445,7 +460,7 @@ class MusicDatabase:
                     file_format=t.file_format,
                     musicbrainz_id=t.musicbrainz_id,
                     isrc=t.isrc,
-                    acoustid_id=t.acoustid_id,
+                    acoustid_id=acoustid,
                 ))
         return results
 

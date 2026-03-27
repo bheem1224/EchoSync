@@ -368,7 +368,6 @@ class LibraryManager:
                 added_at=track_data.added_at, # Set added_at only on insert
                 musicbrainz_id=track_data.musicbrainz_id,
                 isrc=track_data.isrc,
-                acoustid_id=track_data.acoustid_id,
             )
             session.add(track)
             session.flush()
@@ -433,8 +432,6 @@ class LibraryManager:
                 track.musicbrainz_id = track_data.musicbrainz_id
             if track_data.isrc is not None:
                 track.isrc = track_data.isrc
-            if track_data.acoustid_id is not None:
-                track.acoustid_id = track_data.acoustid_id
 
             # NOTE: Explicitly NOT updating added_at to preserve original import time
             
@@ -451,26 +448,24 @@ class LibraryManager:
             if not isinstance(item_id, str):
                 item_id = str(item_id)
 
-            # Check if identifier already exists
+            # Fast-path bulk upserts can skip relationship change detection, so explicitly
+            # upsert identifier rows keyed by (track_id, provider_source).
             stmt = select(ExternalIdentifier).where(
+                ExternalIdentifier.track_id == track.id,
                 ExternalIdentifier.provider_source == source,
-                ExternalIdentifier.provider_item_id == item_id,
             )
             ext_id = session.execute(stmt).scalar_one_or_none()
 
             if ext_id is None:
-                # Create new identifier
                 ext_id = ExternalIdentifier(
-                    track=track,
+                    track_id=track.id,
                     provider_source=source,
                     provider_item_id=item_id,
-                    raw_data=None, # Raw data not supported in simple dict mapping
+                    raw_data=None,  # Raw data not supported in simple dict mapping
                 )
                 session.add(ext_id)
-            else:
-                # Link to track if different
-                if ext_id.track_id != track.id:
-                    ext_id.track = track
+            elif ext_id.provider_item_id != item_id:
+                ext_id.provider_item_id = item_id
 
         # Handle Audio Fingerprint
         if track_data.fingerprint:

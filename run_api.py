@@ -16,6 +16,7 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=True)
 
 # Determine development mode
 dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+auto_migrate = os.getenv('SOULSYNC_AUTO_MIGRATE', 'true').lower() in ('true', '1', 'yes')
 
 from core.settings import config_manager
 
@@ -30,8 +31,12 @@ log_level = "DEBUG" if dev_mode else logging_config.get("level", "INFO")
 setup_logging(level=log_level, log_file=logging_config.get("path"))
 
 # Run Phase 1 Database Migrations securely
-from core.migrations import run_migrations
+from core.migrations import run_migrations, run_alembic_startup_migrations
 run_migrations()
+
+if auto_migrate:
+    # Applies committed Alembic revisions across music/working/config DBs.
+    run_alembic_startup_migrations()
 
 # Run Phase 2: working.db column migrations (must run after working DB engine is initialised)
 from database.working_database import get_working_database
