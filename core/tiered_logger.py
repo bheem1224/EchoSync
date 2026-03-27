@@ -14,6 +14,7 @@ import sys
 import re
 import os
 import time
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
@@ -136,27 +137,53 @@ class SafeFormatter(logging.Formatter):
             record.getMessage = lambda: self.strip_emojis(record.msg % record.args if record.args else record.msg)
             return super().format(record)
 
-class ColoredFormatter(SafeFormatter):
-    COLORS = {
-        'DEBUG': '\033[94m',
-        'INFO': '\033[92m',
-        'WARNING': '\033[93m',
-        'ERROR': '\033[91m',
-        'CRITICAL': '\033[95m',
-        'RESET': '\033[0m'
+class ColorFormatter(SafeFormatter):
+    """
+    Console formatter with dynamic ANSI colors.
+
+    - levelname is colored by severity (red for errors, yellow for warnings, etc.)
+    - [component] tag is colored by a stable hash of the component name so each
+      async service gets a visually distinct, consistent color across log lines.
+    """
+
+    # Severity → ANSI escape code
+    _LEVEL_COLORS: dict = {
+        'DEBUG':    '\033[94m',   # bright blue
+        'INFO':     '\033[32m',   # green
+        'WARNING':  '\033[93m',   # yellow
+        'ERROR':    '\033[91m',   # bright red
+        'CRITICAL': '\033[91;1m', # bright red + bold
     }
 
-    def format(self, record):
-        # Create a copy to not affect other handlers
-        levelname = record.levelname
-        log_color = self.COLORS.get(levelname, self.COLORS['RESET'])
-        reset_color = self.COLORS['RESET']
+    # Per-component palette: Cyan, Magenta, Green, Blue, Yellow
+    _COMPONENT_PALETTE: list = [
+        '\033[96m',   # Cyan
+        '\033[95m',   # Magenta
+        '\033[32m',   # Green
+        '\033[34m',   # Blue
+        '\033[33m',   # Yellow
+    ]
 
-        # Temporarily modify levelname for this format call
-        record.levelname = f"{log_color}{levelname}{reset_color}"
-        result = super().format(record)
-        record.levelname = levelname # Restore
-        return result
+    _RESET = '\033[0m'
+
+    def format(self, record: logging.LogRecord) -> str:
+        # --- Level color ---
+        level_color = self._LEVEL_COLORS.get(record.levelname, '')
+        colored_level = f"{level_color}{record.levelname:<5.5}{self._RESET}"
+
+        # --- Component color (stable hash → palette index) ---
+        # Prefer an explicitly injected 'component' extra, fall back to logger name.
+        component = getattr(record, 'component', None) or record.name
+        comp_color = self._COMPONENT_PALETTE[hash(component) % len(self._COMPONENT_PALETTE)]
+        colored_component = f"{comp_color}[{component}]{self._RESET}"
+
+        # --- Message (safe Unicode retrieval) ---
+        try:
+            msg = record.getMessage()
+        except UnicodeEncodeError:
+            msg = self.strip_emojis(str(record.msg))
+
+        return f"{colored_level} {colored_component} {msg}"
 
 # --- Adapter for Tagging ---
 
@@ -184,8 +211,10 @@ class SourceTagAdapter(logging.LoggerAdapter):
         return "[system]"
 
     def process(self, msg, kwargs):
-        # Prepend tag to message
-        return f"{self.tag} - {msg}", kwargs
+        # Inject the short component name so ColorFormatter can pick a stable palette colour.
+        # The tag (e.g. "provider plex") is stored as record.component on the LogRecord.
+        kwargs.setdefault('extra', {})['component'] = self.tag.strip('[]')
+        return msg, kwargs
 
 # --- Global Setup ---
 
@@ -237,10 +266,7 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
         or (hasattr(console_handler.stream, 'isatty') and console_handler.stream.isatty())
     )
     if _force_color:
-        console_formatter = ColoredFormatter(
-            fmt='%(levelname)-5.5s [%(name)s] %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
+        console_formatter = ColorFormatter()
     else:
         console_formatter = SafeFormatter(
             fmt='%(levelname)-5.5s [%(name)s] %(message)s',
