@@ -104,23 +104,28 @@ class MetadataEnhancerService:
                 # Prepare for identification
                 duration = track.duration or _tagging_read(local_path).get("duration")
 
+                # Resolve any stored fingerprint hash from the AudioFingerprint relation
+                existing_fp = track.audio_fingerprints[0].fingerprint_hash if track.audio_fingerprints else None
+
                 # Step 3 (DB AcoustID Fast-Path):
-                if track.acoustid_id and fingerprint_provider and duration:
+                if existing_fp and fingerprint_provider and duration:
                     logger.debug(f"Step 3 (DB AcoustID Fast-Path): Resolving existing AcoustID for {local_path.name}")
                     try:
-                        mbids = fingerprint_provider.resolve_fingerprint(track.acoustid_id, int(duration / 1000) if duration > 10000 else duration)
+                        mbids = fingerprint_provider.resolve_fingerprint(existing_fp, int(duration / 1000) if duration > 10000 else duration)
                         if mbids:
                             new_musicbrainz_id = mbids[0]
                     except Exception as e:
                         logger.warning(f"AcoustID fast-path resolution failed: {e}")
 
                 # Step 4 (Generate AcoustID):
-                if not new_musicbrainz_id and not track.acoustid_id and fingerprint_provider and duration:
+                if not new_musicbrainz_id and not existing_fp and fingerprint_provider and duration:
                     logger.debug(f"Step 4 (Generate AcoustID): Fingerprinting {local_path.name}")
                     try:
                         fingerprint = FingerprintGenerator.generate(str(local_path))
                         if fingerprint:
-                            track.acoustid_id = fingerprint
+                            from database.music_database import AudioFingerprint
+                            session.add(AudioFingerprint(track_id=track.id, fingerprint_hash=fingerprint))
+                            existing_fp = fingerprint
                             found_new_data = True
                             mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration / 1000) if duration > 10000 else duration)
                             if mbids:
@@ -193,8 +198,8 @@ class MetadataEnhancerService:
                         update_tags['recording_id'] = track.musicbrainz_id
                     if track.isrc:
                         update_tags['isrc'] = track.isrc
-                    if track.acoustid_id:
-                        update_tags['acoustid_id'] = track.acoustid_id
+                    if existing_fp:
+                        update_tags['acoustid_id'] = existing_fp
 
                     if update_tags:
                         _tagging_write(local_path, update_tags)
