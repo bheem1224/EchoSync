@@ -48,7 +48,7 @@ class Artist(Base):
     sort_name: Mapped[Optional[str]] = mapped_column(String)
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True)
     image_url: Mapped[Optional[str]] = mapped_column(String)
-    metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict)
+    metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
 
     albums: Mapped[List["Album"]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
@@ -111,7 +111,7 @@ class Track(Base):
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     isrc: Mapped[Optional[str]] = mapped_column(String)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
-    metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict)
+    metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
 
     album: Mapped[Optional[Album]] = relationship(back_populates="tracks")
     artist: Mapped[Artist] = relationship(back_populates="tracks")

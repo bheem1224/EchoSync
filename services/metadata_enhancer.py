@@ -13,6 +13,8 @@ It does NOT move files or scan directories (see AutoImportService).
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
+
+from sqlalchemy.orm import Session
 import datetime
 
 from core.enums import Capability
@@ -176,8 +178,7 @@ class MetadataEnhancerService:
                                 hook_manager.apply_filters(
                                     'post_musicbrainz_fetch', track, mb_data=meta
                                 )
-                                track.metadata_status = track.metadata_status or {}
-                                track.metadata_status["musicbrainz_aliases"] = True
+                                track.metadata_status = {"musicbrainz_aliases": True}
                         except Exception:
                             pass
                 else:
@@ -415,18 +416,21 @@ class MetadataEnhancerService:
             return None
 
 
-    def ensure_metadata(self, track, requested_keys: List[str]) -> None:
+    def ensure_metadata(self, session: Session, track, requested_keys: list[str]) -> None:
         """Fetch and persist metadata for a track if any of the requested_keys are missing.
 
         Each key in ``requested_keys`` is a logical metadata category (e.g.
         ``"musicbrainz_aliases"``).  The method short-circuits if every key is
         already marked ``True`` in ``track.metadata_status``, avoiding redundant
         network calls.
-        """
-        from database.music_database import get_database
 
-        track.metadata_status = track.metadata_status or {}
-        if all(track.metadata_status.get(k) for k in requested_keys):
+        Args:
+            session:        The active SQLAlchemy session that owns *track*.
+            track:          The ``Track`` ORM instance to update.
+            requested_keys: List of state-dict keys that must be ``True``.
+        """
+        status = track.metadata_status or {}
+        if all(status.get(k) for k in requested_keys):
             return
 
         if not track.musicbrainz_id:
@@ -444,10 +448,9 @@ class MetadataEnhancerService:
             if mb_data:
                 hook_manager.apply_filters('post_musicbrainz_fetch', track, mb_data=mb_data)
                 for key in requested_keys:
-                    track.metadata_status[key] = True
-                db = get_database()
-                with db.session_scope() as session:
-                    session.merge(track)
+                    status[key] = True
+                track.metadata_status = status
+                session.commit()
         except Exception as e:
             logger.warning(f"ensure_metadata failed for track {track.id}: {e}")
 

@@ -354,6 +354,8 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
                         locale=locale_str or None,
                     ))
 
+            session.commit()
+
         logger.debug(
             "CJK Language Pack: stored %d track alias(es) and %d artist alias(es) for track %d",
             len(raw_track_aliases),
