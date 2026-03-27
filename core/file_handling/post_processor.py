@@ -15,8 +15,8 @@ Supports mutagen for tag writing across all formats.
 
 import re
 import shutil
-import logging
 from pathlib import Path
+from core.tiered_logger import get_logger
 from typing import Optional, Dict, Tuple, List
 from urllib.request import urlopen
 from urllib.error import URLError
@@ -36,7 +36,7 @@ except ImportError:
 
 from ..matching_engine import SoulSyncTrack
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AudioFormat(Enum):

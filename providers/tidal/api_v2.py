@@ -1,7 +1,7 @@
 import requests
-import logging
+from core.tiered_logger import get_logger
 
-logger = logging.getLogger("tidal_api")
+logger = get_logger("tidal_api")
 
 class TidalAPI:
     BASE_URL = "https://openapi.tidal.com/v2"

@@ -1,10 +1,9 @@
 from core.health_check import health_check_registry
 from core.settings import config_manager
 from typing import Dict, Any
-import logging
+from core.tiered_logger import get_logger
 
-# Ensure logger is set up
-logger = logging.getLogger("health_check")
+logger = get_logger("health_check")
 
 def get_system_health() -> Dict[str, Any]:
     """

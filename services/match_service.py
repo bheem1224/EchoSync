@@ -14,7 +14,7 @@ Core methods:
 - parse_and_match(raw_string, candidates, context) - End-to-end pipeline
 """
 
-import logging
+from core.tiered_logger import get_logger
 from typing import List, Optional, Dict, Tuple
 from enum import Enum
 from dataclasses import dataclass
@@ -25,7 +25,7 @@ from core.matching_engine.matching_engine import WeightedMatchingEngine, MatchRe
 from core.matching_engine.scoring_profile import ProfileFactory, ProfileType, ScoringProfile
 from core.caching import provider_cache, get_cache
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MatchContext(Enum):

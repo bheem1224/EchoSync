@@ -10,8 +10,8 @@ This module provides:
 
 import functools
 import json
-import logging
 import os
+from core.tiered_logger import get_logger
 import threading
 from datetime import timedelta
 from typing import Any, Callable, Optional, TypeVar, cast
@@ -21,7 +21,7 @@ import hashlib
 from time_utils import utc_now
 from database.music_database import MusicDatabase, ParsedTrack
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Type variable for generic decorator
 F = TypeVar('F', bound=Callable[..., Any])

@@ -147,15 +147,17 @@ def update_settings():
         if "log_level" in payload:
             lvl = payload.get("log_level") or ""
             normalized = lvl.strip().lower()
-            if normalized == "normal":
-                normalized = "INFO"
-            elif normalized == "verbose":
-                normalized = "NOTSET"
-            elif normalized == "debug":
-                normalized = "DEBUG"
             try:
-                from core.tiered_logger import set_log_level
-                set_log_level(normalized.upper())
+                from core.tiered_logger import set_log_level, set_verbose_mode
+                if normalized == "verbose":
+                    duration = int(payload.get("verbose_duration", 60))
+                    set_verbose_mode(duration_seconds=duration)
+                else:
+                    if normalized == "normal":
+                        normalized = "INFO"
+                    elif normalized == "debug":
+                        normalized = "DEBUG"
+                    set_log_level(normalized.upper())
             except Exception:
                 pass
 

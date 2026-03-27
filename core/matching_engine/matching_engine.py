@@ -18,14 +18,14 @@ Final score: 0-100 confidence percentage.
 from typing import Optional, Tuple
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-import logging
 import os
+from core.tiered_logger import get_logger
 
 from .soul_sync_track import SoulSyncTrack
 from .scoring_profile import ScoringProfile, ScoringWeights, ProfileType
 from .fingerprinting import FingerprintMatcher
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # DEV_MODE killswitch: set SOULSYNC_DEV_MODE=1 (or "true"/"yes") in the environment
 # to bypass the ISRC instant-match fast-path during development/testing.

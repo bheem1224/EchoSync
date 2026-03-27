@@ -41,6 +41,10 @@ run_migrations()
 # Run Alembic migrations unconditionally — no-op if already at head.
 run_auto_migrations()
 
+# Re-apply SoulSync's logging config after Alembic migrations, as a safety net.
+# Alembic's fileConfig() may adjust logger levels even with disable_existing_loggers=False.
+setup_logging(level=log_level, log_file=logging_config.get("path"))
+
 # Run Phase 2: working.db column migrations (must run after working DB engine is initialised)
 from database.working_database import get_working_database
 from core.migrations import run_working_db_migrations

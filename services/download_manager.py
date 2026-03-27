@@ -16,8 +16,8 @@ Design Principle: "Central Control"
 
 import asyncio
 import inspect
-import logging
 import re
+from core.tiered_logger import get_logger
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -32,7 +32,7 @@ from core.provider_base import ProviderBase
 from database.music_database import get_database, Track, Artist, Album
 from database.working_database import get_working_database, Download
 
-logger = logging.getLogger("download_manager")
+logger = get_logger("download_manager")
 
 class DownloadManager:
     """

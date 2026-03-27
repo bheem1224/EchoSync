@@ -312,6 +312,35 @@ def set_log_level(level: str) -> bool:
     except Exception:
         return False
 
+# Tracks an active verbose-mode timer so it can be cancelled if verbose is toggled early.
+_verbose_timer: threading.Timer | None = None
+
+def set_verbose_mode(duration_seconds: int = 60) -> None:
+    """
+    Temporarily set console log level to DEBUG for *duration_seconds*, then
+    revert to the level that was active before this call.
+
+    Calling this again while a timer is already running cancels the previous
+    timer and starts a fresh one (extends the window).
+    """
+    global _verbose_timer
+    if _verbose_timer is not None and _verbose_timer.is_alive():
+        _verbose_timer.cancel()
+
+    previous_level = get_current_log_level()
+    set_log_level("DEBUG")
+    logging.getLogger().info(
+        f"Verbose mode active for {duration_seconds}s — will revert to {previous_level}"
+    )
+
+    def _revert():
+        set_log_level(previous_level)
+        logging.getLogger().info(f"Verbose mode expired — console level restored to {previous_level}")
+
+    _verbose_timer = threading.Timer(duration_seconds, _revert)
+    _verbose_timer.daemon = True
+    _verbose_timer.start()
+
 def get_current_log_level() -> str:
     """Get the current console log level."""
     root = logging.getLogger()

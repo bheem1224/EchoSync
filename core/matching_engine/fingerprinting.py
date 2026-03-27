@@ -10,11 +10,11 @@ Fingerprints are useful for:
 3. Library import where filename/tags are unreliable but audio is the truth
 """
 
-import logging
 from typing import Optional, Tuple
 from pathlib import Path
+from core.tiered_logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class FingerprintGenerator:

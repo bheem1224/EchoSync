@@ -15,9 +15,9 @@ from typing import Dict, Optional
 from enum import Enum
 import json
 from pathlib import Path
-import logging
+from core.tiered_logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ProfileType(Enum):
