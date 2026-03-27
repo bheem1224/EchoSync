@@ -21,7 +21,7 @@
 
     // Auto-populate redirect URI if empty
     if (!redirectUri && typeof window !== 'undefined') {
-      redirectUri = `${window.location.protocol}//${window.location.host}/api/spotify/callback`;
+      redirectUri = `${window.location.protocol}//${window.location.host}/api/providers/spotify/callback`;
     }
 
     // Collapse credentials by default when all globals are present and at least one account is authenticated
@@ -145,7 +145,7 @@
 
     try {
       // Request auth URL for this account and redirect the browser
-      const resp = await apiClient.get('/spotify/auth', { params: { account_id: accountId } });
+      const resp = await apiClient.get('/providers/spotify/auth', { params: { account_id: accountId } });
       const url = resp.data?.auth_url;
       if (url) {
         window.location.href = url;

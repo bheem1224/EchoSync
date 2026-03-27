@@ -26,7 +26,7 @@
   async function activateServer() {
     try {
       activating = true;
-      await apiClient.post('/jellyfin/activate');
+      await apiClient.post('/providers/jellyfin/activate');
       feedback.addToast('Jellyfin activated as media server', 'success');
       await loadSettings(); // Reload to get updated is_active
     } catch (error) {
@@ -39,7 +39,7 @@
 
   async function loadSettings() {
     try {
-      const response = await apiClient.get('/jellyfin/settings');
+      const response = await apiClient.get('/providers/jellyfin/settings');
       if (response.data?.settings) {
         baseUrl = response.data.settings.base_url || '';
         username = response.data.settings.username || '';
@@ -68,7 +68,7 @@
 
     try {
       saving = true;
-      await apiClient.post('/jellyfin/settings', {
+      await apiClient.post('/providers/jellyfin/settings', {
         base_url: baseUrl,
         username: username,
         password: password,
@@ -87,7 +87,7 @@
   async function testConnection() {
     try {
       testing = true;
-      const response = await apiClient.post('/jellyfin/test-connection');
+      const response = await apiClient.post('/providers/jellyfin/test-connection');
       
       if (response.data?.connected) {
         const serverName = response.data.server_name || 'Jellyfin';

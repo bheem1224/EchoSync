@@ -32,7 +32,7 @@
   async function loadData() {
     try {
       // Status (accounts + redirect URI + credential flags)
-      const statusResp = await apiClient.get('/musicbrainz/accounts');
+      const statusResp = await apiClient.get('/providers/musicbrainz/accounts');
       if (statusResp.data) {
         accounts = statusResp.data.accounts || [];
         redirectUri = statusResp.data.redirect_uri || '';
@@ -102,7 +102,7 @@
     }
     try {
       savingAccount = true;
-      await apiClient.post('/musicbrainz/accounts', { account_name: name });
+      await apiClient.post('/providers/musicbrainz/accounts', { account_name: name });
       feedback.addToast('Account added', 'success');
       closeAddModal();
       await loadData();
@@ -117,7 +117,7 @@
   async function deleteAccount(accountId, displayName) {
     if (!confirm(`Delete account "${displayName}"? This will also remove its stored tokens.`)) return;
     try {
-      await apiClient.delete(`/musicbrainz/accounts/${accountId}`);
+      await apiClient.delete(`/providers/musicbrainz/accounts/${accountId}`);
       feedback.addToast('Account deleted', 'success');
       await loadData();
     } catch (err) {
@@ -127,7 +127,7 @@
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await apiClient.put(`/musicbrainz/accounts/${accountId}/activate`, {
+      await apiClient.put(`/providers/musicbrainz/accounts/${accountId}/activate`, {
         is_active: !currentlyActive,
       });
       feedback.addToast(currentlyActive ? 'Account deactivated' : 'Account activated', 'success');
@@ -146,7 +146,7 @@
       return;
     }
     try {
-      const resp = await apiClient.get('/musicbrainz/auth', {
+      const resp = await apiClient.get('/providers/musicbrainz/auth', {
         params: { account_id: accountId },
       });
       const url = resp.data?.auth_url;

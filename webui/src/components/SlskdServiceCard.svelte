@@ -44,7 +44,7 @@
 
   async function loadSettings() {
     try {
-      const response = await apiClient.get('/providers/soulseek/settings');
+      const response = await apiClient.get('/providers/slskd/settings');
       if (response.data) {
         slskdUrl = response.data.slskd_url || '';
         serverName = response.data.server_name || '';
@@ -76,7 +76,7 @@
         payload.api_key = apiKey;
       }
       
-      await apiClient.post('/providers/soulseek/settings', payload);
+      await apiClient.post('/providers/slskd/settings', payload);
       feedback.addToast('slskd settings saved', 'success');
       await loadSettings();
     } catch (error) {
@@ -100,7 +100,7 @@
 
     try {
       testing = true;
-      const response = await apiClient.post('/providers/soulseek/connection/test');
+      const response = await apiClient.post('/providers/slskd/connection/test');
       
       if (response.data?.success) {
         feedback.addToast('slskd connection successful!', 'success');
@@ -126,7 +126,7 @@
     // If revealing and the key is stored (masked), fetch the real key
     if (willShow && hasApiKeyInDb && apiKey === '****' && !dbApiKeyRevealed) {
       try {
-        const resp = await apiClient.get('/providers/soulseek/settings/key');
+        const resp = await apiClient.get('/providers/slskd/settings/key');
         if (resp.data && resp.data.api_key) {
           apiKey = resp.data.api_key;
           dbApiKeyRevealed = true;

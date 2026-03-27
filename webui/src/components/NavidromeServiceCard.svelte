@@ -26,7 +26,7 @@
   async function activateServer() {
     try {
       activating = true;
-      await apiClient.post('/navidrome/activate');
+      await apiClient.post('/providers/navidrome/activate');
       feedback.addToast('Navidrome activated as media server', 'success');
       await loadSettings(); // Reload to get updated is_active
     } catch (error) {
@@ -39,7 +39,7 @@
 
   async function loadSettings() {
     try {
-      const response = await apiClient.get('/navidrome/settings');
+      const response = await apiClient.get('/providers/navidrome/settings');
       if (response.data?.settings) {
         baseUrl = response.data.settings.base_url || '';
         username = response.data.settings.username || '';
@@ -68,7 +68,7 @@
 
     try {
       saving = true;
-      await apiClient.post('/navidrome/settings', {
+      await apiClient.post('/providers/navidrome/settings', {
         base_url: baseUrl,
         username: username,
         password: password,
@@ -87,7 +87,7 @@
   async function testConnection() {
     try {
       testing = true;
-      const response = await apiClient.post('/navidrome/test-connection');
+      const response = await apiClient.post('/providers/navidrome/test-connection');
       
       if (response.data?.connected) {
         feedback.addToast(`Connected to Navidrome ${response.data.version}`, 'success');

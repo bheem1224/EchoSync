@@ -27,7 +27,7 @@
   async function activateServer() {
     try {
       activating = true;
-      await apiClient.post('/plex/activate');
+      await apiClient.post('/providers/plex/activate');
       feedback.addToast('Plex activated as media server', 'success');
       await loadSettings(); // Reload to get updated is_active
     } catch (error) {
@@ -40,7 +40,7 @@
 
   async function loadSettings() {
     try {
-      const response = await apiClient.get('/plex/settings');
+      const response = await apiClient.get('/providers/plex/settings');
       if (response.data?.settings) {
         baseUrl = response.data.settings.base_url || '';
         serverName = response.data.settings.server_name || '';
@@ -63,7 +63,7 @@
 
     try {
       saving = true;
-      await apiClient.post('/plex/settings', {
+      await apiClient.post('/providers/plex/settings', {
         base_url: baseUrl,
         server_name: serverName,
         path_mappings: pathMappings
@@ -81,7 +81,7 @@
   async function startOAuth() {
     try {
       authenticating = true;
-      const response = await apiClient.post('/plex/auth/start');
+      const response = await apiClient.post('/providers/plex/auth/start');
       
       if (response.data?.oauth_url && response.data?.session_id) {
         oauthSession = response.data.session_id;
@@ -92,7 +92,7 @@
         // Start polling for completion
         pollInterval = setInterval(async () => {
           try {
-            const pollResp = await apiClient.get(`/plex/auth/poll/${oauthSession}`);
+            const pollResp = await apiClient.get(`/providers/plex/auth/poll/${oauthSession}`);
             if (pollResp.data?.completed) {
               // OAuth completed (backend already saved token to account_tokens)
               clearInterval(pollInterval);
@@ -145,7 +145,7 @@
       pollInterval = null;
       
       try {
-        await apiClient.delete(`/plex/auth/cancel/${oauthSession}`);
+        await apiClient.delete(`/providers/plex/auth/cancel/${oauthSession}`);
       } catch (error) {
         console.error('Failed to cancel OAuth:', error);
       }
@@ -159,7 +159,7 @@
   async function testConnection() {
     try {
       testing = true;
-      const response = await apiClient.post('/plex/test-connection', {
+      const response = await apiClient.post('/providers/plex/test-connection', {
         base_url: baseUrl
       });
       

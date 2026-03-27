@@ -33,7 +33,7 @@
 
   async function loadAccounts() {
     try {
-      const response = await apiClient.get('/accounts/tidal');
+      const response = await apiClient.get('/providers/tidal');
       if (response.data) {
         accounts = response.data.accounts || [];
         redirectUri = response.data.redirect_uri || '';
@@ -53,7 +53,7 @@
 
     try {
       savingRedirectUri = true;
-      await apiClient.post('/accounts/tidal/redirect-uri', {
+      await apiClient.post('/providers/tidal/redirect-uri', {
         redirect_uri: redirectUri
       });
       feedback.addToast('Redirect URI saved', 'success');
@@ -82,7 +82,7 @@
     modalMode = 'edit';
     try {
       // Fetch account with credentials
-      const response = await apiClient.get(`/accounts/tidal/${account.id}`);
+      const response = await apiClient.get(`/providers/tidal/${account.id}`);
       if (response.data?.account) {
         modalAccount = {
           id: response.data.account.id,
@@ -136,10 +136,10 @@
       };
       
       if (modalMode === 'add') {
-        await apiClient.post('/accounts/tidal', accountData);
+        await apiClient.post('/providers/tidal', accountData);
         feedback.addToast('Account added', 'success');
       } else {
-        await apiClient.put(`/accounts/tidal/${modalAccount.id}`, accountData);
+        await apiClient.put(`/providers/tidal/${modalAccount.id}`, accountData);
         feedback.addToast('Account updated', 'success');
       }
       closeModal();
@@ -152,7 +152,7 @@
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await apiClient.put(`/accounts/tidal/${accountId}/activate`, {
+      await apiClient.put(`/providers/tidal/${accountId}/activate`, {
         is_active: !currentlyActive
       });
       feedback.addToast(currentlyActive ? 'Account deactivated' : 'Account activated', 'success');
@@ -167,7 +167,7 @@
     if (!confirm(`Delete account "${accountName}"? This will also delete its credentials.`)) return;
 
     try {
-      await apiClient.delete(`/accounts/tidal/${accountId}`);
+      await apiClient.delete(`/providers/tidal/${accountId}`);
       feedback.addToast('Account deleted', 'success');
       await loadAccounts();
     } catch (error) {
@@ -178,7 +178,7 @@
 
   async function authenticate(accountId) {
     try {
-      const resp = await apiClient.get('/tidal/auth', { params: { account_id: accountId } });
+      const resp = await apiClient.get('/providers/tidal/auth', { params: { account_id: accountId } });
       const url = resp.data?.auth_url;
       if (url) {
         window.location.href = url;

@@ -129,11 +129,11 @@
     }
 
     async function syncManagedUsers() {
-        if (activeServer !== 'plex') return;
+        const providerName = activeServer || 'plex';
 
         syncingManagedUsers = true;
         try {
-            const res = await fetch('/api/accounts/plex/sync_users', {
+            const res = await fetch(`/api/accounts/${providerName}/sync_users`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             });
