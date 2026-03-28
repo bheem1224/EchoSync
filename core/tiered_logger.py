@@ -146,6 +146,24 @@ class ColoredFormatter(SafeFormatter):
         'RESET': '\033[0m'
     }
 
+    _NAMESPACE_COLORS = [
+        '\033[38;5;39m',   # Light Blue
+        '\033[38;5;213m',  # Purple
+        '\033[38;5;46m',   # Green
+        '\033[38;5;226m',  # Lime
+        '\033[38;5;208m',  # Orange
+        '\033[38;5;161m',  # Red
+        '\033[38;5;198m',  # Pink
+        '\033[38;5;51m',   # Cyan
+        '\033[38;5;220m',  # Gold
+        '\033[38;5;135m',  # Lavender
+    ]
+
+    def _hash_to_color(self, text: str) -> str:
+        """Deterministically map a string to an ANSI color code."""
+        hash_val = sum(ord(c) for c in text)
+        return self._NAMESPACE_COLORS[hash_val % len(self._NAMESPACE_COLORS)]
+
     def format(self, record):
         # Create a copy to not affect other handlers
         levelname = record.levelname
@@ -156,6 +174,18 @@ class ColoredFormatter(SafeFormatter):
         record.levelname = f"{log_color}{levelname}{reset_color}"
         result = super().format(record)
         record.levelname = levelname # Restore
+
+        # Colorize namespace tag if present (e.g. [plugin.cjk])
+        import re
+        msg = record.getMessage()
+        if msg.startswith('['):
+            match = re.match(r'^(\[[^\]]+\])( - )', msg)
+            if match:
+                tag = match.group(1)
+                color = self._hash_to_color(tag)
+                # Find the tag in the formatted result and colorize it
+                result = result.replace(tag + match.group(2), f"{color}{tag}{reset_color}{match.group(2)}", 1)
+
         return result
 
 # --- Adapter for Tagging ---

@@ -19,6 +19,7 @@ from core.enums import Capability
 from core.file_handling.local_io import LocalFileHandler
 from core.file_handling.tagging_io import read_tags as _tagging_read, write_tags as _tagging_write
 from core.settings import config_manager
+from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
@@ -49,6 +50,7 @@ class MetadataEnhancerService:
         """
         Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
         """
+        required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
         from database.music_database import get_database, Track
         from core.file_handling.path_mapper import PathMapper
         from core.matching_engine.scoring_profile import ExactSyncProfile
@@ -191,6 +193,9 @@ class MetadataEnhancerService:
                     if update_tags:
                         _tagging_write(local_path, update_tags)
 
+                # Apply post-enrichment hooks before SQLAlchemy auto-commits at the end of the session context
+                hook_manager.apply_filters('post_metadata_enrichment', track)
+
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
         """
         Identify a file using Fingerprinting and/or Metadata Search.
@@ -248,7 +253,8 @@ class MetadataEnhancerService:
                 logger.debug(f"Attempting fallback filename search for {file_path.name}")
                 try:
                     # Extract metadata from filename
-                    query = file_path.stem.replace('_', ' ').replace('-', ' ')
+                    raw_query = file_path.stem.replace('_', ' ').replace('-', ' ')
+                    query = hook_manager.apply_filters('pre_normalize_text', raw_query)
                     
                     # Get duration for matching
                     duration_ms = _tagging_read(file_path).get("duration")

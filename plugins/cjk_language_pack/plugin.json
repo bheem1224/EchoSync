@@ -1,0 +1,7 @@
+{
+  "id": "cjk_language_pack",
+  "name": "CJK Language Pack",
+  "description": "Provides CJK expansion and Romaji/Pinyin normalization for SoulSync Matching Engine.",
+  "version": "1.0.0",
+  "author": "SoulSync"
+}
