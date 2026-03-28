@@ -109,7 +109,6 @@ class SoulSyncTrack:
     @property
     def sync_id(self) -> str:
         import base64
-        import urllib.parse
 
         # Base identity: ss:track:meta:{base64(lowercase_artist|lowercase_title)}
         # Ensure we safely access artist_name instead of artists[0] since artists doesn't exist on SoulSyncTrack
@@ -120,31 +119,33 @@ class SoulSyncTrack:
         encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
         base_sync_id = f"ss:track:meta:{encoded}"
 
-        # Append available attributes as query parameters
-        params = {}
-        if self.duration:
-            params['dur'] = str(self.duration)
-        if self.isrc:
-            params['isrc'] = self.isrc
-        if self.musicbrainz_id:
-            params['mbid'] = self.musicbrainz_id
+        # Append available attributes as query parameters directly
+        dur = self.duration if self.duration else ""
+        mbid = self.musicbrainz_id if self.musicbrainz_id else ""
+        isrc = self.isrc if self.isrc else ""
 
         # Get external_id if any identifier is present
-        ext_id = None
+        ext_id = ""
         if self.identifiers:
-            # Prefer some specific ones if multiple, but we can just grab the first available value
-            # Since identifiers is a dict, we can grab the first value
-            # Let's check for specific ones first: spotify_id, plex_guid, etc.
+            # Prefer some specific ones if multiple
             if 'spotify_id' in self.identifiers:
                 ext_id = self.identifiers['spotify_id']
             elif 'plex_guid' in self.identifiers:
                 ext_id = self.identifiers['plex_guid']
-            elif 'musicbrainz_recording_id' in self.identifiers and not self.musicbrainz_id:
-                 params['mbid'] = self.identifiers['musicbrainz_recording_id']
+            elif 'musicbrainz_recording_id' in self.identifiers and not mbid:
+                 mbid = self.identifiers['musicbrainz_recording_id']
             elif len(self.identifiers) > 0:
-                 # Just take the first value
                  ext_id = list(self.identifiers.values())[0]
 
+        # Append only parameters that have a value
+        import urllib.parse
+        params = {}
+        if self.duration:
+            params['dur'] = str(self.duration)
+        if mbid:
+            params['mbid'] = mbid
+        if self.isrc:
+            params['isrc'] = self.isrc
         if ext_id:
             params['ext'] = ext_id
 

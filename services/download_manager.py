@@ -283,7 +283,7 @@ class DownloadManager:
                 return existing_id
 
             download = Download(
-                sync_id=track.sync_id,
+                sync_id=track.sync_id.split('?')[0],
                 soul_sync_track=track_json,
                 status="queued",
                 created_at=utc_now(),

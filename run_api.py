@@ -29,9 +29,39 @@ log_level = "DEBUG" if dev_mode else logging_config.get("level", "INFO")
 
 setup_logging(level=log_level, log_file=logging_config.get("path"))
 
+# Phase 0: Safe Mode Circuit Breaker
+import sys
+from core.tiered_logger import get_logger
+
+logger = get_logger("boot")
+lock_file = config_manager.config_dir / "booting.lock"
+safe_mode = False
+
+if lock_file.exists():
+    logger.critical("FATAL LOOP DETECTED: 'booting.lock' found from a previous crashed startup.")
+    logger.critical("Booting into SAFE MODE. All community plugins will be disabled.")
+    safe_mode = True
+else:
+    logger.info("Writing boot lock file...")
+    try:
+        lock_file.touch()
+    except Exception as e:
+        logger.warning(f"Could not create boot lock file: {e}")
+
+# Inject safe mode into the app configuration dynamically so other components (like PluginLoader) can see it
+# Alternatively, we could set an environment variable or directly configure the PluginLoader.
+# Setting it in environment is reliable.
+if safe_mode:
+    os.environ['SOULSYNC_SAFE_MODE'] = '1'
+
+
 # Run Phase 1 Database Migrations securely
 from core.migrations import run_migrations
 run_migrations()
+
+# Pillar 1: The Auto-Migrator
+from core.migrations import run_auto_migrations
+run_auto_migrations()
 
 # Run Phase 2: working.db column migrations (must run after working DB engine is initialised)
 from database.working_database import get_working_database
@@ -53,6 +83,15 @@ if __name__ == "__main__":
     print(f"[API] Starting HTTP backend on http://0.0.0.0:5000/api")
 
     app = create_app()
+
+    # Initialization successful - clear the boot lock so the next boot is normal
+    if not safe_mode and lock_file.exists():
+        try:
+            lock_file.unlink()
+            logger.info("Boot successful. Removed boot lock file.")
+        except Exception as e:
+            logger.error(f"Failed to remove boot lock file: {e}")
+
     # Run in standard HTTP mode
     # debug=True enables the reloader and debugger, which is only desired in DEV_MODE
     app.run(host="0.0.0.0", port=5000, debug=dev_mode)

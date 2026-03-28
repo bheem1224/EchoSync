@@ -48,6 +48,7 @@ class Artist(Base):
     sort_name: Mapped[Optional[str]] = mapped_column(String)
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True)
     image_url: Mapped[Optional[str]] = mapped_column(String)
+    metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
 
     albums: Mapped[List["Album"]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
@@ -107,6 +108,7 @@ class Track(Base):
     isrc: Mapped[Optional[str]] = mapped_column(String)
     acoustid_id: Mapped[Optional[str]] = mapped_column(String)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
+    metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
 
     album: Mapped[Optional[Album]] = relationship(back_populates="tracks")
     artist: Mapped[Artist] = relationship(back_populates="tracks")
@@ -209,49 +211,7 @@ class MusicDatabase:
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
 
     def create_all(self) -> None:
-        Base.metadata.create_all(self.engine)
-        self._ensure_track_columns()
-        self._drop_legacy_tables()
-
-    def _ensure_track_columns(self) -> None:
-        """Best-effort migration for tracks columns introduced after initial rollout.
-        
-        Uses PRAGMA table_info to detect missing columns and adds them dynamically
-        if they don't exist. This ensures Docker containers with older schema versions
-        automatically patch themselves without manual migrations.
-        """
-        required_columns = {
-            "isrc": "TEXT",
-            "acoustid_id": "TEXT",
-        }
-
-        try:
-            with self.engine.begin() as conn:
-                existing_rows = conn.exec_driver_sql("PRAGMA table_info('tracks')").fetchall()
-                existing = {str(row[1]) for row in existing_rows}
-
-                for column_name, ddl in required_columns.items():
-                    if column_name not in existing:
-                        conn.exec_driver_sql(
-                            f"ALTER TABLE tracks ADD COLUMN {column_name} {ddl}"
-                        )
-        except Exception:
-            # Non-fatal; metadata create_all already guarantees fresh schemas include columns.
-            pass
-
-    def _drop_legacy_tables(self) -> None:
-        """Drop legacy tables that were migrated to the working database."""
-        legacy_tables = (
-            "users",
-            "user_ratings",
-            "downloads",
-            "review_tasks",
-            "watchlist_artists",
-            "wishlist",
-        )
-        with self.engine.begin() as conn:
-            for table_name in legacy_tables:
-                conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table_name}")
+        pass
 
     def drop_all(self) -> None:
         Base.metadata.drop_all(self.engine)
@@ -624,7 +584,6 @@ def get_database(database_path: Optional[str] = None) -> MusicDatabase:
     global _db_instance
     if _db_instance is None:
         _db_instance = MusicDatabase(database_path)
-        _db_instance.create_all()
     return _db_instance
 
 

@@ -17,7 +17,8 @@ class _Bus:
 
 def _build_working_db(tmp_path: Path) -> WorkingDatabase:
     db = WorkingDatabase(str(tmp_path / "working_state_listener.db"))
-    db.create_all()
+    from database.working_database import WorkingBase
+    WorkingBase.metadata.create_all(db.engine)
     return db
 
 

@@ -524,7 +524,7 @@ class UserHistoryService:
             work_session.execute(upsert_stmt)
             return
 
-        sync_ids = [payload['sync_id'] for payload in rating_payloads]
+        sync_ids = [payload['sync_id'].split('?')[0] for payload in rating_payloads]
         existing_sync_ids = {
             sync_id
             for (sync_id,) in work_session.query(UserRating.sync_id).filter(

@@ -27,6 +27,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import (
+    validates,
     DeclarativeBase,
     Mapped,
     Session,
@@ -84,6 +85,12 @@ class UserRating(WorkingBase):
     play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
+    @validates('sync_id')
+    def validate_sync_id(self, key, sync_id):
+        if sync_id:
+            return str(sync_id).split('?')[0]
+        return sync_id
+
 
 class WatchlistArtist(WorkingBase):
     """Model for tracking watched artists and their scan status."""
@@ -129,6 +136,12 @@ class Download(WorkingBase):
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
+    @validates('sync_id')
+    def validate_sync_id(self, key, sync_id):
+        if sync_id:
+            return str(sync_id).split('?')[0]
+        return sync_id
+
 
 class UserTrackState(WorkingBase):
     __tablename__ = "user_track_states"
@@ -153,6 +166,12 @@ class UserTrackState(WorkingBase):
 
     user: Mapped[User] = relationship(back_populates="track_states", foreign_keys=[user_id])
     sponsor: Mapped[Optional[User]] = relationship(foreign_keys=[sponsor_id])
+
+    @validates('sync_id')
+    def validate_sync_id(self, key, sync_id):
+        if sync_id:
+            return str(sync_id).split('?')[0]
+        return sync_id
 
 
 class UserArtistRating(WorkingBase):
@@ -298,6 +317,12 @@ class SuggestionStagingQueue(WorkingBase):
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
+    @validates('sync_id')
+    def validate_sync_id(self, key, sync_id):
+        if sync_id:
+            return str(sync_id).split('?')[0]
+        return sync_id
+
 
 class ProviderStorageBox:
     """Sandbox wrapper for providers to create their own tables."""
@@ -377,89 +402,7 @@ class WorkingDatabase:
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
 
     def create_all(self) -> None:
-        WorkingBase.metadata.create_all(self.engine)
-        self._drop_legacy_tables()
-        self._ensure_user_rating_columns()
-        self._ensure_user_track_state_columns()
-        self._ensure_media_server_playlist_columns()
-
-    def _drop_legacy_tables(self) -> None:
-        """Drop legacy working DB tables that are no longer part of the schema."""
-        with self.engine.begin() as conn:
-            conn.exec_driver_sql("DROP TABLE IF EXISTS wishlist")
-
-    def _ensure_user_track_state_columns(self) -> None:
-        """Best-effort migration for new user_track_states override columns."""
-        required_columns = {
-            "admin_exempt_deletion": "BOOLEAN NOT NULL DEFAULT 0",
-            "admin_force_upgrade": "BOOLEAN NOT NULL DEFAULT 0",
-            "lifecycle_action": "TEXT",
-            "lifecycle_queued_at": "DATETIME",
-        }
-
-        try:
-            with self.engine.begin() as conn:
-                existing_rows = conn.exec_driver_sql("PRAGMA table_info('user_track_states')").fetchall()
-                existing = {str(row[1]) for row in existing_rows}
-
-                for column_name, ddl in required_columns.items():
-                    if column_name not in existing:
-                        conn.exec_driver_sql(
-                            f"ALTER TABLE user_track_states ADD COLUMN {column_name} {ddl}"
-                        )
-        except Exception:
-            # Non-fatal; metadata create_all already guarantees fresh schemas include columns.
-            pass
-
-    def _ensure_user_rating_columns(self) -> None:
-        """Best-effort migration for user_ratings columns introduced after initial rollout."""
-        required_columns = {
-            "play_count": "INTEGER NOT NULL DEFAULT 0",
-        }
-
-        try:
-            with self.engine.begin() as conn:
-                existing_rows = conn.exec_driver_sql("PRAGMA table_info('user_ratings')").fetchall()
-                existing = {str(row[1]) for row in existing_rows}
-
-                for column_name, ddl in required_columns.items():
-                    if column_name not in existing:
-                        conn.exec_driver_sql(
-                            f"ALTER TABLE user_ratings ADD COLUMN {column_name} {ddl}"
-                        )
-        except Exception:
-            # Non-fatal; metadata create_all already guarantees fresh schemas include columns.
-            pass
-
-    def _ensure_media_server_playlist_columns(self) -> None:
-        """Best-effort migration: creates media server playlist tables for databases
-        created before the MediaServerPlaylist models were introduced (pre-v2.2).
-        ``WorkingBase.metadata.create_all`` is idempotent for *new* installs;
-        this helper handles the ALTER / CREATE path for *existing* databases."""
-        try:
-            with self.engine.begin() as conn:
-                conn.exec_driver_sql("""
-                    CREATE TABLE IF NOT EXISTS media_server_playlists (
-                        id          INTEGER PRIMARY KEY,
-                        server_source TEXT NOT NULL,
-                        playlist_id   TEXT NOT NULL,
-                        name          TEXT NOT NULL,
-                        updated_at    DATETIME,
-                        UNIQUE(server_source, playlist_id)
-                    )
-                """)
-                conn.exec_driver_sql("""
-                    CREATE TABLE IF NOT EXISTS media_server_playlist_items (
-                        id               INTEGER PRIMARY KEY,
-                        playlist_id      INTEGER NOT NULL
-                            REFERENCES media_server_playlists(id) ON DELETE CASCADE,
-                        provider_item_id TEXT NOT NULL,
-                        UNIQUE(playlist_id, provider_item_id)
-                    )
-                """)
-        except Exception:
-            # Non-fatal — fresh installs are covered by create_all above.
-            pass
+        pass
 
     def drop_all(self) -> None:
         WorkingBase.metadata.drop_all(self.engine)
@@ -511,7 +454,6 @@ def get_working_database(database_path: Optional[str] = None) -> WorkingDatabase
     global _working_db_instance
     if _working_db_instance is None:
         _working_db_instance = WorkingDatabase(database_path)
-        _working_db_instance.create_all()
     return _working_db_instance
 
 

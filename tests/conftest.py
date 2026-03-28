@@ -107,7 +107,8 @@ def mock_work_db(tmp_path):
     from database.working_database import WorkingDatabase
     db_path = tmp_path / "working.db"
     work_db = WorkingDatabase(str(db_path))
-    work_db.create_all()
+    from database.working_database import WorkingBase
+    WorkingBase.metadata.create_all(work_db.engine)
     yield work_db
     work_db.dispose()
 
@@ -116,6 +117,7 @@ def mock_db(tmp_path):
     from database.music_database import MusicDatabase
     db_path = tmp_path / "music.db"
     db = MusicDatabase(str(db_path))
-    db.create_all()
+    from database.music_database import Base
+    Base.metadata.create_all(db.engine)
     yield db
     db.dispose()

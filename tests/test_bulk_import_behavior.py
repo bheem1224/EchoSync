@@ -8,7 +8,8 @@ from database.bulk_operations import LibraryManager
 def _make_manager(tmpdir):
     db_path = os.path.join(tmpdir, "library.db")
     db = MusicDatabase(database_path=db_path)
-    db.create_all()
+    from database.music_database import Base
+    Base.metadata.create_all(db.engine)
     return db, LibraryManager(db.session_factory)
 
 

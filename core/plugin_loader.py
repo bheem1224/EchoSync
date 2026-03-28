@@ -59,6 +59,17 @@ class PluginSecurityScanner(ast.NodeVisitor):
         # Each entry is (line_number, human_readable_description)
         self.violations: list = []
 
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if alias.name in ("os", "subprocess", "sqlite3", "sys"):
+                self.violations.append((node.lineno, f"forbidden import '{alias.name}'"))
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module in ("os", "subprocess", "sqlite3", "sys"):
+            self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
         func = node.func
 
@@ -111,11 +122,15 @@ class PluginLoader:
         logger.info("Starting plugin discovery...")
         logger.debug(f"Using plugins directory: {self.plugins_dir}")
 
+        safe_mode = os.environ.get('SOULSYNC_SAFE_MODE') == '1'
+
         # 1. Load Core Providers
         self._scan_directory(self.providers_dir, source_type='core')
 
         # 2. Load Community Plugins (if directory exists)
-        if self.plugins_dir.exists():
+        if safe_mode:
+            logger.critical("SAFE MODE is active. Skipping discovery of community plugins.")
+        elif self.plugins_dir.exists():
             self._scan_directory(self.plugins_dir, source_type='community')
         else:
             logger.debug("No plugins/ directory found. Skipping community plugins.")
