@@ -1,3 +1,4 @@
+import asyncio
 from typing import Callable, Dict, List, Any
 
 class HookManager:
@@ -25,6 +26,8 @@ class HookManager:
             for callback in self._filters[hook_name]:
                 try:
                     value = callback(value, *args, **kwargs)
+                    if asyncio.iscoroutine(value):
+                        raise TypeError('Async hooks are not supported in apply_filters')
                 except Exception as e:
                     import logging
                     logging.getLogger("hook_manager").error(

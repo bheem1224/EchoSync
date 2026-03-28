@@ -122,3 +122,13 @@ def initialize_plugin():
 
 # Auto-initialize when the PluginLoader imports this module
 initialize_plugin()
+
+
+# ── HOOK 5: Registry Override ───────────────────────────────────────────────
+from core.provider import ServiceRegistry
+from core.matching_engine.matching_engine import WeightedMatchingEngine
+
+class CJKMatchingEngine(WeightedMatchingEngine):
+    pass
+
+ServiceRegistry.register_override('com.soulsync.cjk-pack', CJKMatchingEngine)

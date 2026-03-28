@@ -23,6 +23,7 @@ from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
+from core.provider import ServiceRegistry
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from database.working_database import get_working_database, ReviewTask
@@ -57,6 +58,7 @@ class MetadataEnhancerService:
         from core.matching_engine.fingerprinting import FingerprintGenerator
         from core.matching_engine.soul_sync_track import SoulSyncTrack
         from core.matching_engine.matching_engine import WeightedMatchingEngine
+        from core.provider import ServiceRegistry
         from pathlib import Path
 
         db = get_database()
@@ -145,7 +147,8 @@ class MetadataEnhancerService:
                                 album_title=track.album.title if track.album else "",
                                 duration=duration
                             )
-                            matcher = WeightedMatchingEngine(ExactSyncProfile())
+                            engine_cls = ServiceRegistry.resolve('matching_engine')
+                            matcher = engine_cls(ExactSyncProfile())
                             best_score = 0.0
 
                             for candidate in results:
@@ -194,7 +197,7 @@ class MetadataEnhancerService:
                         _tagging_write(local_path, update_tags)
 
                 # Apply post-enrichment hooks before SQLAlchemy auto-commits at the end of the session context
-                hook_manager.apply_filters('post_metadata_enrichment', track)
+                track = hook_manager.apply_filters('post_metadata_enrichment', track)
 
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
         """
@@ -275,7 +278,8 @@ class MetadataEnhancerService:
                         
                         if candidate_tracks:
                             # Use matching engine with EXACT_SYNC profile
-                            matcher = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
+                            engine_cls = ServiceRegistry.resolve('matching_engine')
+                            matcher = engine_cls(PROFILE_EXACT_SYNC)
                             best_score = 0.0
                             best_mbid = None
                             

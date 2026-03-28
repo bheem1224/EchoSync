@@ -482,6 +482,9 @@ class UserHistoryService:
         if not rating_payloads:
             return
 
+        for p in rating_payloads:
+            p['sync_id'] = str(p['sync_id']).split('?')[0]
+
         if self.working_db.engine.dialect.name == 'sqlite':
             # Backward compatibility: some existing working.db files have
             # user_ratings.rating declared NOT NULL. Listen-only rows (rating=None)
