@@ -32,6 +32,38 @@ class FingerprintGenerator:
         return path.suffix.lower() in FingerprintGenerator.SUPPORTED_FORMATS
 
     @staticmethod
+    def _get_channel_count(file_path: str) -> Optional[int]:
+        """Return the channel count for an audio file using mutagen, or None on failure."""
+        try:
+            suffix = Path(file_path).suffix.lower()
+            if suffix == '.flac':
+                from mutagen.flac import FLAC
+                return FLAC(file_path).info.channels
+            elif suffix == '.mp3':
+                from mutagen.mp3 import MP3
+                return MP3(file_path).info.channels
+            elif suffix in ('.m4a', '.aac', '.alac'):
+                from mutagen.mp4 import MP4
+                return MP4(file_path).info.channels
+            elif suffix == '.ogg':
+                from mutagen.oggvorbis import OggVorbis
+                return OggVorbis(file_path).info.channels
+            elif suffix == '.opus':
+                from mutagen.oggopus import OggOpus
+                return OggOpus(file_path).info.channels
+            elif suffix == '.wma':
+                from mutagen.asf import ASF
+                return ASF(file_path).info.channels
+            elif suffix == '.wav':
+                from mutagen.wave import WAVE
+                return WAVE(file_path).info.channels
+            # .ape and any unknown formats: skip the check
+            return None
+        except Exception as e:
+            logger.debug("Could not probe channel count for %s: %s", file_path, e)
+            return None
+
+    @staticmethod
     def generate(file_path: str) -> Optional[str]:
         """
         Generate Chromaprint fingerprint from audio file
@@ -54,6 +86,15 @@ class FingerprintGenerator:
 
         if not FingerprintGenerator.can_fingerprint(file_path):
             logger.warning(f"Cannot fingerprint {file_path}: unsupported format")
+            return None
+
+        channels = FingerprintGenerator._get_channel_count(file_path)
+        if channels is not None and channels > 2:
+            logger.warning(
+                "Skipping AcoustID fingerprinting for multi-channel audio "
+                "(>2 channels) to prevent C-library segfaults: %s (%d ch)",
+                file_path, channels,
+            )
             return None
 
         try:
@@ -107,6 +148,15 @@ class FingerprintGenerator:
 
         if not FingerprintGenerator.can_fingerprint(file_path):
             logger.warning(f"Cannot fingerprint {file_path}: unsupported format")
+            return None, None
+
+        channels = FingerprintGenerator._get_channel_count(file_path)
+        if channels is not None and channels > 2:
+            logger.warning(
+                "Skipping AcoustID fingerprinting for multi-channel audio "
+                "(>2 channels) to prevent C-library segfaults: %s (%d ch)",
+                file_path, channels,
+            )
             return None, None
 
         try:
