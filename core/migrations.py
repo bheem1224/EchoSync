@@ -193,12 +193,18 @@ def _engine_for_env(env: str):
     return None
 
 
-# Maps each Alembic environment to (sentinel_table, v2_3_0_baseline_revision).
-# The Smart Inspector checks these to decide whether a legacy database needs
-# to be stamped before upgrade() runs.
+# Maps each Alembic environment to:
+#   (v2_3_0_sentinel_table, v2_3_0_baseline_revision, v2_4_0_sentinel_table_or_None)
+#
+# v2_3_0_sentinel  — any table present in all v2.3.0 pre-Alembic databases.
+# v2_4_0_sentinel  — a *new table* added by the v2.4.0 upgrade migration, used
+#                    to detect a partial-upgrade state (tables created, but
+#                    alembic_version still absent).  None when the v2.4.0 upgrade
+#                    only adds columns (not tables), so no table-based check is
+#                    possible for that environment.
 _ENV_LEGACY_BASELINE = {
-    "alembic:working": ("downloads", "4661df33cf8b"),
-    "alembic:music":   ("tracks",    "cb4f02f432ea"),
+    "alembic:working": ("downloads", "4661df33cf8b", None),
+    "alembic:music":   ("tracks",    "cb4f02f432ea", "track_aliases"),
     # alembic:config has no application tables — no legacy adoption needed.
 }
 
@@ -218,7 +224,7 @@ def run_auto_migrations() -> None:
     on tables that already exist and crash with OperationalError.
 
     For each environment that has a legacy baseline, the Smart Inspector runs
-    three-case logic before upgrade():
+    four-case logic before upgrade():
 
     * **has_alembic is True** → Normal flow: database is already Alembic-managed,
       just run upgrade("head").
@@ -226,10 +232,14 @@ def run_auto_migrations() -> None:
     * **has_alembic is False, has_legacy is False** → Fresh install: truly empty
       database, run upgrade("head") from scratch.
 
-    * **has_alembic is False, has_legacy is True** → Legacy adoption: v2.3.0
-      tables exist without an alembic_version record.  Stamp the database at
-      the v2.3.0 baseline revision so that upgrade("head") only applies the
-      new v2.4.0 additions without touching existing tables.
+    * **has_alembic is False, has_legacy is True, has_v2_4_0 is True** → Partial
+      upgrade: v2.4.0 tables were already created (e.g. by a previous interrupted
+      run) but alembic_version is absent.  Stamp at "head" to sync the timeline
+      without running any DDL.
+
+    * **has_alembic is False, has_legacy is True, has_v2_4_0 is False** → Pure
+      v2.3.0 legacy: stamp at the v2.3.0 baseline revision, then upgrade to head
+      to apply only the v2.4.0 additions.
     """
     from alembic import command
     from alembic.config import Config
@@ -260,13 +270,13 @@ def run_auto_migrations() -> None:
 
         # ── Smart Inspector ───────────────────────────────────────────────────
         if env in _ENV_LEGACY_BASELINE:
-            sentinel_table, baseline_rev = _ENV_LEGACY_BASELINE[env]
+            sentinel_table, baseline_rev, v2_4_0_sentinel = _ENV_LEGACY_BASELINE[env]
             engine = _engine_for_env(env)
 
             if engine is not None:
-                inspector = sa_inspect(engine)
-                has_alembic = inspector.has_table("alembic_version")
-                has_legacy  = inspector.has_table(sentinel_table)
+                inspector         = sa_inspect(engine)
+                has_alembic       = inspector.has_table("alembic_version")
+                has_legacy_table  = inspector.has_table(sentinel_table)
 
                 if has_alembic:
                     # ── Case 1: Normal flow ───────────────────────────────────
@@ -281,7 +291,7 @@ def run_auto_migrations() -> None:
                         raise
                     continue
 
-                if not has_legacy:
+                elif not has_legacy_table:
                     # ── Case 2: Fresh install ─────────────────────────────────
                     logger.info(
                         "%s: fresh database (no tables) — running full upgrade to head.", env
@@ -294,30 +304,64 @@ def run_auto_migrations() -> None:
                         raise
                     continue
 
-                # ── Case 3: Legacy adoption ───────────────────────────────────
-                # v2.3.0 tables present, no alembic_version → stamp at baseline
-                # so upgrade() only runs the v2.4.0 additions.
-                logger.info(
-                    "%s: legacy database detected (table '%s' exists, alembic_version absent)"
-                    " — stamping at v2.3.0 baseline %s, then upgrading to head.",
-                    env, sentinel_table, baseline_rev,
-                )
-                try:
-                    command.stamp(alembic_cfg, baseline_rev)
-                    logger.info("%s stamped at %s.", env, baseline_rev)
-                except Exception as e:
-                    logger.error(
-                        "Failed to stamp %s at baseline %s: %s", env, baseline_rev, e,
-                        exc_info=True,
+                else:
+                    # Legacy database: has v2.3.0 tables but no alembic_version.
+                    # Check whether the v2.4.0 DDL was already applied (partial
+                    # upgrade) so we never call upgrade() on tables that exist.
+                    has_v2_4_0 = (
+                        inspector.has_table(v2_4_0_sentinel)
+                        if v2_4_0_sentinel is not None
+                        else False
                     )
-                    raise
-                try:
-                    command.upgrade(alembic_cfg, "head")
-                    logger.info("Successfully migrated %s to head.", env)
-                except Exception as e:
-                    logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
-                    raise
-                continue
+
+                    if has_v2_4_0:
+                        # ── Case 3: Partial upgrade ───────────────────────────
+                        # v2.4.0 tables are present but alembic_version is absent
+                        # (previous run created the tables then crashed before
+                        # committing the version record).  Stamp at head to sync
+                        # Alembic's timeline without running any DDL.
+                        logger.info(
+                            "%s: partial upgrade detected (table '%s' exists, "
+                            "alembic_version absent) — stamping at head to sync timeline.",
+                            env, v2_4_0_sentinel,
+                        )
+                        try:
+                            command.stamp(alembic_cfg, "head")
+                            logger.info("%s stamped at head.", env)
+                        except Exception as e:
+                            logger.error(
+                                "Failed to stamp %s at head: %s", env, e, exc_info=True
+                            )
+                            raise
+
+                    else:
+                        # ── Case 4: Pure v2.3.0 legacy adoption ──────────────
+                        # Only the baseline tables exist.  Stamp at the v2.3.0
+                        # baseline revision so upgrade() applies only the v2.4.0
+                        # additions without touching existing tables.
+                        logger.info(
+                            "%s: legacy database detected (table '%s' exists, "
+                            "alembic_version absent) — stamping at v2.3.0 baseline %s, "
+                            "then upgrading to head.",
+                            env, sentinel_table, baseline_rev,
+                        )
+                        try:
+                            command.stamp(alembic_cfg, baseline_rev)
+                            logger.info("%s stamped at %s.", env, baseline_rev)
+                        except Exception as e:
+                            logger.error(
+                                "Failed to stamp %s at baseline %s: %s", env, baseline_rev, e,
+                                exc_info=True,
+                            )
+                            raise
+                        try:
+                            command.upgrade(alembic_cfg, "head")
+                            logger.info("Successfully migrated %s to head.", env)
+                        except Exception as e:
+                            logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
+                            raise
+
+                    continue
 
         # ── No legacy baseline for this environment (alembic:config) ─────────
         try:
