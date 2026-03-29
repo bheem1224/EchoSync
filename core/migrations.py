@@ -179,8 +179,8 @@ def run_migrations() -> None:
         logger.error(f"Migration script encountered an error: {e}")
 
 
-def _get_engine_for_env(env: str):
-    """Return the SQLAlchemy engine that backs the given Alembic environment name."""
+def _engine_for_env(env: str):
+    """Return the live SQLAlchemy engine for the given Alembic environment name."""
     if env == "alembic:working":
         from database.working_database import get_working_database
         return get_working_database().engine
@@ -193,108 +193,138 @@ def _get_engine_for_env(env: str):
     return None
 
 
-# Maps each Alembic environment to (sentinel_table, initial_revision_id).
-# The sentinel table is any table created by that environment's initial
-# migration.  If the sentinel exists but alembic_version does not, the
-# database was created outside of Alembic (e.g. via metadata.create_all())
-# and must be stamped before upgrade() can run.
-_ENV_STAMP_INFO = {
+# Maps each Alembic environment to (sentinel_table, v2_3_0_baseline_revision).
+# The Smart Inspector checks these to decide whether a legacy database needs
+# to be stamped before upgrade() runs.
+_ENV_LEGACY_BASELINE = {
     "alembic:working": ("downloads", "4661df33cf8b"),
     "alembic:music":   ("tracks",    "cb4f02f432ea"),
-    # alembic:config initial migration is empty (no tables), no stamp needed.
+    # alembic:config has no application tables — no legacy adoption needed.
 }
-
-
-def _stamp_if_unversioned(engine, alembic_cfg, initial_revision: str, sentinel_table: str) -> None:
-    """Stamp a pre-Alembic database at its initial revision if required.
-
-    When a database was bootstrapped via ``metadata.create_all()`` (outside
-    Alembic), the ``alembic_version`` table doesn't exist.  Running
-    ``command.upgrade("head")`` from that state would try to CREATE TABLE on
-    tables that already exist, causing an OperationalError.
-
-    This function detects that state and stamps the database with
-    *initial_revision* so that ``upgrade("head")`` only executes migrations
-    that are genuinely newer than the initial schema.
-    """
-    from alembic import command
-    from sqlalchemy import inspect as sa_inspect
-
-    try:
-        inspector = sa_inspect(engine)
-        existing = set(inspector.get_table_names())
-    except Exception as exc:
-        logger.warning("Could not inspect tables for stamp check: %s", exc)
-        return
-
-    has_app_tables = sentinel_table in existing
-    has_alembic_version = "alembic_version" in existing
-
-    if has_app_tables and not has_alembic_version:
-        logger.info(
-            "Pre-Alembic database detected (table '%s' exists, alembic_version absent). "
-            "Stamping at revision %s — upgrade will only run newer migrations.",
-            sentinel_table, initial_revision,
-        )
-        try:
-            command.stamp(alembic_cfg, initial_revision)
-        except Exception as exc:
-            logger.error("Failed to stamp database at %s: %s", initial_revision, exc, exc_info=True)
-            raise
 
 
 def run_auto_migrations() -> None:
     """
     Pillar 1: The Auto-Migrator
-    Programmatically loops through the three database environments (config, working, music)
-    and executes Alembic command.upgrade("head") to safely migrate database schemas.
 
-    Pre-Alembic databases
-    ---------------------
-    Databases created with ``metadata.create_all()`` before Alembic was
-    introduced have all application tables but no ``alembic_version`` record.
-    A pre-flight stamp at the initial revision is inserted for those databases
-    so that ``upgrade("head")`` only runs genuinely new migrations and never
-    tries to re-create tables that already exist.
+    Loops through the three database environments (config, working, music)
+    and brings each schema to head via Alembic.
+
+    Smart Inspector — Legacy Database Adoption
+    ------------------------------------------
+    v2.3.0 databases were bootstrapped with ``metadata.create_all()`` and
+    therefore have no ``alembic_version`` table.  Calling
+    ``command.upgrade("head")`` on such a database would try to CREATE TABLE
+    on tables that already exist and crash with OperationalError.
+
+    For each environment that has a legacy baseline, the Smart Inspector runs
+    three-case logic before upgrade():
+
+    * **has_alembic is True** → Normal flow: database is already Alembic-managed,
+      just run upgrade("head").
+
+    * **has_alembic is False, has_legacy is False** → Fresh install: truly empty
+      database, run upgrade("head") from scratch.
+
+    * **has_alembic is False, has_legacy is True** → Legacy adoption: v2.3.0
+      tables exist without an alembic_version record.  Stamp the database at
+      the v2.3.0 baseline revision so that upgrade("head") only applies the
+      new v2.4.0 additions without touching existing tables.
     """
     from alembic import command
     from alembic.config import Config
+    from sqlalchemy import inspect as sa_inspect
 
     logger.info("Starting automatic database schema migrations via Alembic...")
 
-    # The alembic.ini is at the project root
     alembic_cfg_path = Path(__file__).parent.parent / "alembic.ini"
 
     environments = [
         "alembic:config",
         "alembic:working",
-        "alembic:music"
+        "alembic:music",
     ]
 
     for env in environments:
-        logger.info(f"Running Alembic migrations for environment: {env}")
+        logger.info("Running Alembic migrations for environment: %s", env)
+
         alembic_cfg = Config(str(alembic_cfg_path))
-
-        # Override the logger config so alembic doesn't reset our tiered logger
+        # Prevent Alembic from resetting our tiered logger configuration.
         alembic_cfg.attributes['configure_logger'] = False
+        # Override the active section: our alembic.ini uses [alembic:*] sections
+        # instead of the default [alembic].
+        alembic_cfg.set_main_option(
+            "script_location",
+            alembic_cfg.get_section_option(env, "script_location"),
+        )
 
-        # We must explicitly set the name of the section we are targeting
-        # because our alembic.ini uses custom sections instead of just [alembic]
-        alembic_cfg.set_main_option("script_location", alembic_cfg.get_section_option(env, "script_location"))
+        # ── Smart Inspector ───────────────────────────────────────────────────
+        if env in _ENV_LEGACY_BASELINE:
+            sentinel_table, baseline_rev = _ENV_LEGACY_BASELINE[env]
+            engine = _engine_for_env(env)
 
-        # Pre-flight: stamp pre-Alembic databases so upgrade() doesn't try to
-        # re-create tables that were built by metadata.create_all().
-        if env in _ENV_STAMP_INFO:
-            sentinel_table, initial_revision = _ENV_STAMP_INFO[env]
-            engine = _get_engine_for_env(env)
             if engine is not None:
-                _stamp_if_unversioned(engine, alembic_cfg, initial_revision, sentinel_table)
+                inspector = sa_inspect(engine)
+                has_alembic = inspector.has_table("alembic_version")
+                has_legacy  = inspector.has_table(sentinel_table)
 
+                if has_alembic:
+                    # ── Case 1: Normal flow ───────────────────────────────────
+                    logger.info(
+                        "%s: alembic_version present — running upgrade to head.", env
+                    )
+                    try:
+                        command.upgrade(alembic_cfg, "head")
+                        logger.info("Successfully migrated %s to head.", env)
+                    except Exception as e:
+                        logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
+                        raise
+                    continue
+
+                if not has_legacy:
+                    # ── Case 2: Fresh install ─────────────────────────────────
+                    logger.info(
+                        "%s: fresh database (no tables) — running full upgrade to head.", env
+                    )
+                    try:
+                        command.upgrade(alembic_cfg, "head")
+                        logger.info("Successfully migrated %s to head.", env)
+                    except Exception as e:
+                        logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
+                        raise
+                    continue
+
+                # ── Case 3: Legacy adoption ───────────────────────────────────
+                # v2.3.0 tables present, no alembic_version → stamp at baseline
+                # so upgrade() only runs the v2.4.0 additions.
+                logger.info(
+                    "%s: legacy database detected (table '%s' exists, alembic_version absent)"
+                    " — stamping at v2.3.0 baseline %s, then upgrading to head.",
+                    env, sentinel_table, baseline_rev,
+                )
+                try:
+                    command.stamp(alembic_cfg, baseline_rev)
+                    logger.info("%s stamped at %s.", env, baseline_rev)
+                except Exception as e:
+                    logger.error(
+                        "Failed to stamp %s at baseline %s: %s", env, baseline_rev, e,
+                        exc_info=True,
+                    )
+                    raise
+                try:
+                    command.upgrade(alembic_cfg, "head")
+                    logger.info("Successfully migrated %s to head.", env)
+                except Exception as e:
+                    logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
+                    raise
+                continue
+
+        # ── No legacy baseline for this environment (alembic:config) ─────────
         try:
             command.upgrade(alembic_cfg, "head")
-            logger.info(f"Successfully migrated {env} to head.")
+            logger.info("Successfully migrated %s to head.", env)
         except Exception as e:
-            logger.error(f"Failed to migrate {env}: {e}", exc_info=True)
+            logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
             raise
 
 
