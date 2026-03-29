@@ -11,7 +11,9 @@ config = context.config
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-if config.config_file_name is not None:
+# Guard: when invoked programmatically (e.g. run_auto_migrations), the caller
+# sets configure_logger=False to prevent Alembic wiping our tiered log setup.
+if config.config_file_name is not None and config.attributes.get('configure_logger', True):
     fileConfig(config.config_file_name)
 
 # Config DB doesn't use SQLAlchemy models right now.
