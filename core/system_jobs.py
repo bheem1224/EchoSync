@@ -163,6 +163,16 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                     f"{worker.successful_operations} successful, {worker.failed_operations} failed"
                 )
 
+                # After syncing the library, kick off a metadata enhancement pass so
+                # newly-imported tracks don't wait up to 24 h for the daily job.
+                if worker.successful_operations > 0:
+                    try:
+                        from services.metadata_enhancer import get_metadata_enhancer
+                        logger.info("Database update: triggering post-import metadata enhancement pass")
+                        get_metadata_enhancer().enhance_library_metadata(batch_size=50)
+                    except Exception as _enhance_err:
+                        logger.warning(f"Post-import metadata enhancement failed: {_enhance_err}")
+
             except Exception as e:
                 logger.error(f"Failed to run database update worker: {e}", exc_info=True)
                 

@@ -156,7 +156,11 @@ class AudioFingerprint(Base):
     track_id: Mapped[int] = mapped_column(
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    fingerprint_hash: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    # chromaprint: raw locally-generated Chromaprint string (AcoustID algorithm output).
+    # acoustid_id: the AcoustID service's confirmed UUID for this recording (returned after lookup).
+    # These are deliberately separate — chromaprint is our local computation; acoustid_id is
+    # the external service's canonical identifier.
+    chromaprint: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     acoustid_id: Mapped[Optional[str]] = mapped_column(String)
 
     track: Mapped[Track] = relationship(back_populates="audio_fingerprints")

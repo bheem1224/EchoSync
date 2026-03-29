@@ -472,14 +472,14 @@ class LibraryManager:
         # Handle Audio Fingerprint
         if track_data.fingerprint:
             stmt = select(AudioFingerprint).where(
-                AudioFingerprint.fingerprint_hash == track_data.fingerprint
+                AudioFingerprint.chromaprint == track_data.fingerprint
             )
             af = session.execute(stmt).scalar_one_or_none()
 
             if af is None:
                 af = AudioFingerprint(
                     track=track,
-                    fingerprint_hash=track_data.fingerprint,
+                    chromaprint=track_data.fingerprint,
                     acoustid_id=track_data.acoustid_id
                 )
                 session.add(af)

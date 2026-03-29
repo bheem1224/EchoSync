@@ -177,18 +177,39 @@ class MetadataEnhancerService:
                 new_musicbrainz_id = None
                 new_isrc = None
 
-                # Step 2 (Local File Parsing): Read physical file tags first
+                # Step 2 (Local File Parsing): Read physical file tags first — cheapest
+                # possible source; no CPU fingerprinting and no network calls.
                 tags = _tagging_read(local_path)
                 if tags:
                     tag_mbid = tags.get('musicbrainz_id') or tags.get('recording_id')
                     tag_isrc = tags.get('isrc')
 
-                    if tag_mbid and tag_isrc:
-                        logger.info(f"Step 2 (Local Tags): Found MBID {tag_mbid} and ISRC {tag_isrc} for {local_path.name}")
+                    if tag_mbid:
+                        # MBID already embedded — nothing else to do for this track.
+                        logger.info(f"Step 2 (Local Tags): Found MBID {tag_mbid} for {local_path.name}")
                         track.musicbrainz_id = tag_mbid
-                        if not track.isrc:
+                        if tag_isrc and not track.isrc:
                             track.isrc = tag_isrc
                         continue  # Move to next track, DB updated
+
+                    # MBID not in tags but an ISRC was — store it so Step 2.5 can use it.
+                    if tag_isrc and not track.isrc:
+                        logger.info(f"Step 2 (Local Tags): Found ISRC {tag_isrc} for {local_path.name}, will attempt ISRC lookup")
+                        track.isrc = tag_isrc
+
+                # Step 2.5 (ISRC Fast-Path): If the track already has an ISRC stored in
+                # the DB (from previous scan or Step 2 above), resolve the MBID from
+                # MusicBrainz's dedicated ISRC endpoint.  This is far cheaper than
+                # fingerprint generation and more precise than the text-search fallback.
+                if track.isrc and metadata_provider and getattr(metadata_provider, 'supports_isrc_lookup', False):
+                    logger.debug(f"Step 2.5 (ISRC Lookup): Resolving MBID for ISRC {track.isrc} → {local_path.name}")
+                    try:
+                        isrc_result = metadata_provider.search_by_isrc(track.isrc)
+                        if isrc_result and isrc_result.musicbrainz_id:
+                            new_musicbrainz_id = isrc_result.musicbrainz_id
+                            logger.info(f"Step 2.5 (ISRC Lookup): MBID {new_musicbrainz_id} from ISRC {track.isrc}")
+                    except Exception as e:
+                        logger.warning(f"ISRC lookup failed for {track.isrc}: {e}")
 
                 # Prepare for identification
                 duration = track.duration or _tagging_read(local_path).get("duration")
@@ -197,38 +218,48 @@ class MetadataEnhancerService:
                 from database.music_database import AudioFingerprint
                 track_fp = session.query(AudioFingerprint).filter_by(track_id=track.id).first()
 
-                # Step 3 (DB AcoustID Fast-Path): fingerprint already stored — skip re-generation.
-                if track_fp and track_fp.acoustid_id and fingerprint_provider and duration:
-                    logger.debug(f"Step 3 (DB AcoustID Fast-Path): Resolving existing AcoustID for {local_path.name}")
+                # Step 3 (Stored Chromaprint Fast-Path): we already computed a chromaprint for
+                # this track in a previous run — reuse it to query AcoustID without re-reading
+                # the audio file.  Note: the chromaprint (raw Chromaprint string) is what the
+                # AcoustID /lookup endpoint consumes, NOT the acoustid_id UUID.
+                if not new_musicbrainz_id and track_fp and track_fp.chromaprint and fingerprint_provider and duration:
+                    logger.debug(f"Step 3 (Stored Chromaprint): Re-resolving via AcoustID for {local_path.name}")
                     try:
-                        mbids = fingerprint_provider.resolve_fingerprint(track_fp.acoustid_id, int(duration / 1000) if duration > 10000 else duration)
-                        if mbids:
-                            new_musicbrainz_id = mbids[0]
+                        duration_secs = int(duration / 1000) if duration > 10000 else duration
+                        details = fingerprint_provider.resolve_fingerprint_details(track_fp.chromaprint, duration_secs)
+                        if details.get('mbids'):
+                            new_musicbrainz_id = details['mbids'][0]
+                            logger.debug("Step 3: resolved MBID %s for %s", new_musicbrainz_id, local_path.name)
+                        # Also backfill the acoustid_id UUID if we didn't have it before.
+                        if details.get('acoustid_id') and not track_fp.acoustid_id:
+                            track_fp.acoustid_id = details['acoustid_id']
                     except Exception as e:
                         logger.warning(f"AcoustID fast-path resolution failed: {e}")
 
-                # Step 4 (Generate AcoustID): no fingerprint on record yet — compute one now.
-                if not new_musicbrainz_id and not (track_fp and track_fp.acoustid_id) and fingerprint_provider and duration:
-                    logger.debug(f"Step 4 (Generate AcoustID): Fingerprinting {local_path.name}")
+                # Step 4 (Generate Chromaprint): no chromaprint stored yet — compute one from
+                # the audio file, then look up the AcoustID UUID + MBIDs in one network call.
+                if not new_musicbrainz_id and not (track_fp and track_fp.chromaprint) and fingerprint_provider and duration:
+                    logger.debug(f"Step 4 (Generate Chromaprint): Fingerprinting {local_path.name}")
                     try:
-                        fingerprint = FingerprintGenerator.generate(str(local_path))
-                        if fingerprint:
+                        chromaprint = FingerprintGenerator.generate(str(local_path))
+                        if chromaprint:
                             found_new_data = True
+                            duration_secs = int(duration / 1000) if duration > 10000 else duration
 
-                            # Step 4a (Fingerprint Cache): before hitting the AcoustID network,
-                            # check audio_fingerprints for another track with this same chromaprint.
-                            # If a resolved entry exists, reuse its MBID without any network call.
+                            # Step 4a (Chromaprint Cache): before hitting the AcoustID network,
+                            # check if another track already has this exact chromaprint stored.
+                            # If a sibling with a resolved MBID exists reuse it (zero network calls).
                             cached_fp = session.query(AudioFingerprint).filter_by(
-                                fingerprint_hash=fingerprint
+                                chromaprint=chromaprint
                             ).first()
 
-                            if cached_fp and cached_fp.acoustid_id:
-                                # Another track shares this fingerprint — look for a resolved MBID.
+                            if cached_fp:
+                                # Identical chromaprint found — try to reuse a sibling MBID.
                                 linked_fp = (
                                     session.query(AudioFingerprint)
                                     .join(Track, AudioFingerprint.track_id == Track.id)
                                     .filter(
-                                        AudioFingerprint.acoustid_id == cached_fp.acoustid_id,
+                                        AudioFingerprint.chromaprint == chromaprint,
                                         AudioFingerprint.track_id != track.id,
                                         Track.musicbrainz_id.isnot(None),
                                         Track.musicbrainz_id != "NOT_FOUND",
@@ -238,30 +269,29 @@ class MetadataEnhancerService:
                                 if linked_fp:
                                     linked = session.get(Track, linked_fp.track_id)
                                     new_musicbrainz_id = linked.musicbrainz_id
-                                    track_fp = cached_fp  # reference for tag writing
+                                    track_fp = cached_fp
                                     logger.info(
-                                        "Step 4a (Cache Hit): MBID %s from fingerprint cache for %s",
+                                        "Step 4a (Chromaprint Cache Hit): MBID %s reused for %s",
                                         new_musicbrainz_id, local_path.name,
                                     )
                                 else:
-                                    # Have cached acoustid_id but no resolved MBID — still need network
-                                    duration_secs = int(duration / 1000) if duration > 10000 else duration
-                                    mbids = fingerprint_provider.resolve_fingerprint(
-                                        cached_fp.acoustid_id, duration_secs
-                                    )
-                                    if mbids:
-                                        new_musicbrainz_id = mbids[0]
+                                    # Cached chromaprint but no resolved MBID — still need network.
+                                    details = fingerprint_provider.resolve_fingerprint_details(chromaprint, duration_secs)
+                                    if details.get('mbids'):
+                                        new_musicbrainz_id = details['mbids'][0]
+                                    if details.get('acoustid_id') and not cached_fp.acoustid_id:
+                                        cached_fp.acoustid_id = details['acoustid_id']
                                     track_fp = cached_fp
                             else:
-                                # No cached entry — hit network and persist fingerprint for future fast-path.
-                                duration_secs = int(duration / 1000) if duration > 10000 else duration
-                                mbids = fingerprint_provider.resolve_fingerprint(fingerprint, duration_secs)
-                                if mbids:
-                                    new_musicbrainz_id = mbids[0]
+                                # Completely new chromaprint — query AcoustID and persist both
+                                # the raw chromaprint and the returned AcoustID UUID.
+                                details = fingerprint_provider.resolve_fingerprint_details(chromaprint, duration_secs)
+                                if details.get('mbids'):
+                                    new_musicbrainz_id = details['mbids'][0]
                                 track_fp = AudioFingerprint(
                                     track_id=track.id,
-                                    fingerprint_hash=fingerprint,
-                                    acoustid_id=fingerprint,
+                                    chromaprint=chromaprint,
+                                    acoustid_id=details.get('acoustid_id'),  # AcoustID UUID, not the chromaprint
                                 )
                                 session.add(track_fp)
                     except Exception as e:

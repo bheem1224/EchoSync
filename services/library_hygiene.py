@@ -27,11 +27,11 @@ class DuplicateHygieneService:
         try:
             with self.db.session_scope() as session:
                 # 1. Find fingerprints with multiple tracks
-                # subquery: select fingerprint_hash from audio_fingerprints group by fingerprint_hash having count(*) > 1
+                # subquery: select chromaprint from audio_fingerprints group by chromaprint having count(*) > 1
 
                 subquery = (
-                    session.query(AudioFingerprint.fingerprint_hash)
-                    .group_by(AudioFingerprint.fingerprint_hash)
+                    session.query(AudioFingerprint.chromaprint)
+                    .group_by(AudioFingerprint.chromaprint)
                     .having(func.count(AudioFingerprint.id) > 1)
                 )
 
@@ -42,7 +42,7 @@ class DuplicateHygieneService:
                     # Get all tracks for this fingerprint
                     fingerprints = (
                         session.query(AudioFingerprint)
-                        .filter(AudioFingerprint.fingerprint_hash == fp_hash)
+                        .filter(AudioFingerprint.chromaprint == fp_hash)
                         .all()
                     )
 
@@ -72,7 +72,7 @@ class DuplicateHygieneService:
 
         return results
 
-    def _analyze_group(self, tracks: List[Track], fingerprint_hash: str) -> Dict:
+    def _analyze_group(self, tracks: List[Track], chromaprint: str) -> Dict:
         """
         Analyze a group of duplicate tracks to determine if they can be auto-resolved.
         """
@@ -114,7 +114,7 @@ class DuplicateHygieneService:
 
             return {
                 "type": "auto_resolve",
-                "fingerprint_hash": fingerprint_hash,
+                "chromaprint": chromaprint,
                 "keep": self._serialize_track(winner),
                 "delete": [self._serialize_track(t) for t in losers]
             }
@@ -122,7 +122,7 @@ class DuplicateHygieneService:
             # Scenario B: Manual Review
             return {
                 "type": "manual_review",
-                "fingerprint_hash": fingerprint_hash,
+                "chromaprint": chromaprint,
                 "tracks": serialized_tracks
             }
 

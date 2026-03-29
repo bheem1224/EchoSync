@@ -96,11 +96,11 @@ def upgrade() -> None:
     op.create_table('audio_fingerprints',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('track_id', sa.Integer(), nullable=False),
-    sa.Column('fingerprint_hash', sa.String(), nullable=False),
+    sa.Column('chromaprint', sa.String(), nullable=False),
     sa.Column('acoustid_id', sa.String(), nullable=True),
     sa.ForeignKeyConstraint(['track_id'], ['tracks.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('fingerprint_hash')
+    sa.UniqueConstraint('chromaprint')
     )
     with op.batch_alter_table('audio_fingerprints', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_audio_fingerprints_track_id'), ['track_id'], unique=False)

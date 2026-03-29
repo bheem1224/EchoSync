@@ -444,7 +444,7 @@
                         {#each duplicates as group}
                             <div class="group-item">
                                 <div class="group-meta">
-                                    <span class="fp">FP: {group.fingerprint_hash.substring(0, 8)}...</span>
+                                    <span class="fp">FP: {group.chromaprint.substring(0, 8)}...</span>
                                 </div>
                                 <div class="tracks-stack">
                                     {#each group.tracks as track}
