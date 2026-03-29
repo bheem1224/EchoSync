@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 import datetime
 
+from sqlalchemy.orm.attributes import flag_modified
 from core.enums import Capability
 from core.file_handling.local_io import LocalFileHandler
 from core.file_handling.tagging_io import read_tags as _tagging_read, write_tags as _tagging_write
@@ -230,6 +231,7 @@ class MetadataEnhancerService:
                         local_path.name, track.musicbrainz_id,
                     )
                     track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    flag_modified(track, "metadata_status")
                     total_processed += 1
                     continue
 
@@ -448,6 +450,7 @@ class MetadataEnhancerService:
 
                     # Apply post-enrichment hooks before SQLAlchemy auto-commits at the end of the session context
                     track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    flag_modified(track, "metadata_status")
                     total_processed += 1
 
                 except Exception as e:
