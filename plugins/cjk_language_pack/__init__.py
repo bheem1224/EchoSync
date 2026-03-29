@@ -472,30 +472,52 @@ def _on_post_metadata_enrichment(track_obj: Any) -> Any:
        False for non-CJK tracks so the enhancer won't requeue them on the next pass).
     2. Persist all script-variant TrackAlias rows for the track title (CJK only).
     3. Persist all script-variant ArtistAlias rows for the artist name (CJK only).
+
+    Design invariant: ``track_obj.metadata_status`` is always written BEFORE any
+    relationship lazy-load or alias-persistence work.  This prevents a silent
+    ``DetachedInstanceError`` (or any other ORM error thrown while accessing
+    ``track_obj.artist``) from propagating up to ``apply_filters`` and aborting
+    the hook before the stamp is persisted.
     """
     if not hasattr(track_obj, "metadata_status") or not hasattr(track_obj, "id"):
         return track_obj
 
     title = getattr(track_obj, "title", "") or ""
-    artist_obj = getattr(track_obj, "artist", None)
-    artist_name = (getattr(artist_obj, "name", "") or "") if artist_obj else ""
+
+    # Guard the artist relationship lazy-load with an explicit try/except so that a
+    # DetachedInstanceError or any other SQLAlchemy session error can never prevent
+    # the metadata_status stamp from being written below.
+    # (Python's built-in getattr(obj, attr, default) only catches AttributeError —
+    # it does NOT suppress DetachedInstanceError or other SQLAlchemy exceptions.)
+    artist_name = ""
+    try:
+        artist_obj = getattr(track_obj, "artist", None)
+        artist_name = (getattr(artist_obj, "name", "") or "") if artist_obj else ""
+    except Exception as _exc:
+        logger.debug(
+            "CJK plugin: could not load artist for Track ID %s (%s) — "
+            "CJK detection falls back to title-only.",
+            getattr(track_obj, "id", "?"), _exc,
+        )
 
     status = dict(track_obj.metadata_status or {})
+    is_cjk = _has_cjk(title) or _has_cjk(artist_name)
 
-    if not _has_cjk(title) and not _has_cjk(artist_name):
-        # Non-CJK track — stamp cjk_restored=False so it won't be requeued
-        if "cjk_restored" not in status:
-            status["cjk_restored"] = False
-            track_obj.metadata_status = status
+    # ── STAMP FIRST, before any further lazy-loads or alias persistence ───────
+    # Writing cjk_restored here guarantees the value reaches the DB even if the
+    # alias work below raises — the enhancer's flag_modified + session.commit()
+    # will capture whatever is currently assigned to track_obj.metadata_status.
+    if "cjk_restored" not in status:
+        status["cjk_restored"] = is_cjk
+        if is_cjk:
+            status["cjk_script_applied"] = status.get("release_script", "Latn")
+            logger.debug("Stamped cjk_restored for Track ID %s", track_obj.id)
+        track_obj.metadata_status = status
+
+    if not is_cjk:
         return track_obj
 
-    # Stamp metadata_status for CJK tracks
-    if "cjk_restored" not in status:
-        status["cjk_restored"] = True
-        status["cjk_script_applied"] = status.get("release_script", "Latn")
-        track_obj.metadata_status = status
-        logger.debug("Stamped cjk_restored for Track ID %s", track_obj.id)
-
+    # ── CJK-only: persist script-variant aliases ──────────────────────────────
     if _has_cjk(title):
         _persist_track_aliases(track_obj, _build_track_alias_entries(track_obj))
 
