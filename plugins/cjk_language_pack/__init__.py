@@ -79,30 +79,103 @@ def _on_pre_normalize_text(raw_text: str) -> str:
     return raw_text + " [Romaji/Pinyin Normalized]"
 
 
-# ── HOOK 4: Restore (post_metadata_enrichment) ────────────────────────────────
+# ── HOOK 4: Restore + Persist Aliases (post_metadata_enrichment) ─────────────
+
+def _build_alias_entries(track_obj: Any) -> list:
+    """
+    Derive localised alias entries from a track's metadata_status payload.
+
+    Expects metadata_status to optionally contain a 'cjk_aliases' list of dicts:
+      [{"name": "...", "locale": "zh", "script": "Hant", "is_primary_for_locale": True}, ...]
+
+    When the key is absent we synthesise a minimal Romaji/Pinyin placeholder so
+    the alias table is never left empty for a CJK track.
+    """
+    status = track_obj.metadata_status or {}
+    declared = status.get("cjk_aliases")
+    if declared and isinstance(declared, list):
+        return declared
+
+    # Synthesise Pinyin/Romaji placeholder from the existing title.
+    title = getattr(track_obj, "title", "") or ""
+    if not contains_cjk(title):
+        return []
+
+    return [
+        {
+            "name": title + " [Romaji/Pinyin]",
+            "locale": "en",
+            "script": "Latn",
+            "is_primary_for_locale": True,
+        }
+    ]
+
+
+def _persist_track_aliases(track_obj: Any, alias_entries: list) -> None:
+    """Write alias rows to the database, ignoring duplicates (upsert-safe)."""
+    if not alias_entries:
+        return
+    try:
+        from database.music_database import TrackAlias, get_database
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        db = get_database()
+        with db.session_scope() as session:
+            for entry in alias_entries:
+                name = entry.get("name") or ""
+                if not name:
+                    continue
+                existing = (
+                    session.query(TrackAlias)
+                    .filter_by(
+                        track_id=track_obj.id,
+                        locale=entry.get("locale"),
+                        script=entry.get("script"),
+                        name=name,
+                    )
+                    .first()
+                )
+                if existing is None:
+                    session.add(
+                        TrackAlias(
+                            track_id=track_obj.id,
+                            name=name,
+                            locale=entry.get("locale"),
+                            script=entry.get("script"),
+                            is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
+                        )
+                    )
+        logger.debug(
+            "Persisted %d alias row(s) for Track ID %s", len(alias_entries), track_obj.id
+        )
+    except Exception as exc:
+        # Never crash the enrichment pipeline — alias persistence is best-effort.
+        logger.warning("Failed to persist CJK aliases for Track ID %s: %s", track_obj.id, exc)
+
 
 def _on_post_metadata_enrichment(track_obj: Any) -> Any:
     """
-    Restores the original intent by looking at the fetched 'release_script'.
-    Overwrites the display title and ID3 tags with the accurate character set.
+    1. Marks cjk_restored on metadata_status so downstream code knows the
+       script was inspected.
+    2. Derives alias rows (Romaji, Pinyin, Traditional, etc.) and writes them
+       to the track_aliases table via the MusicDatabase session.
     """
-    # Assuming track_obj is a SQLAlchemy Track instance
-    if not hasattr(track_obj, 'metadata_status'):
+    if not hasattr(track_obj, 'metadata_status') or not hasattr(track_obj, 'id'):
         return track_obj
 
-    # In a real plugin, we would check track_obj.metadata_status.get('release_script') == 'Hant'
-    # and then apply OpenCC translation.
+    title = getattr(track_obj, "title", "") or ""
+    if not contains_cjk(title):
+        return track_obj
 
-    # MOCK IMPLEMENTATION:
-    # Since we don't have the actual DB fields easily populated in the mock, we simulate it
-    # by writing a flag into the JSON metadata_status block.
-
-    status = track_obj.metadata_status or {}
+    status = dict(track_obj.metadata_status or {})
     if "cjk_restored" not in status:
         status["cjk_restored"] = True
-        status["cjk_script_applied"] = "Mock_Traditional"
+        status["cjk_script_applied"] = status.get("release_script", "Latn")
         track_obj.metadata_status = status
-        logger.debug(f"Restored CJK character set for Track ID: {track_obj.id}")
+        logger.debug("Restored CJK character set for Track ID: %s", track_obj.id)
+
+    alias_entries = _build_alias_entries(track_obj)
+    _persist_track_aliases(track_obj, alias_entries)
 
     return track_obj
 

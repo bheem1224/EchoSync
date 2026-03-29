@@ -13,6 +13,7 @@ from time_utils import UTCDateTime, utc_now
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Date,
     DateTime,
     Float,
@@ -54,6 +55,9 @@ class Artist(Base):
         back_populates="artist", cascade="all, delete-orphan"
     )
     tracks: Mapped[List["Track"]] = relationship(
+        back_populates="artist", cascade="all, delete-orphan"
+    )
+    aliases: Mapped[List["ArtistAlias"]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
     )
 
@@ -118,6 +122,9 @@ class Track(Base):
     audio_fingerprints: Mapped[List["AudioFingerprint"]] = relationship(
         back_populates="track", cascade="all, delete-orphan"
     )
+    aliases: Mapped[List["TrackAlias"]] = relationship(
+        back_populates="track", cascade="all, delete-orphan"
+    )
 
     @hybrid_property
     def get_consensus_rating(self) -> int:
@@ -154,6 +161,44 @@ class AudioFingerprint(Base):
     acoustid_id: Mapped[Optional[str]] = mapped_column(String)
 
     track: Mapped[Track] = relationship(back_populates="audio_fingerprints")
+
+
+class TrackAlias(Base):
+    """Localised / transliterated names for a track (e.g. Romaji, Pinyin)."""
+    __tablename__ = "track_aliases"
+    __table_args__ = (
+        UniqueConstraint("track_id", "locale", "script", "name", name="uq_track_alias"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    track_id: Mapped[int] = mapped_column(
+        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    locale: Mapped[Optional[str]] = mapped_column(String)   # e.g. 'en', 'zh', 'ja'
+    script: Mapped[Optional[str]] = mapped_column(String)   # e.g. 'Latn', 'Hant', 'Hans', 'Hrkt'
+    is_primary_for_locale: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+    track: Mapped["Track"] = relationship(back_populates="aliases")
+
+
+class ArtistAlias(Base):
+    """Localised / transliterated names for an artist."""
+    __tablename__ = "artist_aliases"
+    __table_args__ = (
+        UniqueConstraint("artist_id", "locale", "script", "name", name="uq_artist_alias"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    artist_id: Mapped[int] = mapped_column(
+        ForeignKey("artists.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    locale: Mapped[Optional[str]] = mapped_column(String)
+    script: Mapped[Optional[str]] = mapped_column(String)
+    is_primary_for_locale: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+    artist: Mapped["Artist"] = relationship(back_populates="aliases")
 
 
 class TrackAudioFeatures(Base):
@@ -602,6 +647,8 @@ __all__ = [
     "ExternalIdentifier",
     "AudioFingerprint",
     "TrackAudioFeatures",
+    "TrackAlias",
+    "ArtistAlias",
     "MusicDatabase",
     "get_database",
     "close_database",

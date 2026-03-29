@@ -123,9 +123,42 @@ class MetadataEnhancerService:
                         if fingerprint:
                             track.acoustid_id = fingerprint
                             found_new_data = True
-                            mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration / 1000) if duration > 10000 else duration)
-                            if mbids:
-                                new_musicbrainz_id = mbids[0]
+
+                            # Step 4a (Fingerprint Cache): query the local audio_fingerprints
+                            # table before hitting the AcoustID network API.  If another track
+                            # has already been identified with this exact fingerprint, we can
+                            # reuse its MBID without any network round-trip.
+                            from database.music_database import AudioFingerprint
+                            cached_fp = session.query(AudioFingerprint).filter_by(
+                                fingerprint_hash=fingerprint
+                            ).first()
+
+                            if cached_fp and cached_fp.acoustid_id:
+                                # Try to find a track already resolved with this acoustid_id
+                                linked = session.query(Track).filter(
+                                    Track.acoustid_id == cached_fp.acoustid_id,
+                                    Track.musicbrainz_id.isnot(None),
+                                    Track.musicbrainz_id != "NOT_FOUND",
+                                ).first()
+                                if linked:
+                                    new_musicbrainz_id = linked.musicbrainz_id
+                                    logger.info(
+                                        "Step 4a (Cache Hit): MBID %s from fingerprint cache for %s",
+                                        new_musicbrainz_id, local_path.name,
+                                    )
+                                else:
+                                    # Have cached acoustid_id — skip re-generation, still need network
+                                    duration_secs = int(duration / 1000) if duration > 10000 else duration
+                                    mbids = fingerprint_provider.resolve_fingerprint(
+                                        cached_fp.acoustid_id, duration_secs
+                                    )
+                                    if mbids:
+                                        new_musicbrainz_id = mbids[0]
+                            else:
+                                duration_secs = int(duration / 1000) if duration > 10000 else duration
+                                mbids = fingerprint_provider.resolve_fingerprint(fingerprint, duration_secs)
+                                if mbids:
+                                    new_musicbrainz_id = mbids[0]
                     except Exception as e:
                         logger.warning(f"Fingerprint generation/resolution failed: {e}")
 
@@ -147,7 +180,7 @@ class MetadataEnhancerService:
                                 album_title=track.album.title if track.album else "",
                                 duration=duration
                             )
-                            engine_cls = ServiceRegistry.resolve('matching_engine')
+                            engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
                             matcher = engine_cls(ExactSyncProfile())
                             best_score = 0.0
 
@@ -278,7 +311,7 @@ class MetadataEnhancerService:
                         
                         if candidate_tracks:
                             # Use matching engine with EXACT_SYNC profile
-                            engine_cls = ServiceRegistry.resolve('matching_engine')
+                            engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
                             matcher = engine_cls(PROFILE_EXACT_SYNC)
                             best_score = 0.0
                             best_mbid = None

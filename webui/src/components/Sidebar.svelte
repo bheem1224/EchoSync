@@ -23,10 +23,16 @@
 
   $: settingsLinks = [
     { label: 'Preferences', href: '/settings/preferences' },
-    // Use the dedicated route for Music Services
+    // ── Music Providers ───────────────────────────────────────────────────
+    { label: '── Providers', href: null, divider: true },
     { label: 'Music Services', href: '/settings/music-services' },
     { label: 'Servers', href: '/settings/servers' },
     { label: 'Download Clients', href: '/settings/download-clients' },
+    // ── System Plugins ────────────────────────────────────────────────────
+    { label: '── Plugins', href: null, divider: true },
+    { label: 'Installed Plugins', href: '/settings/plugins' },
+    // ── Other ─────────────────────────────────────────────────────────────
+    { label: '── Other', href: null, divider: true },
     { label: 'Metadata', href: '/settings/metadata', badge: $metadataQueue.count },
     { label: 'Search', href: '/settings/search' },
     { label: 'Misc', href: '/settings/misc' },
@@ -86,7 +92,9 @@
     {#if settingsOpen}
       <div class="settings-links">
         {#each settingsLinks as link}
-          {#if link.href.includes('#')}
+          {#if link.divider}
+            <span class="settings-section-label">{link.label.replace(/^── /, '')}</span>
+          {:else if link.href && link.href.includes('#')}
             <a
               class="nav-sub"
               href={link.href}
@@ -97,7 +105,7 @@
                 <span class="badge">{link.badge}</span>
               {/if}
             </a>
-          {:else}
+          {:else if link.href}
             <a
               class="nav-sub"
               href={link.href}
@@ -166,6 +174,18 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+  }
+
+  .settings-section-label {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 10px 12px 2px;
+    pointer-events: none;
+    user-select: none;
   }
 
   .nav-item {

@@ -139,6 +139,7 @@ class SpotifyClient(SyncServiceProvider):
     name = "spotify"
     category = "provider"
     supports_downloads = False
+    supports_isrc_lookup = True
     rate_limit = 5.0  # 5 requests/second rate limit
     capabilities = ProviderCapabilities(
         name='spotify',
@@ -593,6 +594,25 @@ class SpotifyClient(SyncServiceProvider):
         except Exception as e:
             logger.error(f"Error searching Spotify: {e}")
             return []
+
+    def search_by_isrc(self, isrc: str) -> Optional[SoulSyncTrack]:
+        """Implement ProviderBase.search_by_isrc via Spotify's ISRC filter query.
+
+        Uses the ``isrc:<code>`` qualifier supported by the Spotify search endpoint.
+        Returns a single ``SoulSyncTrack`` on an exact match, ``None`` otherwise.
+        """
+        if not self.is_authenticated():
+            logger.debug("search_by_isrc: Spotify not authenticated, skipping.")
+            return None
+        try:
+            results = self.sp.search(q=f"isrc:{isrc}", type="track", limit=1)
+            items = ((results or {}).get("tracks") or {}).get("items") or []
+            if not items:
+                return None
+            return self._convert_track(items[0])
+        except Exception as exc:
+            logger.warning("Spotify search_by_isrc(%s) failed: %s", isrc, exc)
+            return None
 
     def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
         if not self.is_authenticated():

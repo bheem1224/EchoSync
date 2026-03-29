@@ -28,7 +28,9 @@ _FORBIDDEN_BARE_CALLS: frozenset = frozenset({"open", "__import__"})
 _FORBIDDEN_MODULE_CALLS: dict = {
     "os":     frozenset({"remove", "unlink", "rename"}),
     "shutil": frozenset({"move", "copy", "rmtree"}),
-    "importlib": frozenset({"import_module", "reload", "__import__"}),
+    # M1: removed the dead "__import__" entry — importlib has no such attribute.
+    # The bare __import__('os') vector is already blocked by _FORBIDDEN_BARE_CALLS.
+    "importlib": frozenset({"import_module", "reload"}),
 }
 
 # Forbidden method names on *any* receiver.

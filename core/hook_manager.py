@@ -24,12 +24,23 @@ class HookManager:
         value = default_value
         if hook_name in self._filters:
             for callback in self._filters[hook_name]:
+                import logging
+                prev_value = value
                 try:
                     value = callback(value, *args, **kwargs)
                     if asyncio.iscoroutine(value):
-                        raise TypeError('Async hooks are not supported in apply_filters')
+                        # H1: close the coroutine to silence ResourceWarning, restore
+                        # the last known-good value, and log so the plugin author is
+                        # immediately informed.  The chain continues uninterrupted.
+                        value.close()
+                        value = prev_value
+                        logging.getLogger("hook_manager").error(
+                            f"Async hook rejected for '{hook_name}': "
+                            f"callback '{callback.__name__}' returned a coroutine. "
+                            "Hooks must be synchronous plain functions."
+                        )
                 except Exception as e:
-                    import logging
+                    value = prev_value
                     logging.getLogger("hook_manager").error(
                         f"Error applying filter for hook '{hook_name}': {e}", exc_info=True
                     )

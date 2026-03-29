@@ -547,7 +547,25 @@ class UserHistoryService:
         if new_objects:
             work_session.bulk_save_objects(new_objects)
         if update_mappings:
-            work_session.bulk_update_mappings(UserRating, update_mappings)
+            # M2: bulk_update_mappings requires the ORM primary key ('id') in each
+            # dict to build WHERE clauses.  Payloads from _process_interactions
+            # never carry 'id', so this path will silently no-op or raise on
+            # non-SQLite engines (PostgreSQL, MySQL).  Guard explicitly until the
+            # call-site is updated to include PKs in update payloads.
+            if any('id' not in m for m in update_mappings):
+                self.logger.warning(
+                    "_bulk_upsert_user_ratings: update_mappings path requires the "
+                    "'id' primary key in each payload but it is absent. "
+                    "Skipping bulk_update_mappings to prevent silent data corruption. "
+                    "Re-insert via bulk_save_objects instead."
+                )
+                missing_pk_objects = [
+                    UserRating(**{k: v for k, v in m.items() if k != 'id'})
+                    for m in update_mappings
+                ]
+                work_session.bulk_save_objects(missing_pk_objects)
+            else:
+                work_session.bulk_update_mappings(UserRating, update_mappings)
 
 
 def run_day1_ingestion_on_startup() -> Dict[str, int]:

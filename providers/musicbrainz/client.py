@@ -20,6 +20,7 @@ class MusicBrainzClient(ProviderBase):
     """Dedicated metadata provider used by discovery and enrichment flows."""
 
     name = "musicbrainz"
+    supports_isrc_lookup = True
     service_type = "metadata"
     capabilities = ProviderCapabilities(
         name="musicbrainz",
@@ -222,6 +223,58 @@ class MusicBrainzClient(ProviderBase):
         except Exception as exc:
             logger.warning(f"MusicBrainz search_metadata exception for '{query}': {exc}")
             return []
+
+    def search_by_isrc(self, isrc: str) -> Optional[SoulSyncTrack]:
+        """Implement ProviderBase.search_by_isrc via the MusicBrainz ISRC endpoint."""
+        isrc = str(isrc or "").strip().upper()
+        if not isrc:
+            return None
+        try:
+            response = self.http.get(
+                f"{self.api_base}/isrc/{isrc}",
+                params={"fmt": "json", "inc": "artists+releases"},
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            data = response.json() or {}
+            recordings = data.get("recordings") or []
+            if not recordings:
+                return None
+
+            recording = recordings[0]
+            artist_credit = recording.get("artist-credit") or []
+            artist_parts: List[str] = []
+            for entry in artist_credit:
+                if isinstance(entry, dict) and "artist" in entry:
+                    artist_parts.append(str(entry.get("name") or ""))
+                    artist_parts.append(str(entry.get("joinphrase") or ""))
+            artist_str = "".join(artist_parts).strip() or ""
+
+            releases = recording.get("releases") or []
+            first_release = releases[0] if releases else {}
+            release_date = str(first_release.get("date") or "")
+            release_year = int(release_date[:4]) if len(release_date) >= 4 and release_date[:4].isdigit() else None
+
+            duration_ms = recording.get("length")
+            try:
+                duration_ms = int(duration_ms) if duration_ms is not None else None
+            except (TypeError, ValueError):
+                duration_ms = None
+
+            return self.create_soul_sync_track(
+                title=str(recording.get("title") or ""),
+                artist=artist_str,
+                album=str(first_release.get("title") or "") or None,
+                musicbrainz_id=str(recording.get("id") or "") or None,
+                isrc=isrc,
+                year=release_year,
+                duration_ms=duration_ms,
+                source=self.name,
+            )
+        except Exception as exc:
+            logger.warning("MusicBrainz search_by_isrc(%s) failed: %s", isrc, exc)
+            return None
 
     def get_metadata(self, mbid: str) -> Optional[Dict[str, Any]]:
         """Fetch detailed metadata for a recording MBID."""
