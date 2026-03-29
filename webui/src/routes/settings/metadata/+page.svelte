@@ -88,7 +88,7 @@
       });
       if (response.ok) {
         feedback.addToast(`${providerName} credentials saved`, 'success');
-        await loadProviderConfig(providerName);
+        await loadProviders(); // reload providers so is_configured badge updates
       } else {
         const error = await response.json();
         feedback.addToast(`Failed to save: ${error.error || 'Unknown error'}`, 'error');

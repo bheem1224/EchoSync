@@ -203,8 +203,13 @@ def _engine_for_env(env: str):
 #                    only adds columns (not tables), so no table-based check is
 #                    possible for that environment.
 _ENV_LEGACY_BASELINE = {
-    "alembic:working": ("downloads", "4661df33cf8b", None),
-    "alembic:music":   ("tracks",    "cb4f02f432ea", "track_aliases"),
+    # (sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev)
+    # v2_4_0_rev is the Alembic revision ID that was the head at v2.4.0.  When a
+    # partial-upgrade is detected (v2_4_0_sentinel table present, alembic_version
+    # absent) we stamp at this revision then run upgrade(head) so any migrations
+    # added *after* v2.4.0 (e.g. column drops) are still applied.
+    "alembic:working": ("downloads", "4661df33cf8b", None,            None),
+    "alembic:music":   ("tracks",    "cb4f02f432ea", "track_aliases", "f3a9c1e82d47"),
     # alembic:config has no application tables — no legacy adoption needed.
 }
 
@@ -270,7 +275,7 @@ def run_auto_migrations() -> None:
 
         # ── Smart Inspector ───────────────────────────────────────────────────
         if env in _ENV_LEGACY_BASELINE:
-            sentinel_table, baseline_rev, v2_4_0_sentinel = _ENV_LEGACY_BASELINE[env]
+            sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev = _ENV_LEGACY_BASELINE[env]
             engine = _engine_for_env(env)
 
             if engine is not None:
@@ -318,21 +323,35 @@ def run_auto_migrations() -> None:
                         # ── Case 3: Partial upgrade ───────────────────────────
                         # v2.4.0 tables are present but alembic_version is absent
                         # (previous run created the tables then crashed before
-                        # committing the version record).  Stamp at head to sync
-                        # Alembic's timeline without running any DDL.
+                        # committing the version record).
+                        #
+                        # If we know the v2.4.0 revision ID, stamp at that point
+                        # and then run upgrade(head) so any migrations added after
+                        # v2.4.0 (e.g. column drops) are still applied safely.
+                        # Otherwise fall back to stamping at head (pure no-DDL sync).
                         logger.info(
                             "%s: partial upgrade detected (table '%s' exists, "
-                            "alembic_version absent) — stamping at head to sync timeline.",
-                            env, v2_4_0_sentinel,
+                            "alembic_version absent) — stamping at v2.4.0 baseline %s, "
+                            "then upgrading to head.",
+                            env, v2_4_0_sentinel, v2_4_0_rev or "head",
                         )
                         try:
-                            command.stamp(alembic_cfg, "head")
-                            logger.info("%s stamped at head.", env)
+                            stamp_rev = v2_4_0_rev if v2_4_0_rev else "head"
+                            command.stamp(alembic_cfg, stamp_rev)
+                            logger.info("%s stamped at %s.", env, stamp_rev)
                         except Exception as e:
                             logger.error(
-                                "Failed to stamp %s at head: %s", env, e, exc_info=True
+                                "Failed to stamp %s at %s: %s", env, stamp_rev, e, exc_info=True
                             )
                             raise
+                        if v2_4_0_rev:
+                            # Apply any migrations newer than v2.4.0 (e.g. v2.5.0 DROP COLUMN).
+                            try:
+                                command.upgrade(alembic_cfg, "head")
+                                logger.info("Successfully migrated %s to head.", env)
+                            except Exception as e:
+                                logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
+                                raise
 
                     else:
                         # ── Case 4: Pure v2.3.0 legacy adoption ──────────────

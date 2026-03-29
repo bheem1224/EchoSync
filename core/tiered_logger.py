@@ -290,6 +290,30 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
         # Verbose: All
         add_file_handler("verbose.log", logging.NOTSET)
 
+        # If the caller supplied an explicit log_file path (legacy config key), also
+        # write to that exact file at DEBUG level.  External log viewers (e.g.
+        # logterminal) are usually pointed at this named path (e.g. SoulSync.log)
+        # and would otherwise see nothing because the tiered files use different names.
+        if log_file:
+            try:
+                explicit_path = Path(log_file)
+                explicit_path.parent.mkdir(parents=True, exist_ok=True)
+                legacy_handler = SafeRotatingFileHandler(
+                    explicit_path,
+                    maxBytes=10 * 1024 * 1024,
+                    backupCount=3,
+                    encoding="utf-8",
+                )
+                legacy_handler.setLevel(logging.DEBUG)
+                legacy_handler.setFormatter(
+                    SafeFormatter(
+                        fmt="%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
+                    )
+                )
+                root_logger.addHandler(legacy_handler)
+            except Exception as _e:
+                print(f"Failed to setup legacy log file handler: {_e}")
+
         root_logger.info(f"Logging initialized. Console Level: {level}, Log Dir: {log_path}")
 
     except Exception as e:

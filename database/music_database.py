@@ -110,7 +110,6 @@ class Track(Base):
 
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     isrc: Mapped[Optional[str]] = mapped_column(String)
-    acoustid_id: Mapped[Optional[str]] = mapped_column(String)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
     metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
 
@@ -364,7 +363,7 @@ class MusicDatabase:
                     file_format=t.file_format,
                     musicbrainz_id=t.musicbrainz_id,
                     isrc=t.isrc,
-                    acoustid_id=t.acoustid_id,
+                    acoustid_id=next((fp.acoustid_id for fp in t.audio_fingerprints if fp.acoustid_id), None),
                 ))
         return results
 
@@ -376,7 +375,7 @@ class MusicDatabase:
     ) -> List:
         """Search canonical tracks by global identifiers (ISRC, MBID, AcoustID).
 
-        The ``acoustid`` parameter maps to the ``Track.acoustid_id`` DB column.
+        The ``acoustid`` parameter filters via the ``audio_fingerprints`` table.
         Returns a list of ``SoulSyncTrack`` objects.
         """
         from core.matching_engine.soul_sync_track import SoulSyncTrack
@@ -388,7 +387,9 @@ class MusicDatabase:
         if musicbrainz_recording_id:
             filters.append(Track.musicbrainz_id == musicbrainz_recording_id)
         if acoustid:
-            filters.append(Track.acoustid_id == acoustid)
+            filters.append(
+                Track.audio_fingerprints.any(AudioFingerprint.acoustid_id == acoustid)
+            )
         if not filters:
             return results
         with self.session_scope() as session:
@@ -412,7 +413,7 @@ class MusicDatabase:
                     file_format=t.file_format,
                     musicbrainz_id=t.musicbrainz_id,
                     isrc=t.isrc,
-                    acoustid_id=t.acoustid_id,
+                    acoustid_id=next((fp.acoustid_id for fp in t.audio_fingerprints if fp.acoustid_id), None),
                 ))
         return results
 

@@ -193,60 +193,77 @@ class MetadataEnhancerService:
                 # Prepare for identification
                 duration = track.duration or _tagging_read(local_path).get("duration")
 
-                # Step 3 (DB AcoustID Fast-Path):
-                if track.acoustid_id and fingerprint_provider and duration:
+                # Load any existing fingerprint record for this track (avoids re-fingerprinting).
+                from database.music_database import AudioFingerprint
+                track_fp = session.query(AudioFingerprint).filter_by(track_id=track.id).first()
+
+                # Step 3 (DB AcoustID Fast-Path): fingerprint already stored — skip re-generation.
+                if track_fp and track_fp.acoustid_id and fingerprint_provider and duration:
                     logger.debug(f"Step 3 (DB AcoustID Fast-Path): Resolving existing AcoustID for {local_path.name}")
                     try:
-                        mbids = fingerprint_provider.resolve_fingerprint(track.acoustid_id, int(duration / 1000) if duration > 10000 else duration)
+                        mbids = fingerprint_provider.resolve_fingerprint(track_fp.acoustid_id, int(duration / 1000) if duration > 10000 else duration)
                         if mbids:
                             new_musicbrainz_id = mbids[0]
                     except Exception as e:
                         logger.warning(f"AcoustID fast-path resolution failed: {e}")
 
-                # Step 4 (Generate AcoustID):
-                if not new_musicbrainz_id and not track.acoustid_id and fingerprint_provider and duration:
+                # Step 4 (Generate AcoustID): no fingerprint on record yet — compute one now.
+                if not new_musicbrainz_id and not (track_fp and track_fp.acoustid_id) and fingerprint_provider and duration:
                     logger.debug(f"Step 4 (Generate AcoustID): Fingerprinting {local_path.name}")
                     try:
                         fingerprint = FingerprintGenerator.generate(str(local_path))
                         if fingerprint:
-                            track.acoustid_id = fingerprint
                             found_new_data = True
 
-                            # Step 4a (Fingerprint Cache): query the local audio_fingerprints
-                            # table before hitting the AcoustID network API.  If another track
-                            # has already been identified with this exact fingerprint, we can
-                            # reuse its MBID without any network round-trip.
-                            from database.music_database import AudioFingerprint
+                            # Step 4a (Fingerprint Cache): before hitting the AcoustID network,
+                            # check audio_fingerprints for another track with this same chromaprint.
+                            # If a resolved entry exists, reuse its MBID without any network call.
                             cached_fp = session.query(AudioFingerprint).filter_by(
                                 fingerprint_hash=fingerprint
                             ).first()
 
                             if cached_fp and cached_fp.acoustid_id:
-                                # Try to find a track already resolved with this acoustid_id
-                                linked = session.query(Track).filter(
-                                    Track.acoustid_id == cached_fp.acoustid_id,
-                                    Track.musicbrainz_id.isnot(None),
-                                    Track.musicbrainz_id != "NOT_FOUND",
-                                ).first()
-                                if linked:
+                                # Another track shares this fingerprint — look for a resolved MBID.
+                                linked_fp = (
+                                    session.query(AudioFingerprint)
+                                    .join(Track, AudioFingerprint.track_id == Track.id)
+                                    .filter(
+                                        AudioFingerprint.acoustid_id == cached_fp.acoustid_id,
+                                        AudioFingerprint.track_id != track.id,
+                                        Track.musicbrainz_id.isnot(None),
+                                        Track.musicbrainz_id != "NOT_FOUND",
+                                    )
+                                    .first()
+                                )
+                                if linked_fp:
+                                    linked = session.get(Track, linked_fp.track_id)
                                     new_musicbrainz_id = linked.musicbrainz_id
+                                    track_fp = cached_fp  # reference for tag writing
                                     logger.info(
                                         "Step 4a (Cache Hit): MBID %s from fingerprint cache for %s",
                                         new_musicbrainz_id, local_path.name,
                                     )
                                 else:
-                                    # Have cached acoustid_id — skip re-generation, still need network
+                                    # Have cached acoustid_id but no resolved MBID — still need network
                                     duration_secs = int(duration / 1000) if duration > 10000 else duration
                                     mbids = fingerprint_provider.resolve_fingerprint(
                                         cached_fp.acoustid_id, duration_secs
                                     )
                                     if mbids:
                                         new_musicbrainz_id = mbids[0]
+                                    track_fp = cached_fp
                             else:
+                                # No cached entry — hit network and persist fingerprint for future fast-path.
                                 duration_secs = int(duration / 1000) if duration > 10000 else duration
                                 mbids = fingerprint_provider.resolve_fingerprint(fingerprint, duration_secs)
                                 if mbids:
                                     new_musicbrainz_id = mbids[0]
+                                track_fp = AudioFingerprint(
+                                    track_id=track.id,
+                                    fingerprint_hash=fingerprint,
+                                    acoustid_id=fingerprint,
+                                )
+                                session.add(track_fp)
                     except Exception as e:
                         logger.warning(f"Fingerprint generation/resolution failed: {e}")
 
@@ -311,8 +328,8 @@ class MetadataEnhancerService:
                         update_tags['recording_id'] = track.musicbrainz_id
                     if track.isrc:
                         update_tags['isrc'] = track.isrc
-                    if track.acoustid_id:
-                        update_tags['acoustid_id'] = track.acoustid_id
+                    if track_fp and track_fp.acoustid_id:
+                        update_tags['acoustid_id'] = track_fp.acoustid_id
 
                     if update_tags:
                         _tagging_write(local_path, update_tags)
@@ -334,6 +351,22 @@ class MetadataEnhancerService:
         confidence = 0.0
 
         try:
+            # Step 0: Read file tags first — cheapest check, no CPU fingerprinting, no network.
+            try:
+                tags = _tagging_read(file_path)
+                tag_mbid = tags.get('musicbrainz_id') or tags.get('recording_id')
+                if tag_mbid and metadata_provider:
+                    logger.info(f"Step 0 (File Tags): Found MBID {tag_mbid} in tags for {file_path.name}")
+                    try:
+                        metadata = metadata_provider.get_metadata(tag_mbid)
+                        if metadata:
+                            return metadata, 0.99
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch metadata for tag MBID {tag_mbid}: {e}")
+                        # fall through to fingerprint
+            except Exception as e:
+                logger.warning(f"Failed to read tags for {file_path.name}: {e}")
+
             # Step A: Fingerprint via AcoustID
             try:
                 fingerprint = FingerprintGenerator.generate(str(file_path))

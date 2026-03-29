@@ -368,7 +368,6 @@ class LibraryManager:
                 added_at=track_data.added_at, # Set added_at only on insert
                 musicbrainz_id=track_data.musicbrainz_id,
                 isrc=track_data.isrc,
-                acoustid_id=track_data.acoustid_id,
             )
             session.add(track)
             session.flush()
@@ -433,8 +432,6 @@ class LibraryManager:
                 track.musicbrainz_id = track_data.musicbrainz_id
             if track_data.isrc is not None:
                 track.isrc = track_data.isrc
-            if track_data.acoustid_id is not None:
-                track.acoustid_id = track_data.acoustid_id
 
             # NOTE: Explicitly NOT updating added_at to preserve original import time
             

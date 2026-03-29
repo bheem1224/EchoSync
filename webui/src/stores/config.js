@@ -5,7 +5,7 @@ import apiClient from '../api/client';
  */
 export async function getConfig() {
   try {
-    const response = await apiClient.get('/api/config');
+    const response = await apiClient.get('/config');
     return response.data || {};
   } catch (error) {
     console.error('Failed to fetch config:', error);
@@ -21,7 +21,7 @@ export async function getConfig() {
  */
 export async function setConfig(configUpdates) {
   try {
-    const response = await apiClient.post('/api/config', configUpdates);
+    const response = await apiClient.post('/config', configUpdates);
     return response.data || configUpdates;
   } catch (error) {
     console.error('Failed to save config:', error);
