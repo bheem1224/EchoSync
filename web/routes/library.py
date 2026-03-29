@@ -141,9 +141,18 @@ def update_database():
         # Check if update is already running
         with _db_update_lock:
             if _db_update_worker is not None:
-                # Check if thread is alive (handle both Qt and headless modes)
-                thread_obj = getattr(_db_update_worker, 'thread', None)
-                if thread_obj is not None and callable(getattr(thread_obj, 'is_alive', None)) and thread_obj.is_alive():
+                # Query the job queue's authoritative _is_running flag.
+                # self.thread is never set (start() dispatches via job_queue),
+                # so the old thread.is_alive() guard always evaluated False.
+                _already_running = False
+                _job_name = getattr(_db_update_worker, '_job_name', None)
+                if _job_name:
+                    try:
+                        from core.job_queue import job_queue
+                        _already_running = job_queue._is_running.get(_job_name, False)
+                    except Exception:
+                        pass
+                if _already_running:
                     return jsonify({
                         "error": "Database update already in progress",
                         "current_progress": {
@@ -168,9 +177,21 @@ def update_database():
         # Ensure connection
         try:
             if not provider.ensure_connection():
-                return jsonify({"error": f"Could not connect to {active_server}"}), 500
+                msg = (
+                    f"Could not connect to {active_server}. "
+                    "Check your credentials in the provider settings."
+                )
+                logger.error(
+                    "update-database: ensure_connection() returned False for %s — "
+                    "likely expired or missing credentials.",
+                    active_server,
+                )
+                return jsonify({"error": msg}), 500
         except Exception as e:
-            logger.error(f"Connection failed for {active_server}: {e}")
+            logger.error(
+                "update-database: connection to %s raised an exception: %s",
+                active_server, e, exc_info=True,
+            )
             return jsonify({"error": f"Could not connect to {active_server}: {str(e)}"}), 500
         
         # Import DatabaseUpdateWorker
@@ -245,22 +266,20 @@ def get_database_update_status():
                     "server": active_server
                 }), 200
             
-            # Check if worker is running (support both threading.Thread and PyQt6 QThread)
+            # Ask the job queue directly — it sets _is_running[job_name] before
+            # spawning the thread and clears it in the finally block, so this is
+            # accurate from the moment start() returns until the job finishes.
             is_running = False
-            # threading.Thread-style
-            if callable(getattr(_db_update_worker, 'is_alive', None)):
+            job_name = getattr(_db_update_worker, '_job_name', None)
+            if job_name:
                 try:
-                    is_running = _db_update_worker.is_alive()
+                    from core.job_queue import job_queue
+                    is_running = job_queue._is_running.get(job_name, False)
                 except Exception:
                     is_running = False
-            # QThread-style
-            elif callable(getattr(_db_update_worker, 'isRunning', None)):
-                try:
-                    is_running = _db_update_worker.isRunning()
-                except Exception:
-                    is_running = False
-            else:
-                # Fallback: infer running from progress vs total if available
+            if not is_running:
+                # Fallback for any worker that didn't go through start() (e.g. tests):
+                # infer from progress counters once the track list is fetched.
                 try:
                     total = getattr(_db_update_worker, 'total_tracks', 0)
                     processed = getattr(_db_update_worker, 'processed_tracks', 0)

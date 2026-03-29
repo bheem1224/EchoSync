@@ -4,7 +4,7 @@ Simple launcher for the SoulSync Flask API backend.
 
 Usage:
     python run_api.py                    # Run in standard HTTP mode (Production)
-    DEV_MODE=true python run_api.py      # Run in Development mode (Verbose logs, CORS, Debugger)
+    DEV_MODE=true python run_api.py      # Run in Development mode (Debug logs, CORS, Debugger)
 """
 
 from dotenv import load_dotenv

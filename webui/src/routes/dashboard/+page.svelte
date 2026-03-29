@@ -164,7 +164,11 @@
       feedback.addToast(`Database update started (${updateMode})`, 'success');
     } catch (error) {
       console.error('Failed to start database update:', error);
-      feedback.addToast('Failed to start database update', 'error');
+      const errMsg =
+        error.response?.data?.error ||
+        error.message ||
+        'Failed to start database update';
+      feedback.addToast(errMsg, 'error');
       isUpdating = false;
       updateProgress = 0;
       updateStatus = '';

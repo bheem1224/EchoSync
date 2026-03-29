@@ -58,7 +58,7 @@
     }
 
     async function fetchQualityProfiles() {
-        const profileEndpoints = ['/api/metadata/profiles', '/api/quality-profiles'];
+        const profileEndpoints = ['/api/quality-profiles'];
 
         for (const url of profileEndpoints) {
             try {

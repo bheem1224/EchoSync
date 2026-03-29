@@ -113,6 +113,9 @@ class DatabaseUpdateWorker:
         """
         from core.job_queue import job_queue
         job_name = f"db_update_worker_{self.server_type}_{id(self)}"
+        # Expose the job name so get_database_update_status() can query the
+        # job queue's _is_running flag for accurate concurrency detection.
+        self._job_name = job_name
         job_queue.register_job(name=job_name, func=self.run, interval_seconds=None)
         job_queue.execute_job_now(job_name)
         logger.info(f"DatabaseUpdateWorker queued via job_queue for {self.server_type}")

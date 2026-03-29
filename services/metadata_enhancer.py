@@ -547,9 +547,9 @@ class MetadataEnhancerService:
         
         # Use the standard factory method from ProviderBase
         return ProviderBase.create_soul_sync_track(
-            title=parsed.title or file_path.stem,
-            artist=parsed.artist_name or 'Unknown Artist',
-            album=parsed.album_title or '',
+            title=(parsed.title if parsed else None) or file_path.stem,
+            artist=(parsed.artist_name if parsed else None) or 'Unknown Artist',
+            album=(parsed.album_title if parsed else None) or '',
             duration_ms=duration_ms,
             provider_id=str(file_path),
             source='local_file'

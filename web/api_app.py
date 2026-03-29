@@ -69,13 +69,16 @@ def create_app() -> Flask:
     # Configure sensitive logging filter for Werkzeug
     werkzeug_logger = logging.getLogger('werkzeug')
     werkzeug_logger.addFilter(SensitiveRequestFilter())
-    
-    # Suppress verbose urllib3 debug logs (from PlexAPI/requests)
-    logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
+
+    dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+
+    # In production suppress urllib3's per-connection debug chatter.
+    # In DEV_MODE we leave it at NOTSET so connection failures show full detail.
+    if not dev_mode:
+        logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
 
     # Enable CORS for frontend (if flask-cors is installed)
     if CORS_AVAILABLE:
-        dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
 
         if dev_mode:
             # Allow all origins in DEV_MODE
