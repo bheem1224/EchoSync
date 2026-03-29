@@ -131,17 +131,42 @@ def acknowledge_migration():
         return jsonify({"error": "Failed to acknowledge migration"}), 500
 
 
+# Allowlist of top-level config keys that the UI is permitted to write via this
+# endpoint.  Any key not in this set is rejected with 400 to prevent arbitrary
+# config-tree poisoning (C1 security fix).
+_SETTINGS_ALLOWLIST: frozenset = frozenset({
+    "log_level",
+    "active_media_server",
+    "active_download_client",
+    "metadata_enhancement",
+    "quality_profiles",
+    "library_path",
+    "scan_interval",
+    "download_path",
+    "file_rename_template",
+    "match_threshold",
+})
+
+
 @bp.post("/settings")
 def update_settings():
     """Update application settings (partial update).
 
     Handles the special `log_level` key by updating the live console logger
     in addition to persisting the value via config_manager.
+
+    Only keys present in _SETTINGS_ALLOWLIST are accepted; all others are
+    rejected with 400 to prevent arbitrary config-tree injection.
     """
     try:
         payload = request.get_json(silent=True) or {}
 
-        # adjust log level immediately if requested
+        # Reject any key not in the explicit allowlist.
+        rejected_keys = [k for k in payload if k not in _SETTINGS_ALLOWLIST]
+        if rejected_keys:
+            return jsonify({"error": f"Rejected unknown settings keys: {rejected_keys}"}), 400
+
+        # Adjust log level immediately if requested.
         if "log_level" in payload:
             lvl = payload.get("log_level") or ""
             normalized = lvl.strip().lower()

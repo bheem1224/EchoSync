@@ -239,3 +239,25 @@ def ignore_task():
     except Exception as e:
         logger.error(f"Error ignoring task: {e}")
         return jsonify({"error": "Failed to ignore task"}), 500
+
+
+@bp.get("/isrc/<string:isrc>")
+def lookup_isrc(isrc: str):
+    """Resolve track metadata from an ISRC code using a Spotify → iTunes → MusicBrainz waterfall.
+
+    Returns the best available metadata hit and lists every tier that was tried.
+    """
+    from services.isrc_lookup_service import fetch_metadata_by_isrc
+
+    try:
+        data = fetch_metadata_by_isrc(isrc)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logger.error("ISRC lookup endpoint error: %s", exc)
+        return jsonify({"error": "Internal lookup error"}), 500
+
+    if data["result"] is None:
+        return jsonify({"isrc": data["isrc"], "result": None, "tried": data["tried"]}), 404
+
+    return jsonify(data), 200

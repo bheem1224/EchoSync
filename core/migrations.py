@@ -249,6 +249,45 @@ def run_migrations() -> None:
         logger.error(f"Migration script encountered an error: {e}")
 
 
+def run_auto_migrations() -> None:
+    """
+    Pillar 1: The Auto-Migrator
+    Programmatically loops through the three database environments (config, working, music)
+    and executes Alembic command.upgrade("head") to safely migrate database schemas.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    logger.info("Starting automatic database schema migrations via Alembic...")
+
+    # The alembic.ini is at the project root
+    alembic_cfg_path = Path(__file__).parent.parent / "alembic.ini"
+
+    environments = [
+        "alembic:config",
+        "alembic:working",
+        "alembic:music"
+    ]
+
+    for env in environments:
+        logger.info(f"Running Alembic migrations for environment: {env}")
+        alembic_cfg = Config(str(alembic_cfg_path))
+
+        # Override the logger config so alembic doesn't reset our tiered logger
+        alembic_cfg.attributes['configure_logger'] = False
+
+        # We must explicitly set the name of the section we are targeting
+        # because our alembic.ini uses custom sections instead of just [alembic]
+        alembic_cfg.set_main_option("script_location", alembic_cfg.get_section_option(env, "script_location"))
+
+        try:
+            command.upgrade(alembic_cfg, "head")
+            logger.info(f"Successfully migrated {env} to head.")
+        except Exception as e:
+            logger.error(f"Failed to migrate {env}: {e}", exc_info=True)
+            raise
+
+
 def trigger_post_migration_database_update():
     """
     Trigger a one-time database update after v2.1.0 migration.

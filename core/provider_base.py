@@ -28,6 +28,10 @@ class ProviderBase(ABC):
     supports_downloads: bool = False  # Indicates if provider supports downloads
     enabled: bool = True  # Flag to enable/disable provider without deleting files
 
+    # Set to True in providers that can resolve metadata by ISRC code.
+    # Providers that set this to True MUST implement search_by_isrc().
+    supports_isrc_lookup: bool = False
+
     # Typed capability class for registry detection
     capabilities: 'ProviderCapabilities' = None
 
@@ -179,6 +183,22 @@ class ProviderBase(ABC):
     def get_logo_url(self) -> str:
         """Return a URL or path to the provider's logo/icon."""
         pass
+
+    def search_by_isrc(self, isrc: str) -> Optional[SoulSyncTrack]:
+        """Look up a single track by its ISRC code.
+
+        Providers that support ISRC lookup MUST set ``supports_isrc_lookup = True``
+        and override this method.  The default implementation returns ``None`` so
+        that existing providers that do not support this capability are unaffected.
+
+        Args:
+            isrc: A canonical 12-character ISRC (no hyphens, already validated).
+
+        Returns:
+            A ``SoulSyncTrack`` populated with as much metadata as the provider
+            can supply, or ``None`` if the ISRC was not found.
+        """
+        return None
 
     # ===== HELPER METHODS (Reusable by all providers) =====
     

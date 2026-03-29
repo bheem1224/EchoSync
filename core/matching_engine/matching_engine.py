@@ -1030,3 +1030,7 @@ class WeightedMatchingEngine:
 def create_matcher(profile: ScoringProfile) -> WeightedMatchingEngine:
     """Convenience function to create a matcher with a profile"""
     return WeightedMatchingEngine(profile)
+
+
+from core.provider import ServiceRegistry
+ServiceRegistry.register_default('matching_engine', WeightedMatchingEngine)

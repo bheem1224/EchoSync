@@ -113,6 +113,8 @@ def create_app() -> Flask:
     app.register_blueprint(webhooks_bp)
     app.register_blueprint(local_server_bp)
     app.register_blueprint(local_metadata_bp)
+    from web.routes.plugins import bp as plugins_bp
+    app.register_blueprint(plugins_bp)
     
     # Initialize databases (triggers v2.1.0 migration if needed)
     try:

@@ -986,7 +986,7 @@ class PlaylistSyncService:
                 for i in range(0, len(sync_ids), chunk_size):
                     chunk = sync_ids[i:i + chunk_size]
                     queued_downloads = session.query(Download.sync_id).filter(
-                        Download.sync_id.in_(chunk),
+                        Download.sync_id.in_([c.split('?')[0] for c in chunk]),
                         Download.status.in_(['queued', 'searching', 'downloading'])
                     ).all()
                     for d in queued_downloads:

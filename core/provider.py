@@ -12,6 +12,7 @@ Developer SDK:
     Do not modify this file unless you are changing the internal plugin architecture.
 """
 
+import threading
 from typing import Protocol, List, Optional, Dict, Any, Type
 from abc import abstractmethod
 from enum import Enum, auto
@@ -423,3 +424,38 @@ class ProviderRegistry:
     @classmethod
     def get_disabled_providers(cls) -> List[str]:
         return list(cls._disabled_providers)
+
+
+class ServiceRegistry:
+    """
+    Phase 2: Unified Service Registry
+    Dependency Injection container for core platform services (e.g. MatchingEngine).
+    Allows plugins to override default platform behaviors.
+    """
+    _services: Dict[str, Any] = {}
+    _defaults: Dict[str, Any] = {}
+    # H3: class-level lock prevents TOCTOU races under Flask threading / gunicorn.
+    _lock: threading.Lock = threading.Lock()
+
+    @classmethod
+    def register_default(cls, service_name: str, factory: Any) -> None:
+        with cls._lock:
+            cls._defaults[service_name] = factory
+            if service_name not in cls._services:
+                cls._services[service_name] = factory
+
+    @classmethod
+    def register_override(cls, service_name: str, factory: Any) -> None:
+        with cls._lock:
+            cls._services[service_name] = factory
+
+    @classmethod
+    def resolve(cls, service_name: str) -> Any:
+        from core.settings import config_manager
+        override_key = f"settings.active_{service_name}"
+        active_override = config_manager.get(override_key)
+
+        with cls._lock:
+            if active_override and active_override in cls._services:
+                return cls._services[active_override]
+            return cls._services.get(service_name, cls._defaults.get(service_name))

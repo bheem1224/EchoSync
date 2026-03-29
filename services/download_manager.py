@@ -16,6 +16,7 @@ Design Principle: "Central Control"
 
 import asyncio
 import inspect
+from core.hook_manager import hook_manager
 import logging
 import re
 import threading
@@ -147,7 +148,6 @@ class DownloadManager:
         except Exception as e:
             logger.error(f"Failed to load download provider: {e}")
             return None
-
     async def _invoke_provider_search(
         self,
         provider: ProviderBase,
@@ -155,7 +155,25 @@ class DownloadManager:
         strategy_filters: Dict[str, Any],
         quality_profile: Optional[Dict[str, Any]],
     ) -> List[SoulSyncTrack]:
+        query_or_queries = hook_manager.apply_filters('pre_provider_search', query)
+        queries = query_or_queries if isinstance(query_or_queries, list) else [query_or_queries]
+
+        all_results = []
+        for q in set(queries):
+            results = await self._invoke_provider_search_single(provider, q, strategy_filters, quality_profile)
+            if results:
+                all_results.extend(results)
+        return all_results
+
+    async def _invoke_provider_search_single(
+        self,
+        provider: ProviderBase,
+        query: str,
+        strategy_filters: Dict[str, Any],
+        quality_profile: Optional[Dict[str, Any]],
+    ) -> List[SoulSyncTrack]:
         """Invoke provider search while passing quality_profile when supported."""
+
         if hasattr(provider, '_async_search'):
             async_search = getattr(provider, '_async_search')
             try:
@@ -283,7 +301,7 @@ class DownloadManager:
                 return existing_id
 
             download = Download(
-                sync_id=track.sync_id,
+                sync_id=track.sync_id.split('?')[0],
                 soul_sync_track=track_json,
                 status="queued",
                 created_at=utc_now(),

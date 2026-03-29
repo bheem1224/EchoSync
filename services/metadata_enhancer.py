@@ -19,9 +19,11 @@ from core.enums import Capability
 from core.file_handling.local_io import LocalFileHandler
 from core.file_handling.tagging_io import read_tags as _tagging_read, write_tags as _tagging_write
 from core.settings import config_manager
+from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
+from core.provider import ServiceRegistry
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from database.working_database import get_working_database, ReviewTask
@@ -49,12 +51,14 @@ class MetadataEnhancerService:
         """
         Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
         """
+        required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
         from database.music_database import get_database, Track
         from core.file_handling.path_mapper import PathMapper
         from core.matching_engine.scoring_profile import ExactSyncProfile
         from core.matching_engine.fingerprinting import FingerprintGenerator
         from core.matching_engine.soul_sync_track import SoulSyncTrack
         from core.matching_engine.matching_engine import WeightedMatchingEngine
+        from core.provider import ServiceRegistry
         from pathlib import Path
 
         db = get_database()
@@ -119,9 +123,42 @@ class MetadataEnhancerService:
                         if fingerprint:
                             track.acoustid_id = fingerprint
                             found_new_data = True
-                            mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration / 1000) if duration > 10000 else duration)
-                            if mbids:
-                                new_musicbrainz_id = mbids[0]
+
+                            # Step 4a (Fingerprint Cache): query the local audio_fingerprints
+                            # table before hitting the AcoustID network API.  If another track
+                            # has already been identified with this exact fingerprint, we can
+                            # reuse its MBID without any network round-trip.
+                            from database.music_database import AudioFingerprint
+                            cached_fp = session.query(AudioFingerprint).filter_by(
+                                fingerprint_hash=fingerprint
+                            ).first()
+
+                            if cached_fp and cached_fp.acoustid_id:
+                                # Try to find a track already resolved with this acoustid_id
+                                linked = session.query(Track).filter(
+                                    Track.acoustid_id == cached_fp.acoustid_id,
+                                    Track.musicbrainz_id.isnot(None),
+                                    Track.musicbrainz_id != "NOT_FOUND",
+                                ).first()
+                                if linked:
+                                    new_musicbrainz_id = linked.musicbrainz_id
+                                    logger.info(
+                                        "Step 4a (Cache Hit): MBID %s from fingerprint cache for %s",
+                                        new_musicbrainz_id, local_path.name,
+                                    )
+                                else:
+                                    # Have cached acoustid_id — skip re-generation, still need network
+                                    duration_secs = int(duration / 1000) if duration > 10000 else duration
+                                    mbids = fingerprint_provider.resolve_fingerprint(
+                                        cached_fp.acoustid_id, duration_secs
+                                    )
+                                    if mbids:
+                                        new_musicbrainz_id = mbids[0]
+                            else:
+                                duration_secs = int(duration / 1000) if duration > 10000 else duration
+                                mbids = fingerprint_provider.resolve_fingerprint(fingerprint, duration_secs)
+                                if mbids:
+                                    new_musicbrainz_id = mbids[0]
                     except Exception as e:
                         logger.warning(f"Fingerprint generation/resolution failed: {e}")
 
@@ -143,7 +180,8 @@ class MetadataEnhancerService:
                                 album_title=track.album.title if track.album else "",
                                 duration=duration
                             )
-                            matcher = WeightedMatchingEngine(ExactSyncProfile())
+                            engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
+                            matcher = engine_cls(ExactSyncProfile())
                             best_score = 0.0
 
                             for candidate in results:
@@ -190,6 +228,9 @@ class MetadataEnhancerService:
 
                     if update_tags:
                         _tagging_write(local_path, update_tags)
+
+                # Apply post-enrichment hooks before SQLAlchemy auto-commits at the end of the session context
+                track = hook_manager.apply_filters('post_metadata_enrichment', track)
 
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
         """
@@ -248,7 +289,8 @@ class MetadataEnhancerService:
                 logger.debug(f"Attempting fallback filename search for {file_path.name}")
                 try:
                     # Extract metadata from filename
-                    query = file_path.stem.replace('_', ' ').replace('-', ' ')
+                    raw_query = file_path.stem.replace('_', ' ').replace('-', ' ')
+                    query = hook_manager.apply_filters('pre_normalize_text', raw_query)
                     
                     # Get duration for matching
                     duration_ms = _tagging_read(file_path).get("duration")
@@ -269,7 +311,8 @@ class MetadataEnhancerService:
                         
                         if candidate_tracks:
                             # Use matching engine with EXACT_SYNC profile
-                            matcher = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
+                            engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
+                            matcher = engine_cls(PROFILE_EXACT_SYNC)
                             best_score = 0.0
                             best_mbid = None
                             

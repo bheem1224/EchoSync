@@ -196,8 +196,7 @@ class TestDeducePathMappingEdgeCases:
         mock_config_db.get_service_config.return_value = None   # no existing mappings
 
         with patch("services.media_manager.config_manager") as mock_cm, \
-             patch("services.media_manager.get_config_database",
-                   return_value=mock_config_db, create=True):
+             patch("database.config_database.get_config_database", return_value=mock_config_db):
 
             mock_cm.get_active_media_server.return_value = "plex"
 
@@ -230,8 +229,7 @@ class TestDeducePathMappingEdgeCases:
         mock_config_db.get_service_config.return_value = json.dumps(existing)
 
         with patch("services.media_manager.config_manager") as mock_cm, \
-             patch("services.media_manager.get_config_database",
-                   return_value=mock_config_db, create=True):
+             patch("database.config_database.get_config_database", return_value=mock_config_db):
 
             mock_cm.get_active_media_server.return_value = "plex"
 

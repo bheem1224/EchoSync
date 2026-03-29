@@ -22,12 +22,15 @@ logger = get_logger("plugin_loader")
 # Zero-Trust Plugin Security Scanner
 # ---------------------------------------------------------------------------
 # Forbidden bare-name calls (Python builtins used for direct file I/O)
-_FORBIDDEN_BARE_CALLS: frozenset = frozenset({"open"})
+_FORBIDDEN_BARE_CALLS: frozenset = frozenset({"open", "__import__"})
 
 # Forbidden module.method() patterns
 _FORBIDDEN_MODULE_CALLS: dict = {
     "os":     frozenset({"remove", "unlink", "rename"}),
     "shutil": frozenset({"move", "copy", "rmtree"}),
+    # M1: removed the dead "__import__" entry — importlib has no such attribute.
+    # The bare __import__('os') vector is already blocked by _FORBIDDEN_BARE_CALLS.
+    "importlib": frozenset({"import_module", "reload"}),
 }
 
 # Forbidden method names on *any* receiver.
@@ -58,6 +61,17 @@ class PluginSecurityScanner(ast.NodeVisitor):
     def __init__(self) -> None:
         # Each entry is (line_number, human_readable_description)
         self.violations: list = []
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if alias.name.split('.')[0] in ("os", "subprocess", "sqlite3", "sys", "importlib"):
+                self.violations.append((node.lineno, f"forbidden import '{alias.name}'"))
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module and node.module.split('.')[0] in ("os", "subprocess", "sqlite3", "sys", "importlib"):
+            self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
+        self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
         func = node.func
@@ -111,11 +125,15 @@ class PluginLoader:
         logger.info("Starting plugin discovery...")
         logger.debug(f"Using plugins directory: {self.plugins_dir}")
 
+        safe_mode = os.environ.get('SOULSYNC_SAFE_MODE') == '1'
+
         # 1. Load Core Providers
         self._scan_directory(self.providers_dir, source_type='core')
 
         # 2. Load Community Plugins (if directory exists)
-        if self.plugins_dir.exists():
+        if safe_mode:
+            logger.critical("SAFE MODE is active. Skipping discovery of community plugins.")
+        elif self.plugins_dir.exists():
             self._scan_directory(self.plugins_dir, source_type='community')
         else:
             logger.debug("No plugins/ directory found. Skipping community plugins.")
@@ -281,3 +299,59 @@ def get_provider(capability: Capability) -> Optional[ProviderBase]:
     if providers:
         return providers[0]
     return None
+
+
+def get_all_plugins() -> list:
+    import os
+    import json
+    from pathlib import Path
+    from core.settings import config_manager
+    from core.provider import ProviderRegistry
+
+    plugins = []
+
+    # Get Core Providers
+    providers_dir = Path(__file__).parent.parent / "providers"
+    if providers_dir.exists():
+        for item in providers_dir.iterdir():
+            if item.is_dir() and not item.name.startswith('_'):
+                plugins.append({
+                    "id": f"core.{item.name}",
+                    "name": item.name.capitalize(),
+                    "description": f"Core provider for {item.name}",
+                    "type": "core"
+                })
+
+    # Get Community Plugins
+    plugins_dir = config_manager.get_plugins_dir()
+    if plugins_dir.exists():
+        for item in plugins_dir.iterdir():
+            if item.is_dir() and not item.name.startswith('_'):
+                plugin_info = {
+                    "id": f"plugin.{item.name}",
+                    "name": item.name,
+                    "description": "Community plugin",
+                    "type": "community"
+                }
+
+                json_file = item / "plugin.json"
+                if json_file.exists():
+                    try:
+                        data = json.loads(json_file.read_text(encoding="utf-8"))
+                        plugin_info.update({
+                            "name": data.get("name", item.name),
+                            "description": data.get("description", plugin_info["description"]),
+                            "version": data.get("version", "Unknown"),
+                            "author": data.get("author", "Unknown"),
+                            "id": data.get("id", plugin_info["id"])
+                        })
+                    except Exception:
+                        pass
+                plugins.append(plugin_info)
+
+    # Determine enabled status based on config
+    disabled = config_manager.get_disabled_providers()
+    for p in plugins:
+        p["enabled"] = p["id"] not in disabled
+
+    return plugins
