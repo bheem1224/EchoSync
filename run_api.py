@@ -84,11 +84,18 @@ if __name__ == "__main__":
 
     app = create_app()
 
-    # Initialization successful - clear the boot lock so the next boot is normal
-    if not safe_mode and lock_file.exists():
+    # Initialization successful — clear the boot lock unconditionally so the next
+    # boot starts clean.  Critically, this must also run when we booted into Safe
+    # Mode: Safe Mode is meant to survive *one* bad boot cycle, not permanently
+    # brick the server.  If this boot itself crashes before reaching here, the
+    # lock survives and the next restart will enter Safe Mode again as designed.
+    if lock_file.exists():
         try:
             lock_file.unlink()
-            logger.info("Boot successful. Removed boot lock file.")
+            if safe_mode:
+                logger.info("Safe Mode boot complete. Removed boot lock file — next boot will be normal.")
+            else:
+                logger.info("Boot successful. Removed boot lock file.")
         except Exception as e:
             logger.error(f"Failed to remove boot lock file: {e}")
 
