@@ -85,7 +85,7 @@ def detect_language(text: str) -> str:
     return "zh"
 
 
-
+class CJKTransliterator:
     """
     Offline CJK → Latin transliteration with lazy-loaded library imports.
 
