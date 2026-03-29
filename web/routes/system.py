@@ -458,14 +458,32 @@ def preview_rename():
         return jsonify({"error": "Failed to generate preview"}), 500
 
 
+@bp.post("/enhance/trigger")
+def trigger_metadata_enhancement():
+    """Manually kick off a retroactive metadata enhancement batch.
+
+    Optional JSON body: { "batch_size": <int> }  (default 100)
+
+    Returns JSON: { "status": "ok", "batch_size": <int> }
+    """
+    try:
+        body = request.get_json(silent=True, force=True) or {}
+        size = int(body.get("batch_size", 100))
+        get_metadata_enhancer().enhance_library_metadata(batch_size=size)
+        return jsonify({"status": "ok", "batch_size": size}), 200
+    except Exception as exc:
+        logger.error("Manual enhance trigger failed: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
 @bp.post("/database/rebuild")
 def rebuild_database():
     """Rebuild the music library database by dropping and recreating all tables.
-    
+
     This is a destructive operation that will clear all synced tracks from the
     music library database. The database will be empty after this operation,
     and library scans will need to be re-run to repopulate it.
-    
+
     Returns JSON: { "success": true, "message": "..." }
     """
     try:

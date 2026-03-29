@@ -1,7 +1,13 @@
 {
   "id": "cjk_language_pack",
   "name": "CJK Language Pack",
-  "description": "Provides CJK expansion and Romaji/Pinyin normalization for SoulSync Matching Engine.",
-  "version": "1.0.0",
-  "author": "SoulSync"
+  "description": "Solves the Anime/Drama OST Problem: expands CJK queries, scores via Pinyin/Romaji transliteration, and persists script-variant aliases entirely offline.",
+  "version": "2.4.0",
+  "author": "SoulSync",
+  "requirements": [
+    "opencc-python-reimplemented",
+    "pypinyin",
+    "pykakasi",
+    "hangul-romanize"
+  ]
 }

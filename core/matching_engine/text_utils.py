@@ -101,6 +101,12 @@ def normalize_text(text: Optional[str]) -> str:
     if not text:
         return ""
 
+    # Allow plugins (e.g. CJK Language Pack) to transliterate non-Latin scripts
+    # into their Latin-script equivalents *before* the ASCII-folding pass below.
+    # If no plugin registers this hook the text is returned unchanged.
+    from core.hook_manager import hook_manager
+    text = hook_manager.apply_filters('pre_normalize_text', text)
+
     # Standardize all Unicode character variants (smart quotes, fancy dashes, etc.)
     text = normalize_chars(text)
 

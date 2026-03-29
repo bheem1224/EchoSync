@@ -1,123 +1,272 @@
 """
-CJK Language Pack Plugin
-========================
+CJK Language Pack Plugin — v2.4.0
+===================================
+Solves the "Anime/Drama OST Problem" via a three-stage Expand → Score → Restore
+pipeline that works entirely offline (no cloud ASR, no paid APIs).
 
-This is the first sandbox-compliant plugin built on the "Expand -> Reduce -> Restore" architecture.
-It intercepts metadata queries to handle Chinese, Japanese, and Korean characters.
+Expand  (pre_provider_search)
+    Detects CJK characters in a search query and generates a targeted set of
+    search strings:
+      • Original CJK query
+      • Simplified / Traditional Chinese script variants   (opencc)
+      • Tone-stripped Pinyin / Hepburn Romaji / Revised Romanization  (pypinyin / pykakasi / hangul_romanize)
+      • Anime or drama series names discovered from VGMdb.info
+        → e.g. "YOASOBI Idol" becomes ["YOASOBI Idol", "晴天", "yoasobi idol", "Oshi no Ko Idol"]
 
-1.  Fast Tripwire: Checks for CJK Unicode blocks.
-2.  Expand: Multiplies a search query into original, Pinyin, Traditional, Simplified.
-3.  Reduce: Normalizes chaotic incoming text into Pinyin/Romaji for the MatchingEngine.
-4.  Restore: Resets the original character script on the track ORM object before saving.
+Score   (pre_normalize_text)
+    Intercepts every string that flows through the WeightedMatchingEngine:
+      • CJK strings are flattened to pure-Latin phonetics so edit-distance
+        scoring works across scripts ("アイドル" → "aidoru" vs "idol").
+      • Strings matching a known anime / drama series name (populated by the
+        VGMdb lookup above) are remapped to the canonical artist name so
+        "Oshi no Ko" scores as "yoasobi" — a near-perfect artist match.
+
+Restore (post_metadata_enrichment)
+    After the MetadataEnhancerService pipeline completes:
+      • Writes TrackAlias rows for Simplified, Traditional, and Latin
+        (Pinyin / Romaji) forms of the track title.
+      • Writes ArtistAlias rows for the same variants of the artist name.
+    Both use the SQLAlchemy ORM session already attached to the track object —
+    no new session or raw database connection is ever created (Zero-Trust).
+
+Zero-Trust sandbox compliance
+    • No direct file I/O.
+    • No os / sys / subprocess / importlib imports at module level.
+    • Database access exclusively via object_session() on the passed ORM object.
+    • VGMdb HTTP calls use only stdlib urllib with a hard timeout and hardcoded
+      base URL — user input is URL-encoded and never used to construct the host.
 """
 
-from typing import List, Any
+from __future__ import annotations
+
 import re
+from typing import Any, List
+
 from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
+from plugins.cjk_language_pack.transliterator import get_transliterator
+from plugins.cjk_language_pack.vgmdb_proxy import get_proxy
+from plugins.cjk_language_pack.noise_filter import get_noise_filter
+from plugins.cjk_language_pack.noise_filter import get_noise_filter
 
 logger = get_logger("plugin.cjk")
 
-# Fast CJK Unicode Block Regex Tripwire
-# Covers basic CJK Unified Ideographs, Hiragana, Katakana, Hangul.
-CJK_PATTERN = re.compile(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]')
+# Fast CJK tripwire — same ranges covered by transliterator._CJK_RE
+_CJK_RE = re.compile(
+    r"[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u1100-\u11ff]"
+)
 
+
+def _has_cjk(text: str) -> bool:
+    return isinstance(text, str) and bool(_CJK_RE.search(text))
+
+
+# kept for callers that still use the old name
 def contains_cjk(text: str) -> bool:
-    if not isinstance(text, str):
-        return False
-    return bool(CJK_PATTERN.search(text))
+    return _has_cjk(text)
 
 
-# ── HOOK 1: Register Requirements ─────────────────────────────────────────────
+# ── Hook 0: register_metadata_requirements ────────────────────────────────────
 
 def _on_register_metadata_requirements(requirements: List[str]) -> List[str]:
-    """Adds the necessary fields to the MusicBrainz metadata fetch payload."""
-    logger.debug("Registering CJK metadata requirements.")
-    # In a real environment, we ensure these aren't duplicated, but we just append here.
-    return requirements + ["musicbrainz_aliases", "release_script", "release_locale"]
+    """Ask MusicBrainz to include CJK-specific fields in the metadata payload."""
+    extra = ["musicbrainz_aliases", "release_script", "release_locale"]
+    existing = set(requirements)
+    return requirements + [f for f in extra if f not in existing]
 
 
-# ── HOOK 2: Expand (pre_provider_search) ──────────────────────────────────────
+# ── Hook 1: pre_provider_search (Expand) ──────────────────────────────────────
 
-def _on_pre_provider_search(query: str) -> Any:
+def _expand_query(query: str) -> list[str]:
     """
-    Expands the search query if CJK characters are detected.
-    Returns a list of search permutations (Original, Pinyin, Traditional, Simplified).
+    Generate a targeted set of search strings for a single CJK-containing query.
+
+    Order of results:
+        1. Original CJK form
+        2. Simplified Chinese (opencc t2s)  — if distinct from original
+        3. Traditional Chinese (opencc s2t) — if distinct
+        4. Pinyin / Romaji / Revised-Romanization (fully Latin)
+        5. "<SeriesName> <title_part>" for each VGMdb anime/drama series hit
     """
-    if not contains_cjk(query):
+    tr = get_transliterator()
+    variants: list[str] = tr.script_variants(query)   # [original, …, latin]
+
+    # Use the last (Latin) variant for the VGMdb lookup — better ASCII query
+    latin = variants[-1] if len(variants) > 1 else query
+
+    # Split "Artist - Title" if possible; otherwise use the full string for both
+    if " - " in latin:
+        artist_part, title_part = latin.split(" - ", 1)
+    else:
+        artist_part, title_part = latin, latin
+
+    proxy = get_proxy()
+    series = proxy.lookup_series(artist_part.strip(), title_part.strip())
+
+    # Append "<series> <title>" queries for slskd — tagged files use series names
+    seen = set(variants)
+    for name in series:
+        candidate = f"{name} {title_part}".strip()
+        if candidate not in seen:
+            seen.add(candidate)
+            variants.append(candidate)
+
+    return variants
+
+
+def _on_pre_provider_search(query: Any) -> Any:
+    """
+    Expand a CJK query into a prioritised list of Latin and multi-script variants.
+
+    Also accepts a list (from a previously chained hook) and expands each
+    CJK element individually, deduplicating the combined result.
+    """
+    if isinstance(query, list):
+        out: list[str] = []
+        seen: set[str] = set()
+        for q in query:
+            for v in (_expand_query(q) if _has_cjk(q) else [q]):
+                if v not in seen:
+                    seen.add(v)
+                    out.append(v)
+        return out
+
+    if not _has_cjk(query):
         return query
 
-    logger.info(f"CJK characters detected in search query: '{query}'. Expanding permutations...")
-
-    # MOCK IMPLEMENTATION:
-    # In a real production plugin, we would use OpenCC to convert between Simplified/Traditional
-    # and pypinyin for romanization. To respect the strict lightweight requirement, we mock it.
-    permutations = [
-        query,                      # Original
-        query + " (Pinyin)",        # Mock Pinyin
-        query + " (Traditional)",   # Mock Traditional
-        query + " (Simplified)",    # Mock Simplified
-    ]
-
-    return permutations
+    logger.info("CJK detected in search query %r — expanding variants", query)
+    expanded = _expand_query(query)
+    logger.debug("Expanded to %d variants: %s", len(expanded), expanded)
+    return expanded
 
 
-# ── HOOK 3: Reduce (pre_normalize_text) ───────────────────────────────────────
+# ── Hook 2: pre_normalize_text (Score / Reduce) ────────────────────────────────
 
-def _on_pre_normalize_text(raw_text: str) -> str:
+def _on_pre_normalize_text(text: str) -> str:
     """
-    Reduces chaotic CJK text into standardized Pinyin/Romaji so the core
-    WeightedMatchingEngine can score it accurately using the Latin alphabet.
+    Transform *text* before the WeightedMatchingEngine's ASCII-folding pass.
+
+    **Fast gatekeeper** (first line):
+        If *text* contains no CJK or full-width characters, return it unchanged
+        immediately.  This guarantees zero overhead for English / Latin tracks
+        — the core normalizer handles those natively.
+
+    When CJK is detected, three steps run in strict order:
+
+    1. **Series → artist remapping**
+           If *text* matches a VGMdb-resolved series name, return the
+           canonical artist name (e.g. "Oshi no Ko" → "yoasobi").
+
+    2. **CJK noise stripping** (NoiseFilter.strip_cjk_noise)
+           Remove OST markers, theme-song labels, full-width brackets, and
+           full-width Latin tokens (ｆｅａｔ, ＯＳＴ) that are exclusive to
+           CJK text.  Standard English noise (feat., OST, …) is left in place
+           so the core normalizer can strip it during its own downstream pass.
+
+    3. **Transliteration** (CJKTransliterator.flatten_to_romaji)
+           Convert ideographs / kana / hangul to pure-Latin phonetics.
+           The resulting Romaji/Pinyin string re-enters the core pipeline,
+           which then runs its own feat.-stripping and Unicode canonicalization
+           — cleanly splitting the workload between plugin and core.
     """
-    if not contains_cjk(raw_text):
-        return raw_text
+    # ── Gatekeeper: bypass entirely for non-CJK strings ──────────────────
+    if not isinstance(text, str) or not _has_cjk(text):
+        return text
 
-    logger.debug(f"Reducing CJK string for MatchingEngine: '{raw_text}'")
+    # ── Step 1: series → canonical artist remap ───────────────────────────
+    proxy = get_proxy()
+    canonical_artist = proxy.resolve_artist_for_series(text)
+    if canonical_artist:
+        logger.debug("Series alias remap: %r → %r", text, canonical_artist)
+        return canonical_artist
 
-    # MOCK IMPLEMENTATION:
-    # Convert everything to standard Pinyin. For now, we append a mock tag.
-    return raw_text + " [Romaji/Pinyin Normalized]"
+    # ── Step 2: strip CJK-exclusive structural noise ──────────────────────
+    cleaned = get_noise_filter().strip_cjk_noise(text)
+    if cleaned != text:
+        logger.debug("CJK noise strip: %r → %r", text, cleaned)
+
+    # ── Step 3: transliterate to Latin phonetics ──────────────────────────
+    # Returns the cleaned string unchanged if no CJK remains after noise strip.
+    result = get_transliterator().flatten_to_romaji(cleaned)
+    logger.debug("CJK transliterate: %r → %r", cleaned, result)
+    return result
 
 
-# ── HOOK 4: Restore + Persist Aliases (post_metadata_enrichment) ─────────────
+# ── Hook 3: post_metadata_enrichment (Restore) ────────────────────────────────
 
-def _build_alias_entries(track_obj: Any) -> list:
+def _build_track_alias_entries(track_obj: Any) -> list[dict]:
     """
-    Derive localised alias entries from a track's metadata_status payload.
+    Return a list of alias dicts for every script variant of the track title.
 
-    Expects metadata_status to optionally contain a 'cjk_aliases' list of dicts:
-      [{"name": "...", "locale": "zh", "script": "Hant", "is_primary_for_locale": True}, ...]
-
-    When the key is absent we synthesise a minimal Romaji/Pinyin placeholder so
-    the alias table is never left empty for a CJK track.
+    Priority order:
+      1. Explicit ``cjk_aliases`` list in ``track_obj.metadata_status``
+         (set by a provider that fetched MusicBrainz aliases directly).
+      2. Synthesised from the title using CJKTransliterator:
+         • Simplified Chinese  (locale="zh", script="Hans")
+         • Traditional Chinese (locale="zh", script="Hant")
+         • Latin phonetics     (locale="en", script="Latn") ← primary
     """
     status = track_obj.metadata_status or {}
     declared = status.get("cjk_aliases")
     if declared and isinstance(declared, list):
         return declared
 
-    # Synthesise Pinyin/Romaji placeholder from the existing title.
     title = getattr(track_obj, "title", "") or ""
-    if not contains_cjk(title):
+    if not _has_cjk(title):
         return []
 
-    return [
-        {
-            "name": title + " [Romaji/Pinyin]",
-            "locale": "en",
-            "script": "Latn",
-            "is_primary_for_locale": True,
-        }
-    ]
+    tr = get_transliterator()
+    entries: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(name: str, locale: str, script: str, primary: bool) -> None:
+        if name and name not in seen and name != title:
+            seen.add(name)
+            entries.append({
+                "name": name,
+                "locale": locale,
+                "script": script,
+                "is_primary_for_locale": primary,
+            })
+
+    _add(tr.to_simplified(title),  "zh", "Hans", False)
+    _add(tr.to_traditional(title), "zh", "Hant", False)
+    _add(tr.flatten_to_romaji(title), "en", "Latn", True)   # Pinyin/Romaji
+    return entries
 
 
-def _persist_track_aliases(track_obj: Any, alias_entries: list) -> None:
-    """Inject alias rows into the existing ORM session via the track's relationship.
+def _build_artist_alias_entries(artist_name: str) -> list[dict]:
+    """Return alias dicts for every script variant of *artist_name*."""
+    if not _has_cjk(artist_name):
+        return []
 
-    Uses the SQLAlchemy session already attached to *track_obj* so that no new
-    connection is opened and no second transaction is created.  The core
-    MetadataEnhancerService owns the surrounding session_scope and will commit
-    all pending changes — including these alias rows — at the end of its block.
+    tr = get_transliterator()
+    entries: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(name: str, locale: str, script: str, primary: bool) -> None:
+        if name and name not in seen and name != artist_name:
+            seen.add(name)
+            entries.append({
+                "name": name,
+                "locale": locale,
+                "script": script,
+                "is_primary_for_locale": primary,
+            })
+
+    _add(tr.to_simplified(artist_name),  "zh", "Hans", False)
+    _add(tr.to_traditional(artist_name), "zh", "Hant", False)
+    _add(tr.flatten_to_romaji(artist_name), "en", "Latn", True)
+    return entries
+
+
+def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
+    """
+    Append TrackAlias rows via the ORM session that already owns *track_obj*.
+
+    Zero-Trust: uses ``object_session(track_obj)`` — no new session opened.
+    The MetadataEnhancerService owns the surrounding ``session_scope`` and
+    commits all pending changes (including these rows) when its block exits.
     """
     if not alias_entries:
         return
@@ -128,98 +277,178 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list) -> None:
         session = object_session(track_obj)
         if session is None:
             logger.warning(
-                "No active ORM session on track_obj (ID %s) — alias persistence skipped.",
+                "No ORM session on track_obj (ID %s) — TrackAlias write skipped.",
                 getattr(track_obj, "id", "?"),
             )
             return
 
-        # Resolve TrackAlias class from the mapper to avoid importing database models
-        # directly from a plugin, keeping the dependency boundary clean.
         rel = sa_inspect(type(track_obj)).relationships.get("aliases")
         if rel is None:
-            logger.warning("Track ORM type has no 'aliases' relationship — skipping alias write.")
+            logger.warning("Track ORM has no 'aliases' relationship — skipping.")
             return
         TrackAlias = rel.mapper.class_
 
+        added = 0
         for entry in alias_entries:
             name = entry.get("name") or ""
             if not name:
                 continue
-            already_exists = any(
+            if any(
                 a.name == name
                 and a.locale == entry.get("locale")
                 and a.script == entry.get("script")
                 for a in track_obj.aliases
-            )
-            if not already_exists:
-                track_obj.aliases.append(
-                    TrackAlias(
-                        track_id=track_obj.id,
-                        name=name,
-                        locale=entry.get("locale"),
-                        script=entry.get("script"),
-                        is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
-                    )
+            ):
+                continue
+            track_obj.aliases.append(
+                TrackAlias(
+                    track_id=track_obj.id,
+                    name=name,
+                    locale=entry.get("locale"),
+                    script=entry.get("script"),
+                    is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
                 )
-        logger.debug(
-            "Queued %d alias row(s) for Track ID %s (commit deferred to caller).",
-            len(alias_entries),
-            track_obj.id,
-        )
+            )
+            added += 1
+
+        if added:
+            logger.debug(
+                "Queued %d TrackAlias row(s) for Track ID %s (commit deferred to caller).",
+                added, track_obj.id,
+            )
     except Exception as exc:
-        # Never crash the enrichment pipeline — alias persistence is best-effort.
-        logger.warning("Failed to persist CJK aliases for Track ID %s: %s", track_obj.id, exc)
+        logger.warning(
+            "TrackAlias persistence failed for Track ID %s: %s",
+            getattr(track_obj, "id", "?"), exc,
+        )
+
+
+def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
+    """
+    Append ArtistAlias rows for the artist attached to *track_obj*.
+
+    Accesses ``track_obj.artist`` via the SQLAlchemy lazy-load mechanism —
+    safe because we're always called from inside a ``session_scope`` context.
+    Zero-Trust: no new session opened.
+    """
+    if not alias_entries:
+        return
+    try:
+        from sqlalchemy.orm import object_session
+        from sqlalchemy import inspect as sa_inspect
+
+        if object_session(track_obj) is None:
+            return
+
+        artist_obj = getattr(track_obj, "artist", None)
+        if artist_obj is None:
+            return
+
+        rel = sa_inspect(type(artist_obj)).relationships.get("aliases")
+        if rel is None:
+            return
+        ArtistAlias = rel.mapper.class_
+
+        added = 0
+        for entry in alias_entries:
+            name = entry.get("name") or ""
+            if not name:
+                continue
+            if any(
+                a.name == name
+                and a.locale == entry.get("locale")
+                and a.script == entry.get("script")
+                for a in artist_obj.aliases
+            ):
+                continue
+            artist_obj.aliases.append(
+                ArtistAlias(
+                    artist_id=artist_obj.id,
+                    name=name,
+                    locale=entry.get("locale"),
+                    script=entry.get("script"),
+                    is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
+                )
+            )
+            added += 1
+
+        if added:
+            logger.debug(
+                "Queued %d ArtistAlias row(s) for Artist ID %s (commit deferred to caller).",
+                added, artist_obj.id,
+            )
+    except Exception as exc:
+        logger.warning(
+            "ArtistAlias persistence failed for Track ID %s: %s",
+            getattr(track_obj, "id", "?"), exc,
+        )
 
 
 def _on_post_metadata_enrichment(track_obj: Any) -> Any:
     """
-    1. Marks cjk_restored on metadata_status so downstream code knows the
-       script was inspected.
-    2. Derives alias rows (Romaji, Pinyin, Traditional, etc.) and writes them
-       to the track_aliases table via the MusicDatabase session.
+    After the MetadataEnhancerService pipeline:
+
+    1. Stamp ``cjk_restored = True`` on ``track_obj.metadata_status``.
+    2. Persist all script-variant TrackAlias rows for the track title.
+    3. Persist all script-variant ArtistAlias rows for the artist name.
     """
-    if not hasattr(track_obj, 'metadata_status') or not hasattr(track_obj, 'id'):
+    if not hasattr(track_obj, "metadata_status") or not hasattr(track_obj, "id"):
         return track_obj
 
     title = getattr(track_obj, "title", "") or ""
-    if not contains_cjk(title):
+    artist_obj = getattr(track_obj, "artist", None)
+    artist_name = (getattr(artist_obj, "name", "") or "") if artist_obj else ""
+
+    if not _has_cjk(title) and not _has_cjk(artist_name):
         return track_obj
 
+    # Stamp metadata_status
     status = dict(track_obj.metadata_status or {})
     if "cjk_restored" not in status:
         status["cjk_restored"] = True
         status["cjk_script_applied"] = status.get("release_script", "Latn")
         track_obj.metadata_status = status
-        logger.debug("Restored CJK character set for Track ID: %s", track_obj.id)
+        logger.debug("Stamped cjk_restored for Track ID %s", track_obj.id)
 
-    alias_entries = _build_alias_entries(track_obj)
-    _persist_track_aliases(track_obj, alias_entries)
+    if _has_cjk(title):
+        _persist_track_aliases(track_obj, _build_track_alias_entries(track_obj))
+
+    if _has_cjk(artist_name):
+        _persist_artist_aliases(track_obj, _build_artist_alias_entries(artist_name))
 
     return track_obj
 
 
-# ── Plugin Initialization ─────────────────────────────────────────────────────
+# ── Plugin Initialization ──────────────────────────────────────────────────────
 
-def initialize_plugin():
-    """Wire all hooks into the system."""
-    logger.info("Initializing CJK Language Pack Plugin...")
+def initialize_plugin() -> None:
+    """Wire all hooks into the system. Called automatically on first import."""
+    logger.info("CJK Language Pack: initializing hooks...")
+    hook_manager.add_filter("register_metadata_requirements", _on_register_metadata_requirements)
+    hook_manager.add_filter("pre_provider_search",            _on_pre_provider_search)
+    hook_manager.add_filter("pre_normalize_text",             _on_pre_normalize_text)
+    hook_manager.add_filter("post_metadata_enrichment",       _on_post_metadata_enrichment)
+    logger.info(
+        "CJK Language Pack: registered hooks "
+        "(register_metadata_requirements / pre_provider_search / "
+        "pre_normalize_text / post_metadata_enrichment)"
+    )
 
-    hook_manager.add_filter('register_metadata_requirements', _on_register_metadata_requirements)
-    hook_manager.add_filter('pre_provider_search', _on_pre_provider_search)
-    hook_manager.add_filter('pre_normalize_text', _on_pre_normalize_text)
-    hook_manager.add_filter('post_metadata_enrichment', _on_post_metadata_enrichment)
 
-    logger.info("CJK Language Pack hooks registered successfully.")
-
-# Auto-initialize when the PluginLoader imports this module
 initialize_plugin()
 
 
-# ── HOOK 5: Registry Override ───────────────────────────────────────────────
+# ── Registry Override (WeightedMatchingEngine subclass) ───────────────────────
 from core.provider import ServiceRegistry
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 
-class CJKMatchingEngine(WeightedMatchingEngine):
-    pass
 
-ServiceRegistry.register_override('com.soulsync.cjk-pack', CJKMatchingEngine)
+class CJKMatchingEngine(WeightedMatchingEngine):
+    """
+    Subclass reserved for future CJK-specific scoring overrides.
+    Currently delegates all scoring to WeightedMatchingEngine unchanged;
+    the pre_normalize_text hook above is sufficient for correct CJK matching.
+    """
+
+
+ServiceRegistry.register_override("com.soulsync.cjk-pack", CJKMatchingEngine)

@@ -372,27 +372,15 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
 
 def setup(hm: "HookManager") -> None:
     """
-    Called by :class:`core.plugin_loader.PluginLoader` after security scanning.
+    Legacy entry point — kept for compatibility with any caller that invokes
+    ``module.setup(hook_manager)`` directly.
 
-    Registers :func:`transliterate_cjk` as a ``pre_normalize_text`` filter at
-    priority 10.  After this call, every invocation of
-    ``hook_manager.apply_filters("pre_normalize_text", text)`` inside
-    ``core.matching_engine.text_utils.normalize_text`` will run the CJK
-    transliterator before the NFKD ascii-folding pass.
-
-    Also registers :func:`extract_mb_aliases` on ``post_musicbrainz_fetch``
-    so that CJK-locale aliases from MusicBrainz are persisted to the DB
-    whenever new metadata is fetched by the enhancer service.
-
-    Args:
-        hm:  The process-wide :class:`core.plugins.hook_manager.HookManager`
-             instance passed by the loader.
+    All hook registrations now live in :mod:`plugins.cjk_language_pack`
+    (``__init__.py``) and are performed automatically when the package is
+    imported by the PluginLoader.  This function is intentionally a no-op so
+    that a second call never produces duplicate filter registrations.
     """
-    hm.add_filter("pre_normalize_text", transliterate_cjk, priority=10)
-    hm.add_filter("post_musicbrainz_fetch", extract_mb_aliases, priority=10)
-    logger.info(
-        "CJK Language Pack: registered 'pre_normalize_text' filter (priority=10) "
-        "and 'post_musicbrainz_fetch' filter (priority=10). "
-        "Chinese/Japanese/Korean track titles will be transliterated before matching, "
-        "and CJK aliases from MusicBrainz will be stored to the database."
+    logger.debug(
+        "CJK Language Pack plugin.setup() called — hooks already registered "
+        "by __init__.py; no action taken."
     )
