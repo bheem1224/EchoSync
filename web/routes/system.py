@@ -67,12 +67,19 @@ def get_settings():
     """
     try:
         data = config_manager.get_all() if hasattr(config_manager, "get_all") else {}
-        # add live log level to payload (may differ from stored value)
-        try:
-            from core.tiered_logger import get_current_log_level
-            data["log_level"] = get_current_log_level()
-        except Exception:
-            pass
+        dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+        data["dev_mode"] = dev_mode
+        # Inject live console log level.  In DEV_MODE the startup level is always
+        # DEBUG (set by run_api.py), so we can short-circuit the handler scan which
+        # can return NOTSET if Werkzeug adds its own handlers before the request lands.
+        if dev_mode:
+            data["log_level"] = "DEBUG"
+        else:
+            try:
+                from core.tiered_logger import get_current_log_level
+                data["log_level"] = get_current_log_level()
+            except Exception:
+                pass
         return jsonify({
             "settings": data,
             "schema": None,

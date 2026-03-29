@@ -219,6 +219,11 @@ class SourceTagAdapter(logging.LoggerAdapter):
 
 # --- Global Setup ---
 
+# Module-level reference to the console StreamHandler so get/set log level
+# functions don't have to scan root.handlers (which may include Werkzeug's own
+# handlers and cause false NOTSET results in dev mode).
+_active_console_handler: Optional[logging.StreamHandler] = None
+
 def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: Optional[str] = None) -> logging.Logger:
     """
     Initialize the unified logging system.
@@ -263,6 +268,10 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
     )
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
+
+    # Keep a module-level reference so level queries bypass foreign handlers.
+    global _active_console_handler
+    _active_console_handler = console_handler
 
     # --- File Handlers (Tiered Strategy) ---
     try:
@@ -330,20 +339,26 @@ def get_logger(name: str) -> logging.Logger:
 def set_log_level(level: str) -> bool:
     """Dynamically change the console log level."""
     try:
-        root = logging.getLogger()
         lvl = getattr(logging, level.upper(), logging.INFO)
-        for h in root.handlers:
-            if isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler):
-                h.setLevel(lvl)
-        root.info(f"Console log level changed to: {level}")
+        if _active_console_handler is not None:
+            _active_console_handler.setLevel(lvl)
+        else:
+            # Fallback: scan handlers (e.g. if setup_logging hasn't run yet)
+            root = logging.getLogger()
+            for h in root.handlers:
+                if isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler):
+                    h.setLevel(lvl)
+        logging.getLogger().info(f"Console log level changed to: {level}")
         return True
     except Exception:
         return False
 
 def get_current_log_level() -> str:
     """Get the current console log level."""
-    root = logging.getLogger()
-    for h in root.handlers:
+    if _active_console_handler is not None:
+        return logging.getLevelName(_active_console_handler.level)
+    # Fallback: scan root handlers
+    for h in logging.getLogger().handlers:
         if isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler):
             return logging.getLevelName(h.level)
     return "INFO"

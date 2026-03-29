@@ -40,8 +40,8 @@
         console.error('Failed to save preferences during Save All', e);
         feedback.addToast('Failed saving preferences', 'error');
       }
-      // persist full settings state to backend
-      await settings.save($settings?.data || {});
+      // Note: log_level is saved immediately on dropdown change via updateSetting().
+      // Sending the full $settings.data blob here would hit the backend allowlist → 400.
       feedback.addToast('Settings saved', 'success');
     } catch (e) {
       console.error('Failed to save all settings', e);
@@ -62,6 +62,7 @@
 
   $: providerList = Object.values($providers?.items ?? []);
   $: userSettings = $settings?.data ?? {};
+  $: devMode = userSettings?.dev_mode === true;
   $: streamingProviders = providerList.filter((p) => (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE' || p.capabilities?.supports_sync);
   $: serverProviders = providerList.filter((p) => p.capabilities?.server);
   $: metadataProviders = providerList.filter((p) => p.capabilities?.metadata);
@@ -78,6 +79,17 @@
 </svelte:head>
 
 <section class="page">
+  {#if devMode}
+    <div class="dev-mode-banner" role="alert">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <span><strong>DEV MODE</strong> — Debug logging active · ISRC matching disabled</span>
+    </div>
+  {/if}
+
   <header class="page__header">
     <div>
       <h1 class="prefs-title">{({ preferences: 'Preferences' }[$settingsPanel?.active] ?? ($settingsPanel?.active?.replace(/-/g, ' ') || 'Settings'))}</h1>
@@ -216,4 +228,17 @@
     color: var(--text);
     font-size: 14px;
   }
+
+  .dev-mode-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    color: #fca5a5;
+    font-size: 13px;
+  }
+  .dev-mode-banner strong { color: #f87171; }
 </style>
