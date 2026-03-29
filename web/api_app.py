@@ -77,6 +77,15 @@ def create_app() -> Flask:
     if not dev_mode:
         logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
 
+    # Watchdog emits extremely verbose DEBUG messages for every inotify event
+    # (filesystem buffer operations, IN_MODIFY, IN_CREATE, etc.).  These flood
+    # the console even in DEV_MODE and make real application logs unreadable.
+    # We cap the entire watchdog hierarchy at WARNING unconditionally — errors
+    # and warnings from the file watcher itself are still surfaced.
+    logging.getLogger('watchdog').setLevel(logging.WARNING)
+    logging.getLogger('watchdog.observers').setLevel(logging.WARNING)
+    logging.getLogger('watchdog.observers.inotify_buffer').setLevel(logging.WARNING)
+
     # Enable CORS for frontend (if flask-cors is installed)
     if CORS_AVAILABLE:
 
