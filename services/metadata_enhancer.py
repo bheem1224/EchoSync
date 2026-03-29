@@ -142,7 +142,7 @@ class MetadataEnhancerService:
         Loops through batches until no more tracks require enhancement.  Each batch is
         committed in its own session so memory stays flat even on large libraries.
         """
-        from sqlalchemy import or_, and_
+        from sqlalchemy import or_, and_, func, Integer
         required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
         from database.music_database import get_database, Track
         from core.file_handling.path_mapper import PathMapper
@@ -152,6 +152,11 @@ class MetadataEnhancerService:
         from core.matching_engine.matching_engine import WeightedMatchingEngine
         from core.provider import ServiceRegistry
         from pathlib import Path
+
+        # Tracks that previously couldn't be identified are stamped NOT_FOUND with an
+        # incrementing enhancement_attempts counter in metadata_status.  Re-attempt them
+        # until the cap is reached (handles transient network failures, missing fpcalc, etc.).
+        MAX_REATTEMPTS = 5
 
         db = get_database()
 
@@ -163,16 +168,27 @@ class MetadataEnhancerService:
 
         for _iteration in range(MAX_ITERATIONS):
           with db.session_scope() as session:
-            # Step 1: Select tracks that still need work:
-            #   (a) no MusicBrainz ID yet, OR
-            #   (b) have a MBID but are missing a plugin-required metadata_status key.
-            conditions = [Track.musicbrainz_id.is_(None)]
+            # Step 1: Select tracks that still need work.
+            #   (a) MBID identification needed — NULL MBID, OR previously-failed NOT_FOUND
+            #       tracks that still have retry budget remaining.
+            #   (b) MBID already resolved but a plugin-required metadata_status key is absent.
+            needs_identification = or_(
+                Track.musicbrainz_id.is_(None),
+                and_(
+                    Track.musicbrainz_id == "NOT_FOUND",
+                    func.coalesce(
+                        func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
+                        0,
+                    ).cast(Integer) < MAX_REATTEMPTS,
+                ),
+            )
+            conditions = [needs_identification]
             for key in required_keys:
                 conditions.append(
                     and_(
                         Track.musicbrainz_id.isnot(None),
                         Track.musicbrainz_id != "NOT_FOUND",
-                        Track.metadata_status[key].as_string().is_(None),
+                        func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
                     )
                 )
             tracks_to_process = (
@@ -198,6 +214,10 @@ class MetadataEnhancerService:
                 if not local_path.exists():
                     logger.warning(f"File not found for track {track.id}: {local_path}")
                     track.musicbrainz_id = "NOT_FOUND"
+                    # Use a high sentinel so this track is never retried — the file is gone.
+                    status = dict(track.metadata_status or {})
+                    status['enhancement_attempts'] = 99
+                    track.metadata_status = status
                     total_processed += 1
                     continue
 
@@ -390,8 +410,17 @@ class MetadataEnhancerService:
                         except Exception:
                             pass
                 else:
-                    logger.warning(f"Failed to identify track {track.id}: {local_path.name}")
+                    # File exists but couldn't be identified — increment the retry counter so
+                    # this track is re-attempted on future runs up to MAX_REATTEMPTS times.
+                    status = dict(track.metadata_status or {})
+                    attempts = status.get('enhancement_attempts', 0) + 1
+                    status['enhancement_attempts'] = attempts
+                    track.metadata_status = status
                     track.musicbrainz_id = "NOT_FOUND"
+                    logger.warning(
+                        "Failed to identify track %d: %s (attempt %d/%d)",
+                        track.id, local_path.name, attempts, MAX_REATTEMPTS,
+                    )
 
                 # Tag physical file if new data was found
                 if found_new_data:
