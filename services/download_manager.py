@@ -154,16 +154,84 @@ class DownloadManager:
         query: str,
         strategy_filters: Dict[str, Any],
         quality_profile: Optional[Dict[str, Any]],
-    ) -> List[SoulSyncTrack]:
-        query_or_queries = hook_manager.apply_filters('pre_provider_search', query)
+        target_track: Optional[SoulSyncTrack] = None,
+        strategy_name: str = "",
+        perfect_match_threshold: int = 90,
+    ) -> Tuple[List[SoulSyncTrack], bool]:
+        """Search a single provider for one strategy query, expanding via hooks.
+
+        Returns ``(results, sniper_hit)`` where ``sniper_hit=True`` means a
+        candidate scoring >= *perfect_match_threshold* was found during variant
+        iteration and all remaining query variants were short-circuited.
+        The caller should break its own strategy loop when ``sniper_hit`` is True.
+        """
+        query_or_queries = hook_manager.apply_filters(
+            'pre_provider_search',
+            query,
+            strategy_name=strategy_name,
+            artist_name=getattr(target_track, 'artist_name', "") or "",
+            title=getattr(target_track, 'title', "") or "",
+        )
         queries = query_or_queries if isinstance(query_or_queries, list) else [query_or_queries]
 
-        all_results = []
-        for q in set(queries):
-            results = await self._invoke_provider_search_single(provider, q, strategy_filters, quality_profile)
-            if results:
-                all_results.extend(results)
-        return all_results
+        # dict.fromkeys: order-preserving deduplication — respects the CJK priority matrix
+        ordered_queries = list(dict.fromkeys(
+            q for q in queries if isinstance(q, str) and q.strip()
+        ))
+
+        accumulated: List[SoulSyncTrack] = []
+        for q in ordered_queries:
+            batch = await self._invoke_provider_search_single(
+                provider, q, strategy_filters, quality_profile
+            )
+            if not batch:
+                continue
+
+            # Evaluation-driven short-circuit: score this batch immediately.
+            # If a qualifying candidate is found, skip all remaining variants.
+            if target_track is not None:
+                hit = self._evaluate_search_batch(
+                    batch, target_track, quality_profile, perfect_match_threshold
+                )
+                if hit is not None:
+                    remaining = len(ordered_queries) - ordered_queries.index(q) - 1
+                    if remaining > 0:
+                        logger.info(
+                            "\u26a1 Sniper hit on variant %r (score\u2265%d) "
+                            "\u2014 skipping %d remaining variant(s).",
+                            q, perfect_match_threshold, remaining,
+                        )
+                    return [hit], True
+
+            accumulated.extend(batch)
+        return accumulated, False
+
+    def _evaluate_search_batch(
+        self,
+        batch: List[SoulSyncTrack],
+        target_track: SoulSyncTrack,
+        quality_profile: Optional[Dict[str, Any]],
+        threshold: float,
+    ) -> Optional[SoulSyncTrack]:
+        """Run tier filtering + matching on a raw result batch.
+
+        Returns the best candidate if ``confidence_score >= threshold``, else
+        ``None``.  Used by the evaluation-driven short-circuit so that
+        remaining query variants are skipped as soon as a perfect match is
+        found within the current variant's result set.
+        """
+        priority_tiers = self._get_priority_tiers(quality_profile)
+        matcher = self._get_matching_engine(quality_profile)
+        for _priority_num, priority_formats in priority_tiers:
+            tier_candidates = self._filter_by_formats(batch, priority_formats)
+            if not tier_candidates:
+                continue
+            candidate = matcher.select_best_download_candidate(target_track, tier_candidates)
+            if candidate:
+                match_result = matcher.calculate_match(target_track, candidate)
+                if match_result.confidence_score >= threshold:
+                    return candidate
+        return None
 
     async def _invoke_provider_search_single(
         self,
@@ -537,6 +605,7 @@ class DownloadManager:
                 provider_candidates = []
 
                 # Try all strategies for this provider
+                sniper_winner: Optional[SoulSyncTrack] = None
                 for strategy_idx, strategy in enumerate(strategies, 1):
                     query = strategy["query"]
                     strategy_tolerance = strategy["duration_tolerance_ms"]
@@ -549,26 +618,63 @@ class DownloadManager:
                         f"  Strategy {strategy_idx}/{len(strategies)} [{strategy_name}] "
                         f"via {provider.name}: query='{query}'"
                     )
-                    
-                    # Call provider search
-                    search_results = []
+
+                    # Call provider search (evaluation-driven short-circuit)
+                    search_results: List[SoulSyncTrack] = []
+                    sniper_hit = False
                     try:
                         logger.debug(f"    Invoking search on {provider.name} with quality profile")
-                        search_results = await self._invoke_provider_search(
+                        search_results, sniper_hit = await self._invoke_provider_search(
                             provider,
                             query,
                             strategy_filters,
                             quality_profile,
+                            target_track=target_track,
+                            strategy_name=strategy_name,
+                            perfect_match_threshold=perfect_match_threshold,
                         )
                     except Exception as e:
                         logger.warning(f"    Search failed on {provider.name}: {e}")
                         continue
 
                     logger.info(f"    Strategy {strategy_idx} returned {len(search_results)} candidates")
-                    
+
+                    if sniper_hit and search_results:
+                        # A perfect-score candidate was found inside the variant loop.
+                        # Bypass all remaining strategies for this provider.
+                        logger.info(
+                            f"  \u26a1 SNIPER HIT at strategy {strategy_idx} [{strategy_name}] "
+                            f"\u2014 short-circuiting remaining strategies."
+                        )
+                        sniper_winner = search_results[0]
+                        break
+
                     if search_results:
                         provider_candidates.extend(search_results)
 
+                # ── Fast-path: sniper winner bypasses full dedup + scoring ────────────
+                if sniper_winner is not None:
+                    match_result = self._get_matching_engine(quality_profile).calculate_match(
+                        target_track, sniper_winner
+                    )
+                    provider_best_candidate = sniper_winner
+                    provider_best_score = match_result.confidence_score
+                    logger.info(
+                        f"  Sniper winner confirmed: score={provider_best_score:.1f} "
+                        f"from {provider.name}"
+                    )
+                    if provider_best_score >= perfect_match_threshold:
+                        best_candidate = provider_best_candidate
+                        best_score = provider_best_score
+                        winning_provider_name = provider.name
+                        break  # Exit provider loop — perfect match secured
+                    if provider_best_score > best_score:
+                        best_candidate = provider_best_candidate
+                        best_score = provider_best_score
+                        winning_provider_name = provider.name
+                    continue  # Skip the slow scoring path below
+
+                # ── Slow-path: deduplicate + full priority-tier scoring ────────────────
                 # Deduplicate candidates for this provider
                 provider_candidates = self._deduplicate_candidates(provider_candidates)
                 logger.info(f"  Total candidates from {provider.name}: {len(provider_candidates)}")

@@ -77,55 +77,115 @@ def _on_register_metadata_requirements(requirements: List[str]) -> List[str]:
 
 # ── Hook 1: pre_provider_search (Expand) ──────────────────────────────────────
 
-def _expand_query(query: str) -> list[str]:
+def _expand_query(query: str, artist_name: str = "", title: str = "") -> list[str]:
     """
-    Generate a targeted set of search strings for a single CJK-containing query.
+    Return a priority-ordered list of search strings for a CJK-containing query.
 
-    Order of results:
-        1. Original CJK form
-        2. Simplified Chinese (opencc t2s)  — if distinct from original
-        3. Traditional Chinese (opencc s2t) — if distinct
-        4. Pinyin / Romaji / Revised-Romanization (fully Latin)
-        5. "<SeriesName> <title_part>" for each VGMdb anime/drama series hit
+    Sniper priority matrix (highest → lowest hit-rate on slskd):
+        1. ``<VGMdb series name> <CJK title>``       — files tagged by show name
+        2. ``<original combined query>``              — pass-through / exact tags
+        3. ``<romaji/pinyin artist> <romaji/pinyin title>``  — Latin-phonetic files
+        4. Simplified Chinese variant
+        5. Traditional Chinese variant
     """
     tr = get_transliterator()
-    variants: list[str] = tr.script_variants(query)   # [original, …, latin]
 
-    # Use the last (Latin) variant for the VGMdb lookup — better ASCII query
-    latin = variants[-1] if len(variants) > 1 else query
-
-    # Split "Artist - Title" if possible; otherwise use the full string for both
-    if " - " in latin:
-        artist_part, title_part = latin.split(" - ", 1)
+    # Prefer explicit per-field kwargs over parsing the combined query string.
+    if artist_name and title:
+        cjk_artist    = artist_name
+        cjk_title     = title
+        latin_artist  = tr.flatten_to_romaji(artist_name)
+        latin_title   = tr.flatten_to_romaji(title)
+    elif " - " in query:
+        raw_artist, raw_title = query.split(" - ", 1)
+        cjk_artist    = raw_artist.strip()
+        cjk_title     = raw_title.strip()
+        latin_artist  = tr.flatten_to_romaji(cjk_artist)
+        latin_title   = tr.flatten_to_romaji(cjk_title)
     else:
-        artist_part, title_part = latin, latin
+        cjk_artist    = ""
+        cjk_title     = query
+        latin_artist  = ""
+        latin_title   = tr.flatten_to_romaji(query)
 
-    proxy = get_proxy()
-    series = proxy.lookup_series(artist_part.strip(), title_part.strip())
+    # ------------------------------------------------------------------
+    # 1. VGMdb series look-up — use Latin forms for better API match quality
+    # ------------------------------------------------------------------
+    proxy       = get_proxy()
+    series_names = proxy.lookup_series(
+        (latin_artist or cjk_artist).strip(),
+        (latin_title  or cjk_title).strip(),
+    )
 
-    # Append "<series> <title>" queries for slskd — tagged files use series names
-    seen = set(variants)
-    for name in series:
-        candidate = f"{name} {title_part}".strip()
-        if candidate not in seen:
-            seen.add(candidate)
-            variants.append(candidate)
+    result: list[str] = []
+    seen:   set[str]  = set()
 
-    return variants
+    def _add(candidate: str) -> None:
+        s = candidate.strip()
+        if s and s not in seen:
+            seen.add(s)
+            result.append(s)
+
+    # Priority 1: "<series> <CJK title>" — highest hit-rate on slskd
+    for series in series_names:
+        _add(f"{series} {cjk_title}" if cjk_title else series)
+
+    # Priority 2: original combined query (pass-through)
+    _add(query)
+
+    # Priority 3: fully Latin — covers files tagged in Romaji / Pinyin
+    if cjk_artist:
+        _add(f"{latin_artist} {latin_title}".strip())
+    else:
+        _add(latin_title)
+
+    # Priority 4 & 5: Simplified / Traditional Chinese script variants
+    if cjk_artist:
+        _add(f"{tr.to_simplified(cjk_artist)} {tr.to_simplified(cjk_title)}".strip())
+        _add(f"{tr.to_traditional(cjk_artist)} {tr.to_traditional(cjk_title)}".strip())
+    else:
+        _add(tr.to_simplified(cjk_title))
+        _add(tr.to_traditional(cjk_title))
+
+    return result
 
 
-def _on_pre_provider_search(query: Any) -> Any:
+def _on_pre_provider_search(
+    query: Any,
+    strategy_name: str = "",
+    artist_name: str = "",
+    title: str = "",
+    **kwargs: Any,
+) -> Any:
     """
-    Expand a CJK query into a prioritised list of Latin and multi-script variants.
+    Expand a CJK query into a prioritised list of search strings.
 
-    Also accepts a list (from a previously chained hook) and expands each
-    CJK element individually, deduplicating the combined result.
+    * Returns ``[]`` immediately for the ``album+title`` strategy — CJK tracks
+      on slskd are almost never tagged by CJK album name, so this strategy
+      produces only noise while burning an extra HTTP round-trip.
+    * Passes ``artist_name`` / ``title`` down to ``_expand_query`` so the
+      sniper priority matrix can use precise per-field metadata rather than
+      parsing the combined query string.
     """
+    # ── Album+title pruning for CJK queries ──────────────────────────────
+    _probe = query if isinstance(query, str) else " ".join(str(q) for q in (query or []))
+    if strategy_name == "album+title" and _has_cjk(_probe):
+        logger.debug(
+            "Pruning album+title strategy for CJK query %r "
+            "(slskd files are not tagged by CJK album name).",
+            query,
+        )
+        return []
+
     if isinstance(query, list):
         out: list[str] = []
         seen: set[str] = set()
         for q in query:
-            for v in (_expand_query(q) if _has_cjk(q) else [q]):
+            for v in (
+                _expand_query(q, artist_name=artist_name, title=title)
+                if _has_cjk(q)
+                else [q]
+            ):
                 if v not in seen:
                     seen.add(v)
                     out.append(v)
@@ -134,8 +194,8 @@ def _on_pre_provider_search(query: Any) -> Any:
     if not _has_cjk(query):
         return query
 
-    logger.info("CJK detected in search query %r — expanding variants", query)
-    expanded = _expand_query(query)
+    logger.info("CJK detected in search query %r — expanding sniper variants", query)
+    expanded = _expand_query(query, artist_name=artist_name, title=title)
     logger.debug("Expanded to %d variants: %s", len(expanded), expanded)
     return expanded
 

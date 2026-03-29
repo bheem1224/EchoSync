@@ -67,14 +67,15 @@ class TestDownloadManagerQualityProfileForwarding:
         strategy_filters = {"min_bitrate": 320, "allowed_extensions": ["flac"]}
         quality_profile = {"advanced_filters": {"fake_flac_min_kbps": 500}}
 
-        result = await manager._invoke_provider_search(
+        results, sniper_hit = await manager._invoke_provider_search(
             provider,
             "artist title",
             strategy_filters,
             quality_profile,
         )
 
-        assert result == [{"ok": True}]
+        assert results == [{"ok": True}]
+        assert not sniper_hit
         assert captured["query"] == "artist title"
         assert captured["basic_filters"] == strategy_filters
         assert captured["quality_profile"] == quality_profile
@@ -148,8 +149,11 @@ class TestDownloadManagerPrefilterBypass:
         candidate.identifiers["upload_speed"] = 2_000_000
         candidate.identifiers["queue_length"] = 0
 
-        async def fake_search(provider, query, strategy_filters, quality_profile):
-            return [candidate]
+        async def fake_search(
+            provider, query, strategy_filters, quality_profile,
+            target_track=None, strategy_name="", perfect_match_threshold=90,
+        ):
+            return [candidate], False
 
         manager._invoke_provider_search = fake_search
 
