@@ -13,6 +13,7 @@ from core.provider_base import ProviderBase
 from core.provider import SyncServiceProvider, get_provider_capabilities, ProviderRegistry, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
+from core.caching.provider_cache import provider_cache
 
 logger = get_logger("spotify_client")
 
@@ -614,22 +615,28 @@ class SpotifyClient(SyncServiceProvider):
             logger.warning("Spotify search_by_isrc(%s) failed: %s", isrc, exc)
             return None
 
-    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
+    @provider_cache(ttl_seconds=2592000)
+    def _raw_track(self, track_id: str) -> Optional[Dict[str, Any]]:
+        """Cached raw Spotipy track payload.  Decoupled from get_track so the
+        JSON-serialisable dict survives the provider_cache SQLite round-trip."""
         if not self.is_authenticated():
             return None
-        
         try:
-            track_data = self.sp.track(track_id)
-            return self._convert_track(track_data)
+            return self.sp.track(track_id)
         except Exception as e:
-            logger.error(f"Error getting track {track_id}: {e}")
+            logger.error(f"Error fetching raw track {track_id}: {e}")
             return None
-            
+
+    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
+        raw = self._raw_track(track_id)
+        return self._convert_track(raw) if raw else None
+
     # Alias for Provider protocol compatibility if needed,
     # though ProviderBase uses get_track
     def get_track_by_id(self, item_id: str) -> Optional[SoulSyncTrack]:
         return self.get_track(item_id)
 
+    @provider_cache(ttl_seconds=2592000)
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
         if not self.is_authenticated():
             return None
@@ -639,6 +646,7 @@ class SpotifyClient(SyncServiceProvider):
             logger.error(f"Error getting album {album_id}: {e}")
             return None
 
+    @provider_cache(ttl_seconds=2592000)
     def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
         if not self.is_authenticated():
             return None

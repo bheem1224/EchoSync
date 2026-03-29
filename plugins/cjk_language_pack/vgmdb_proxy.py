@@ -57,7 +57,7 @@ class VGMdbProxy:
 
         proxy = VGMdbProxy()
         series = proxy.lookup_series("YOASOBI", "Idol")
-        # → ["Oshi no Ko"]
+        # → [{"native": "\u63a8\u3057\u306e\u5b50", "english": "Oshi no Ko"}]
 
         canonical = proxy.resolve_artist_for_series("Oshi no Ko")
         # → "yoasobi"  (populated after the lookup above)
@@ -65,18 +65,28 @@ class VGMdbProxy:
 
     def __init__(self, timeout: int = _TIMEOUT) -> None:
         self._timeout = timeout
-        # {cache_key: (monotonic_timestamp, [series_name, ...])}
-        self._cache: dict[str, tuple[float, list[str]]] = {}
-        # Reverse map populated by lookup_series: series_name_lower → artist_name_lower
+        # {cache_key: (monotonic_timestamp, [{"native": ..., "english": ...}, ...])}
+        self._cache: dict[str, tuple[float, list[dict]]] = {}
+        # Reverse map populated by lookup_series:
+        # both native_name.lower() and english_name.lower() → artist_name_lower
         self._series_to_artist: dict[str, str] = {}
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def lookup_series(self, artist: str, title: str) -> list[str]:
+    def lookup_series(self, artist: str, title: str) -> list[dict]:
         """
-        Return a (possibly empty) list of anime / drama / game series names
-        associated with *artist* + *title*.  Results are cached in memory;
-        returns ``[]`` on any network or parse failure.
+        Return a (possibly empty) list of series info dicts for *artist* + *title*.
+
+        Each dict has the shape::
+
+            {"native": str, "english": str}
+
+        where ``native`` is the original-language title (Japanese/Chinese/Korean)
+        and ``english`` is the localised English title.  Both keys are always
+        present; when a locale is unavailable both fields hold the same value.
+
+        Results are cached in-process; returns ``[]`` on any network / parse
+        failure.
         """
         key = self._make_key(artist, title)
         cached = self._cache.get(key)
@@ -85,10 +95,13 @@ class VGMdbProxy:
 
         series = self._fetch_series(artist, title)
 
-        # Populate the reverse map so pre_normalize_text can remap later
+        # Populate the reverse map so pre_normalize_text can remap later.
+        # Both the native and English name are registered as aliases.
         artist_norm = artist.strip().lower()
-        for name in series:
-            self._series_to_artist.setdefault(name.lower(), artist_norm)
+        for hit in series:
+            for name in (hit.get("native", ""), hit.get("english", "")):
+                if name:
+                    self._series_to_artist.setdefault(name.lower(), artist_norm)
 
         self._store(key, series)
         return series
@@ -109,13 +122,13 @@ class VGMdbProxy:
     def _make_key(artist: str, title: str) -> str:
         return f"{artist.strip().lower()}::{title.strip().lower()}"
 
-    def _store(self, key: str, series: list[str]) -> None:
+    def _store(self, key: str, series: list[dict]) -> None:
         if len(self._cache) >= _MAX_CACHE:
             oldest = min(self._cache, key=lambda k: self._cache[k][0])
             del self._cache[oldest]
         self._cache[key] = (time.monotonic(), series)
 
-    def _fetch_series(self, artist: str, title: str) -> list[str]:
+    def _fetch_series(self, artist: str, title: str) -> list[dict]:
         """Search VGMdb.info and extract product/series names from the results."""
         query = f"{artist} {title}".strip()
         try:
@@ -124,21 +137,45 @@ class VGMdbProxy:
             logger.debug("VGMdb search request failed for %r: %s", query, exc)
             return []
 
-        series: list[str] = []
-        seen: set[str] = set()
+        series: list[dict] = []
+        seen_pairs: set[tuple[str, str]] = set()
 
         for album in albums[:5]:   # inspect only the top 5 results
             for product in album.get("products", []):
                 names = product.get("names", {})
-                # Prefer English; fall back to first available locale
-                name = (
+
+                # English / localised name
+                english: str = (
                     names.get("en")
                     or names.get("en-US")
-                    or next(iter(names.values()), None)
+                    or ""
                 )
-                if name and name not in seen:
-                    seen.add(name)
-                    series.append(name)
+
+                # Native / original-language name (prefer non-English locales)
+                native: str = (
+                    names.get("ja")
+                    or names.get("zh")
+                    or names.get("ko")
+                    or next(
+                        (v for k, v in names.items() if k not in ("en", "en-US")),
+                        None,
+                    )
+                    or ""
+                )
+
+                # Cross-fill when one locale is missing
+                if not native:
+                    native = english
+                if not english:
+                    english = native
+
+                if not english and not native:
+                    continue
+
+                pair = (native.strip(), english.strip())
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    series.append({"native": pair[0], "english": pair[1]})
 
         logger.debug("VGMdb %r → series: %s", query, series)
         return series

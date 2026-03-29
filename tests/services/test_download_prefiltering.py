@@ -152,6 +152,7 @@ class TestDownloadManagerPrefilterBypass:
         async def fake_search(
             provider, query, strategy_filters, quality_profile,
             target_track=None, strategy_name="", perfect_match_threshold=90,
+            includes=None, excludes=None,
         ):
             return [candidate], False
 

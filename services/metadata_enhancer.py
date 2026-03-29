@@ -30,6 +30,94 @@ from database.working_database import get_working_database, ReviewTask
 
 logger = get_logger("services.metadata_enhancer")
 
+
+def _title_similarity(a: str, b: str) -> float:
+    """Jaccard word-set similarity for comparing track titles (case-insensitive)."""
+    if a == b:
+        return 1.0
+    words_a = set(a.split())
+    words_b = set(b.split())
+    if not words_a or not words_b:
+        return 0.0
+    return len(words_a & words_b) / len(words_a | words_b)
+
+
+def _track_entry_to_metadata(track: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert an album_cache track entry to the standard identify_file return format."""
+    return {
+        "title": track.get("title"),
+        "recording_id": track.get("recording_id"),
+        "artist": track.get("artist"),
+        "artist_id": "",
+        "album": track.get("album"),
+        "release_id": track.get("release_id"),
+        "date": track.get("date"),
+        "track_number": track.get("track_number"),
+        "disc_number": track.get("disc_number"),
+        "cover_art_url": track.get("cover_art_url"),
+        "isrc": track.get("isrc"),
+    }
+
+
+def _match_from_album_cache(
+    file_path: Path,
+    album_cache: Dict[str, Any],
+) -> "Optional[Tuple[Optional[Dict[str, Any]], float]]":
+    """Try to match *file_path* against any release stored in *album_cache*.
+
+    Matching priority:
+    1. ID3 ``track_number`` (+ disc_number) exact match → confidence 0.90
+    2. Title Jaccard word-set similarity ≥ 0.85     → confidence 0.88
+
+    Returns a ``(metadata, confidence)`` tuple on a hit, or ``None``.
+    """
+    try:
+        tags = _tagging_read(file_path)
+    except Exception:
+        return None
+
+    tag_title = str(tags.get("title") or "").strip().lower()
+    raw_track_num = tags.get("track_number") or tags.get("tracknumber")
+    raw_disc_num = tags.get("disc_number") or tags.get("discnumber") or "1"
+    try:
+        tag_track_num: Optional[int] = int(str(raw_track_num).split("/")[0].strip())
+    except (TypeError, ValueError):
+        tag_track_num = None
+    try:
+        tag_disc_num = int(str(raw_disc_num).split("/")[0].strip())
+    except (TypeError, ValueError):
+        tag_disc_num = 1
+
+    for _release_id, release_data in album_cache.items():
+        tracks = release_data.get("tracks") or []
+
+        # Priority 1: exact track number + disc number
+        if tag_track_num is not None:
+            for t in tracks:
+                if (
+                    t.get("track_number") == tag_track_num
+                    and (t.get("disc_number") or 1) == tag_disc_num
+                ):
+                    logger.info(
+                        "Album cache HIT (disc %d, track %d): %s → %s",
+                        tag_disc_num, tag_track_num, file_path.name, t.get("title"),
+                    )
+                    return _track_entry_to_metadata(t), 0.90
+
+        # Priority 2: title word-set similarity
+        if tag_title:
+            for t in tracks:
+                cache_title = str(t.get("title") or "").strip().lower()
+                if cache_title and _title_similarity(tag_title, cache_title) >= 0.85:
+                    logger.info(
+                        "Album cache HIT (title match): %s → %s",
+                        file_path.name, t.get("title"),
+                    )
+                    return _track_entry_to_metadata(t), 0.88
+
+    return None
+
+
 class MetadataEnhancerService:
     _instance = None
 
@@ -361,6 +449,56 @@ class MetadataEnhancerService:
             return None, 0.0
 
         return metadata, confidence
+
+    def identify_batch(
+        self, files: List[Path]
+    ) -> List[Tuple[Optional[Dict[str, Any]], float]]:
+        """Identify a batch of files sharing a parent directory (typically one album).
+
+        Uses an in-process ``album_cache`` to avoid N+1 AcoustID / MusicBrainz
+        round-trips.  After the first successful identification yields a
+        ``release_id``, the full MusicBrainz release is fetched *once* via
+        ``MusicBrainzClient.get_release`` (itself cached for 30 days) and
+        indexed by track number and title.  Subsequent files in the same batch
+        look up their metadata in O(1) — no network call needed.
+
+        Returns:
+            List of ``(metadata, confidence)`` tuples in the same order as
+            *files*.
+        """
+        results: List[Tuple[Optional[Dict[str, Any]], float]] = []
+        # release_id -> {"album": str, "cover_art_url": str|None, "tracks": [...]}
+        album_cache: Dict[str, Any] = {}
+        metadata_provider = self._get_provider(Capability.FETCH_METADATA)
+
+        for file_path in files:
+            # ── Try album cache first ─────────────────────────────────────────
+            if album_cache:
+                cached = _match_from_album_cache(file_path, album_cache)
+                if cached is not None:
+                    results.append(cached)
+                    continue
+
+            # ── Full identification pipeline ──────────────────────────────────
+            metadata, confidence = self.identify_file(file_path)
+            results.append((metadata, confidence))
+
+            # ── Populate album cache on first successful release_id ───────────
+            if metadata and metadata.get("release_id") and metadata_provider:
+                release_id = metadata["release_id"]
+                if release_id not in album_cache:
+                    get_release = getattr(metadata_provider, "get_release", None)
+                    if get_release is not None:
+                        release_data = get_release(release_id)
+                        if release_data and release_data.get("tracks"):
+                            album_cache[release_id] = release_data
+                            logger.info(
+                                "Album memory cache populated: release=%s, tracks=%d",
+                                release_id,
+                                len(release_data["tracks"]),
+                            )
+
+        return results
 
     def create_or_update_review_task(self, file_path: Path, metadata: Optional[Dict[str, Any]], confidence: float, status='pending'):
         """Create or update a task in the review queue."""

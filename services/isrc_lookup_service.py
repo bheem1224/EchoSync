@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.caching.provider_cache import provider_cache
 from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.tiered_logger import get_logger
 
@@ -111,6 +112,7 @@ def _dispatch_isrc_via_providers(
 
 # ─── Public entrypoint ────────────────────────────────────────────────────────
 
+@provider_cache(ttl_seconds=2592000)
 def fetch_metadata_by_isrc(isrc_code: str) -> Dict[str, Any]:
     """
     Resolve track metadata for *isrc_code* via the provider-agnostic waterfall.

@@ -472,6 +472,8 @@ class SlskdProvider(DownloaderProvider):
         basic_filters: Dict[str, Any] = None,
         timeout: int = 180,
         quality_profile: Optional[Dict[str, Any]] = None,
+        includes: Optional[List[str]] = None,
+        excludes: Optional[List[str]] = None,
     ) -> List[SoulSyncTrack]:
         """
         Atomic Search: Post -> Poll -> Parse -> Delete.
@@ -489,7 +491,10 @@ class SlskdProvider(DownloaderProvider):
         """
         # Acquire semaphore slot (max 3 concurrent searches — Soulseek IP ban protection)
         async with self._search_semaphore:
-            return await self._do_async_search(query, basic_filters, timeout, quality_profile)
+            return await self._do_async_search(
+                query, basic_filters, timeout, quality_profile,
+                includes=includes, excludes=excludes,
+            )
 
     async def _check_soulseek_connected(self) -> bool:
         """Return True only if slskd reports it is connected and logged in to the Soulseek network."""
@@ -537,6 +542,8 @@ class SlskdProvider(DownloaderProvider):
         basic_filters: Dict[str, Any] = None,
         timeout: int = 180,
         quality_profile: Optional[Dict[str, Any]] = None,
+        includes: Optional[List[str]] = None,
+        excludes: Optional[List[str]] = None,
     ) -> List[SoulSyncTrack]:
         """Internal async search implementation (called under semaphore lock)."""
         if not self.base_url:
@@ -678,6 +685,37 @@ class SlskdProvider(DownloaderProvider):
                     valid_tracks.append(soul_track)
 
             logger.info(f"After coarse filtering: {len(valid_tracks)} candidates")
+
+            # Apply client-side includes / excludes text filter (for broad searches).
+            # 'includes' terms must ALL appear in the filename (AND semantics).
+            # 'excludes' terms cause the result to be dropped if ANY match (OR semantics).
+            if includes:
+                includes_lower = [t.lower() for t in includes if isinstance(t, str) and t.strip()]
+                if includes_lower:
+                    valid_tracks = [
+                        t for t in valid_tracks
+                        if all(
+                            inc in (t.filename or "").lower()
+                            for inc in includes_lower
+                        )
+                    ]
+                    logger.info(
+                        f"After includes filter {includes_lower!r}: {len(valid_tracks)} candidates"
+                    )
+            if excludes:
+                excludes_lower = [t.lower() for t in excludes if isinstance(t, str) and t.strip()]
+                if excludes_lower:
+                    valid_tracks = [
+                        t for t in valid_tracks
+                        if not any(
+                            exc in (t.filename or "").lower()
+                            for exc in excludes_lower
+                        )
+                    ]
+                    logger.info(
+                        f"After excludes filter {excludes_lower!r}: {len(valid_tracks)} candidates"
+                    )
+
             return valid_tracks
 
         except Exception as e:
@@ -803,13 +841,20 @@ class SlskdProvider(DownloaderProvider):
         basic_filters: Dict[str, Any] = None,
         limit: int = 10,
         quality_profile: Optional[Dict[str, Any]] = None,
+        includes: Optional[List[str]] = None,
+        excludes: Optional[List[str]] = None,
     ) -> List[SoulSyncTrack]:
         """Synchronous wrapper for atomic search"""
         try:
             loop = asyncio.new_event_loop()
             try:
                 results = loop.run_until_complete(
-                    self._async_search(query, basic_filters, quality_profile=quality_profile)
+                    self._async_search(
+                        query, basic_filters,
+                        quality_profile=quality_profile,
+                        includes=includes,
+                        excludes=excludes,
+                    )
                 )
                 return results[:limit]
             finally:

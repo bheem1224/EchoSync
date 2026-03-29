@@ -157,6 +157,8 @@ class DownloadManager:
         target_track: Optional[SoulSyncTrack] = None,
         strategy_name: str = "",
         perfect_match_threshold: int = 90,
+        includes: Optional[List[str]] = None,
+        excludes: Optional[List[str]] = None,
     ) -> Tuple[List[SoulSyncTrack], bool]:
         """Search a single provider for one strategy query, expanding via hooks.
 
@@ -182,7 +184,8 @@ class DownloadManager:
         accumulated: List[SoulSyncTrack] = []
         for q in ordered_queries:
             batch = await self._invoke_provider_search_single(
-                provider, q, strategy_filters, quality_profile
+                provider, q, strategy_filters, quality_profile,
+                includes=includes, excludes=excludes,
             )
             if not batch:
                 continue
@@ -239,6 +242,8 @@ class DownloadManager:
         query: str,
         strategy_filters: Dict[str, Any],
         quality_profile: Optional[Dict[str, Any]],
+        includes: Optional[List[str]] = None,
+        excludes: Optional[List[str]] = None,
     ) -> List[SoulSyncTrack]:
         """Invoke provider search while passing quality_profile when supported."""
 
@@ -246,8 +251,14 @@ class DownloadManager:
             async_search = getattr(provider, '_async_search')
             try:
                 sig = inspect.signature(async_search)
+                kwargs: Dict[str, Any] = {}
                 if 'quality_profile' in sig.parameters:
-                    return await async_search(query, strategy_filters, quality_profile=quality_profile)
+                    kwargs['quality_profile'] = quality_profile
+                if 'includes' in sig.parameters:
+                    kwargs['includes'] = includes
+                if 'excludes' in sig.parameters:
+                    kwargs['excludes'] = excludes
+                return await async_search(query, strategy_filters, **kwargs)
             except (TypeError, ValueError):
                 pass
             return await async_search(query, strategy_filters)
@@ -256,11 +267,17 @@ class DownloadManager:
         search_fn = provider.search
         try:
             sig = inspect.signature(search_fn)
+            call_kwargs: Dict[str, Any] = {'basic_filters': strategy_filters}
             if 'quality_profile' in sig.parameters:
-                return await loop.run_in_executor(
-                    None,
-                    lambda: search_fn(query, basic_filters=strategy_filters, quality_profile=quality_profile),
-                )
+                call_kwargs['quality_profile'] = quality_profile
+            if 'includes' in sig.parameters:
+                call_kwargs['includes'] = includes
+            if 'excludes' in sig.parameters:
+                call_kwargs['excludes'] = excludes
+            return await loop.run_in_executor(
+                None,
+                lambda: search_fn(query, **call_kwargs),
+            )
         except (TypeError, ValueError):
             pass
 
@@ -610,6 +627,8 @@ class DownloadManager:
                     query = strategy["query"]
                     strategy_tolerance = strategy["duration_tolerance_ms"]
                     strategy_name = strategy["name"]
+                    strategy_includes = strategy.get("includes")
+                    strategy_excludes = strategy.get("excludes")
 
                     strategy_filters = dict(basic_filters)
                     strategy_filters["duration_tolerance_ms"] = strategy_tolerance
@@ -632,6 +651,8 @@ class DownloadManager:
                             target_track=target_track,
                             strategy_name=strategy_name,
                             perfect_match_threshold=perfect_match_threshold,
+                            includes=strategy_includes,
+                            excludes=strategy_excludes,
                         )
                     except Exception as e:
                         logger.warning(f"    Search failed on {provider.name}: {e}")
@@ -975,6 +996,19 @@ class DownloadManager:
                 "name": "title+strict-duration",
                 "query": search_title,
                 "duration_tolerance_ms": stricter_tolerance,
+            })
+
+        # Strategy 4: Artist broad + client-side title filter
+        # Mimics the P2P power-user tactic: search by artist name only to bypass
+        # poorly-indexed servers, then rely on client-side filename filtering to
+        # surface results containing the track title.
+        if track.artist_name and search_title:
+            normalized_artist = normalize_artist(track.artist_name)
+            strategies.append({
+                "name": "artist+broad+filter",
+                "query": normalized_artist,
+                "duration_tolerance_ms": int(base_duration_tolerance_ms),
+                "includes": [search_title],   # enforced client-side by the provider adapter
             })
 
         # De-duplicate by normalized query while preserving order and strategy metadata

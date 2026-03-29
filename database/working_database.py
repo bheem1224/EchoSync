@@ -118,6 +118,9 @@ class ReviewTask(WorkingBase):
     detected_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
     confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
 
 
 class Download(WorkingBase):

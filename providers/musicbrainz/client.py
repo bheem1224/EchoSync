@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict, Any
 import re
 
+from core.caching.provider_cache import provider_cache
 from core.provider_base import ProviderBase
 from core.provider import (
     ProviderCapabilities,
@@ -47,24 +48,25 @@ class MusicBrainzClient(ProviderBase):
         )
         self.api_base = "https://musicbrainz.org/ws/2"
 
-    def get_artist_tracks(self, artist_name: str) -> List[SoulSyncTrack]:
-        """Fetch a full-ish artist tracklist from MusicBrainz recordings search.
+    @provider_cache(ttl_seconds=2592000)
+    def _fetch_artist_track_dicts(self, artist_name: str) -> List[Dict[str, Any]]:
+        """Cached paginated recording fetch returning JSON-serialisable dicts.
 
-        The discovery engine uses SoulSyncTrack.sync_id to diff these results
-        against local libraries, so tracks must be created through the standard
-        factory path to ensure deterministic IDs.
+        Separating the API calls from SoulSyncTrack construction keeps the
+        provider_cache round-trip (JSON → SQLite → JSON) lossless.  Called
+        exclusively by get_artist_tracks.
         """
         artist_name = str(artist_name or "").strip()
         if not artist_name:
             return []
 
-        tracks: List[SoulSyncTrack] = []
+        raw: List[Dict[str, Any]] = []
         offset = 0
         limit = 100
         max_records = 500
 
         try:
-            while len(tracks) < max_records:
+            while len(raw) < max_records:
                 if re.fullmatch(r"[0-9a-fA-F-]{36}", artist_name):
                     query = f'arid:{artist_name}'
                 else:
@@ -103,7 +105,6 @@ class MusicBrainzClient(ProviderBase):
                         if isinstance(entry, dict):
                             provider_artist += str(entry.get("name") or "")
                             provider_artist += str(entry.get("joinphrase") or "")
-
                     provider_artist = provider_artist.strip() or artist_name
 
                     releases = recording.get("releases") or []
@@ -122,35 +123,58 @@ class MusicBrainzClient(ProviderBase):
                     if isrc_list:
                         isrc = str(isrc_list[0] or "").strip() or None
 
-                    track_obj = self.create_soul_sync_track(
-                        title=title,
-                        artist=provider_artist,
-                        album=album_title or "Unknown Album",
-                        musicbrainz_id=recording_mbid,
-                        isrc=isrc,
-                        year=release_year,
-                        provider_id=recording_mbid,
-                        source=self.name,
-                    )
-                    if track_obj:
-                        tracks.append(track_obj)
-                        if len(tracks) >= max_records:
-                            break
+                    raw.append({
+                        "title": title,
+                        "artist": provider_artist,
+                        "album": album_title or "Unknown Album",
+                        "mbid": recording_mbid,
+                        "isrc": isrc,
+                        "year": release_year,
+                    })
+                    if len(raw) >= max_records:
+                        break
 
                 if len(recordings) < limit:
                     break
                 offset += limit
 
         except Exception as exc:
-            logger.error(f"Failed to fetch artist tracks for '{artist_name}': {exc}", exc_info=True)
+            logger.error(
+                "Failed to fetch artist tracks for '%s': %s", artist_name, exc, exc_info=True
+            )
 
-        # Deduplicate by base sync identity to keep discovery diff deterministic.
-        deduped: Dict[str, SoulSyncTrack] = {}
-        for track in tracks:
-            deduped[track.sync_id.split("?")[0]] = track
-
+        # Deduplicate by artist+title to keep discovery diff deterministic.
+        deduped: Dict[str, Dict[str, Any]] = {}
+        for d in raw:
+            key = f"{d['artist']}|{d['title']}"
+            if key not in deduped:
+                deduped[key] = d
         return list(deduped.values())
 
+    def get_artist_tracks(self, artist_name: str) -> List[SoulSyncTrack]:
+        """Fetch a full-ish artist tracklist from MusicBrainz recordings search.
+
+        The discovery engine uses SoulSyncTrack.sync_id to diff these results
+        against local libraries, so tracks must be created through the standard
+        factory path to ensure deterministic IDs.
+        """
+        tracks: List[SoulSyncTrack] = []
+        for d in self._fetch_artist_track_dicts(artist_name):
+            track_obj = self.create_soul_sync_track(
+                title=d["title"],
+                artist=d["artist"],
+                album=d["album"],
+                musicbrainz_id=d["mbid"],
+                isrc=d["isrc"],
+                year=d["year"],
+                provider_id=d["mbid"],
+                source=self.name,
+            )
+            if track_obj:
+                tracks.append(track_obj)
+        return tracks
+
+    @provider_cache(ttl_seconds=604800)
     def search_metadata(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Compatibility search API used by metadata_enhancer fallback logic.
 
@@ -333,6 +357,97 @@ class MusicBrainzClient(ProviderBase):
 
         except Exception as exc:
             logger.error(f"Failed to fetch metadata for {mbid}: {exc}")
+            return None
+
+    @provider_cache(ttl_seconds=2592000)
+    def get_release(self, release_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch full release data for the album memory cache in MetadataEnhancerService.
+
+        Returns a dict with:
+          - ``album``: release title
+          - ``cover_art_url``: front cover URL from the Cover Art Archive (or None)
+          - ``tracks``: list of track dicts, each carrying title, artist,
+            track_number, disc_number, recording_id, release_id, isrc,
+            duration_ms, date, cover_art_url
+
+        Called at most once per release per 30-day cache window, eliminating
+        N−1 redundant AcoustID / MusicBrainz calls when an entire album lands
+        in the download directory at once.
+        """
+        release_id = str(release_id or "").strip()
+        if not release_id:
+            return None
+
+        try:
+            response = self.http.get(
+                f"{self.api_base}/release/{release_id}",
+                params={"fmt": "json", "inc": "recordings+artist-credits"},
+            )
+            if response.status_code != 200:
+                return None
+
+            data = response.json() or {}
+            album_title = str(data.get("title") or "").strip()
+            release_date = str(data.get("date") or "").strip()
+            cover_art_url = self._get_cover_art(release_id)
+
+            tracks: List[Dict[str, Any]] = []
+            for medium in data.get("media", []) or []:
+                disc_number = int(medium.get("position") or 1)
+                for track_entry in medium.get("tracks", []) or []:
+                    recording = track_entry.get("recording") or {}
+                    raw_pos = track_entry.get("number") or track_entry.get("position")
+                    try:
+                        track_number: Optional[int] = int(
+                            str(raw_pos).split("/")[0].strip()
+                        )
+                    except (TypeError, ValueError):
+                        track_number = None
+
+                    artist_credit = recording.get("artist-credit") or []
+                    artist_parts: List[str] = []
+                    for entry in artist_credit:
+                        if isinstance(entry, dict):
+                            artist_parts.append(str(entry.get("name") or ""))
+                            artist_parts.append(str(entry.get("joinphrase") or ""))
+                    artist_str = "".join(artist_parts).strip()
+                    if not artist_str:
+                        for entry in data.get("artist-credit", []) or []:
+                            if isinstance(entry, dict):
+                                artist_str += str(entry.get("name") or "")
+                                artist_str += str(entry.get("joinphrase") or "")
+                        artist_str = artist_str.strip()
+
+                    recording_id = str(recording.get("id") or "").strip() or None
+                    title = str(
+                        recording.get("title") or track_entry.get("title") or ""
+                    ).strip()
+                    duration_ms = recording.get("length")
+                    try:
+                        duration_ms = int(duration_ms) if duration_ms is not None else None
+                    except (TypeError, ValueError):
+                        duration_ms = None
+
+                    isrc_list = recording.get("isrcs") or []
+                    isrc = str(isrc_list[0]).strip() if isrc_list else None
+
+                    tracks.append({
+                        "title": title,
+                        "artist": artist_str,
+                        "album": album_title,
+                        "track_number": track_number,
+                        "disc_number": disc_number,
+                        "recording_id": recording_id,
+                        "release_id": release_id,
+                        "isrc": isrc,
+                        "duration_ms": duration_ms,
+                        "date": release_date,
+                        "cover_art_url": cover_art_url,
+                    })
+
+            return {"album": album_title, "cover_art_url": cover_art_url, "tracks": tracks}
+        except Exception as exc:
+            logger.warning("MusicBrainzClient.get_release(%s) failed: %s", release_id, exc)
             return None
 
     def _get_cover_art(self, release_id: str) -> Optional[str]:

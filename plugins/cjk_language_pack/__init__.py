@@ -111,8 +111,8 @@ def _expand_query(query: str, artist_name: str = "", title: str = "") -> list[st
     # ------------------------------------------------------------------
     # 1. VGMdb series look-up — use Latin forms for better API match quality
     # ------------------------------------------------------------------
-    proxy       = get_proxy()
-    series_names = proxy.lookup_series(
+    proxy        = get_proxy()
+    series_hits  = proxy.lookup_series(
         (latin_artist or cjk_artist).strip(),
         (latin_title  or cjk_title).strip(),
     )
@@ -126,11 +126,23 @@ def _expand_query(query: str, artist_name: str = "", title: str = "") -> list[st
             seen.add(s)
             result.append(s)
 
-    # Priority 1: "<series> <CJK title>" — highest hit-rate on slskd
-    for series in series_names:
-        _add(f"{series} {cjk_title}" if cjk_title else series)
+    # Priority 1 (a/b/c): VGMdb series queries — highest hit-rate on slskd P2P.
+    # Covers files tagged by show/game name rather than by artist name.
+    for hit in series_hits:
+        native  = hit.get("native", "")
+        english = hit.get("english", "")
+        # (a) "<native series> OST" — e.g. "葬送のフリーレン OST"
+        if native:
+            _add(f"{native} OST")
+        # (b) "<english series> Soundtrack" — e.g. "Frieren Soundtrack"
+        if english:
+            _add(f"{english} Soundtrack")
+        # (c) "<english series> <original CJK title>" — e.g. "Frieren Frieren"
+        #     (catches releases labelled by series name with the track title)
+        if english and cjk_title:
+            _add(f"{english} {cjk_title}")
 
-    # Priority 2: original combined query (pass-through)
+    # Priority 2: original combined query (pass-through / exact tags)
     _add(query)
 
     # Priority 3: fully Latin — covers files tagged in Romaji / Pinyin
@@ -140,12 +152,16 @@ def _expand_query(query: str, artist_name: str = "", title: str = "") -> list[st
         _add(latin_title)
 
     # Priority 4 & 5: Simplified / Traditional Chinese script variants
-    if cjk_artist:
-        _add(f"{tr.to_simplified(cjk_artist)} {tr.to_simplified(cjk_title)}".strip())
-        _add(f"{tr.to_traditional(cjk_artist)} {tr.to_traditional(cjk_title)}".strip())
-    else:
-        _add(tr.to_simplified(cjk_title))
-        _add(tr.to_traditional(cjk_title))
+    # (only emitted for Chinese; detect_language guards are inside script_variants)
+    from plugins.cjk_language_pack.transliterator import detect_language
+    lang = detect_language(cjk_title or query)
+    if lang == "zh":
+        if cjk_artist:
+            _add(f"{tr.to_simplified(cjk_artist)} {tr.to_simplified(cjk_title)}".strip())
+            _add(f"{tr.to_traditional(cjk_artist)} {tr.to_traditional(cjk_title)}".strip())
+        else:
+            _add(tr.to_simplified(cjk_title))
+            _add(tr.to_traditional(cjk_title))
 
     return result
 

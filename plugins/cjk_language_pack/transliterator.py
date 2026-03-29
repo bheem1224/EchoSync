@@ -49,7 +49,43 @@ _KANA_RE = re.compile(r"[\u3040-\u309f\u30a0-\u30ff]")
 _KOREAN_RE = re.compile(r"[\uac00-\ud7af\u1100-\u11ff]")
 
 
-class CJKTransliterator:
+# ── Public module-level helper ────────────────────────────────────────────────
+
+
+def detect_language(text: str) -> str:
+    """
+    Lightweight Unicode-range language detector for CJK text.
+
+    Decision rules (evaluated in order, first match wins):
+
+    * **Japanese** (``"ja"``)
+          Text contains at least one Hiragana (U+3040–U+309F) or Katakana
+          (U+30A0–U+30FF) character.  Kana is an unambiguous Japanese signal;
+          the presence of CJK ideographs alongside kana does not change the
+          decision.
+
+    * **Korean** (``"ko"``)
+          Text contains at least one Hangul Syllable (U+AC00–U+D7A3).
+          Hangul is used exclusively for Korean.
+
+    * **Chinese / unknown** (``"zh"``)
+          Fallback for text that contains CJK ideographs but no kana or Hangul,
+          as well as plain Latin text passed through by mistake.
+
+    Returns one of the strings ``"ja"``, ``"ko"``, or ``"zh"``.
+    """
+    if not isinstance(text, str):
+        return "zh"
+    # Kana check (hiragana or full katakana)
+    if _KANA_RE.search(text):
+        return "ja"
+    # Hangul syllables
+    if re.search(r"[\uac00-\ud7a3]", text):
+        return "ko"
+    return "zh"
+
+
+
     """
     Offline CJK → Latin transliteration with lazy-loaded library imports.
 
@@ -200,10 +236,12 @@ class CJKTransliterator:
         Return all meaningful script variants of *text*, deduplicated,
         with the original form first.
 
-        Chinese  → [original, simplified?, traditional?, pinyin]
-        Japanese → [original, romaji]
-        Korean   → [original, revised_romanization]
-        Latin    → [original]
+        Language-aware pruning prevents generating irrelevant variants:
+
+        * Chinese (``zh``)  → [original, simplified?, traditional?, pinyin]
+        * Japanese (``ja``) → [original, romaji]  — **no Pinyin, no Simplified/Traditional**
+        * Korean (``ko``)   → [original, revised_romanization]  — **no Pinyin/Romaji**
+        * Latin             → [original]
         """
         if not self.has_cjk(text):
             return [text]
@@ -214,17 +252,18 @@ class CJKTransliterator:
             if variant and variant not in seen:
                 seen.append(variant)
 
-        # Korean (only Hangul, no ideographs)
-        if _KOREAN_RE.search(text) and not _CHINESE_RE.search(text) and not _KANA_RE.search(text):
+        lang = detect_language(text)
+
+        if lang == "ko":
             _add(self.to_hangul_latin(text))
             return seen
 
-        # Japanese (kana present)
-        if _KANA_RE.search(text):
+        if lang == "ja":
+            # Japanese: Romaji only — Pinyin and Simp/Trad Chinese are irrelevant
             _add(self.to_romaji(text))
             return seen
 
-        # Chinese
+        # Chinese (zh): full script + Pinyin variants
         simplified  = self.to_simplified(text)
         traditional = self.to_traditional(text)
         pinyin      = self.to_pinyin(simplified)
@@ -232,6 +271,7 @@ class CJKTransliterator:
         _add(traditional)
         _add(pinyin)
         return seen
+
 
 
 # ── Module-level singleton ──────────────────────────────────────────────────────

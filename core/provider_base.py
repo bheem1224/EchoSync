@@ -113,11 +113,17 @@ class ProviderBase(ABC):
         type: str = "track",
         limit: int = 10,
         quality_profile: Optional[Dict[str, Any]] = None,
+        includes: Optional[List[str]] = None,
+        excludes: Optional[List[str]] = None,
     ) -> List[SoulSyncTrack]:
         """Search for tracks. Must return SoulSyncTrack objects.
 
         Args:
             quality_profile: Optional active quality profile for provider-side pre-filtering.
+            includes: Optional list of terms that must all appear in a result's filename
+                      (client-side text filter, AND semantics).
+            excludes: Optional list of terms where any match causes the result to be dropped
+                      (client-side text filter, OR semantics).
         """
         pass
 

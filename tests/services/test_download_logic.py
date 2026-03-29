@@ -136,32 +136,52 @@ class TestAutoImportLogic:
     """Task 2 Verification: Memory Leak Fix"""
 
     def test_is_path_ignored_db_query(self, mock_work_db):
-        """Verify that _is_path_ignored queries the DB correctly."""
+        """Verify that _is_path_ignored queries the DB correctly.
+
+        Expected behaviour after the 48-hour Review Queue backoff was introduced:
+        - 'ignored' tasks  → always skipped (True)
+        - 'pending' tasks created < 48 h ago  → skipped (True)  [API-spam guard]
+        - 'pending' tasks created > 48 h ago  → NOT skipped (False) [allow retry]
+        - unknown paths                        → NOT skipped (False)
+        """
+        from datetime import timedelta
         from services.auto_importer import AutoImportService
+        from time_utils import utc_now
 
         service = AutoImportService.get_instance()
         service.work_db = mock_work_db
 
         ignored_path = "/downloads/ignored_song.mp3"
-        with mock_work_db.session_scope() as session:
-            task = ReviewTask(
-                file_path=ignored_path,
-                status="ignored"
-            )
-            session.add(task)
+        pending_recent_path = "/downloads/pending_recent.mp3"
+        pending_old_path = "/downloads/pending_old.mp3"
 
-            pending_path = "/downloads/pending_song.mp3"
-            task2 = ReviewTask(
-                file_path=pending_path,
-                status="pending"
+        old_timestamp = utc_now() - timedelta(hours=72)
+
+        with mock_work_db.session_scope() as session:
+            session.add(ReviewTask(file_path=ignored_path, status="ignored"))
+            # Recent pending task — within the 48-hour backoff window
+            session.add(ReviewTask(file_path=pending_recent_path, status="pending"))
+            # Old pending task — outside the backoff window; safe to retry
+            old_task = ReviewTask(
+                file_path=pending_old_path,
+                status="pending",
+                created_at=old_timestamp,
             )
-            session.add(task2)
+            # Directly set updated_at if the column exists on the model
+            if hasattr(old_task, 'updated_at'):
+                old_task.updated_at = old_timestamp
+            session.add(old_task)
             session.commit()
 
         with patch('services.auto_importer.get_working_database', return_value=mock_work_db):
             with patch('services.auto_importer.get_metadata_enhancer'):
                 with patch('services.auto_importer.config_manager') as mock_config:
                     mock_config.get_library_dir.return_value = Path("/tmp/lib")
+                    # 'ignored' → always skip
                     assert service._is_path_ignored(ignored_path) is True
-                    assert service._is_path_ignored(pending_path) is False
+                    # recent 'pending' → skip (API-spam guard)
+                    assert service._is_path_ignored(pending_recent_path) is True
+                    # old 'pending' → allow retry
+                    assert service._is_path_ignored(pending_old_path) is False
+                    # unknown path → don't skip
                     assert service._is_path_ignored("/downloads/random.mp3") is False
