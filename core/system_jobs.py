@@ -434,6 +434,7 @@ def register_user_history_sync_job(interval_seconds: int = 43200, enabled: bool 
         name="user_history_sync",
         func=run_user_history_sync,
         interval_seconds=interval_seconds,
+        start_after=600,  # 10-minute startup delay — avoids Plex API calls during boot
         enabled=enabled,
         tags=["system", "user_history", "suggestion_engine"],
         max_retries=1,
