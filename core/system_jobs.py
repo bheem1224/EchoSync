@@ -184,6 +184,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
         name="database_update",
         func=run_database_update,
         interval_seconds=interval_seconds,
+        start_after=600,  # 10-minute startup delay so all plugins initialise before first sync
         enabled=enabled,
         tags=["system", "database"],
         max_retries=2
@@ -250,6 +251,7 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
         name="media_server_scan",
         func=run_media_server_scan,
         interval_seconds=interval_seconds,
+        start_after=600,  # 10-minute startup delay — avoids hammering Plex/Jellyfin during boot
         enabled=enabled,
         tags=["system", "media_scan"],
         max_retries=1,
