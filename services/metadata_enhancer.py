@@ -138,7 +138,11 @@ class MetadataEnhancerService:
     def enhance_library_metadata(self, batch_size=100):
         """
         Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
+
+        Loops through batches until no more tracks require enhancement.  Each batch is
+        committed in its own session so memory stays flat even on large libraries.
         """
+        from sqlalchemy import or_, and_
         required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
         from database.music_database import get_database, Track
         from core.file_handling.path_mapper import PathMapper
@@ -154,15 +158,38 @@ class MetadataEnhancerService:
         fingerprint_provider = self._get_provider(Capability.RESOLVE_FINGERPRINT)
         metadata_provider = self._get_provider(Capability.FETCH_METADATA)
 
-        with db.session_scope() as session:
-            # Step 1 (Path Mapping): Query DB for tracks where musicbrainz_id IS NULL
-            tracks_to_process = session.query(Track).filter(Track.musicbrainz_id.is_(None)).limit(batch_size).all()
+        total_processed = 0
+        MAX_ITERATIONS = 500  # safety cap — prevents infinite loops on persistent failures
+
+        for _iteration in range(MAX_ITERATIONS):
+          with db.session_scope() as session:
+            # Step 1: Select tracks that still need work:
+            #   (a) no MusicBrainz ID yet, OR
+            #   (b) have a MBID but are missing a plugin-required metadata_status key.
+            conditions = [Track.musicbrainz_id.is_(None)]
+            for key in required_keys:
+                conditions.append(
+                    and_(
+                        Track.musicbrainz_id.isnot(None),
+                        Track.musicbrainz_id != "NOT_FOUND",
+                        Track.metadata_status[key].as_string().is_(None),
+                    )
+                )
+            tracks_to_process = (
+                session.query(Track).filter(or_(*conditions)).limit(batch_size).all()
+            )
 
             if not tracks_to_process:
-                logger.info("No tracks missing MusicBrainz ID. Enhancement complete.")
+                if total_processed > 0:
+                    logger.info("Enhancement complete. Total tracks processed: %d", total_processed)
+                else:
+                    logger.info("No tracks require metadata enhancement.")
                 return
 
-            logger.info(f"Processing batch of {len(tracks_to_process)} tracks for metadata enhancement.")
+            logger.info(
+                "Enhancement pass %d: processing %d tracks (total so far: %d).",
+                _iteration + 1, len(tracks_to_process), total_processed,
+            )
 
             for track in tracks_to_process:
                 local_path_str = PathMapper.to_local(track.file_path)
@@ -171,6 +198,19 @@ class MetadataEnhancerService:
                 if not local_path.exists():
                     logger.warning(f"File not found for track {track.id}: {local_path}")
                     track.musicbrainz_id = "NOT_FOUND"
+                    total_processed += 1
+                    continue
+
+                # Fast path: track already has a valid MBID — it was selected only because
+                # a plugin-required metadata_status key is absent.  Skip the expensive MBID
+                # resolution pipeline and go straight to plugin enrichment.
+                if track.musicbrainz_id and track.musicbrainz_id != "NOT_FOUND":
+                    logger.debug(
+                        "Plugin-only enrichment for already-identified track: %s (MBID: %s)",
+                        local_path.name, track.musicbrainz_id,
+                    )
+                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    total_processed += 1
                     continue
 
                 found_new_data = False
@@ -185,11 +225,14 @@ class MetadataEnhancerService:
                     tag_isrc = tags.get('isrc')
 
                     if tag_mbid:
-                        # MBID already embedded — nothing else to do for this track.
+                        # MBID already embedded — fire plugin hooks now that we have the MBID,
+                        # then move on.  No fingerprinting or network calls needed.
                         logger.info(f"Step 2 (Local Tags): Found MBID {tag_mbid} for {local_path.name}")
                         track.musicbrainz_id = tag_mbid
                         if tag_isrc and not track.isrc:
                             track.isrc = tag_isrc
+                        track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                        total_processed += 1
                         continue  # Move to next track, DB updated
 
                     # MBID not in tags but an ISRC was — store it so Step 2.5 can use it.
@@ -366,6 +409,7 @@ class MetadataEnhancerService:
 
                 # Apply post-enrichment hooks before SQLAlchemy auto-commits at the end of the session context
                 track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                total_processed += 1
 
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
         """

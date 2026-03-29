@@ -69,8 +69,12 @@ def contains_cjk(text: str) -> bool:
 # ── Hook 0: register_metadata_requirements ────────────────────────────────────
 
 def _on_register_metadata_requirements(requirements: List[str]) -> List[str]:
-    """Ask MusicBrainz to include CJK-specific fields in the metadata payload."""
-    extra = ["musicbrainz_aliases", "release_script", "release_locale"]
+    """Register the metadata_status key that this plugin writes to metadata_status upon enrichment.
+
+    ``cjk_restored`` is set to True on CJK tracks and False on non-CJK tracks so the
+    retroactive enhancer knows a track has already been processed and won't requeue it.
+    """
+    extra = ["cjk_restored"]
     existing = set(requirements)
     return requirements + [f for f in extra if f not in existing]
 
@@ -464,9 +468,10 @@ def _on_post_metadata_enrichment(track_obj: Any) -> Any:
     """
     After the MetadataEnhancerService pipeline:
 
-    1. Stamp ``cjk_restored = True`` on ``track_obj.metadata_status``.
-    2. Persist all script-variant TrackAlias rows for the track title.
-    3. Persist all script-variant ArtistAlias rows for the artist name.
+    1. Stamp ``cjk_restored`` on ``track_obj.metadata_status`` (True for CJK tracks,
+       False for non-CJK tracks so the enhancer won't requeue them on the next pass).
+    2. Persist all script-variant TrackAlias rows for the track title (CJK only).
+    3. Persist all script-variant ArtistAlias rows for the artist name (CJK only).
     """
     if not hasattr(track_obj, "metadata_status") or not hasattr(track_obj, "id"):
         return track_obj
@@ -475,11 +480,16 @@ def _on_post_metadata_enrichment(track_obj: Any) -> Any:
     artist_obj = getattr(track_obj, "artist", None)
     artist_name = (getattr(artist_obj, "name", "") or "") if artist_obj else ""
 
+    status = dict(track_obj.metadata_status or {})
+
     if not _has_cjk(title) and not _has_cjk(artist_name):
+        # Non-CJK track — stamp cjk_restored=False so it won't be requeued
+        if "cjk_restored" not in status:
+            status["cjk_restored"] = False
+            track_obj.metadata_status = status
         return track_obj
 
-    # Stamp metadata_status
-    status = dict(track_obj.metadata_status or {})
+    # Stamp metadata_status for CJK tracks
     if "cjk_restored" not in status:
         status["cjk_restored"] = True
         status["cjk_script_applied"] = status.get("release_script", "Latn")

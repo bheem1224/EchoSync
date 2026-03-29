@@ -69,6 +69,8 @@ def get_settings():
         data = config_manager.get_all() if hasattr(config_manager, "get_all") else {}
         dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
         data["dev_mode"] = dev_mode
+        safe_mode = os.getenv('SOULSYNC_SAFE_MODE', '') in ('1', 'true')
+        data["safe_mode"] = safe_mode
         # Inject live console log level.  In DEV_MODE the startup level is always
         # DEBUG (set by run_api.py), so we can short-circuit the handler scan which
         # can return NOTSET if Werkzeug adds its own handlers before the request lands.

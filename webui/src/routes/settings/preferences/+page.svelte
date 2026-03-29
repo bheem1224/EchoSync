@@ -63,6 +63,7 @@
   $: providerList = Object.values($providers?.items ?? []);
   $: userSettings = $settings?.data ?? {};
   $: devMode = userSettings?.dev_mode === true;
+  $: safeMode = userSettings?.safe_mode === true;
   $: streamingProviders = providerList.filter((p) => (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE' || p.capabilities?.supports_sync);
   $: serverProviders = providerList.filter((p) => p.capabilities?.server);
   $: metadataProviders = providerList.filter((p) => p.capabilities?.metadata);
@@ -87,6 +88,15 @@
         <line x1="12" y1="17" x2="12.01" y2="17"/>
       </svg>
       <span><strong>DEV MODE</strong> — Debug logging active · ISRC matching disabled</span>
+    </div>
+  {/if}
+
+  {#if safeMode}
+    <div class="safe-mode-banner" role="alert">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      </svg>
+      <span><strong>SAFE MODE</strong> — Plugin loading is disabled · Previous crash or unclean shutdown detected</span>
     </div>
   {/if}
 
@@ -241,4 +251,18 @@
     font-size: 13px;
   }
   .dev-mode-banner strong { color: #f87171; }
+
+  .safe-mode-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    background: rgba(251, 146, 60, 0.15);
+    border: 1px solid rgba(251, 146, 60, 0.5);
+    color: #fed7aa;
+    font-size: 13px;
+    margin-top: 8px;
+  }
+  .safe-mode-banner strong { color: #fb923c; }
 </style>
