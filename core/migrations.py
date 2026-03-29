@@ -179,11 +179,83 @@ def run_migrations() -> None:
         logger.error(f"Migration script encountered an error: {e}")
 
 
+def _get_engine_for_env(env: str):
+    """Return the SQLAlchemy engine that backs the given Alembic environment name."""
+    if env == "alembic:working":
+        from database.working_database import get_working_database
+        return get_working_database().engine
+    if env == "alembic:music":
+        from database.music_database import get_database
+        return get_database().engine
+    if env == "alembic:config":
+        from sqlalchemy import create_engine as _ce
+        return _ce(f"sqlite:///{config_manager.database_path}")
+    return None
+
+
+# Maps each Alembic environment to (sentinel_table, initial_revision_id).
+# The sentinel table is any table created by that environment's initial
+# migration.  If the sentinel exists but alembic_version does not, the
+# database was created outside of Alembic (e.g. via metadata.create_all())
+# and must be stamped before upgrade() can run.
+_ENV_STAMP_INFO = {
+    "alembic:working": ("downloads", "4661df33cf8b"),
+    "alembic:music":   ("tracks",    "cb4f02f432ea"),
+    # alembic:config initial migration is empty (no tables), no stamp needed.
+}
+
+
+def _stamp_if_unversioned(engine, alembic_cfg, initial_revision: str, sentinel_table: str) -> None:
+    """Stamp a pre-Alembic database at its initial revision if required.
+
+    When a database was bootstrapped via ``metadata.create_all()`` (outside
+    Alembic), the ``alembic_version`` table doesn't exist.  Running
+    ``command.upgrade("head")`` from that state would try to CREATE TABLE on
+    tables that already exist, causing an OperationalError.
+
+    This function detects that state and stamps the database with
+    *initial_revision* so that ``upgrade("head")`` only executes migrations
+    that are genuinely newer than the initial schema.
+    """
+    from alembic import command
+    from sqlalchemy import inspect as sa_inspect
+
+    try:
+        inspector = sa_inspect(engine)
+        existing = set(inspector.get_table_names())
+    except Exception as exc:
+        logger.warning("Could not inspect tables for stamp check: %s", exc)
+        return
+
+    has_app_tables = sentinel_table in existing
+    has_alembic_version = "alembic_version" in existing
+
+    if has_app_tables and not has_alembic_version:
+        logger.info(
+            "Pre-Alembic database detected (table '%s' exists, alembic_version absent). "
+            "Stamping at revision %s — upgrade will only run newer migrations.",
+            sentinel_table, initial_revision,
+        )
+        try:
+            command.stamp(alembic_cfg, initial_revision)
+        except Exception as exc:
+            logger.error("Failed to stamp database at %s: %s", initial_revision, exc, exc_info=True)
+            raise
+
+
 def run_auto_migrations() -> None:
     """
     Pillar 1: The Auto-Migrator
     Programmatically loops through the three database environments (config, working, music)
     and executes Alembic command.upgrade("head") to safely migrate database schemas.
+
+    Pre-Alembic databases
+    ---------------------
+    Databases created with ``metadata.create_all()`` before Alembic was
+    introduced have all application tables but no ``alembic_version`` record.
+    A pre-flight stamp at the initial revision is inserted for those databases
+    so that ``upgrade("head")`` only runs genuinely new migrations and never
+    tries to re-create tables that already exist.
     """
     from alembic import command
     from alembic.config import Config
@@ -209,6 +281,14 @@ def run_auto_migrations() -> None:
         # We must explicitly set the name of the section we are targeting
         # because our alembic.ini uses custom sections instead of just [alembic]
         alembic_cfg.set_main_option("script_location", alembic_cfg.get_section_option(env, "script_location"))
+
+        # Pre-flight: stamp pre-Alembic databases so upgrade() doesn't try to
+        # re-create tables that were built by metadata.create_all().
+        if env in _ENV_STAMP_INFO:
+            sentinel_table, initial_revision = _ENV_STAMP_INFO[env]
+            engine = _get_engine_for_env(env)
+            if engine is not None:
+                _stamp_if_unversioned(engine, alembic_cfg, initial_revision, sentinel_table)
 
         try:
             command.upgrade(alembic_cfg, "head")
