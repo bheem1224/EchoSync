@@ -53,8 +53,9 @@ class DatabaseUpdateWorker:
         logger.info(f"Starting database update worker for {self.server_type}")
         try:
             # Initialize database with SQLAlchemy
+            # Schema is managed exclusively by Alembic (run_auto_migrations);
+            # create_all() is intentionally removed to prevent schema drift.
             db = MusicDatabase(self.database_path)
-            db.create_all()  # Ensure schema exists
             library_manager = LibraryManager(db.session_factory)
             logger.debug("Database path resolved to %s", db.database_path)
             

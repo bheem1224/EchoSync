@@ -170,12 +170,15 @@ class DuplicateHygieneService:
                         os.remove(track.file_path)
                         logger.info(f"Deleted file: {track.file_path}")
                     except OSError as e:
-                        logger.error(f"Failed to delete file {track.file_path}: {e}")
-                        # If file deletion fails, we proceed to remove from DB?
-                        # This avoids "ghost" tracks.
-                        pass
+                        logger.critical(
+                            "Failed to delete physical file '%s': %s — "
+                            "aborting DB removal to prevent ghost track.",
+                            track.file_path,
+                            e,
+                        )
+                        return False
 
-                # Delete from DB
+                # Delete from DB — only reached when the file is confirmed deleted
                 session.delete(track)
                 logger.info(f"Deleted track ID {track_id} from database")
                 return True

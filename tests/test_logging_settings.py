@@ -39,11 +39,11 @@ def test_update_settings_changes_log_level_and_persists(monkeypatch):
     set_calls = []
     monkeypatch.setattr("core.settings.config_manager.set", lambda k, v: set_calls.append((k, v)), raising=False)
 
-    # post both log_level and another key
-    resp = client.post("/api/settings", json={"log_level": "INFO", "another": 123})
+    # post both log_level and another allowlisted key
+    resp = client.post("/api/settings", json={"log_level": "INFO", "match_threshold": 85})
     assert resp.status_code == 200
     assert ("log_level", "INFO") in set_calls
-    assert ("another", 123) in set_calls
+    assert ("match_threshold", 85) in set_calls
     assert log_calls == ["INFO"]
 
 

@@ -96,6 +96,14 @@ def _dispatch_isrc_via_providers(
             logger.warning("ISRC provider %s raised: %s", provider_name, exc)
             track = None
         if track is not None:
+            if not isinstance(track, SoulSyncTrack):
+                logger.warning(
+                    "ISRC provider %s returned unexpected type %s (expected SoulSyncTrack) "
+                    "— skipping to next provider.",
+                    provider_name,
+                    type(track).__name__,
+                )
+                continue
             return _track_to_dict(track, provider_name), tried
 
     return None, tried

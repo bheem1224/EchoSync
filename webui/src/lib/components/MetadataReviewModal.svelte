@@ -20,6 +20,7 @@
   let showAdvanced = true;
   let musicbrainzLookupLoading = false;
   let acoustidLookupLoading = false;
+  let isrcLookupLoading = false;
 
   let proposedMetadata = {
     title: '',
@@ -340,6 +341,49 @@
     }
   }
 
+  async function runISRCLookup() {
+    // Prompt the user to supply an ISRC before firing the network request.
+    const raw = window.prompt('Enter ISRC code (e.g. USRC12345678 or US-RC1-23-45678):');
+    if (!raw || !raw.trim()) return;
+    const isrc = raw.trim();
+
+    if (isrcLookupLoading || musicbrainzLookupLoading || acoustidLookupLoading || approving) {
+      return;
+    }
+
+    isrcLookupLoading = true;
+    try {
+      const response = await apiClient.get(`/metadata/isrc/${encodeURIComponent(isrc)}`);
+      const result = response?.data?.result;
+      if (result) {
+        // Remap ISRC-response field names to the keys applyMetadataUpdate understands.
+        applyMetadataUpdate({
+          title: result.title,
+          artist: result.artist,
+          album: result.album,
+          year: result.release_year,
+          musicbrainz_id: result.musicbrainz_recording_id,
+          isrc: result.isrc,
+        });
+        feedback.addToast('ISRC metadata loaded', 'success');
+      } else {
+        feedback.addToast(`No results found for ISRC ${isrc}`, 'error');
+      }
+    } catch (error) {
+      const status = error?.response?.status;
+      if (status === 400) {
+        feedback.addToast('Invalid ISRC format — expected 12 alphanumeric characters', 'error');
+      } else if (status === 404) {
+        feedback.addToast(`No provider matched ISRC ${isrc}`, 'error');
+      } else {
+        feedback.addToast('ISRC lookup failed', 'error');
+      }
+      console.error('ISRC lookup failed:', error);
+    } finally {
+      isrcLookupLoading = false;
+    }
+  }
+
   onDestroy(() => {
     clearAutosaveTimer();
   });
@@ -551,6 +595,14 @@
           disabled={acoustidLookupLoading || musicbrainzLookupLoading || approving || savingDraft}
         >
           {acoustidLookupLoading ? 'Scanning AcoustID...' : '🧬 AcoustID Scan'}
+        </button>
+
+        <button
+          class="px-4 py-2 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60"
+          on:click={runISRCLookup}
+          disabled={isrcLookupLoading || musicbrainzLookupLoading || acoustidLookupLoading || approving || savingDraft}
+        >
+          {isrcLookupLoading ? 'Looking up ISRC...' : '🎵 ISRC Lookup'}
         </button>
 
         <button

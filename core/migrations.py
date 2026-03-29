@@ -89,87 +89,17 @@ SECRETS = {
     'password', 'token', 'client_secret', 'api_key', 'access_token', 'refresh_token'
 }
 
-def migrate_user_provider_identifier(working_db_engine) -> None:
+def run_working_db_migrations(working_db_engine) -> None:  # noqa: ARG001
     """
-    v2.2.0 working.db migration: rename the Plex-specific ``plex_id`` column on
-    the ``users`` table to the provider-agnostic ``provider_identifier``.
+    Entry point for working.db schema migrations at application startup.
 
-    Safety notes
-    ------------
-    * Guards against SQLite < 3.25.0 (which lacks ALTER TABLE RENAME COLUMN).
-    * Uses ``engine.begin()`` — the idiomatic SQLAlchemy 2.0 pattern — so the
-      DDL is committed automatically on clean exit and rolled back automatically
-      on any exception.  An explicit ``conn.commit()`` is neither required nor
-      used, avoiding the implicit second autobegin that ``engine.connect()`` +
-      ``conn.commit()`` leaves open.
-    * Raises on failure so startup fails loudly: a silent swallow here would
-      leave the SQLAlchemy model column name (``provider_identifier``) mismatched
-      against the database column (``plex_id``), causing every ORM query on that
-      column to raise at runtime.
+    All DDL is managed exclusively by Alembic via ``run_auto_migrations()``
+    (the "alembic:working" environment).  Raw ALTER TABLE statements have been
+    removed — schema changes must be expressed as Alembic migration scripts.
     """
-    from sqlalchemy import text
-
-    # Version guard — RENAME COLUMN requires SQLite ≥ 3.25.0.
-    sqlite_version = tuple(int(x) for x in sqlite3.sqlite_version.split("."))
-    if sqlite_version < _MIN_SQLITE_RENAME_COLUMN:
-        raise RuntimeError(
-            f"SQLite {sqlite3.sqlite_version} is too old to perform ALTER TABLE "
-            f"RENAME COLUMN (requires ≥ 3.25.0).  Upgrade SQLite and restart."
-        )
-
-    try:
-        # Read the current column list outside of the write transaction so we
-        # avoid holding a write lock during the PRAGMA query.
-        with working_db_engine.connect() as conn:
-            rows = conn.execute(text("PRAGMA table_info(users)")).fetchall()
-        columns = {row[1] for row in rows}
-
-        if "plex_id" not in columns:
-            if "provider_identifier" in columns:
-                logger.debug(
-                    "working.db 'users' table already has 'provider_identifier'; "
-                    "v2.2.0 migration not needed."
-                )
-            else:
-                logger.warning(
-                    "working.db 'users' table has neither 'plex_id' nor "
-                    "'provider_identifier'; schema is in an unexpected state."
-                )
-            return
-
-        if "provider_identifier" in columns:
-            # Both columns present — a previous partial migration; nothing to do.
-            logger.warning(
-                "working.db 'users' table already has 'provider_identifier' "
-                "alongside 'plex_id'; skipping rename."
-            )
-            return
-
-        # engine.begin() auto-commits on clean block exit and auto-rolls back on
-        # any exception — no explicit conn.commit() required.
-        with working_db_engine.begin() as conn:
-            conn.execute(
-                text("ALTER TABLE users RENAME COLUMN plex_id TO provider_identifier")
-            )
-
-        logger.info(
-            "v2.2.0 migration: successfully renamed 'plex_id' → 'provider_identifier' "
-            "in working.db users table."
-        )
-
-    except Exception as e:
-        # Re-raise so the caller (run_working_db_migrations / startup) sees a
-        # hard failure rather than silently continuing with a mismatched schema.
-        logger.error(f"v2.2.0 migration failed: {e}", exc_info=True)
-        raise
-
-
-def run_working_db_migrations(working_db_engine) -> None:
-    """
-    Entry point for all working.db schema migrations.
-    Called once at application startup after the WorkingDatabase engine is available.
-    """
-    migrate_user_provider_identifier(working_db_engine)
+    logger.debug(
+        "run_working_db_migrations: schema management delegated to Alembic — nothing to do here."
+    )
 
 
 def run_migrations() -> None:

@@ -112,41 +112,59 @@ def _build_alias_entries(track_obj: Any) -> list:
 
 
 def _persist_track_aliases(track_obj: Any, alias_entries: list) -> None:
-    """Write alias rows to the database, ignoring duplicates (upsert-safe)."""
+    """Inject alias rows into the existing ORM session via the track's relationship.
+
+    Uses the SQLAlchemy session already attached to *track_obj* so that no new
+    connection is opened and no second transaction is created.  The core
+    MetadataEnhancerService owns the surrounding session_scope and will commit
+    all pending changes — including these alias rows — at the end of its block.
+    """
     if not alias_entries:
         return
     try:
-        from database.music_database import TrackAlias, get_database
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+        from sqlalchemy.orm import object_session
+        from sqlalchemy import inspect as sa_inspect
 
-        db = get_database()
-        with db.session_scope() as session:
-            for entry in alias_entries:
-                name = entry.get("name") or ""
-                if not name:
-                    continue
-                existing = (
-                    session.query(TrackAlias)
-                    .filter_by(
+        session = object_session(track_obj)
+        if session is None:
+            logger.warning(
+                "No active ORM session on track_obj (ID %s) — alias persistence skipped.",
+                getattr(track_obj, "id", "?"),
+            )
+            return
+
+        # Resolve TrackAlias class from the mapper to avoid importing database models
+        # directly from a plugin, keeping the dependency boundary clean.
+        rel = sa_inspect(type(track_obj)).relationships.get("aliases")
+        if rel is None:
+            logger.warning("Track ORM type has no 'aliases' relationship — skipping alias write.")
+            return
+        TrackAlias = rel.mapper.class_
+
+        for entry in alias_entries:
+            name = entry.get("name") or ""
+            if not name:
+                continue
+            already_exists = any(
+                a.name == name
+                and a.locale == entry.get("locale")
+                and a.script == entry.get("script")
+                for a in track_obj.aliases
+            )
+            if not already_exists:
+                track_obj.aliases.append(
+                    TrackAlias(
                         track_id=track_obj.id,
+                        name=name,
                         locale=entry.get("locale"),
                         script=entry.get("script"),
-                        name=name,
+                        is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
                     )
-                    .first()
                 )
-                if existing is None:
-                    session.add(
-                        TrackAlias(
-                            track_id=track_obj.id,
-                            name=name,
-                            locale=entry.get("locale"),
-                            script=entry.get("script"),
-                            is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
-                        )
-                    )
         logger.debug(
-            "Persisted %d alias row(s) for Track ID %s", len(alias_entries), track_obj.id
+            "Queued %d alias row(s) for Track ID %s (commit deferred to caller).",
+            len(alias_entries),
+            track_obj.id,
         )
     except Exception as exc:
         # Never crash the enrichment pipeline — alias persistence is best-effort.
