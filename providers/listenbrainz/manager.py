@@ -303,61 +303,11 @@ class ListenBrainzMetadataProvider(ProviderBase):
             })
         
         db.conn.commit()
-        
-        # Fetch cover art
-        self._fetch_cover_art_parallel(db, track_data_list)
-    
+
     def _fetch_cover_art_parallel(self, db, track_data_list: List[Dict]):
-        """Fetch cover art for tracks in parallel"""
-        def fetch_cover(track):
-            release_mbid = track.get('release_mbid')
-            if not release_mbid:
-                return None
-            
-            try:
-                url = f"https://coverartarchive.org/release/{release_mbid}"
-                response = self._http.get(url, timeout=3)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    images = data.get('images', [])
-                    
-                    # Front cover
-                    for img in images:
-                        if img.get('front'):
-                            return img.get('thumbnails', {}).get('small') or img.get('image')
-                    
-                    # First image
-                    if images:
-                        return images[0].get('thumbnails', {}).get('small') or images[0].get('image')
-            except:
-                pass
-            
-            return None
-        
-        # Fetch in parallel
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {
-                executor.submit(fetch_cover, track): track
-                for track in track_data_list
-            }
-            
-            cursor = db.conn.cursor()
-            for future in as_completed(futures):
-                track = futures[future]
-                try:
-                    cover_url = future.result()
-                    if cover_url:
-                        cursor.execute(
-                            "UPDATE listenbrainz_tracks SET album_cover_url = ? WHERE id = ?",
-                            (cover_url, track['id'])
-                        )
-                except Exception as e:
-                    logger.debug(f"Error fetching cover: {e}")
-        
-        db.conn.commit()
-        covers_found = sum(1 for t in track_data_list if t.get('album_cover_url'))
-        logger.info(f"✅ Fetched {covers_found}/{len(track_data_list)} cover URLs")
+        # Cover art fetching from coverartarchive.org has been removed.
+        # Album art is supplied by the media server during library sync.
+        pass
     
     def _cleanup_old_playlists(self, db):
         """Keep only 4 most recent playlists per type"""

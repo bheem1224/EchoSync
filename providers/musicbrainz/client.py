@@ -346,9 +346,6 @@ class MusicBrainzClient(ProviderBase):
                 result["album"] = release.get("title") or ""
                 result["release_id"] = release.get("id") or ""
                 result["date"] = release.get("date") or ""
-                if result["release_id"]:
-                    result["cover_art_url"] = self._get_cover_art(result["release_id"])
-
             isrcs = data.get("isrcs") or []
             if isrcs:
                 result["isrc"] = isrcs[0]
@@ -389,7 +386,7 @@ class MusicBrainzClient(ProviderBase):
             data = response.json() or {}
             album_title = str(data.get("title") or "").strip()
             release_date = str(data.get("date") or "").strip()
-            cover_art_url = self._get_cover_art(release_id)
+            cover_art_url = None
 
             tracks: List[Dict[str, Any]] = []
             for medium in data.get("media", []) or []:
@@ -450,17 +447,10 @@ class MusicBrainzClient(ProviderBase):
             logger.warning("MusicBrainzClient.get_release(%s) failed: %s", release_id, exc)
             return None
 
-    def _get_cover_art(self, release_id: str) -> Optional[str]:
-        try:
-            resp = self.http.request(
-                "HEAD",
-                f"https://coverartarchive.org/release/{release_id}/front",
-                allow_redirects=True,
-            )
-            if resp.status_code == 200:
-                return resp.url
-        except Exception:
-            pass
+    def _get_cover_art(self, release_id: str) -> Optional[str]:  # noqa: ARG002
+        # Cover art is sourced from the media server (Plex/Jellyfin) during library
+        # sync. We never query coverartarchive.org so that the enhancer stays fast
+        # and does not consume bandwidth on redirected image HEAD requests.
         return None
 
     # ProviderBase abstract methods
