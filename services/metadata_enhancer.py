@@ -163,7 +163,7 @@ class MetadataEnhancerService:
                           processed.  This lets plugins like the CJK pack run at ~100
                           tracks/s because all work is local — zero MusicBrainz API calls.
         """
-        from sqlalchemy import or_, and_, func, Integer, cast, Boolean
+        from sqlalchemy import or_, and_, func, Integer
         required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
         from database.music_database import get_database, Track
         from core.file_handling.path_mapper import PathMapper
@@ -218,16 +218,14 @@ class MetadataEnhancerService:
                 conditions.append(needs_identification)
 
             for key in required_keys:
-                # Include tracks where the plugin key is either missing, false,
-                # or otherwise not True, AND the track hasn't exhausted retry attempts.
+                # Select tracks that have not yet received this plugin stamp.
+                # is_(None) targets only truly unstamped tracks (NULL key) — tracks
+                # already stamped True or False are correctly excluded.  The
+                # enhancement_attempts cap is deliberately absent here: plugin
+                # stamping is a zero-network local operation and must not be gated
+                # by the identification retry budget used for fingerprint/API paths.
                 conditions.append(
-                    and_(
-                        cast(func.json_extract(Track.metadata_status, f'$.{key}'), Boolean).isnot(True),
-                        func.coalesce(
-                            func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
-                            0,
-                        ).cast(Integer) < 5
-                    )
+                    func.json_extract(Track.metadata_status, f'$.{key}').is_(None)
                 )
 
             if not conditions:
@@ -265,7 +263,13 @@ class MetadataEnhancerService:
                     # Use a high sentinel so this track is never retried — the file is gone.
                     status = dict(track.metadata_status or {})
                     status['enhancement_attempts'] = 99
+                    # Stamp all plugin-required keys so this track is excluded from
+                    # future enhancement passes.  File is gone — no processing possible.
+                    for _req_key in required_keys:
+                        if _req_key not in status:
+                            status[_req_key] = True
                     track.metadata_status = status
+                    flag_modified(track, "metadata_status")
                     session.commit()
                     total_processed += 1
                     continue
