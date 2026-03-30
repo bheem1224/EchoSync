@@ -410,6 +410,34 @@ class WeightedMatchingEngine:
         if source.title and candidate.title:
             title_fuzzy_score = self._fuzzy_match(source.title, candidate.title)
 
+        # ── Pre-score plugin check ─────────────────────────────────────────────
+        # Fire the scoring_modifier hook here — BEFORE the fuzzy threshold gate —
+        # so plugins can signal force_artist_score_to_100 when an external
+        # context (e.g. matching CJK drama brackets) definitively identifies the
+        # artist, making a "Various Artists" tag or a romanised-vs-hanzi mismatch
+        # irrelevant.  Setting artist_fuzzy_score = 1.0 here means:
+        #   • Rescue A (title+artist ≥ 0.95) fires if the title also matches.
+        #   • STEP 4's Artist Match Duration Escalation (→ 8500ms) activates.
+        # The hook fires a second time at the normal plugin-modifier block below
+        # for boost / duration_override; double-firing is safe (pure read op).
+        from core.hook_manager import hook_manager as _hm_pre
+        _pre_mod: dict = _hm_pre.apply_filters(
+            'scoring_modifier', {},
+            source=source, candidate=candidate,
+        ) or {}
+        _force_artist: bool = bool(_pre_mod.get('force_artist_score_to_100', False))
+        _pre_dur_override: Optional[int] = (
+            int(_pre_mod['duration_override'])
+            if _pre_mod.get('duration_override')
+            else None
+        )
+        if _force_artist:
+            artist_fuzzy_score = 1.0
+            reasoning_parts.append(
+                "Drama context confirmed by plugin → artist_score forced to 1.0 "
+                "(artist tag treated as verified regardless of romanisation/compilation tagging)"
+            )
+
         if fuzzy_score < self.weights.fuzzy_match_threshold:
             # ── Strong-pair rescues ────────────────────────────────────────────
             # The combined fuzzy average can fall below the threshold when album
@@ -428,7 +456,13 @@ class WeightedMatchingEngine:
                     title_fuzzy_score * self.weights.title_weight
                     + artist_fuzzy_score * self.weights.artist_weight
                 ) / ta_total_w
-                dur_score_a = self._calculate_duration_match(source, candidate)
+                # Artist is already confirmed ≥ 0.95 (the enclosing condition).
+                # Use the plugin's duration_override if supplied (e.g. 15000ms when
+                # CJK drama context is confirmed), otherwise fall back to the standard
+                # 8500ms Artist Match Escalation.  This ensures tracks with TV-edit /
+                # trailer-length differences (up to ~15 s) are not rejected here.
+                _rescue_a_tol: int = max(8500, _pre_dur_override or 0)
+                dur_score_a = self._calculate_duration_match(source, candidate, _rescue_a_tol)
                 # Score is album-free text component + duration component
                 rescued_a = (
                     ta_norm * self.weights.text_weight * 100
@@ -437,7 +471,7 @@ class WeightedMatchingEngine:
                 rescued_a = max(0.0, min(100.0, rescued_a))
                 if rescued_a >= self.weights.min_confidence_to_accept:
                     reasoning_parts.append(
-                        f"Title+Artist exact-pair rescue (album discounted): "
+                        f"Title+Artist exact-pair rescue (album discounted, dur_tol={_rescue_a_tol}ms): "
                         f"title={title_fuzzy_score:.2f} artist={artist_fuzzy_score:.2f} "
                         f"dur={dur_score_a:.2f} → {rescued_a:.1f}%"
                     )

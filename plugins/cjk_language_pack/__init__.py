@@ -576,21 +576,38 @@ def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
     if not local_drama or not remote_drama:
         return {"boost": 0, "duration_override": 0}
 
+    # Normalise both drama strings before comparison so that
+    # Traditional/Simplified variants, full-width vs half-width punctuation,
+    # and decorative spacing don't cause spurious mismatches.
+    # Step 1: Traditional → Simplified (so 點燃我 == 点燃我)
+    try:
+        _t = get_transliterator()
+        local_drama  = _t.to_simplified(local_drama)
+        remote_drama = _t.to_simplified(remote_drama)
+    except Exception:
+        pass
+    # Step 2: strip everything that isn't a letter / Han character / digit so
+    # full-width commas, spaces, hyphens, etc. are ignored entirely.
+    # '点燃我，温暖你' → '点燃我温暖你'   '点燃我, 温暖你' → '点燃我温暖你'
+    _strip_punct = lambda s: re.sub(r'[^\w]', '', s, flags=re.UNICODE)
+    local_cmp  = _strip_punct(local_drama)
+    remote_cmp = _strip_punct(remote_drama)
+
     from difflib import SequenceMatcher
-    ratio = SequenceMatcher(None, local_drama, remote_drama).ratio()
+    ratio = SequenceMatcher(None, local_cmp, remote_cmp).ratio()
 
     if ratio >= 0.90:
         logger.debug(
-            "scoring_modifier: drama match %r ≈ %r (ratio=%.2f) "
-            "→ boost=+15, duration_override=7000ms",
-            local_drama, remote_drama, ratio,
+            "scoring_modifier: drama match %r ≈ %r (normalised: %r vs %r, ratio=%.2f) "
+            "→ force_artist_score_to_100=True, boost=+15, duration_override=15000ms",
+            local_drama, remote_drama, local_cmp, remote_cmp, ratio,
         )
-        return {"boost": 15.0, "duration_override": 7000}
+        return {"boost": 15.0, "force_artist_score_to_100": True, "duration_override": 15000}
 
     logger.debug(
         "scoring_modifier: drama context present but ratio %.2f < 0.90 "
-        "(%r vs %r) — no boost applied",
-        ratio, local_drama, remote_drama,
+        "(%r vs %r, normalised: %r vs %r) — no boost applied",
+        ratio, local_drama, remote_drama, local_cmp, remote_cmp,
     )
     return {"boost": 0, "duration_override": 0}
 
