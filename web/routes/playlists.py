@@ -334,6 +334,20 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     plugin_context=source_track.plugin_context,
                 )
 
+                # ── Normalize source title for scoring ───────────────────────────────
+                # Pass through the same normalize_title() pipeline used on candidate
+                # titles so the fuzzy matcher always compares clean text on both sides.
+                # e.g. "逆刃（电视剧《山河令》片头曲）" → "逆刃"
+                # plugin_context is passed so normalize_title re-fires pre_normalize_title
+                # on the same title — harmless since cjk_drama is just overwritten with
+                # the same value that was already extracted above.
+                _clean_source_title = _normalize_candidate_title(
+                    source_track.raw_title,
+                    plugin_context=source_track.plugin_context,
+                )
+                if _clean_source_title:
+                    source_track.title = _clean_source_title
+
                 library_match = "Not Found"
                 best_score = 0
 
