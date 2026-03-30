@@ -518,23 +518,24 @@ def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
 
     Compares the ``cjk_drama`` values stored in each track's ``plugin_context``
     by the ``pre_normalize_title`` hook.  When both tracks carry drama context
-    and the two names fuzzy-match at ≥ 85 %, this returns:
+    and the two drama names fuzzy-match at ≥ 90 %, this returns:
 
-    * ``score_boost = +10.0`` — added to the final normalised score to reward
-      the verified drama match even when artist/title romanisation differs.
-    * ``duration_tolerance_override = 5000`` (ms) — prevents a strict duration
-      gate from killing an otherwise correct OST match, since TV-edit, trailer,
-      and full-album versions of the same songs routinely differ by 3–5 s.
+    * ``boost = +15.0`` — added to the final normalised score to reward the
+      verified drama match even when artist/title romanisation differs or the
+      artist field reads "Various Artists".
+    * ``duration_override = 7000`` (ms) — prevents a strict duration gate from
+      killing an otherwise correct OST match; TV-edit, trailer, and full-album
+      versions of the same song routinely differ by 3–7 s.
 
-    The modifier dict is returned unchanged when drama context is absent or when
-    the similarity is below the threshold.
+    Returns ``{"boost": 0, "duration_override": 0}`` when drama context is
+    absent from either track or when the similarity is below the threshold, so
+    the calling engine always receives a well-typed dict regardless of outcome.
     """
-    result: dict = dict(modifier) if isinstance(modifier, dict) else {}
-
     source = kwargs.get('source')
     candidate = kwargs.get('candidate')
+
     if source is None or candidate is None:
-        return result
+        return {"boost": 0, "duration_override": 0}
 
     local_drama: str = (
         getattr(source, 'plugin_context', {}).get('cjk_drama', '') or ''
@@ -544,21 +545,25 @@ def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
     )
 
     if not local_drama or not remote_drama:
-        return result
+        return {"boost": 0, "duration_override": 0}
 
     from difflib import SequenceMatcher
     ratio = SequenceMatcher(None, local_drama, remote_drama).ratio()
 
-    if ratio >= 0.85:
-        result['score_boost'] = float(result.get('score_boost', 0.0)) + 10.0
-        result['duration_tolerance_override'] = 5000
+    if ratio >= 0.90:
         logger.debug(
             "scoring_modifier: drama match %r ≈ %r (ratio=%.2f) "
-            "→ score_boost=+10, duration_tolerance_override=5000ms",
+            "→ boost=+15, duration_override=7000ms",
             local_drama, remote_drama, ratio,
         )
+        return {"boost": 15.0, "duration_override": 7000}
 
-    return result
+    logger.debug(
+        "scoring_modifier: drama context present but ratio %.2f < 0.90 "
+        "(%r vs %r) — no boost applied",
+        ratio, local_drama, remote_drama,
+    )
+    return {"boost": 0, "duration_override": 0}
 
 
 def _on_post_metadata_enrichment(track_obj: Any) -> Any:

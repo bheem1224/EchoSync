@@ -85,26 +85,6 @@ def normalize_chars(text: Optional[str]) -> str:
     # Ellipsis → three dots
     text = text.replace("\u2026", "...")
 
-    # ── CJK bracket / parenthesis content removal ──────────────────────────────
-    # Strip anything inside full-width parentheses（）, lenticular brackets【】,
-    # and double-angle / title marks《》, including the delimiters themselves.
-    # These commonly contain OST episode notes, version labels, and show titles
-    # that break fuzzy matching against plain-Latin equivalents.
-    text = re.sub(r'\uff08[^\uff09]*\uff09', '', text)   # （...）full-width parens
-    text = re.sub(r'\u3010[^\u3011]*\u3011', '', text)   # 【...】lenticular brackets
-    text = re.sub(r'\u300a[^\u300b]*\u300b', '', text)   # 《...》double-angle brackets
-    text = re.sub(r'\u300c[^\u300d]*\u300d', '', text)   # 「...」corner brackets
-    text = re.sub(r'\u300e[^\u300f]*\u300f', '', text)   # 『...』white corner brackets
-    text = re.sub(r'\u3008[^\u3009]*\u3009', '', text)   # 〈...〉angle brackets
-
-    # Strip individual CJK punctuation marks left after bracket removal
-    # (title-stop, enumeration comma, wave dash, etc.)
-    text = text.translate(str.maketrans('', '', '\u3001\u3002\u30fb\uff65\uff01\uff1f\uff1a\uff1b'))
-    # U+3001 IDEOGRAPHIC COMMA 、  U+3002 IDEOGRAPHIC FULL STOP 。
-    # U+30FB KATAKANA MIDDLE DOT ・  U+FF65 HALFWIDTH KATAKANA MIDDLE DOT ･
-    # U+FF01 FULLWIDTH EXCLAMATION !  U+FF1F FULLWIDTH QUESTION ?
-    # U+FF1A FULLWIDTH COLON ：  U+FF1B FULLWIDTH SEMICOLON ；
-
     return text
 
 
@@ -179,20 +159,10 @@ def normalize_title(title: Optional[str], plugin_context: Optional[Dict[str, Any
     # This helps with filenames like "Artist_Name-Song.Title.mp3"
     title = title.replace('_', ' ').replace('.', ' ')
 
-    # STEP 1b: Strip CJK OST dash-suffixes that appear before CJK bracket removal.
-    # Covers patterns like:  - 电视剧《...》片头曲 / - (드라마) OST / - 드라마 OST Part N
-    # Must run before normalize_text so the CJK brackets are still present as anchors.
-    _ost_dash_cjk = (
-        # dash followed by any mix of CJK text + brackets (《》【】（）) then optional suffix
-        r'\s*-\s*[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\uff00-\uffef'
-        r'\u3000-\u303f\u300a-\u300f\u3010\u3011\uff08\uff09\u300c-\u300f]+[^-]*$'
-    )
-    title = re.sub(_ost_dash_cjk, '', title).strip()
-
-    # STEP 1c: If a plugin_context dict was supplied, fire the pre_normalize_title
-    # hook NOW — while CJK brackets are still present.  Plugins extract drama /
-    # series names into plugin_context as a side-effect and return the title
-    # unchanged.  The return value is intentionally ignored here.
+    # STEP 1b: If a plugin_context dict was supplied, fire the pre_normalize_title
+    # hook NOW — before normalize_text runs, so that CJK brackets (《》, 【】, （）)
+    # are still present and plugins can extract drama/series names as a side-effect.
+    # The return value is intentionally ignored; the title is passed unchanged.
     if plugin_context is not None:
         from core.hook_manager import hook_manager
         hook_manager.apply_filters('pre_normalize_title', title, plugin_context=plugin_context)
@@ -223,9 +193,9 @@ def normalize_title(title: Optional[str], plugin_context: Optional[Dict[str, Any
     for pattern in ost_patterns:
         normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
 
-    # Strip full-width / ASCII bracketed content not already handled by normalize_text.
-    # normalize_text removes CJK bracket content; here we also remove ASCII-bracket
-    # and full-width-paren content that survived (e.g. version/edit labels).
+    # Strip ASCII-bracketed content that survived (e.g. version/edit labels).
+    # CJK brackets are intentionally preserved — the CJK plugin reads them via
+    # the pre_normalize_title hook for drama-context scoring.
     normalized = re.sub(r'\s*\([^)]*\)', '', normalized)   # (anything)
     normalized = re.sub(r'\s*\[[^\]]*\]', '', normalized)  # [anything]
 

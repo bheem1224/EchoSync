@@ -261,6 +261,25 @@ class WeightedMatchingEngine:
         duration_diff_ms = abs(source.duration - candidate.duration)
         tolerance_ms = 2000  # 2 seconds strict tolerance for Tier 2
 
+        # Allow plugins to relax the duration gate (e.g. CJK drama context boost).
+        from core.hook_manager import hook_manager as _hm_t2
+        _t2_mod = _hm_t2.apply_filters(
+            'scoring_modifier', {},
+            source=source, candidate=candidate,
+        )
+        _t2_dur_override: Optional[int] = (
+            int(_t2_mod['duration_override'])
+            if isinstance(_t2_mod, dict) and _t2_mod.get('duration_override')
+            else None
+        )
+        _t2_score_boost: float = (
+            float(_t2_mod.get('boost', 0.0))
+            if isinstance(_t2_mod, dict)
+            else 0.0
+        )
+        if _t2_dur_override is not None:
+            tolerance_ms = _t2_dur_override
+
         if duration_diff_ms > tolerance_ms:
             reasoning_parts.append(
                 f"Duration outside tolerance: {duration_diff_ms}ms > {tolerance_ms}ms "
@@ -285,6 +304,9 @@ class WeightedMatchingEngine:
         reasoning_parts.append(
             f"Duration match: {duration_diff_ms}ms difference (within {tolerance_ms}ms tolerance)"
         )
+        if _t2_score_boost:
+            confidence = min(100.0, confidence + _t2_score_boost)
+            reasoning_parts.append(f"Plugin boost applied: +{_t2_score_boost:.1f} → {confidence:.1f}%")
         reasoning_parts.append(f"Tier 2: Title+Duration match (artist ignored) → {confidence:.1f}%")
 
         return self._attach_target_context(MatchResult(
@@ -503,13 +525,13 @@ class WeightedMatchingEngine:
             source=source, candidate=candidate,
         )
         _score_boost: float = (
-            float(_plugin_mod.get('score_boost', 0.0))
+            float(_plugin_mod.get('boost', 0.0))
             if isinstance(_plugin_mod, dict)
             else 0.0
         )
         _dur_override: Optional[int] = (
-            int(_plugin_mod['duration_tolerance_override'])
-            if isinstance(_plugin_mod, dict) and _plugin_mod.get('duration_tolerance_override')
+            int(_plugin_mod['duration_override'])
+            if isinstance(_plugin_mod, dict) and _plugin_mod.get('duration_override')
             else None
         )
         # If a plugin supplied a relaxed duration tolerance and the standard check
@@ -524,7 +546,7 @@ class WeightedMatchingEngine:
                     f"new_score={duration_score:.2f})"
                 )
         if _score_boost:
-            reasoning_parts.append(f"Plugin score_boost queued: +{_score_boost:.1f}")
+            reasoning_parts.append(f"Plugin boost queued: +{_score_boost:.1f}")
         # ── End plugin modifiers ───────────────────────────────────────────────
 
         # ── Near-miss detection ────────────────────────────────────────────────

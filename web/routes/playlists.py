@@ -12,6 +12,7 @@ from core.matching_engine.soul_sync_track import SoulSyncTrack
 from core.job_queue import job_queue
 from core.event_bus import event_bus
 from core.sync_history import sync_history
+from core.hook_manager import hook_manager
 import time
 
 logger = get_logger("playlists_api")
@@ -129,6 +130,18 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                 base_search_title = re.sub(r'\s+-.*$', '', base_search_title).strip()
                 if not base_search_title:
                     base_search_title = search_title
+
+                # ── Populate source-track plugin context (drama name extraction) ─────
+                # Fire the pre_normalize_title hook on the raw source title while CJK
+                # brackets are still intact so the CJK plugin can write cjk_drama into
+                # source_track.plugin_context.  The scoring_modifier hook later compares
+                # this value against the candidate's drama context.
+                hook_manager.apply_filters(
+                    'pre_normalize_title',
+                    source_track.raw_title,
+                    plugin_context=source_track.plugin_context,
+                )
+
                 library_match = "Not Found"
                 best_score = 0
 
@@ -255,6 +268,13 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             album_title=candidate_row[7] or "",
                             duration=candidate_row[2] if candidate_row[2] else 0,
                             edition=edition_candidate,
+                        )
+                        # Populate candidate plugin_context so scoring_modifier can
+                        # compare drama names extracted from both sides.
+                        hook_manager.apply_filters(
+                            'pre_normalize_title',
+                            candidate_track.raw_title,
+                            plugin_context=candidate_track.plugin_context,
                         )
 
                         if source_track.edition or candidate_track.edition:
@@ -398,6 +418,13 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         album_title=candidate_row[7] or "",
                                         duration=candidate_row[2] if candidate_row[2] else 0,
                                         edition=edition_candidate,
+                                    )
+                                    # Populate candidate plugin_context for the Tier 2
+                                    # escalation path as well.
+                                    hook_manager.apply_filters(
+                                        'pre_normalize_title',
+                                        candidate_track.raw_title,
+                                        plugin_context=candidate_track.plugin_context,
                                     )
 
                                     result = matching_engine.calculate_title_duration_match(
