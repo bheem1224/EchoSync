@@ -122,6 +122,20 @@ def _read_tags_impl(file_path: Path) -> Dict[str, Any]:
         if len(date_val) >= 4 and date_val[:4].isdigit():
             metadata["year"] = date_val[:4]
 
+    # ── Track artist vs Album artist resolution ──────────────────────────────
+    # Rule: TPE1 / ARTIST (track artist) always wins over TPE2 / ALBUMARTIST
+    # (album artist).  We only fall back to album_artist when the track artist
+    # tag is completely absent — never the other way around.  This prevents
+    # compilation / OST albums that use 'Various Artists' as the album artist
+    # from incorrectly overwriting the specific performer stored in TPE1.
+    track_artist = metadata.get("artist")
+    album_artist = metadata.get("album_artist")
+    if not track_artist and album_artist:
+        # TPE1 absent but TPE2 present — use album artist as last-resort fallback
+        metadata["artist"] = album_artist
+    # Keep album_artist in the dict so callers (e.g. library importers) can
+    # distinguish the two fields if they need to.
+
     # Canonical field aliases
     # artist_name is the primary semantic name; keep 'artist' for back-compat
     if metadata.get("artist") and not metadata.get("artist_name"):
@@ -209,9 +223,13 @@ def _extract_detailed_tags(audio: Any) -> Dict[str, Any]:
 
     if hasattr(tags, "getall"):
         # ID3 frame-based format (MP3)
+        # TPE1 = Track/Performer artist  (the specific singer/band for this track)
+        # TPE2 = Album/Band artist field (often 'Various Artists' on compilations)
+        # We store BOTH so the caller can prefer the track artist over the band tag.
         metadata: Dict[str, Any] = {
             "title":        _id3_text(tags, "TIT2"),
             "artist":       _id3_text(tags, "TPE1"),
+            "album_artist": _id3_text(tags, "TPE2"),
             "album":        _id3_text(tags, "TALB"),
             "date":         _id3_text(tags, "TDRC"),
             "track_number": _id3_text(tags, "TRCK"),
@@ -246,7 +264,10 @@ def _map_simple_tags(tags: Any) -> Dict[str, Any]:
     lowered = {str(k).lower(): v for k, v in tags.items()}
     result: Dict[str, Any] = {
         "title":        _first(lowered, "title",       "inam"),
+        # Track artist (ARTIST vorbis / TPE1 in ID3 via easy) — the specific performer
         "artist":       _first(lowered, "artist",      "iart"),
+        # Album artist (ALBUMARTIST vorbis / TPE2 in ID3 via easy) — often 'Various Artists'
+        "album_artist": _first(lowered, "albumartist", "album artist"),
         "album":        _first(lowered, "album",       "iprd"),
         "date":         _first(lowered, "date",        "year",  "icrd"),
         "track_number": _first(lowered, "tracknumber", "track_number", "trck", "itrk"),

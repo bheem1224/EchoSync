@@ -925,22 +925,44 @@ class PlexClient(ProviderBase):
             # Extract basic metadata
             title = getattr(plex_track, 'title', None)
             
-            # Handle artist and album gracefully
+            # Handle artist and album gracefully.
+            #
+            # Plex data model for compilation/OST albums:
+            #   plex_track.originalTitle  — the TRACK artist (TPE1); the specific
+            #                               performer, e.g. 'Hu Xia'.
+            #   plex_track.artist().title — the ALBUM artist (TPE2); typically
+            #                               'Various Artists' for compilations.
+            #   plex_track.grandparentTitle — same as artist().title but cheaper.
+            #
+            # We must prefer originalTitle (track artist) so that OST tracks
+            # tagged as 'Various Artists' at the album level are stored with their
+            # real performer rather than the generic compilation tag.
             artist = None
-            try:
-                artist_obj = plex_track.artist()
-                artist = getattr(artist_obj, 'title', None) if artist_obj else None
-                logger.debug(f"Extracted artist for '{title}': artist_obj={artist_obj}, artist_title={artist}")
-            except (NotFound, AttributeError, Exception) as e:
-                logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
-            
-            # Fallback to grandparentTitle attribute if artist() method failed
+
+            # Step 1: track-specific performer (originalTitle = TPE1 in Plex)
+            original_title = getattr(plex_track, 'originalTitle', None)
+            if original_title and original_title.strip():
+                artist = original_title.strip()
+                logger.debug(
+                    f"Using originalTitle (track artist) for '{title}': artist='{artist}'"
+                )
+
+            # Step 2: fall back to album artist via artist() / grandparentTitle
+            if not artist:
+                try:
+                    artist_obj = plex_track.artist()
+                    artist = getattr(artist_obj, 'title', None) if artist_obj else None
+                    logger.debug(f"Extracted artist for '{title}': artist_obj={artist_obj}, artist_title={artist}")
+                except (NotFound, AttributeError, Exception) as e:
+                    logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
+
+            # Step 3: cheap XML attribute fallback
             if not artist:
                 artist = getattr(plex_track, 'grandparentTitle', None)
                 if artist:
                     logger.debug(f"Using grandparentTitle fallback for '{title}': artist={artist}")
                 else:
-                    logger.warning(f"Failed to extract artist for track '{title}' via both artist() and grandparentTitle")
+                    logger.warning(f"Failed to extract artist for track '{title}' via originalTitle, artist(), and grandparentTitle")
             
             album = None
             try:

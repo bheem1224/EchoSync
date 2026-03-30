@@ -86,6 +86,30 @@ def _cmp_titles(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+def _cmp_artists(a: str, b: str) -> float:
+    """Artist similarity score (0–1) with substring-containment boost.
+
+    Normalises both strings identically to _cmp_titles, then returns the
+    SequenceMatcher ratio OR 0.95 (whichever is higher) when one normalised
+    form is fully contained in the other.  The 0.95 floor handles credit-group
+    names like '摩登兄弟刘宇宁' vs '刘宇宁' and romanisation variants like
+    'Zhou Shen' (alias) vs '周深' (primary), without conflating unrelated artists.
+    """
+    def _n(s: str) -> str:
+        s = s.lower()
+        s = re.sub(r'[^\w\s]', '', s)
+        return ' '.join(s.split())
+
+    a_n, b_n = _n(a), _n(b)
+    if not a_n or not b_n:
+        return 0.0
+    ratio = SequenceMatcher(None, a_n, b_n).ratio()
+    # Substring containment: one name is fully inside the other — very likely the same artist.
+    if a_n in b_n or b_n in a_n:
+        return max(ratio, 0.95)
+    return ratio
+
+
 def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist, track_duration):
     """Execute the Tier 1 artist+title candidate query with search-expansion hook support.
 
@@ -410,6 +434,27 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         except Exception:
                             _alias_map = {}
 
+                    # Batch-fetch artist aliases keyed by artist_id (column 5) so that
+                    # romanised forms ('Zhou Shen') and alternate scripts ('\u5468\u6df1') stored in the
+                    # artist_aliases table are considered when scoring the artist dimension.
+                    _artist_alias_map: dict = {}
+                    if candidates:
+                        try:
+                            _artist_ids = list({int(r[5]) for r in candidates if r[5] is not None})
+                            if _artist_ids:
+                                with db.engine.connect() as _aac:
+                                    for _aar in _aac.execute(
+                                        text(
+                                            "SELECT artist_id, name FROM artist_aliases"
+                                            " WHERE artist_id IN ("
+                                            + ",".join(str(a) for a in _artist_ids)
+                                            + ")"
+                                        )
+                                    ).fetchall():
+                                        _artist_alias_map.setdefault(_aar[0], []).append(_aar[1])
+                        except Exception:
+                            _artist_alias_map = {}
+
                     for candidate_row in candidates:
                         candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
                         raw_title_candidate = candidate_row[1]
@@ -462,6 +507,26 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 _best_cand_title = _alias_clean
                         if _best_cand_title and _best_cand_title != candidate_track.title:
                             candidate_track.title = _best_cand_title
+
+                        # ── Promote best artist alias (Tier 1) ────────────────────────────
+                        # Score the primary artist name and every stored artist alias against
+                        # the source artist; hand the best-matching form to the engine so
+                        # that fuzzy matching sees 'Zhou Shen' vs 'Zhou Shen' (alias) rather
+                        # than 'Zhou Shen' vs '\u5468\u6df1' (primary).  _cmp_artists assigns a 0.95
+                        # floor when one normalised name contains the other as a substring,
+                        # handling credit-group tags like '\u6469\u767b\u5144\u5f1f\u5218\u5b87\u5b81' vs '\u5218\u5b87\u5b81'.
+                        if source_track.artist_name:
+                            _best_artist_name = candidate_track.artist_name or ''
+                            _best_artist_score = _cmp_artists(source_track.artist_name, _best_artist_name)
+                            for _artist_alias in _artist_alias_map.get(candidate_row[5], []):
+                                if not _artist_alias:
+                                    continue
+                                _a_score = _cmp_artists(source_track.artist_name, _artist_alias)
+                                if _a_score > _best_artist_score:
+                                    _best_artist_score = _a_score
+                                    _best_artist_name = _artist_alias
+                            if _best_artist_name and _best_artist_name != candidate_track.artist_name:
+                                candidate_track.artist_name = _best_artist_name
 
                         if source_track.edition or candidate_track.edition:
                             logger.debug(
@@ -582,6 +647,24 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 except Exception:
                                     _t2_alias_map = {}
 
+                                # Batch-fetch artist aliases for Tier 2 escalation candidates.
+                                _t2_artist_alias_map: dict = {}
+                                try:
+                                    _t2_artist_ids = list({int(r[5]) for r in candidates if r[5] is not None})
+                                    if _t2_artist_ids:
+                                        with db.engine.connect() as _t2_aac:
+                                            for _t2_aar in _t2_aac.execute(
+                                                text(
+                                                    "SELECT artist_id, name FROM artist_aliases"
+                                                    " WHERE artist_id IN ("
+                                                    + ",".join(str(a) for a in _t2_artist_ids)
+                                                    + ")"
+                                                )
+                                            ).fetchall():
+                                                _t2_artist_alias_map.setdefault(_t2_aar[0], []).append(_t2_aar[1])
+                                except Exception:
+                                    _t2_artist_alias_map = {}
+
                                 for candidate_row in candidates:
                                     candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
                                     raw_title_candidate = candidate_row[1]
@@ -630,6 +713,20 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                             _t2_best_title = _t2_alias_clean
                                     if _t2_best_title and _t2_best_title != candidate_track.title:
                                         candidate_track.title = _t2_best_title
+
+                                    # ── Promote best artist alias (Tier 2) ────────────────────────
+                                    if source_track.artist_name:
+                                        _t2_best_artist = candidate_track.artist_name or ''
+                                        _t2_best_artist_score = _cmp_artists(source_track.artist_name, _t2_best_artist)
+                                        for _t2_artist_alias in _t2_artist_alias_map.get(candidate_row[5], []):
+                                            if not _t2_artist_alias:
+                                                continue
+                                            _t2_a_score = _cmp_artists(source_track.artist_name, _t2_artist_alias)
+                                            if _t2_a_score > _t2_best_artist_score:
+                                                _t2_best_artist_score = _t2_a_score
+                                                _t2_best_artist = _t2_artist_alias
+                                        if _t2_best_artist and _t2_best_artist != candidate_track.artist_name:
+                                            candidate_track.artist_name = _t2_best_artist
 
                                     result = matching_engine.calculate_title_duration_match(
                                         source_track,

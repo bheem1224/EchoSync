@@ -438,6 +438,46 @@ class WeightedMatchingEngine:
                 "(artist tag treated as verified regardless of romanisation/compilation tagging)"
             )
 
+        # ── Reverse Various Artists Amnesty ───────────────────────────────────
+        # Scenario: Spotify asks for a specific singer (e.g. 'Hu Xia') but the
+        # local file is part of an OST compilation tagged 'Various Artists'.
+        # The raw_title of the local track carries a CJK drama-series marker
+        # (e.g. '无题 - 网剧《山河令》插曲') that proves the track's provenance
+        # even though the artist field is a generic compilation tag.
+        #
+        # Conditions (all must hold):
+        #   1. title_fuzzy_score == 1.0 — cleaned titles are a perfect match.
+        #   2. candidate.artist_name is 'Various Artists' (case-insensitive).
+        #   3. candidate.raw_title contains a CJK OST marker — at least one of
+        #      《…》/【…】 brackets OR recognised Chinese suffix keywords.
+        #
+        # Effect: force artist_score to 1.0 and widen duration tolerance to
+        # 10 000 ms so that TV-edit / trailer-length variants are not rejected.
+        if (
+            not _force_artist
+            and title_fuzzy_score >= 1.0
+            and candidate.artist_name
+            and candidate.artist_name.strip().lower() == 'various artists'
+        ):
+            import re as _re_va
+            _raw = getattr(candidate, 'raw_title', '') or candidate.title or ''
+            _CJK_OST_RE = _re_va.compile(
+                r'《[^》]+》'           # 《山河令》 style drama title
+                r'|【[^】]+】'          # 【山河令】 style
+                r'|[片主插推片片]\s*[头尾]?\s*曲'  # 片头曲/片尾曲/主题曲/插曲/推广曲
+                r'|原声带|原声|配乐'     # 原声带 (OST)
+                r'|网剧|电视剧|电影'     # drama/film prefixes
+            )
+            if _CJK_OST_RE.search(_raw):
+                _force_artist = True
+                _pre_dur_override = max(_pre_dur_override or 0, 10000)
+                artist_fuzzy_score = 1.0
+                reasoning_parts.append(
+                    "Reverse Various Artists Amnesty: title=1.00, candidate artist='Various Artists', "
+                    f"raw_title contains CJK OST marker → artist_score forced to 1.0, "
+                    f"duration_tolerance raised to {_pre_dur_override}ms"
+                )
+
         if fuzzy_score < self.weights.fuzzy_match_threshold:
             # ── Strong-pair rescues ────────────────────────────────────────────
             # The combined fuzzy average can fall below the threshold when album
