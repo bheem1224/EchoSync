@@ -35,6 +35,6 @@ dependencies = [
     "watchdog>=4.0.0",
     "werkzeug>=3.1.6",
     "alembic>=1.18.4",
-    "opencc>=1.2.0",
     "pypinyin>=0.55.0",
+    "opencc-python-reimplemented>=0.1.7",
 ]
