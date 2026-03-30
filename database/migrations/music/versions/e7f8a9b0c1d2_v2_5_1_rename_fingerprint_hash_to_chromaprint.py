@@ -26,11 +26,26 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # On a fresh database the column is already named 'chromaprint' (the ORM
+    # model was updated before this migration was run), so skip the rename to
+    # avoid "no such column: fingerprint_hash" errors.
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = [col['name'] for col in inspector.get_columns('audio_fingerprints')]
+    if 'fingerprint_hash' not in columns:
+        return
+
     # SQLite requires batch mode for column renames.
     with op.batch_alter_table('audio_fingerprints', schema=None) as batch_op:
         batch_op.alter_column('fingerprint_hash', new_column_name='chromaprint')
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = [col['name'] for col in inspector.get_columns('audio_fingerprints')]
+    if 'chromaprint' not in columns:
+        return
+
     with op.batch_alter_table('audio_fingerprints', schema=None) as batch_op:
         batch_op.alter_column('chromaprint', new_column_name='fingerprint_hash')
