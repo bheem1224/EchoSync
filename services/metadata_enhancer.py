@@ -224,7 +224,6 @@ class MetadataEnhancerService:
                 conditions.append(
                     func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
                 )
-                )
 
             if not conditions:
                 # Nothing to do: no plugins registered requirements and full_refresh is off.
