@@ -11,7 +11,6 @@ It does NOT move files or scan directories (see AutoImportService).
 """
 
 import logging
-import re
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 import datetime
@@ -31,16 +30,6 @@ from core.matching_engine.soul_sync_track import SoulSyncTrack
 from database.working_database import get_working_database, ReviewTask
 
 logger = get_logger("services.metadata_enhancer")
-
-# Matches any CJK Unified Ideograph, Hiragana/Katakana, or Hangul syllable.
-# Used as a fast pre-flight gate: if neither title nor artist contains CJK chars
-# we can skip the hook manager entirely and stamp cjk_restored=True at DB speed.
-_CJK_RE = re.compile(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]')
-
-
-def _has_cjk(*texts: Optional[str]) -> bool:
-    """Return True if any of *texts* contains at least one CJK character."""
-    return any(_CJK_RE.search(t) for t in texts if t)
 
 
 def _title_similarity(a: str, b: str) -> float:
@@ -147,21 +136,12 @@ class MetadataEnhancerService:
         from core.plugin_loader import get_provider
         return get_provider(capability)
 
-    def enhance_library_metadata(self, batch_size=100, full_refresh: bool = False):
+    def enhance_library_metadata(self, batch_size=100):
         """
         Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
 
         Loops through batches until no more tracks require enhancement.  Each batch is
         committed in its own session so memory stays flat even on large libraries.
-
-        Args:
-            batch_size:   Number of tracks to process per iteration.
-            full_refresh: When True, also (re-)processes tracks with null/NOT_FOUND MBIDs
-                          via the full fingerprint + network identification pipeline (slow).
-                          When False (the default), only tracks that already have a valid
-                          MBID but are missing a plugin-required metadata_status key are
-                          processed.  This lets plugins like the CJK pack run at ~100
-                          tracks/s because all work is local — zero MusicBrainz API calls.
         """
         from sqlalchemy import or_, and_, func, Integer
         required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
@@ -185,58 +165,33 @@ class MetadataEnhancerService:
         metadata_provider = self._get_provider(Capability.FETCH_METADATA)
 
         total_processed = 0
-        _iteration = 0
+        MAX_ITERATIONS = 500  # safety cap — prevents infinite loops on persistent failures
 
-        while True:
-          _iteration += 1
+        for _iteration in range(MAX_ITERATIONS):
           with db.session_scope() as session:
             # Step 1: Select tracks that still need work.
-            #
-            # Fast (default) mode — full_refresh=False:
-            #   Only select tracks that already have a valid MBID but are missing a
-            #   plugin-required metadata_status key.  Every such track takes the fast path
-            #   in the loop below (hook manager only, zero network calls), so throughput is
-            #   limited only by CPU / SQLite speed (~100 tracks/s).
-            #
-            # Full-refresh mode — full_refresh=True:
-            #   Also include tracks with NULL / NOT_FOUND MBIDs that still have retry
-            #   budget.  Those go through the full fingerprint + network pipeline (Steps
-            #   2-5), which is throttled by MusicBrainz / AcoustID rate limits.
-            conditions = []
-
-            if full_refresh:
-                needs_identification = or_(
-                    Track.musicbrainz_id.is_(None),
-                    and_(
-                        Track.musicbrainz_id == "NOT_FOUND",
-                        func.coalesce(
-                            func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
-                            0,
-                        ).cast(Integer) < MAX_REATTEMPTS,
-                    ),
-                )
-                conditions.append(needs_identification)
-
+            #   (a) MBID identification needed — NULL MBID, OR previously-failed NOT_FOUND
+            #       tracks that still have retry budget remaining.
+            #   (b) MBID already resolved but a plugin-required metadata_status key is absent.
+            needs_identification = or_(
+                Track.musicbrainz_id.is_(None),
+                and_(
+                    Track.musicbrainz_id == "NOT_FOUND",
+                    func.coalesce(
+                        func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
+                        0,
+                    ).cast(Integer) < MAX_REATTEMPTS,
+                ),
+            )
+            conditions = [needs_identification]
             for key in required_keys:
-                # Select tracks that have not yet received this plugin stamp.
-                # is_(None) targets only truly unstamped tracks (NULL key) — tracks
-                # already stamped True or False are correctly excluded.  The
-                # enhancement_attempts cap is deliberately absent here: plugin
-                # stamping is a zero-network local operation and must not be gated
-                # by the identification retry budget used for fingerprint/API paths.
                 conditions.append(
-                    func.json_extract(Track.metadata_status, f'$.{key}').is_(None)
+                    and_(
+                        Track.musicbrainz_id.isnot(None),
+                        Track.musicbrainz_id != "NOT_FOUND",
+                        func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
+                    )
                 )
-
-            if not conditions:
-                # Nothing to do: no plugins registered requirements and full_refresh is off.
-                logger.info(
-                    "No tracks require enhancement "
-                    "(no plugins registered requirements; pass full_refresh=True to "
-                    "(re-)identify tracks missing a MusicBrainz ID)."
-                )
-                return
-
             tracks_to_process = (
                 session.query(Track).filter(or_(*conditions)).limit(batch_size).all()
             )
@@ -263,74 +218,20 @@ class MetadataEnhancerService:
                     # Use a high sentinel so this track is never retried — the file is gone.
                     status = dict(track.metadata_status or {})
                     status['enhancement_attempts'] = 99
-                    # Stamp all plugin-required keys so this track is excluded from
-                    # future enhancement passes.  File is gone — no processing possible.
-                    for _req_key in required_keys:
-                        if _req_key not in status:
-                            status[_req_key] = True
                     track.metadata_status = status
-                    flag_modified(track, "metadata_status")
-                    session.commit()
                     total_processed += 1
                     continue
 
-                # Fast path: track already has a valid MBID — selected only because a
-                # plugin-required metadata_status key is missing.
-                #
-                # CJK Gatekeeper: before calling the hook manager we inspect the title
-                # and artist name for CJK characters with a single regex pass (no I/O,
-                # no network).  For the vast majority of Latin/ASCII libraries this
-                # allows the enhancer to run at pure DB-write speed:
-                #
-                #   • No CJK chars → stamp cjk_restored=True immediately and continue.
-                #     This satisfies the CJK plugin's metadata_status requirement so the
-                #     track is never re-queued, with zero hook-manager overhead.
-                #
-                #   • CJK chars found → call hook manager as normal so the CJK plugin
-                #     can generate aliases / transliterations.
+                # Fast path: track already has a valid MBID — it was selected only because
+                # a plugin-required metadata_status key is absent.  Skip the expensive MBID
+                # resolution pipeline and go straight to plugin enrichment.
                 if track.musicbrainz_id and track.musicbrainz_id != "NOT_FOUND":
-                    artist_name_for_gate = track.artist.name if track.artist else None
-                    if _has_cjk(track.title, artist_name_for_gate):
-                        logger.debug(
-                            "CJK gatekeeper: CJK chars detected — running hooks for %s (MBID: %s)",
-                            local_path.name, track.musicbrainz_id,
-                        )
-                        track = hook_manager.apply_filters('post_metadata_enrichment', track)
-                    else:
-                        logger.debug(
-                            "CJK gatekeeper: no CJK chars — fast-stamping cjk_restored for %s",
-                            local_path.name,
-                        )
-                        status = dict(track.metadata_status or {})
-                        status['cjk_restored'] = True
-                        track.metadata_status = status
+                    logger.debug(
+                        "Plugin-only enrichment for already-identified track: %s (MBID: %s)",
+                        local_path.name, track.musicbrainz_id,
+                    )
+                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
                     flag_modified(track, "metadata_status")
-                    session.commit()
-                    total_processed += 1
-                    continue
-
-                elif not full_refresh:
-                    # No MBID yet, but we're in default (plugin-only) mode.
-                    # The CJK plugin only needs title + artist_name — both are already
-                    # in the DB — so we can still run the gatekeeper without any network
-                    # calls.  MBID identification is left for a full_refresh=True run.
-                    artist_name_for_gate = track.artist.name if track.artist else None
-                    if _has_cjk(track.title, artist_name_for_gate):
-                        logger.debug(
-                            "CJK gatekeeper (no MBID): CJK chars found — running hooks for %s",
-                            local_path.name,
-                        )
-                        track = hook_manager.apply_filters('post_metadata_enrichment', track)
-                    else:
-                        logger.debug(
-                            "CJK gatekeeper (no MBID): Latin track — fast-stamping cjk_restored for %s",
-                            local_path.name,
-                        )
-                        status = dict(track.metadata_status or {})
-                        status['cjk_restored'] = True
-                        track.metadata_status = status
-                    flag_modified(track, "metadata_status")
-                    session.commit()
                     total_processed += 1
                     continue
 
@@ -516,13 +417,8 @@ class MetadataEnhancerService:
                             # arrive with only an embedded MBID and nothing else.
                             try:
                                 meta = metadata_provider.get_metadata(new_musicbrainz_id)
-                                if meta:
-                                    if not track.isrc and meta.get('isrc'):
-                                        track.isrc = meta.get('isrc')
-                                    # Cover art is sourced from the media server (Plex) during
-                                    # library sync.  We never write cover_image_url here so
-                                    # that fast Plex-supplied art is never overwritten and no
-                                    # slow coverartarchive.org HEAD requests are made.
+                                if meta and not track.isrc and meta.get('isrc'):
+                                    track.isrc = meta.get('isrc')
                             except Exception:
                                 pass
                     else:
@@ -552,37 +448,26 @@ class MetadataEnhancerService:
                         if update_tags:
                             _tagging_write(local_path, update_tags)
 
-                    # Apply post-enrichment hooks
+                    # Apply post-enrichment hooks before SQLAlchemy auto-commits at the end of the session context
                     track = hook_manager.apply_filters('post_metadata_enrichment', track)
                     flag_modified(track, "metadata_status")
-                    session.commit()
                     total_processed += 1
 
                 except Exception as e:
-                    track_id = getattr(track, 'id', None)
                     logger.error(
-                        "Unhandled error processing track %s (%s) — skipping to next track.",
-                        track_id or '?',
+                        "Unhandled error processing track %d (%s) — skipping to next track.",
+                        getattr(track, 'id', '?'),
                         getattr(local_path, 'name', str(track.file_path) if track.file_path else '?'),
                         exc_info=True,
                     )
-                    # Rollback the poisoned transaction for this single track
-                    session.rollback()
-
-                    # Re-fetch track to increment attempt counter without poison
-                    if track_id is not None:
-                        try:
-                            # Re-fetch the track to ensure it's attached to the session
-                            track = session.get(Track, track_id)
-                            if track:
-                                status = dict(getattr(track, 'metadata_status', None) or {})
-                                status['enhancement_attempts'] = status.get('enhancement_attempts', 0) + 1
-                                track.metadata_status = status
-                                flag_modified(track, "metadata_status")
-                                session.commit()
-                        except Exception as update_err:
-                            logger.error(f"Failed to record enhancement attempt for track {track_id}: {update_err}")
-                            session.rollback()
+                    # Increment the attempt counter so persistently-broken tracks eventually
+                    # exhaust their retry budget rather than blocking the batch indefinitely.
+                    try:
+                        status = dict(getattr(track, 'metadata_status', None) or {})
+                        status['enhancement_attempts'] = status.get('enhancement_attempts', 0) + 1
+                        track.metadata_status = status
+                    except Exception:
+                        pass
                     total_processed += 1
 
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:

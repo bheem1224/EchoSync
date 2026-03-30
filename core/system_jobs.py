@@ -453,11 +453,7 @@ def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400,
         try:
             logger.info("Starting scheduled retroactive metadata enhancement job")
             from services.metadata_enhancer import get_metadata_enhancer
-            # full_refresh=True is required so that tracks with a NULL / NOT_FOUND
-            # musicbrainz_id are sent through the full AcoustID + MusicBrainz
-            # identification pipeline.  Without this flag the enhancer only runs
-            # the plugin-stamp (CJK) pass and never actually identifies tracks.
-            get_metadata_enhancer().enhance_library_metadata(batch_size=batch_size, full_refresh=True)
+            get_metadata_enhancer().enhance_library_metadata(batch_size=batch_size)
             logger.info("Retroactive metadata enhancement job complete")
         except Exception as e:
             logger.error(f"Retroactive metadata enhancement job failed: {e}", exc_info=True)

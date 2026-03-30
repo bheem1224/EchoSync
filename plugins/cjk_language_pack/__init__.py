@@ -373,29 +373,22 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             name = entry.get("name") or ""
             if not name:
                 continue
-            # Use no_autoflush so that accessing track_obj.aliases (lazy-load)
-            # does not trigger an unexpected session flush.  An autoflush here
-            # could fail if earlier tracks in the same batch left dirty state,
-            # which would put the session into a needs-rollback state and silently
-            # prevent ALL aliases in the batch from being committed.
-            with session.no_autoflush:
-                already_exists = any(
-                    a.name == name
-                    and a.locale == entry.get("locale")
-                    and a.script == entry.get("script")
-                    for a in track_obj.aliases
-                )
-            if already_exists:
+            if any(
+                a.name == name
+                and a.locale == entry.get("locale")
+                and a.script == entry.get("script")
+                for a in track_obj.aliases
+            ):
                 continue
-            new_alias = TrackAlias(
-                track_id=track_obj.id,
-                name=name,
-                locale=entry.get("locale"),
-                script=entry.get("script"),
-                is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
+            track_obj.aliases.append(
+                TrackAlias(
+                    track_id=track_obj.id,
+                    name=name,
+                    locale=entry.get("locale"),
+                    script=entry.get("script"),
+                    is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
+                )
             )
-            session.add(new_alias)   # explicit — ensures tracking even if cascade lags
-            track_obj.aliases.append(new_alias)
             added += 1
 
         if added:
@@ -403,18 +396,6 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
                 "Queued %d TrackAlias row(s) for Track ID %s (commit deferred to caller).",
                 added, track_obj.id,
             )
-            # Flush immediately so the INSERTs reach SQLite within the current
-            # open transaction.  Without this, an exception raised by the
-            # immediately-following _persist_artist_aliases call (before the
-            # session_scope commit) can leave the session in a state where
-            # SQLAlchemy discards the pending rows on the next rollback/close.
-            try:
-                session.flush()
-            except Exception as flush_exc:
-                logger.warning(
-                    "TrackAlias flush failed for Track ID %s: %s",
-                    track_obj.id, flush_exc,
-                )
     except Exception as exc:
         logger.warning(
             "TrackAlias persistence failed for Track ID %s: %s",
@@ -436,8 +417,7 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         from sqlalchemy.orm import object_session
         from sqlalchemy import inspect as sa_inspect
 
-        session = object_session(track_obj)   # store result — used for no_autoflush below
-        if session is None:
+        if object_session(track_obj) is None:
             return
 
         artist_obj = getattr(track_obj, "artist", None)
@@ -454,24 +434,22 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             name = entry.get("name") or ""
             if not name:
                 continue
-            with session.no_autoflush:
-                already_exists = any(
-                    a.name == name
-                    and a.locale == entry.get("locale")
-                    and a.script == entry.get("script")
-                    for a in artist_obj.aliases
-                )
-            if already_exists:
+            if any(
+                a.name == name
+                and a.locale == entry.get("locale")
+                and a.script == entry.get("script")
+                for a in artist_obj.aliases
+            ):
                 continue
-            new_alias = ArtistAlias(
-                artist_id=artist_obj.id,
-                name=name,
-                locale=entry.get("locale"),
-                script=entry.get("script"),
-                is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
+            artist_obj.aliases.append(
+                ArtistAlias(
+                    artist_id=artist_obj.id,
+                    name=name,
+                    locale=entry.get("locale"),
+                    script=entry.get("script"),
+                    is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
+                )
             )
-            session.add(new_alias)
-            artist_obj.aliases.append(new_alias)
             added += 1
 
         if added:
