@@ -163,7 +163,7 @@ class MetadataEnhancerService:
                           processed.  This lets plugins like the CJK pack run at ~100
                           tracks/s because all work is local — zero MusicBrainz API calls.
         """
-        from sqlalchemy import or_, and_, func, Integer
+        from sqlalchemy import or_, and_, func, Integer, cast, Boolean
         required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
         from database.music_database import get_database, Track
         from core.file_handling.path_mapper import PathMapper
@@ -185,9 +185,10 @@ class MetadataEnhancerService:
         metadata_provider = self._get_provider(Capability.FETCH_METADATA)
 
         total_processed = 0
-        MAX_ITERATIONS = 500  # safety cap — prevents infinite loops on persistent failures
+        _iteration = 0
 
-        for _iteration in range(MAX_ITERATIONS):
+        while True:
+          _iteration += 1
           with db.session_scope() as session:
             # Step 1: Select tracks that still need work.
             #
@@ -217,12 +218,16 @@ class MetadataEnhancerService:
                 conditions.append(needs_identification)
 
             for key in required_keys:
-                # Include ALL tracks missing the plugin key, regardless of MBID.
-                # Tracks with a valid MBID go through the full gatekeeper below;
-                # tracks without an MBID go through the no-MBID gatekeeper branch
-                # (CJK check only, no network calls in either case).
+                # Include tracks where the plugin key is either missing, false,
+                # or otherwise not True, AND the track hasn't exhausted retry attempts.
                 conditions.append(
-                    func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
+                    and_(
+                        cast(func.json_extract(Track.metadata_status, f'$.{key}'), Boolean).isnot(True),
+                        func.coalesce(
+                            func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
+                            0,
+                        ).cast(Integer) < 5
+                    )
                 )
 
             if not conditions:
@@ -261,6 +266,7 @@ class MetadataEnhancerService:
                     status = dict(track.metadata_status or {})
                     status['enhancement_attempts'] = 99
                     track.metadata_status = status
+                    session.commit()
                     total_processed += 1
                     continue
 
@@ -295,6 +301,7 @@ class MetadataEnhancerService:
                         status['cjk_restored'] = True
                         track.metadata_status = status
                     flag_modified(track, "metadata_status")
+                    session.commit()
                     total_processed += 1
                     continue
 
@@ -319,6 +326,7 @@ class MetadataEnhancerService:
                         status['cjk_restored'] = True
                         track.metadata_status = status
                     flag_modified(track, "metadata_status")
+                    session.commit()
                     total_processed += 1
                     continue
 
@@ -540,26 +548,37 @@ class MetadataEnhancerService:
                         if update_tags:
                             _tagging_write(local_path, update_tags)
 
-                    # Apply post-enrichment hooks before SQLAlchemy auto-commits at the end of the session context
+                    # Apply post-enrichment hooks
                     track = hook_manager.apply_filters('post_metadata_enrichment', track)
                     flag_modified(track, "metadata_status")
+                    session.commit()
                     total_processed += 1
 
                 except Exception as e:
+                    track_id = getattr(track, 'id', None)
                     logger.error(
-                        "Unhandled error processing track %d (%s) — skipping to next track.",
-                        getattr(track, 'id', '?'),
+                        "Unhandled error processing track %s (%s) — skipping to next track.",
+                        track_id or '?',
                         getattr(local_path, 'name', str(track.file_path) if track.file_path else '?'),
                         exc_info=True,
                     )
-                    # Increment the attempt counter so persistently-broken tracks eventually
-                    # exhaust their retry budget rather than blocking the batch indefinitely.
-                    try:
-                        status = dict(getattr(track, 'metadata_status', None) or {})
-                        status['enhancement_attempts'] = status.get('enhancement_attempts', 0) + 1
-                        track.metadata_status = status
-                    except Exception:
-                        pass
+                    # Rollback the poisoned transaction for this single track
+                    session.rollback()
+
+                    # Re-fetch track to increment attempt counter without poison
+                    if track_id is not None:
+                        try:
+                            # Re-fetch the track to ensure it's attached to the session
+                            track = session.get(Track, track_id)
+                            if track:
+                                status = dict(getattr(track, 'metadata_status', None) or {})
+                                status['enhancement_attempts'] = status.get('enhancement_attempts', 0) + 1
+                                track.metadata_status = status
+                                flag_modified(track, "metadata_status")
+                                session.commit()
+                        except Exception as update_err:
+                            logger.error(f"Failed to record enhancement attempt for track {track_id}: {update_err}")
+                            session.rollback()
                     total_processed += 1
 
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
