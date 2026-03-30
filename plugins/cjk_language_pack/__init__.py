@@ -235,7 +235,7 @@ def _on_pre_provider_search(
 
 def _on_pre_normalize_text(text: str) -> str:
     """
-    Transform *text* before the WeightedMatchingEngine's ASCII-folding pass.
+    Pre-process *text* for the WeightedMatchingEngine's comparison pipeline.
 
     **Fast gatekeeper** (first line):
         If *text* contains no CJK or full-width characters, return it unchanged
@@ -254,11 +254,13 @@ def _on_pre_normalize_text(text: str) -> str:
            CJK text.  Standard English noise (feat., OST, …) is left in place
            so the core normalizer can strip it during its own downstream pass.
 
-    3. **Transliteration** (CJKTransliterator.flatten_to_romaji)
-           Convert ideographs / kana / hangul to pure-Latin phonetics.
-           The resulting Romaji/Pinyin string re-enters the core pipeline,
-           which then runs its own feat.-stripping and Unicode canonicalization
-           — cleanly splitting the workload between plugin and core.
+    3. **Script normalization** (Traditional → Simplified)
+           Unify Traditional and Simplified Chinese to a common form so that
+           "長風謠" and "长风谣" produce identical comparison strings.  The
+           result is still native Hanzi — NO Latin transliteration is performed
+           here.  Pinyin / Romaji / Romanization are generated exclusively by
+           the ``search_expansion`` and ``pre_provider_search`` hooks, which
+           serve candidate *retrieval* — not scoring.
     """
     # ── Gatekeeper: bypass entirely for non-CJK strings ──────────────────
     if not isinstance(text, str) or not _has_cjk(text):
@@ -276,10 +278,12 @@ def _on_pre_normalize_text(text: str) -> str:
     if cleaned != text:
         logger.debug("CJK noise strip: %r → %r", text, cleaned)
 
-    # ── Step 3: transliterate to Latin phonetics ──────────────────────────
-    # Returns the cleaned string unchanged if no CJK remains after noise strip.
-    result = get_transliterator().flatten_to_romaji(cleaned)
-    logger.debug("CJK transliterate: %r → %r", cleaned, result)
+    # ── Step 3: script normalization (Traditional → Simplified) ──────────
+    # Keeps the result in native Hanzi; Traditional and Simplified variants
+    # of the same title compare equal under SequenceMatcher.
+    result = get_transliterator().to_simplified(cleaned)
+    if result != cleaned:
+        logger.debug("CJK T→S normalize: %r → %r", cleaned, result)
     return result
 
 

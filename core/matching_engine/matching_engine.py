@@ -956,12 +956,26 @@ class WeightedMatchingEngine:
 
     def _normalize_string_for_comparison(self, s: str) -> str:
         """
-        Normalize string for comparison (lowercase, remove special chars, strip featured artists)
+        Normalize string for comparison (lowercase, remove special chars, strip featured artists).
+
+        For CJK text: applies noise-strip + Traditional → Simplified normalization via the
+        ``pre_normalize_text`` hook so that both sides of a fuzzy comparison are always in the
+        same native script.  The hook's gatekeeper returns immediately for non-CJK strings,
+        so Latin / Cyrillic tracks incur zero overhead.
+
+        Transliteration to Latin (Pinyin / Romaji) is intentionally NOT performed here —
+        scoring always compares native script to native script.
         """
 
         import re
+        # Apply CJK script normalization (T→S) before any further processing.
+        # For non-CJK text the hook returns immediately (zero overhead).
+        try:
+            from core.hook_manager import hook_manager as _hm_cmp
+            s = _hm_cmp.apply_filters('pre_normalize_text', s)
+        except Exception:
+            pass
         s = s.lower()
-        s = self._romanize_text(s)
         # Strip featured artist markers first
         s = re.sub(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+.*?[\]\)]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$", "", s, flags=re.IGNORECASE)
         # Remove special characters but keep spaces
