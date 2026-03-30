@@ -504,7 +504,21 @@ class WeightedMatchingEngine:
         max_possible_score += self.weights.text_weight * 100
 
         # ===== STEP 4: DURATION MATCHING =====
-        duration_score = self._calculate_duration_match(source, candidate)
+        # Artist Match Duration Escalation — when artist confidence is ≥ 0.95 the
+        # artist is definitively identified; slight duration drift from extra silence,
+        # streaming re-masters, or gapless album padding should not kill an otherwise
+        # strong match.  The tolerance is raised from the profile default up to 8500ms
+        # for this candidate only.  The same linear penalty formula (max −0.5 at the
+        # new edge) applies, so the scoring still degrades gracefully and a track 4 s
+        # off does not get the same score as one that is bang-on.
+        _artist_dur_tolerance: Optional[int] = None
+        if artist_fuzzy_score >= 0.95:
+            _artist_dur_tolerance = 8500
+            reasoning_parts.append(
+                f"Artist Match Duration Escalation: artist={artist_fuzzy_score:.2f} ≥ 0.95 "
+                f"→ duration tolerance raised to {_artist_dur_tolerance}ms"
+            )
+        duration_score = self._calculate_duration_match(source, candidate, _artist_dur_tolerance)
         duration_contribution = duration_score * self.weights.duration_weight * 100
 
         reasoning_parts.append(

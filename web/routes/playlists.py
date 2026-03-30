@@ -1,5 +1,6 @@
 import logging
 import re
+from difflib import SequenceMatcher
 from urllib.parse import quote
 from flask import Blueprint, jsonify, request
 from web.services.sync_service import SyncAdapter
@@ -9,6 +10,7 @@ from core.tiered_logger import get_logger
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import ScoringProfile
 from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.text_utils import normalize_title as _normalize_candidate_title
 from core.job_queue import job_queue
 from core.event_bus import event_bus
 from core.sync_history import sync_history
@@ -65,6 +67,23 @@ def _extract_target_identifier(candidate):
             return identifiers.get(key)
 
     return getattr(candidate, 'id', None)
+
+
+def _cmp_titles(a: str, b: str) -> float:
+    """Lightweight title similarity score (0–1), matching the engine's _fuzzy_match logic.
+
+    Lowercases, strips non-word/non-space characters, collapses whitespace, then runs
+    SequenceMatcher.  Used to pick the best candidate title or alias before scoring.
+    """
+    def _n(s: str) -> str:
+        s = s.lower()
+        s = re.sub(r'[^\w\s]', '', s)
+        return ' '.join(s.split())
+
+    a, b = _n(a), _n(b)
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
 
 
 def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist, track_duration):
@@ -357,6 +376,25 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     candidate_diagnostics = []
                     near_miss_candidate_id = None
 
+                    # Batch-fetch all track aliases for the candidate set so that
+                    # per-candidate alias scoring below needs no extra DB round-trips.
+                    _alias_map: dict = {}
+                    if candidates:
+                        try:
+                            _cids = [int(r[0]) for r in candidates]
+                            with db.engine.connect() as _ac:
+                                for _ar in _ac.execute(
+                                    text(
+                                        "SELECT track_id, name FROM track_aliases"
+                                        " WHERE track_id IN ("
+                                        + ",".join(str(c) for c in _cids)
+                                        + ")"
+                                    )
+                                ).fetchall():
+                                    _alias_map.setdefault(_ar[0], []).append(_ar[1])
+                        except Exception:
+                            _alias_map = {}
+
                     for candidate_row in candidates:
                         candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
                         raw_title_candidate = candidate_row[1]
@@ -387,6 +425,28 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             candidate_track.raw_title,
                             plugin_context=candidate_track.plugin_context,
                         )
+
+                        # ── Normalize candidate title & promote best alias ─────────────
+                        # Pass the raw DB title through normalize_title() to strip CJK
+                        # promo suffixes (e.g. "望天涯 - 网剧《山河令》推广" → "望天涯") and
+                        # CJK bracket annotations.  Then score each stored alias so that
+                        # script-variant or Pinyin/Romaji forms can achieve a 100% match.
+                        _clean_cand_title = _normalize_candidate_title(
+                            raw_title_candidate,
+                            plugin_context=candidate_track.plugin_context,
+                        )
+                        _best_cand_title = _clean_cand_title or candidate_track.title
+                        _best_cand_score = _cmp_titles(source_track.title, _best_cand_title)
+                        for _alias_name in _alias_map.get(candidate_row[0], []):
+                            if not _alias_name:
+                                continue
+                            _alias_clean = _normalize_candidate_title(_alias_name)
+                            _alias_score = _cmp_titles(source_track.title, _alias_clean)
+                            if _alias_score > _best_cand_score:
+                                _best_cand_score = _alias_score
+                                _best_cand_title = _alias_clean
+                        if _best_cand_title and _best_cand_title != candidate_track.title:
+                            candidate_track.title = _best_cand_title
 
                         if source_track.edition or candidate_track.edition:
                             logger.debug(
@@ -488,6 +548,23 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                     except Exception as ext_err:
                                         logger.debug(f"External identifier lookup failed for Tier 2: {ext_err}")
 
+                                # Batch-fetch aliases for all Tier 2 escalation candidates.
+                                _t2_alias_map: dict = {}
+                                try:
+                                    _t2_cids = [int(r[0]) for r in candidates]
+                                    with db.engine.connect() as _t2_ac:
+                                        for _t2_ar in _t2_ac.execute(
+                                            text(
+                                                "SELECT track_id, name FROM track_aliases"
+                                                " WHERE track_id IN ("
+                                                + ",".join(str(c) for c in _t2_cids)
+                                                + ")"
+                                            )
+                                        ).fetchall():
+                                            _t2_alias_map.setdefault(_t2_ar[0], []).append(_t2_ar[1])
+                                except Exception:
+                                    _t2_alias_map = {}
+
                                 for candidate_row in candidates:
                                     candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
                                     raw_title_candidate = candidate_row[1]
@@ -518,6 +595,24 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         candidate_track.raw_title,
                                         plugin_context=candidate_track.plugin_context,
                                     )
+
+                                    # ── Normalize candidate title & promote best alias ─────
+                                    _t2_clean = _normalize_candidate_title(
+                                        raw_title_candidate,
+                                        plugin_context=candidate_track.plugin_context,
+                                    )
+                                    _t2_best_title = _t2_clean or candidate_track.title
+                                    _t2_best_score = _cmp_titles(source_track.title, _t2_best_title)
+                                    for _t2_alias in _t2_alias_map.get(candidate_row[0], []):
+                                        if not _t2_alias:
+                                            continue
+                                        _t2_alias_clean = _normalize_candidate_title(_t2_alias)
+                                        _t2_alias_score = _cmp_titles(source_track.title, _t2_alias_clean)
+                                        if _t2_alias_score > _t2_best_score:
+                                            _t2_best_score = _t2_alias_score
+                                            _t2_best_title = _t2_alias_clean
+                                    if _t2_best_title and _t2_best_title != candidate_track.title:
+                                        candidate_track.title = _t2_best_title
 
                                     result = matching_engine.calculate_title_duration_match(
                                         source_track,

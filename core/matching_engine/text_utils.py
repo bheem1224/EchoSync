@@ -199,6 +199,29 @@ def normalize_title(title: Optional[str], plugin_context: Optional[Dict[str, Any
     normalized = re.sub(r'\s*\([^)]*\)', '', normalized)   # (anything)
     normalized = re.sub(r'\s*\[[^\]]*\]', '', normalized)  # [anything]
 
+    # Strip CJK drama/promo suffix after a dash separator, now that the
+    # pre_normalize_title hook (step 1b) has already captured any drama context.
+    # e.g. "望天涯 - 网剧《山河令》推广曲" → "望天涯"
+    # Pattern: dash, optional non-ASCII filler, CJK opening bracket, content,
+    # CJK closing bracket, optional trailing text — all stripped to end of string.
+    # English suffixes like "- Radio Edit" are NOT matched because the pattern
+    # requires a CJK bracket (《【〈「『（) to anchor the annotation.
+    normalized = re.sub(
+        r'\s*-\s*(?:[^\x00-\x7f]|\s)*[《【〈「『（][^》】〉」』）\n]*[》】〉」』）][^\n]*$',
+        '',
+        normalized,
+    )
+
+    # Strip remaining CJK bracket sequences (standalone annotations not preceded
+    # by a dash, e.g. "望天涯《加長版》"). Must run after the suffix strip above
+    # so the brackets remain available as anchors for that pattern.
+    normalized = re.sub(r'\s*《[^》]*》', '', normalized)   # 《…》
+    normalized = re.sub(r'\s*【[^】]*】', '', normalized)   # 【…】
+    normalized = re.sub(r'\s*〈[^〉]*〉', '', normalized)   # 〈…〉
+    normalized = re.sub(r'\s*「[^」]*」', '', normalized)   # 「…」
+    normalized = re.sub(r'\s*『[^』]*』', '', normalized)   # 『…』
+    normalized = re.sub(r'\s*（[^）]*）', '', normalized)   # （…）
+
     # Remove trailing feat/with clauses (normalize_text already converts "feat" → "&",
     # so both the original keyword and the "&" form need to be handled).
     normalized = re.sub(r"\s+&\s+\S+.*$", "", normalized)
