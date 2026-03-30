@@ -470,9 +470,40 @@ class MusicDatabase:
             return session.query(Album).count()
 
     def count_tracks(self) -> int:
-        """Return total tracks stored."""
+        """Return total tracks that are linked to a provider via ExternalIdentifier.
+
+        Orphaned Track rows (no ExternalIdentifier) are excluded — they are artefacts
+        of aborted sync transactions and should not inflate the displayed count.
+        """
+        from sqlalchemy import exists as _exists
         with self.session_scope() as session:
-            return session.query(Track).count()
+            return (
+                session.query(Track)
+                .filter(_exists().where(ExternalIdentifier.track_id == Track.id))
+                .count()
+            )
+
+    def cleanup_orphaned_tracks(self) -> int:
+        """Delete Track rows that have no linked ExternalIdentifier.
+
+        These orphans are created when a sync transaction is interrupted after
+        the Track INSERT but before the ExternalIdentifier INSERT commits.
+        Returns the number of rows removed.
+        """
+        from sqlalchemy import exists as _exists, delete as _delete, select as _select
+        with self.session_scope() as session:
+            orphan_ids = [
+                row[0] for row in session.execute(
+                    _select(Track.id).where(
+                        ~_exists().where(ExternalIdentifier.track_id == Track.id)
+                    )
+                ).all()
+            ]
+            if not orphan_ids:
+                return 0
+            session.execute(_delete(Track).where(Track.id.in_(orphan_ids)))
+            logger.debug("Removed %d orphaned track(s) with no provider link", len(orphan_ids))
+            return len(orphan_ids)
 
     def check_track_exists(self, title: str, artist: str, confidence_threshold: float = 0.7, server_source: str = None) -> Tuple[Optional[Track], float]:
         """Check if a track exists in the database using fuzzy matching."""

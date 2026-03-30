@@ -877,8 +877,13 @@ class PlexClient(ProviderBase):
             return {}
         
         try:
+            # Fetch one track so totalSize is populated with the actual track count.
+            # (totalSize reflects the most-recent search result; without an explicit
+            # searchTracks call it may hold the artist/album count instead.)
+            self.music_library.searchTracks(maxresults=1)
+            track_count = self.music_library.totalSize if hasattr(self.music_library, 'totalSize') else 0
             return {
-                'total_tracks': self.music_library.totalSize if hasattr(self.music_library, 'totalSize') else 0,
+                'tracks': track_count,   # was 'total_tracks' — library_service.py reads 'tracks'
                 'albums': len(self.music_library.searchAlbums(limit=99999)),
                 'artists': len(self.music_library.searchArtists(limit=99999)),
             }

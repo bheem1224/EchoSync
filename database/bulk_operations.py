@@ -559,6 +559,17 @@ class LibraryManager:
 
         logger.info(f"Starting bulk import of {total_count if total_count > 0 else 'unknown number of'} tracks")
 
+        # Remove orphan Track rows left by previously interrupted syncs before
+        # we start so they don't pollute counts or interfere with deduplication.
+        try:
+            from database.music_database import get_database
+            _db = get_database()
+            removed = _db.cleanup_orphaned_tracks()
+            if removed:
+                logger.info("Pre-import cleanup: removed %d orphaned track(s)", removed)
+        except Exception as _e:
+            logger.debug("Pre-import orphan cleanup skipped: %s", _e)
+
         session = self.session_factory()
         imported_count = 0
         updated_count = 0
