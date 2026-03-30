@@ -67,6 +67,179 @@ def _extract_target_identifier(candidate):
     return getattr(candidate, 'id', None)
 
 
+def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist, track_duration):
+    """Execute the Tier 1 artist+title candidate query with search-expansion hook support.
+
+    Fires the ``search_expansion`` hook to collect plugin-provided alternative
+    search strings (e.g. Pinyin / Romaji transliterations from the CJK plugin),
+    then runs a single SQL query that matches against Track.title,
+    Track.sort_title, and track_aliases.name.  The artist-anchored conditions
+    are preserved for the default terms; expanded terms are searched without an
+    artist anchor to handle 'Various Artists' and similar mis-tagged libraries.
+
+    Returns a list of unique row tuples: (id, title, duration, edition,
+    artist_name, artist_id, sort_title, album_title).
+    """
+    from sqlalchemy import text as _sql
+
+    # Request plugin-provided alternative search strings.
+    expanded_terms = hook_manager.apply_filters(
+        'search_expansion', [],
+        title=search_title, artist=track_artist,
+    )
+    if not isinstance(expanded_terms, list):
+        expanded_terms = []
+
+    # Deduplicate expanded terms; skip strings already covered by the base search.
+    seen_terms = {search_title.lower(), base_search_title.lower()}
+    clean_expanded = []
+    for t in expanded_terms:
+        if isinstance(t, str) and t.strip() and t.strip().lower() not in seen_terms:
+            seen_terms.add(t.strip().lower())
+            clean_expanded.append(t.strip())
+
+    title_norm = search_title.replace('\u2019', "'").replace('\u2018', "'")
+
+    params = {
+        "artist_exact":       track_artist,
+        "artist_pattern":     f"%{track_artist}%",
+        "title_exact":        search_title,
+        "title_pattern":      f"%{search_title}%",
+        "base_title_pattern": f"%{base_search_title}%",
+        "title_norm_pattern": f"%{title_norm}%",
+        "duration":           track_duration or 0,
+    }
+
+    # Returns an alias-aware LIKE fragment for a named SQL parameter.
+    # Matches Track.title, Track.sort_title, or any track_aliases.name row.
+    def _am(param):
+        return (
+            f"(LOWER(t.title) LIKE LOWER(:{param})"
+            f" OR (t.sort_title IS NOT NULL AND LOWER(t.sort_title) LIKE LOWER(:{param}))"
+            f" OR EXISTS (SELECT 1 FROM track_aliases ta_x"
+            f" WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) LIKE LOWER(:{param})))"
+        )
+
+    # Artist-anchored conditions — identical semantics to the original Tier 1 SQL
+    # but the title side now also searches sort_title and aliases.
+    base_where = (
+        f"(LOWER(a.name) = LOWER(:artist_exact) AND {_am('title_pattern')})\n"
+        f"        OR (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) = LOWER(:title_exact))\n"
+        f"        OR (LOWER(a.name) LIKE LOWER(:artist_pattern) AND {_am('title_pattern')})\n"
+        f"        OR (LOWER(a.name) LIKE LOWER(:artist_pattern) AND {_am('base_title_pattern')})\n"
+        f"        OR (LOWER(a.name) = LOWER(:artist_exact) AND {_am('base_title_pattern')})\n"
+        f"        OR (LOWER(a.name) = LOWER(:artist_exact)\n"
+        f"            AND LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39)))"
+        f" LIKE LOWER(:title_norm_pattern))\n"
+        f"        OR (LOWER(a.name) LIKE LOWER(:artist_pattern)\n"
+        f"            AND LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39)))"
+        f" LIKE LOWER(:title_norm_pattern))"
+    )
+
+    # Plugin-expanded terms: no artist anchor — covers 'Various Artists' mis-tags.
+    exp_parts = []
+    for i, term in enumerate(clean_expanded):
+        pkey = f"exp_{i}"
+        params[pkey] = f"%{term}%"
+        exp_parts.append(_am(pkey))
+    exp_where = ("\n        OR " + "\n        OR ".join(exp_parts)) if exp_parts else ""
+
+    sql = _sql(f"""
+        SELECT DISTINCT t.id, t.title, t.duration, t.edition,
+               a.name AS artist_name, a.id AS artist_id,
+               t.sort_title, al.title AS album_title
+        FROM tracks t
+        JOIN artists a ON t.artist_id = a.id
+        LEFT JOIN albums al ON t.album_id = al.id
+        WHERE ({base_where}{exp_where})
+        ORDER BY
+            (LOWER(a.name) = LOWER(:artist_exact)) DESC,
+            (LOWER(t.title) = LOWER(:title_exact)) DESC,
+            ABS(t.duration - :duration) ASC
+        LIMIT 20
+    """)
+
+    return conn.execute(sql, params).fetchall()
+
+
+def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_ms):
+    """Execute the Tier 2 title-exact + duration-window query with alias support.
+
+    Fires the ``search_expansion`` hook so that transliterated strings returned
+    by plugins are also matched against Track.title, Track.sort_title, and
+    track_aliases.name with LIKE (transliterations are rarely exact-match).
+    The base title-exact conditions retain the original strict equality so non-CJK
+    tracks are unaffected.
+
+    Returns a list of unique row tuples compatible with the existing candidate loop.
+    """
+    from sqlalchemy import text as _sql
+
+    expanded_terms = hook_manager.apply_filters(
+        'search_expansion', [],
+        title=search_title, artist='',
+    )
+    if not isinstance(expanded_terms, list):
+        expanded_terms = []
+
+    seen_terms = {search_title.lower()}
+    clean_expanded = []
+    for t in expanded_terms:
+        if isinstance(t, str) and t.strip() and t.strip().lower() not in seen_terms:
+            seen_terms.add(t.strip().lower())
+            clean_expanded.append(t.strip())
+
+    duration_min = track_duration - duration_window_ms
+    duration_max = track_duration + duration_window_ms
+
+    params = {
+        "title_exact":  search_title,
+        "duration":     track_duration,
+        "duration_min": duration_min,
+        "duration_max": duration_max,
+    }
+
+    # Base title-exact conditions (original Tier 2) plus alias equality match.
+    base_where = (
+        "LOWER(t.title) = LOWER(:title_exact)\n"
+        "        OR LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39)))"
+        " = LOWER(:title_exact)\n"
+        "        OR LOWER(t.title)"
+        " = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))\n"
+        "        OR EXISTS (SELECT 1 FROM track_aliases ta_x\n"
+        "                   WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) = LOWER(:title_exact))"
+    )
+
+    # Expanded terms use LIKE — transliterations need fuzzy title matching.
+    exp_parts = []
+    for i, term in enumerate(clean_expanded):
+        pkey = f"exp_{i}"
+        params[pkey] = f"%{term}%"
+        exp_parts.append(
+            f"(LOWER(t.title) LIKE LOWER(:{pkey})"
+            f" OR (t.sort_title IS NOT NULL AND LOWER(t.sort_title) LIKE LOWER(:{pkey}))"
+            f" OR EXISTS (SELECT 1 FROM track_aliases ta_x"
+            f" WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) LIKE LOWER(:{pkey})))"
+        )
+    exp_where = ("\n        OR " + "\n        OR ".join(exp_parts)) if exp_parts else ""
+
+    sql = _sql(f"""
+        SELECT DISTINCT t.id, t.title, t.duration, t.edition,
+               a.name AS artist_name, a.id AS artist_id,
+               t.sort_title, al.title AS album_title
+        FROM tracks t
+        JOIN artists a ON t.artist_id = a.id
+        LEFT JOIN albums al ON t.album_id = al.id
+        WHERE ({base_where}{exp_where})
+          AND t.duration IS NOT NULL
+          AND t.duration BETWEEN :duration_min AND :duration_max
+        ORDER BY ABS(t.duration - :duration) ASC
+        LIMIT 10
+    """)
+
+    return conn.execute(sql, params).fetchall()
+
+
 def _analyze_playlists_internal(source, target_source, playlists, quality_profile="Auto"):
     """Run the canonical playlist matching flow used by both manual and scheduled syncs."""
     from database.music_database import MusicDatabase
@@ -147,89 +320,27 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
 
                 try:
                     with db.engine.connect() as conn:
-                        tier1_query = text("""
-                            SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
-                            FROM tracks t
-                            JOIN artists a ON t.artist_id = a.id
-                            LEFT JOIN albums al ON t.album_id = al.id
-                            WHERE (
-                                (LOWER(a.name) = LOWER(:artist_exact) AND LOWER(t.title) LIKE LOWER(:title_pattern))
-                                OR
-                                (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) = LOWER(:title_exact))
-                                OR
-                                (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) LIKE LOWER(:title_pattern))
-                                OR
-                                (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) LIKE LOWER(:base_title_pattern))
-                                OR
-                                (LOWER(a.name) = LOWER(:artist_exact) AND LOWER(t.title) LIKE LOWER(:base_title_pattern))
-                                OR
-                                (LOWER(a.name) = LOWER(:artist_exact)
-                                    AND LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) LIKE LOWER(:title_norm_pattern))
-                                OR
-                                (LOWER(a.name) LIKE LOWER(:artist_pattern)
-                                    AND LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) LIKE LOWER(:title_norm_pattern))
-                            )
-                            ORDER BY 
-                                (LOWER(a.name) = LOWER(:artist_exact)) DESC,
-                                (LOWER(t.title) = LOWER(:title_exact)) DESC,
-                                ABS(t.duration - :duration) ASC
-                            LIMIT 20
-                        """)
-
-                        # Normalise apostrophes in the search term so that
-                        # "Gangsta's Paradise" (plain ') matches the DB row
-                        # stored as "Gangsta\u2019s Paradise" (curly '), and vice-versa.
-                        title_norm = search_title.replace("\u2019", "'").replace("\u2018", "'")
-
-                        result = conn.execute(tier1_query, {
-                            "artist_exact": track_artist,
-                            "artist_pattern": f"%{track_artist}%",
-                            "title_exact": search_title,
-                            "title_pattern": f"%{search_title}%",
-                            "base_title_pattern": f"%{base_search_title}%",
-                            "title_norm_pattern": f"%{title_norm}%",
-                            "duration": track_duration or 0,
-                        })
-                        candidates = result.fetchall()
+                        candidates = _fetch_tier1_candidates(
+                            conn, search_title, base_search_title,
+                            track_artist, track_duration,
+                        )
                         tier2_mode = False
 
                         if not candidates and track_duration:
                             # Wide net: ±5000ms. No artist anchor here — the scoring
-                            # engine's Rescue A (title+artist ≥0.95) and Rescue B
+                            # engine’s Rescue A (title+artist ≥0.95) and Rescue B
                             # (title+duration ≤2s) reject false positives. A tight 2s
                             # window silently drops mastering-length variants, e.g.
                             # Gangsta’s Paradise: Spotify 240693ms vs local 243800ms = 3107ms.
                             sql_duration_tolerance_ms = 5000
-                            duration_min = track_duration - sql_duration_tolerance_ms
-                            duration_max = track_duration + sql_duration_tolerance_ms
-
                             logger.debug(
                                 f"Tier 1 found 0 candidates for '{track_title}' by '{track_artist}'. "
                                 f"Attempting Tier 2 with title='{search_title}', duration={track_duration}ms ±{sql_duration_tolerance_ms}ms"
                             )
-                            tier2_query = text("""
-                                SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
-                                FROM tracks t
-                                JOIN artists a ON t.artist_id = a.id
-                                LEFT JOIN albums al ON t.album_id = al.id
-                                WHERE (
-                                    LOWER(t.title) = LOWER(:title_exact)
-                                    OR LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) = LOWER(:title_exact)
-                                    OR LOWER(t.title) = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))
-                                )
-                                  AND t.duration IS NOT NULL
-                                  AND t.duration BETWEEN :duration_min AND :duration_max
-                                ORDER BY ABS(t.duration - :duration) ASC
-                                LIMIT 10
-                            """)
-
-                            result = conn.execute(tier2_query, {
-                                "title_exact": search_title,
-                                "duration": track_duration,
-                                "duration_min": duration_min,
-                                "duration_max": duration_max,
-                            })
-                            candidates = result.fetchall()
+                            candidates = _fetch_tier2_candidates(
+                                conn, search_title, track_duration,
+                                sql_duration_tolerance_ms,
+                            )
                             tier2_mode = True
 
                     external_ids_map = {}
@@ -358,29 +469,10 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             duration_max = track_duration + sql_duration_tolerance_ms
 
                             with db.engine.connect() as tier2_conn:
-                                tier2_query = text("""
-                                    SELECT t.id, t.title, t.duration, t.edition, a.name as artist_name, a.id as artist_id, t.sort_title, al.title as album_title
-                                    FROM tracks t
-                                    JOIN artists a ON t.artist_id = a.id
-                                    LEFT JOIN albums al ON t.album_id = al.id
-                                    WHERE (
-                                        LOWER(t.title) = LOWER(:title_exact)
-                                        OR LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39))) = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))
-                                        OR LOWER(t.title) = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))
-                                    )
-                                    AND t.duration IS NOT NULL
-                                    AND t.duration BETWEEN :duration_min AND :duration_max
-                                    ORDER BY ABS(t.duration - :duration) ASC
-                                    LIMIT 10
-                                """)
-
-                                result = tier2_conn.execute(tier2_query, {
-                                    "title_exact": search_title,
-                                    "duration": track_duration,
-                                    "duration_min": duration_min,
-                                    "duration_max": duration_max,
-                                })
-                                candidates = result.fetchall()
+                                candidates = _fetch_tier2_candidates(
+                                    tier2_conn, search_title, track_duration,
+                                    sql_duration_tolerance_ms,
+                                )
 
                             if candidates:
                                 logger.debug(

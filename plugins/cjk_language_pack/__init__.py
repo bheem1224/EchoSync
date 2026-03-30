@@ -566,6 +566,66 @@ def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
     return {"boost": 0, "duration_override": 0}
 
 
+# ── Hook 6: search_expansion (local-DB query expansion) ─────────────────────
+
+def _on_search_expansion(terms: Any, **kwargs: Any) -> list[str]:
+    """
+    Filter registered on the ``search_expansion`` hook.
+
+    Called during local-library candidate retrieval in the playlist sync
+    pipeline.  When the source track title or artist contains CJK characters,
+    returns Latin-phonetic forms (Pinyin / Romaji / Revised Romanization) and
+    Script variants (Simplified / Traditional Chinese) so the database query
+    also hits alias rows written by the CJK plugin's ``post_metadata_enrichment``
+    handler — without requiring the local file to have been tagged in Chinese.
+
+    Also emits the bare content of any CJK bracket group (e.g. the drama name
+    inside 《莲花楼》) as a standalone search term so tracks stored only under
+    the series name are found even when the full bracketed title yields no hit.
+
+    Returns the input ``terms`` list unchanged for non-CJK strings so there is
+    zero overhead for standard Latin / English libraries.
+    """
+    result: list[str] = list(terms) if isinstance(terms, list) else []
+    title: str = kwargs.get('title', '') or ''
+    artist: str = kwargs.get('artist', '') or ''
+
+    if not _has_cjk(title) and not _has_cjk(artist):
+        return result
+
+    tr = get_transliterator()
+    seen = {t.lower() for t in result}
+
+    def _add(s: str) -> None:
+        s = (s or '').strip()
+        if s and s.lower() not in seen:
+            seen.add(s.lower())
+            result.append(s)
+
+    if _has_cjk(title):
+        _add(tr.flatten_to_romaji(title))
+        _add(tr.to_simplified(title))
+        _add(tr.to_traditional(title))
+        # Emit bare drama / series name from CJK brackets as its own search term.
+        m = _CJK_BRACKET_RE.search(title)
+        if m:
+            drama = next((g for g in m.groups() if g is not None), None)
+            if drama and drama.strip():
+                _add(drama.strip())
+                _add(tr.flatten_to_romaji(drama.strip()))
+
+    if _has_cjk(artist):
+        _add(tr.flatten_to_romaji(artist))
+
+    added = len(result) - (len(list(terms)) if isinstance(terms, list) else 0)
+    if added:
+        logger.debug(
+            "search_expansion: CJK detected in %r — added %d alternative term(s)",
+            title or artist, added,
+        )
+    return result
+
+
 def _on_post_metadata_enrichment(track_obj: Any) -> Any:
     """
     After the MetadataEnhancerService pipeline:
@@ -639,12 +699,13 @@ def initialize_plugin() -> None:
     hook_manager.add_filter("pre_normalize_text",             _on_pre_normalize_text)
     hook_manager.add_filter("pre_normalize_title",            _on_pre_normalize_title)
     hook_manager.add_filter("scoring_modifier",               _on_scoring_modifier)
+    hook_manager.add_filter("search_expansion",               _on_search_expansion)
     hook_manager.add_filter("post_metadata_enrichment",       _on_post_metadata_enrichment)
     logger.info(
         "CJK Language Pack: registered hooks "
         "(register_metadata_requirements / pre_provider_search / "
         "pre_normalize_text / pre_normalize_title / "
-        "scoring_modifier / post_metadata_enrichment)"
+        "scoring_modifier / search_expansion / post_metadata_enrichment)"
     )
 
 
