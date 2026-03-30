@@ -51,6 +51,7 @@ class PlexClient(ProviderBase):
         self._is_connecting = False
         self._last_connection_attempt = 0
         self._connection_check_interval = 30
+        self._item_cache: dict = {}  # ratingKey → PlexItem; cleared on reconnect
 
         # Auto-detect active account if not provided
         if account_id is None:
@@ -924,32 +925,26 @@ class PlexClient(ProviderBase):
         try:
             # Extract basic metadata
             title = getattr(plex_track, 'title', None)
-            
-            # Handle artist and album gracefully
-            artist = None
-            try:
-                artist_obj = plex_track.artist()
-                artist = getattr(artist_obj, 'title', None) if artist_obj else None
-                logger.debug(f"Extracted artist for '{title}': artist_obj={artist_obj}, artist_title={artist}")
-            except (NotFound, AttributeError, Exception) as e:
-                logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
-            
-            # Fallback to grandparentTitle attribute if artist() method failed
+
+            # Use inline grandparentTitle/parentTitle attributes first — these are
+            # part of the Plex track XML response and require NO extra network call.
+            # Only fall back to the .artist()/.album() API methods when the inline
+            # attributes are absent, to prevent N+1 requests during library scans.
+            artist = getattr(plex_track, 'grandparentTitle', None) or None
             if not artist:
-                artist = getattr(plex_track, 'grandparentTitle', None)
-                if artist:
-                    logger.debug(f"Using grandparentTitle fallback for '{title}': artist={artist}")
-                else:
-                    logger.warning(f"Failed to extract artist for track '{title}' via both artist() and grandparentTitle")
-            
-            album = None
-            try:
-                album_obj = plex_track.album()
-                album = getattr(album_obj, 'title', None) or ""
-            except (NotFound, AttributeError, Exception) as e:
-                logger.debug(f"Failed to get album for track '{title}': {e}")
-                # Fallback to parentTitle (album name in Plex XML structure)
-                album = getattr(plex_track, 'parentTitle', None) or ""
+                try:
+                    artist_obj = self._fetch_plex_item(getattr(plex_track, 'grandparentRatingKey', None))
+                    artist = getattr(artist_obj, 'title', None) if artist_obj else None
+                except Exception as e:
+                    logger.debug(f"Failed to fetch artist object for '{title}': {e}")
+
+            album = getattr(plex_track, 'parentTitle', None) or ""
+            if not album:
+                try:
+                    album_obj = self._fetch_plex_item(getattr(plex_track, 'parentRatingKey', None))
+                    album = getattr(album_obj, 'title', None) or "" if album_obj else ""
+                except Exception as e:
+                    logger.debug(f"Failed to fetch album object for '{title}': {e}")
             
             if not title:
                 logger.warning("Skipping track - missing title")
@@ -1099,6 +1094,25 @@ class PlexClient(ProviderBase):
             logger.error(f"Error converting Plex track '{getattr(plex_track, 'title', 'Unknown')}': {e}", exc_info=True)
             return None
     
+    def _fetch_plex_item(self, rating_key):
+        """
+        Fetch a Plex library item by ratingKey with an instance-level cache.
+
+        Deduplicates /library/metadata/<id> requests within a sync session so
+        that albums and artists shared by many tracks are only fetched once.
+        The cache is keyed by ratingKey (int or str) and is cleared automatically
+        when the server connection is reset via ensure_connection().
+        """
+        if rating_key is None:
+            return None
+        key = str(rating_key)
+        if key not in self._item_cache:
+            try:
+                self._item_cache[key] = self.server.fetchItem(int(rating_key))
+            except Exception:
+                self._item_cache[key] = None
+        return self._item_cache[key]
+
     def ensure_connection(self) -> bool:
         """Ensure connection to Plex server with lazy initialization."""
         # Test existing connection
@@ -1109,6 +1123,7 @@ class PlexClient(ProviderBase):
             except Exception:
                 logger.info("Plex connection lost, reconnecting...")
                 self.server = None
+                self._item_cache.clear()  # stale fetchItem results are invalid after reconnect
         
         # Avoid concurrent connection attempts
         if self._is_connecting:
