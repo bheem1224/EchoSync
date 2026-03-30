@@ -11,6 +11,7 @@ It does NOT move files or scan directories (see AutoImportService).
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 import datetime
@@ -30,6 +31,16 @@ from core.matching_engine.soul_sync_track import SoulSyncTrack
 from database.working_database import get_working_database, ReviewTask
 
 logger = get_logger("services.metadata_enhancer")
+
+# Matches any CJK Unified Ideograph, Hiragana/Katakana, or Hangul syllable.
+# Used as a fast pre-flight gate: if neither title nor artist contains CJK chars
+# we can skip the hook manager entirely and stamp cjk_restored=True at DB speed.
+_CJK_RE = re.compile(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]')
+
+
+def _has_cjk(*texts: Optional[str]) -> bool:
+    """Return True if any of *texts* contains at least one CJK character."""
+    return any(_CJK_RE.search(t) for t in texts if t)
 
 
 def _title_similarity(a: str, b: str) -> float:
@@ -253,15 +264,36 @@ class MetadataEnhancerService:
                     total_processed += 1
                     continue
 
-                # Fast path: track already has a valid MBID — it was selected only because
-                # a plugin-required metadata_status key is absent.  Skip the expensive MBID
-                # resolution pipeline and go straight to plugin enrichment.
+                # Fast path: track already has a valid MBID — selected only because a
+                # plugin-required metadata_status key is missing.
+                #
+                # CJK Gatekeeper: before calling the hook manager we inspect the title
+                # and artist name for CJK characters with a single regex pass (no I/O,
+                # no network).  For the vast majority of Latin/ASCII libraries this
+                # allows the enhancer to run at pure DB-write speed:
+                #
+                #   • No CJK chars → stamp cjk_restored=True immediately and continue.
+                #     This satisfies the CJK plugin's metadata_status requirement so the
+                #     track is never re-queued, with zero hook-manager overhead.
+                #
+                #   • CJK chars found → call hook manager as normal so the CJK plugin
+                #     can generate aliases / transliterations.
                 if track.musicbrainz_id and track.musicbrainz_id != "NOT_FOUND":
-                    logger.debug(
-                        "Plugin-only enrichment for already-identified track: %s (MBID: %s)",
-                        local_path.name, track.musicbrainz_id,
-                    )
-                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    artist_name_for_gate = track.artist.name if track.artist else None
+                    if _has_cjk(track.title, artist_name_for_gate):
+                        logger.debug(
+                            "CJK gatekeeper: CJK chars detected — running hooks for %s (MBID: %s)",
+                            local_path.name, track.musicbrainz_id,
+                        )
+                        track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    else:
+                        logger.debug(
+                            "CJK gatekeeper: no CJK chars — fast-stamping cjk_restored for %s",
+                            local_path.name,
+                        )
+                        status = dict(track.metadata_status or {})
+                        status['cjk_restored'] = True
+                        track.metadata_status = status
                     flag_modified(track, "metadata_status")
                     total_processed += 1
                     continue
