@@ -360,12 +360,13 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         tier2_mode = False
 
                         if not candidates and track_duration:
-                            # Wide net: ±5000ms. No artist anchor here — the scoring
-                            # engine’s Rescue A (title+artist ≥0.95) and Rescue B
-                            # (title+duration ≤2s) reject false positives. A tight 2s
-                            # window silently drops mastering-length variants, e.g.
-                            # Gangsta’s Paradise: Spotify 240693ms vs local 243800ms = 3107ms.
-                            sql_duration_tolerance_ms = 5000
+                            # Wide net: ±10000ms. The SQL window is intentionally wider
+                            # than the engine’s hard rejection threshold so that the
+                            # Artist Match Duration Escalation (up to 8500ms) always has
+                            # candidates to work with. Python scoring enforces the strict
+                            # gate; false positives are rejected there, not at the SQL layer.
+                            # (Previously 5000ms — raised to 10000ms.)
+                            sql_duration_tolerance_ms = 10000
                             logger.debug(
                                 f"Tier 1 found 0 candidates for '{track_title}' by '{track_artist}'. "
                                 f"Attempting Tier 2 with title='{search_title}', duration={track_duration}ms ±{sql_duration_tolerance_ms}ms"
@@ -535,10 +536,11 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         near_miss_candidate_id = None
 
                         if track_duration:
-                            # Escalation Tier 2: widen to ±10000ms — generous SQL net so
-                            # the Python engine can apply the artist-escalation rule
-                            # (up to ±8500ms for artist_score ≥ 0.95).  The engine
-                            # enforces stricter per-candidate tolerances at scoring time.
+                            # Escalation Tier 2: widen to ±10000ms — wider than the engine's
+                            # 8500ms Artist Match Duration Escalation ceiling so a confident
+                            # artist match is never blocked at the SQL layer. Python scoring
+                            # discriminates; the SQL window is just a coarse pre-filter.
+                            # (Previously 5000ms — raised to 10000ms.)
                             sql_duration_tolerance_ms = 10000
                             duration_min = track_duration - sql_duration_tolerance_ms
                             duration_max = track_duration + sql_duration_tolerance_ms
