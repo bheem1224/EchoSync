@@ -20,6 +20,25 @@ import time
 logger = get_logger("playlists_api")
 bp = Blueprint("playlists", __name__, url_prefix="/api/playlists")
 
+# ── Semantic Substring Failsafe — safe OST filler dictionary ──────────────────
+# Words that commonly appear in longer CJK/English OST title variants but do NOT
+# change the track's identity.  If a title delta (the extra part of the longer
+# string after the shared shorter title is removed) is composed *entirely* of
+# these words the two strings refer to the same track and a 0.95 title score is
+# awarded.  Any unrecognised token (e.g. 'Part 2', 'Remix', 'Live') causes the
+# substring boost to be withheld, preventing false-positive Swap Cases.
+_OST_SAFE_RE = re.compile(
+    r'^(?:'
+    r'\s*'                                           # whitespace between tokens
+    r'|电视剧|网剧|影视剧|影視劇|电影'              # drama-type classifiers
+    r'|片头曲|片尾曲|主题曲|插曲|推广曲'             # song-role labels
+    r'|原声带|原声|配乐'                              # soundtrack labels
+    r'|ost|theme|opening|ending|soundtrack|original'  # English equivalents
+    r')+$',
+    re.IGNORECASE | re.UNICODE,
+)
+# ──────────────────────────────────────────────────────────────────────────────
+
 
 def _get_provider_for_account(provider_name, acc_id=None):
     from core.provider import ProviderRegistry
@@ -69,21 +88,75 @@ def _extract_target_identifier(candidate):
     return getattr(candidate, 'id', None)
 
 
-def _cmp_titles(a: str, b: str) -> float:
+def _cmp_titles(
+    a: str,
+    b: str,
+    context_score: float = 0.0,
+    drama_ctx: bool = False,
+) -> float:
     """Lightweight title similarity score (0–1), matching the engine's _fuzzy_match logic.
 
     Lowercases, strips non-word/non-space characters, collapses whitespace, then runs
     SequenceMatcher.  Used to pick the best candidate title or alias before scoring.
+
+    Semantic Substring Failsafe (Step 4 of the matching pipeline):
+      When the plain fuzzy ratio falls below 0.90 *and* we have a confident artist
+      or drama-context match (`context_score >= 0.80` or `drama_ctx=True`), the
+      function checks whether the shorter normalised title is a whole-word substring
+      of the longer one.  If yes, the "delta" (the extra characters in the longer
+      string) is extracted and validated against `_OST_SAFE_RE`:
+        • Delta is entirely safe OST filler ⇒ title_score forced to 0.95.
+        • Delta contains ANY unrecognised token (e.g. 'Part 2', 'Remix', 'Live')
+          ⇒ substring boost is withheld; the plain ratio is returned, preventing a
+          false-positive Swap Case (e.g. matching Part 1 instead of Part 2).
     """
     def _n(s: str) -> str:
         s = s.lower()
         s = re.sub(r'[^\w\s]', '', s)
         return ' '.join(s.split())
 
-    a, b = _n(a), _n(b)
-    if not a or not b:
+    a_n, b_n = _n(a), _n(b)
+    if not a_n or not b_n:
         return 0.0
-    return SequenceMatcher(None, a, b).ratio()
+    ratio = SequenceMatcher(None, a_n, b_n).ratio()
+
+    # ── Semantic Substring Failsafe ───────────────────────────────────────────
+    # Only activate when the plain ratio hasn't already passed AND we have a
+    # confident external signal (artist similarity ≥ 80% OR drama context hit)
+    # to guard against unrelated short-title collisions.
+    if ratio < 0.90 and (context_score >= 0.80 or drama_ctx):
+        shorter, longer = (a_n, b_n) if len(a_n) <= len(b_n) else (b_n, a_n)
+        if len(shorter) >= 3 and re.search(
+            r'(?<![\w])' + re.escape(shorter) + r'(?![\w])', longer
+        ):
+            # Extract delta: strip the shared prefix and collapse leftover whitespace.
+            delta_raw = re.sub(r'(?<![\w])' + re.escape(shorter) + r'(?![\w])', '', longer, count=1)
+            # Strip ALL punctuation and separators; keep only word characters.
+            delta_words = re.sub(r'[^\w]', '', delta_raw, flags=re.UNICODE)
+            if not delta_words:
+                # Delta is purely separators / punctuation — same track.
+                logger.debug(
+                    "Substring failsafe: '%s' ⊂ '%s' — delta is empty after strip → score=0.95",
+                    shorter, longer,
+                )
+                ratio = 0.95
+            elif _OST_SAFE_RE.match(delta_words):
+                # Delta is composed entirely of safe OST filler tokens.
+                logger.debug(
+                    "Substring failsafe: '%s' ⊂ '%s' — delta '%s' is safe filler → score=0.95",
+                    shorter, longer, delta_words,
+                )
+                ratio = 0.95
+            else:
+                # Delta contains unrecognised text — do NOT boost; prevents Swap Cases.
+                logger.debug(
+                    "Substring failsafe: '%s' ⊂ '%s' — delta '%s' contains unrecognised token "
+                    "→ rejecting substring match",
+                    shorter, longer, delta_words,
+                )
+    # ── End Semantic Substring Failsafe ──────────────────────────────────────
+
+    return ratio
 
 
 def _cmp_artists(a: str, b: str) -> float:
@@ -496,12 +569,30 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             plugin_context=candidate_track.plugin_context,
                         )
                         _best_cand_title = _clean_cand_title or candidate_track.title
-                        _best_cand_score = _cmp_titles(source_track.title, _best_cand_title)
+                        # Context guard for the Semantic Substring Failsafe: compute raw
+                        # artist similarity from the primary name pair (before alias
+                        # resolution) and check whether the CJK plugin found a drama
+                        # context in the candidate title (set by pre_normalize_title).
+                        _t1_artist_ctx = (
+                            _cmp_artists(source_track.artist_name, candidate_row[4])
+                            if source_track.artist_name and candidate_row[4]
+                            else 0.0
+                        )
+                        _t1_drama_ctx = bool(
+                            (candidate_track.plugin_context or {}).get('remote_drama')
+                        )
+                        _best_cand_score = _cmp_titles(
+                            source_track.title, _best_cand_title,
+                            context_score=_t1_artist_ctx, drama_ctx=_t1_drama_ctx,
+                        )
                         for _alias_name in _alias_map.get(candidate_row[0], []):
                             if not _alias_name:
                                 continue
                             _alias_clean = _normalize_candidate_title(_alias_name)
-                            _alias_score = _cmp_titles(source_track.title, _alias_clean)
+                            _alias_score = _cmp_titles(
+                                source_track.title, _alias_clean,
+                                context_score=_t1_artist_ctx, drama_ctx=_t1_drama_ctx,
+                            )
                             if _alias_score > _best_cand_score:
                                 _best_cand_score = _alias_score
                                 _best_cand_title = _alias_clean
@@ -702,12 +793,27 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         plugin_context=candidate_track.plugin_context,
                                     )
                                     _t2_best_title = _t2_clean or candidate_track.title
-                                    _t2_best_score = _cmp_titles(source_track.title, _t2_best_title)
+                                    # Context guard for Tier 2 Semantic Substring Failsafe.
+                                    _t2_artist_ctx = (
+                                        _cmp_artists(source_track.artist_name, candidate_row[4])
+                                        if source_track.artist_name and candidate_row[4]
+                                        else 0.0
+                                    )
+                                    _t2_drama_ctx = bool(
+                                        (candidate_track.plugin_context or {}).get('remote_drama')
+                                    )
+                                    _t2_best_score = _cmp_titles(
+                                        source_track.title, _t2_best_title,
+                                        context_score=_t2_artist_ctx, drama_ctx=_t2_drama_ctx,
+                                    )
                                     for _t2_alias in _t2_alias_map.get(candidate_row[0], []):
                                         if not _t2_alias:
                                             continue
                                         _t2_alias_clean = _normalize_candidate_title(_t2_alias)
-                                        _t2_alias_score = _cmp_titles(source_track.title, _t2_alias_clean)
+                                        _t2_alias_score = _cmp_titles(
+                                            source_track.title, _t2_alias_clean,
+                                            context_score=_t2_artist_ctx, drama_ctx=_t2_drama_ctx,
+                                        )
                                         if _t2_alias_score > _t2_best_score:
                                             _t2_best_score = _t2_alias_score
                                             _t2_best_title = _t2_alias_clean
