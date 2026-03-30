@@ -154,7 +154,7 @@ class MetadataEnhancerService:
         """
         from sqlalchemy import or_, and_, func, Integer
         required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
-        from database.music_database import get_database, Track
+        from database.music_database import get_database, Track, Artist
         from core.file_handling.path_mapper import PathMapper
         from core.matching_engine.scoring_profile import ExactSyncProfile
         from core.matching_engine.fingerprinting import FingerprintGenerator
@@ -201,6 +201,22 @@ class MetadataEnhancerService:
                         func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
                     )
                 )
+            # Condition (c): tracks whose artist row is 'Various Artists' and whose
+            # physical-file artist tag has not yet been read.  These tracks must be
+            # processed regardless of whether musicbrainz_id or spotify_id is populated —
+            # we need to overwrite the placeholder with the real per-track performer.
+            _va_artist_ids_subq = (
+                session.query(Artist.id)
+                .filter(func.lower(Artist.name) == 'various artists')
+            )
+            conditions.append(
+                and_(
+                    Track.artist_id.in_(_va_artist_ids_subq),
+                    func.json_extract(
+                        Track.metadata_status, '$.artist_fixed_from_tags'
+                    ).is_(None),
+                )
+            )
             try:
                 tracks_to_process = (
                     session.query(Track).filter(or_(*conditions)).limit(batch_size).all()
@@ -237,6 +253,73 @@ class MetadataEnhancerService:
                     status['enhancement_attempts'] = 99
                     track.metadata_status = status
                     flag_modified(track, "metadata_status")
+                    session.commit()
+                    total_processed += 1
+                    continue
+
+                # ── Step 0.5: Various Artists artist-fix from physical file tags ─────────
+                # Tracks whose artist row is 'Various Artists' may have the real performer
+                # stored in their TPE1 / ARTIST tag.  We read the physical file here so this
+                # correction runs BEFORE the MBID fast-path — ensuring it is never skipped
+                # even when musicbrainz_id or spotify_id is already populated.
+                _artist_was_va = False
+                if (
+                    track.artist
+                    and track.artist.name.strip().lower() == 'various artists'
+                    and not (track.metadata_status or {}).get('artist_fixed_from_tags')
+                ):
+                    _artist_was_va = True
+                    try:
+                        _va_tags = _tagging_read(local_path)
+                        _tag_artist = (
+                            (_va_tags or {}).get('artist')
+                            or (_va_tags or {}).get('artist_name')
+                        )
+                        _tag_artist_lower = (_tag_artist or '').strip().lower()
+                        if _tag_artist and _tag_artist_lower not in ('', 'various artists', 'various'):
+                            _real_name = _tag_artist.strip()
+                            # Find or create the real artist row (case-insensitive lookup).
+                            _real_artist = (
+                                session.query(Artist)
+                                .filter(func.lower(Artist.name) == _real_name.lower())
+                                .first()
+                            )
+                            if _real_artist is None:
+                                _real_artist = Artist(name=_real_name)
+                                session.add(_real_artist)
+                                session.flush()  # obtain the new artist.id before assigning
+                            track.artist_id = _real_artist.id
+                            _va_status = dict(track.metadata_status or {})
+                            _va_status['artist_fixed_from_tags'] = _real_name
+                            track.metadata_status = _va_status
+                            flag_modified(track, 'metadata_status')
+                            logger.info(
+                                "Artist fix: track %d '%s' re-assigned from "
+                                "'Various Artists' → '%s'",
+                                track.id, local_path.name, _real_name,
+                            )
+                        else:
+                            # File has no usable track artist — record that we tried so
+                            # this track does not keep re-entering the VA condition.
+                            logger.debug(
+                                "VA track %d '%s': no usable artist in file tags "
+                                "(raw value=%r) — marking as attempted.",
+                                track.id, local_path.name, _tag_artist,
+                            )
+                            _va_status = dict(track.metadata_status or {})
+                            _va_status['artist_fixed_from_tags'] = False
+                            track.metadata_status = _va_status
+                            flag_modified(track, 'metadata_status')
+                    except Exception as _e_va:
+                        logger.warning(
+                            "Artist tag-fix failed for track %d (%s): %s",
+                            track.id, local_path.name, _e_va,
+                        )
+
+                # If this track was selected solely for the VA artist-fix (it already has a
+                # valid MBID and no other pending work), commit and move on.  Tracks that
+                # also need MBID identification fall through to the full pipeline below.
+                if _artist_was_va and track.musicbrainz_id and track.musicbrainz_id != "NOT_FOUND":
                     session.commit()
                     total_processed += 1
                     continue
