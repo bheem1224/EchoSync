@@ -535,10 +535,11 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         near_miss_candidate_id = None
 
                         if track_duration:
-                            # Escalation Tier 2: widen to ±5000ms for the same reason as the
-                            # initial Tier 2 — artist is already known to be unreliable here,
-                            # so use a wide duration net and let the engine score discriminate.
-                            sql_duration_tolerance_ms = 5000
+                            # Escalation Tier 2: widen to ±10000ms — generous SQL net so
+                            # the Python engine can apply the artist-escalation rule
+                            # (up to ±8500ms for artist_score ≥ 0.95).  The engine
+                            # enforces stricter per-candidate tolerances at scoring time.
+                            sql_duration_tolerance_ms = 10000
                             duration_min = track_duration - sql_duration_tolerance_ms
                             duration_max = track_duration + sql_duration_tolerance_ms
 
