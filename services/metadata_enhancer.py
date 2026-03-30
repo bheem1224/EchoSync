@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any, Tuple, List
 import datetime
 
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.exc import OperationalError
 from core.enums import Capability
 from core.file_handling.local_io import LocalFileHandler
 from core.file_handling.tagging_io import read_tags as _tagging_read, write_tags as _tagging_write
@@ -200,9 +201,17 @@ class MetadataEnhancerService:
                         func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
                     )
                 )
-            tracks_to_process = (
-                session.query(Track).filter(or_(*conditions)).limit(batch_size).all()
-            )
+            try:
+                tracks_to_process = (
+                    session.query(Track).filter(or_(*conditions)).limit(batch_size).all()
+                )
+            except OperationalError as _oe:
+                if "database is locked" in str(_oe).lower():
+                    logger.critical(
+                        "EMERGENCY ABORT: Database is locked by an external process. "
+                        "Halting job to prevent corruption."
+                    )
+                raise
 
             if not tracks_to_process:
                 if total_processed > 0:
@@ -510,6 +519,26 @@ class MetadataEnhancerService:
                     session.commit()
                     total_processed += 1
 
+                except OperationalError as _oe:
+                    if "database is locked" in str(_oe).lower():
+                        try:
+                            session.rollback()
+                        except Exception:
+                            pass
+                        logger.critical(
+                            "EMERGENCY ABORT: Database is locked by an external process. "
+                            "Halting job to prevent corruption."
+                        )
+                        raise
+                    # Non-lock OperationalError (disk full, corrupt DB, etc.) — also fatal;
+                    # do not silently continue and risk writing partial data.
+                    logger.error(
+                        "Fatal database error processing track %d (%s) — aborting job.",
+                        getattr(track, 'id', '?'),
+                        getattr(local_path, 'name', str(track.file_path) if track.file_path else '?'),
+                        exc_info=True,
+                    )
+                    raise
                 except Exception as e:
                     logger.error(
                         "Unhandled error processing track %d (%s) — skipping to next track.",
