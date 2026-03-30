@@ -67,6 +67,11 @@ _CJK_BRACKET_RE = re.compile(
     r'|\uff08([^\uff09]*)\uff09'  # （） full-width parentheses
 )
 
+# ASCII bracket pairs: capture content from [bracket] or (parens) labels such
+# as "[Jiang Cheng] Hen Bie" or "Hold On (Wang Zhe Rong Yao version)".
+# Used to extract romanised drama/series context from purely-Latin titles.
+_ASCII_BRACKET_RE = re.compile(r'\[([^\]]+)\]|\(([^)]+)\)')
+
 
 def _has_cjk(text: str) -> bool:
     return isinstance(text, str) and bool(_CJK_RE.search(text))
@@ -262,11 +267,12 @@ def _on_pre_normalize_text(text: str) -> str:
            the ``search_expansion`` and ``pre_provider_search`` hooks, which
            serve candidate *retrieval* — not scoring.
     """
-    # ── Gatekeeper: bypass entirely for non-CJK strings ──────────────────
-    if not isinstance(text, str) or not _has_cjk(text):
+    if not isinstance(text, str):
         return text
 
     # ── Step 1: series → canonical artist remap ───────────────────────────
+    # Applies to all strings (CJK and Latin) because a VGMdb series name may
+    # itself be in Romaji (e.g. "Shan He Ling" → canonical artist).
     proxy = get_proxy()
     canonical_artist = proxy.resolve_artist_for_series(text)
     if canonical_artist:
@@ -274,17 +280,20 @@ def _on_pre_normalize_text(text: str) -> str:
         return canonical_artist
 
     # ── Step 2: strip CJK-exclusive structural noise ──────────────────────
+    # strip_cjk_noise is CJK-pattern-specific; pure-Latin strings pass through
+    # unchanged with negligible overhead (all patterns fail to match early).
     cleaned = get_noise_filter().strip_cjk_noise(text)
     if cleaned != text:
         logger.debug("CJK noise strip: %r → %r", text, cleaned)
 
-    # ── Step 3: script normalization (Traditional → Simplified) ──────────
-    # Keeps the result in native Hanzi; Traditional and Simplified variants
-    # of the same title compare equal under SequenceMatcher.
-    result = get_transliterator().to_simplified(cleaned)
-    if result != cleaned:
-        logger.debug("CJK T→S normalize: %r → %r", cleaned, result)
-    return result
+    # ── Step 3: script normalization (Traditional → Simplified, CJK only) ─
+    if _has_cjk(cleaned):
+        result = get_transliterator().to_simplified(cleaned)
+        if result != cleaned:
+            logger.debug("CJK T→S normalize: %r → %r", cleaned, result)
+        return result
+
+    return cleaned
 
 
 # ── Hook 3: post_metadata_enrichment (Restore) ────────────────────────────────
@@ -496,18 +505,34 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
     plugin_context = kwargs.get('plugin_context')
     if plugin_context is None:
         return raw_title
-    if not isinstance(raw_title, str) or not _has_cjk(raw_title):
+    if not isinstance(raw_title, str):
         return raw_title
 
-    match = _CJK_BRACKET_RE.search(raw_title)
+    # ── CJK bracket extraction (《》 【】 etc.) ─────────────────────────────
+    # Only attempted when native CJK characters are present.
+    if _has_cjk(raw_title):
+        match = _CJK_BRACKET_RE.search(raw_title)
+        if match:
+            drama = next((g for g in match.groups() if g is not None), None)
+            if drama and drama.strip():
+                plugin_context['cjk_drama'] = drama.strip()
+                logger.debug(
+                    "pre_normalize_title: extracted CJK drama context %r from %r",
+                    plugin_context['cjk_drama'], raw_title,
+                )
+                return raw_title
+
+    # ── ASCII bracket extraction ([bracket] / (parens)) ────────────────────
+    # Fires for pure-Latin titles such as "[Jiang Cheng] Hen Bie" so the
+    # scoring_modifier hook receives romanised drama context even when the
+    # Spotify title carries no native CJK characters.
+    match = _ASCII_BRACKET_RE.search(raw_title)
     if match:
-        # The regex has 6 alternating groups (one per bracket type).
-        # The first non-None group is the drama/series name.
         drama = next((g for g in match.groups() if g is not None), None)
         if drama and drama.strip():
             plugin_context['cjk_drama'] = drama.strip()
             logger.debug(
-                "pre_normalize_title: extracted drama context %r from %r",
+                "pre_normalize_title: extracted ASCII bracket drama context %r from %r",
                 plugin_context['cjk_drama'], raw_title,
             )
 
@@ -594,9 +619,6 @@ def _on_search_expansion(terms: Any, **kwargs: Any) -> list[str]:
     title: str = kwargs.get('title', '') or ''
     artist: str = kwargs.get('artist', '') or ''
 
-    if not _has_cjk(title) and not _has_cjk(artist):
-        return result
-
     tr = get_transliterator()
     seen = {t.lower() for t in result}
 
@@ -607,16 +629,30 @@ def _on_search_expansion(terms: Any, **kwargs: Any) -> list[str]:
             result.append(s)
 
     if _has_cjk(title):
+        # Native CJK title — emit Romaji/Pinyin and both script variants so
+        # the DB query hits alias rows regardless of how the file was tagged.
         _add(tr.flatten_to_romaji(title))
         _add(tr.to_simplified(title))
         _add(tr.to_traditional(title))
-        # Emit bare drama / series name from CJK brackets as its own search term.
         m = _CJK_BRACKET_RE.search(title)
         if m:
             drama = next((g for g in m.groups() if g is not None), None)
             if drama and drama.strip():
                 _add(drama.strip())
                 _add(tr.flatten_to_romaji(drama.strip()))
+    else:
+        # Pure-Latin / Pinyin title (e.g. "[Jiang Cheng] Hen Bie").
+        # Emit the title itself as an explicit search term so the SQL query
+        # hits track_aliases.name rows written for romanised forms.
+        # Also emit any content inside ASCII brackets as a standalone term —
+        # e.g. "[Jiang Cheng]" emits "Jiang Cheng" for tracks stored under
+        # just the character/series name.
+        _add(title)
+        m = _ASCII_BRACKET_RE.search(title)
+        if m:
+            bracket_content = next((g for g in m.groups() if g is not None), None)
+            if bracket_content and bracket_content.strip():
+                _add(bracket_content.strip())
 
     if _has_cjk(artist):
         _add(tr.flatten_to_romaji(artist))
@@ -624,8 +660,8 @@ def _on_search_expansion(terms: Any, **kwargs: Any) -> list[str]:
     added = len(result) - (len(list(terms)) if isinstance(terms, list) else 0)
     if added:
         logger.debug(
-            "search_expansion: CJK detected in %r — added %d alternative term(s)",
-            title or artist, added,
+            "search_expansion: added %d alternative term(s) for %r",
+            added, title or artist,
         )
     return result
 
