@@ -219,16 +219,23 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     # ensure foreign keys are enforced
     cursor.execute("PRAGMA foreign_keys=ON")
-    # give other connections a bit longer before raising "database is locked" (MUST be before WAL)
+    # give other connections a bit longer before raising "database is locked"
+    # 30 s covers even the longest bulk imports without failing immediately.
+    # (MUST be set before activating WAL)
     try:
-        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA busy_timeout=30000")
     except Exception:
         pass
-    # use WAL mode so long-running writes don't block readers (fixes UI freeze during updates)
+    # WAL mode — long-running writes don't block readers (fixes UI freeze during updates)
     try:
         cursor.execute("PRAGMA journal_mode=WAL")
     except Exception:
         # older SQLite versions may not support WAL; ignore failure
+        pass
+    # NORMAL is safe with WAL and significantly faster than the default FULL
+    try:
+        cursor.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
         pass
     cursor.close()
 

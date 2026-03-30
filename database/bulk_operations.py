@@ -61,37 +61,37 @@ class LibraryManager:
 
         norm_name = self._normalize_name(artist_name)
 
-        # Check cache first
-        if norm_name in self.artist_cache:
-            artist_id = self.artist_cache[norm_name]
-            # Retrieve from DB to return attached object
-            stmt = select(Artist).where(Artist.id == artist_id)
-            artist = session.execute(stmt).scalar_one()
-            return artist
-
-        # Check DB using case-insensitive lookup (may not strip accents)
-        stmt = select(Artist).where(
-            func.lower(Artist.name) == norm_name
-        )
-        artist = session.execute(stmt).scalar_one_or_none()
-        # Additional fallback: try Python normalization to catch accent variants
-        if artist is None:
-            # since artist_cache may already contain normalized values from DB,
-            # we can leverage it here to avoid another query
+        # Suppress autoflush during all lookup SELECTs so that pending dirty
+        # objects in the session do not trigger a premature flush (and a
+        # potential sqlite3.OperationalError / PendingRollbackError cascade).
+        # Explicit session.flush() calls below are unaffected by no_autoflush.
+        with session.no_autoflush:
+            # Check cache first
             if norm_name in self.artist_cache:
-                uid = self.artist_cache[norm_name]
-                stmt2 = select(Artist).where(Artist.id == uid)
-                artist = session.execute(stmt2).scalar_one_or_none()
-            else:
-                # final brute-force scan (should be rare after cache prepopulate)
-                stmt2 = select(Artist)
-                for a in session.execute(stmt2).scalars().all():
-                    if self._normalize_name(a.name) == norm_name:
-                        artist = a
-                        break
+                artist_id = self.artist_cache[norm_name]
+                stmt = select(Artist).where(Artist.id == artist_id)
+                artist = session.execute(stmt).scalar_one()
+                return artist
+
+            # Check DB using case-insensitive lookup (may not strip accents)
+            stmt = select(Artist).where(func.lower(Artist.name) == norm_name)
+            artist = session.execute(stmt).scalar_one_or_none()
+            # Additional fallback: try Python normalization to catch accent variants
+            if artist is None:
+                if norm_name in self.artist_cache:
+                    uid = self.artist_cache[norm_name]
+                    stmt2 = select(Artist).where(Artist.id == uid)
+                    artist = session.execute(stmt2).scalar_one_or_none()
+                else:
+                    # final brute-force scan (should be rare after cache prepopulate)
+                    stmt2 = select(Artist)
+                    for a in session.execute(stmt2).scalars().all():
+                        if self._normalize_name(a.name) == norm_name:
+                            artist = a
+                            break
 
         if artist is None:
-            # Create new artist
+            # Create new artist — explicit flush is intentional and safe outside no_autoflush
             artist = Artist(name=artist_name, sort_name=sort_name)
             session.add(artist)
             session.flush()
@@ -134,41 +134,43 @@ class LibraryManager:
         norm_title = self._normalize_name(album_title)
         cache_key = (norm_title, artist.id)
 
-        # Check cache first
-        if cache_key in self.album_cache:
-            album_id = self.album_cache[cache_key]
-            stmt = select(Album).where(Album.id == album_id)
-            album = session.execute(stmt).scalar_one()
-            # Still might need to update metadata if it was cached but fields were missing
-            if release_group_id and not album.release_group_id:
-                album.release_group_id = release_group_id
-            if album_type and not album.album_type:
-                album.album_type = album_type
-            if mb_release_id and not album.mb_release_id:
-                album.mb_release_id = mb_release_id
-            if original_release_date and not album.original_release_date:
-                album.original_release_date = original_release_date
-            return album
-
-        # Check DB using case-insensitive lookup (may not strip accents)
-        stmt = select(Album).where(
-            func.lower(Album.title) == norm_title,
-            Album.artist_id == artist.id,
-        )
-        album = session.execute(stmt).scalar_one_or_none()
-        # Fallback via normalization similar to artists
-        if album is None:
-            cache_key = (norm_title, artist.id)
+        # Suppress autoflush during all lookup SELECTs (same rationale as _get_or_create_artist).
+        with session.no_autoflush:
+            # Check cache first
             if cache_key in self.album_cache:
-                aid = self.album_cache[cache_key]
-                stmt2 = select(Album).where(Album.id == aid)
-                album = session.execute(stmt2).scalar_one_or_none()
-            else:
-                stmt2 = select(Album).where(Album.artist_id == artist.id)
-                for alb in session.execute(stmt2).scalars().all():
-                    if self._normalize_name(alb.title) == norm_title:
-                        album = alb
-                        break
+                album_id = self.album_cache[cache_key]
+                stmt = select(Album).where(Album.id == album_id)
+                album = session.execute(stmt).scalar_one()
+                # Still might need to update metadata if it was cached but fields were missing
+                if release_group_id and not album.release_group_id:
+                    album.release_group_id = release_group_id
+                if album_type and not album.album_type:
+                    album.album_type = album_type
+                if mb_release_id and not album.mb_release_id:
+                    album.mb_release_id = mb_release_id
+                if original_release_date and not album.original_release_date:
+                    album.original_release_date = original_release_date
+                return album
+
+            # Check DB using case-insensitive lookup (may not strip accents)
+            stmt = select(Album).where(
+                func.lower(Album.title) == norm_title,
+                Album.artist_id == artist.id,
+            )
+            album = session.execute(stmt).scalar_one_or_none()
+            # Fallback via normalization similar to artists
+            if album is None:
+                cache_key = (norm_title, artist.id)
+                if cache_key in self.album_cache:
+                    aid = self.album_cache[cache_key]
+                    stmt2 = select(Album).where(Album.id == aid)
+                    album = session.execute(stmt2).scalar_one_or_none()
+                else:
+                    stmt2 = select(Album).where(Album.artist_id == artist.id)
+                    for alb in session.execute(stmt2).scalars().all():
+                        if self._normalize_name(alb.title) == norm_title:
+                            album = alb
+                            break
 
         release_date = date(release_year, 1, 1) if release_year else None
 
@@ -714,6 +716,19 @@ class LibraryManager:
                         f"Failed to import track '{track_data.title}': {e}",
                         exc_info=True,
                     )
+                    # Roll back the poisoned transaction so the session is usable
+                    # for the next track.  Without this, a sqlite3.OperationalError
+                    # ("database is locked") on one track leaves the session in a
+                    # PendingRollbackError state and causes every subsequent track
+                    # in the batch to fail with the same error.
+                    # Also clear the artist/album caches: any IDs they hold for
+                    # objects flushed-but-not-committed in this batch are now gone.
+                    try:
+                        session.rollback()
+                        self.artist_cache.clear()
+                        self.album_cache.clear()
+                    except Exception:
+                        pass
                     continue
 
                 # Batch commit every BATCH_SIZE tracks

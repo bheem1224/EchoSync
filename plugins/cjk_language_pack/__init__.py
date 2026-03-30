@@ -373,22 +373,29 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             name = entry.get("name") or ""
             if not name:
                 continue
-            if any(
-                a.name == name
-                and a.locale == entry.get("locale")
-                and a.script == entry.get("script")
-                for a in track_obj.aliases
-            ):
-                continue
-            track_obj.aliases.append(
-                TrackAlias(
-                    track_id=track_obj.id,
-                    name=name,
-                    locale=entry.get("locale"),
-                    script=entry.get("script"),
-                    is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
+            # Use no_autoflush so that accessing track_obj.aliases (lazy-load)
+            # does not trigger an unexpected session flush.  An autoflush here
+            # could fail if earlier tracks in the same batch left dirty state,
+            # which would put the session into a needs-rollback state and silently
+            # prevent ALL aliases in the batch from being committed.
+            with session.no_autoflush:
+                already_exists = any(
+                    a.name == name
+                    and a.locale == entry.get("locale")
+                    and a.script == entry.get("script")
+                    for a in track_obj.aliases
                 )
+            if already_exists:
+                continue
+            new_alias = TrackAlias(
+                track_id=track_obj.id,
+                name=name,
+                locale=entry.get("locale"),
+                script=entry.get("script"),
+                is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
             )
+            session.add(new_alias)   # explicit — ensures tracking even if cascade lags
+            track_obj.aliases.append(new_alias)
             added += 1
 
         if added:
@@ -434,22 +441,24 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             name = entry.get("name") or ""
             if not name:
                 continue
-            if any(
-                a.name == name
-                and a.locale == entry.get("locale")
-                and a.script == entry.get("script")
-                for a in artist_obj.aliases
-            ):
-                continue
-            artist_obj.aliases.append(
-                ArtistAlias(
-                    artist_id=artist_obj.id,
-                    name=name,
-                    locale=entry.get("locale"),
-                    script=entry.get("script"),
-                    is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
+            with session.no_autoflush:
+                already_exists = any(
+                    a.name == name
+                    and a.locale == entry.get("locale")
+                    and a.script == entry.get("script")
+                    for a in artist_obj.aliases
                 )
+            if already_exists:
+                continue
+            new_alias = ArtistAlias(
+                artist_id=artist_obj.id,
+                name=name,
+                locale=entry.get("locale"),
+                script=entry.get("script"),
+                is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
             )
+            session.add(new_alias)
+            artist_obj.aliases.append(new_alias)
             added += 1
 
         if added:
