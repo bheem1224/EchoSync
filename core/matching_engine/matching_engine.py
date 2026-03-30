@@ -489,6 +489,44 @@ class WeightedMatchingEngine:
             f"Duration match: {duration_score:.1%} × {self.weights.duration_weight:.1%} = {duration_contribution:.1f} points"
         )
 
+        # ── Plugin scoring modifiers ───────────────────────────────────────────
+        # Fired here — after the standard duration check but BEFORE the near-miss
+        # guard — so that a plugin can:
+        #   a) supply a relaxed duration_tolerance_override (ms) to rescue OST
+        #      tracks whose TV edit / trailer mix differs from the album length;
+        #   b) supply a score_boost (float) applied to the final normalised score.
+        # The hook receives (modifier_dict, source=, candidate=) and returns the
+        # possibly-mutated dict.  An empty dict means "no modification".
+        from core.hook_manager import hook_manager as _hm_mod
+        _plugin_mod = _hm_mod.apply_filters(
+            'scoring_modifier', {},
+            source=source, candidate=candidate,
+        )
+        _score_boost: float = (
+            float(_plugin_mod.get('score_boost', 0.0))
+            if isinstance(_plugin_mod, dict)
+            else 0.0
+        )
+        _dur_override: Optional[int] = (
+            int(_plugin_mod['duration_tolerance_override'])
+            if isinstance(_plugin_mod, dict) and _plugin_mod.get('duration_tolerance_override')
+            else None
+        )
+        # If a plugin supplied a relaxed duration tolerance and the standard check
+        # already returned 0.0, re-evaluate before confirming a near-miss / fail.
+        if _dur_override is not None and duration_score == 0.0:
+            _rescored = self._calculate_duration_match(source, candidate, _dur_override)
+            if _rescored > 0.0:
+                duration_score = _rescored
+                duration_contribution = duration_score * self.weights.duration_weight * 100
+                reasoning_parts.append(
+                    f"Duration rescued by plugin (tolerance_override={_dur_override}ms → "
+                    f"new_score={duration_score:.2f})"
+                )
+        if _score_boost:
+            reasoning_parts.append(f"Plugin score_boost queued: +{_score_boost:.1f}")
+        # ── End plugin modifiers ───────────────────────────────────────────────
+
         # ── Near-miss detection ────────────────────────────────────────────────
         # If duration hard-failed (score=0.0) but the text match was exceptionally
         # strong (title ≥ 0.95 AND artist ≥ 0.95), this is almost certainly an
@@ -557,6 +595,12 @@ class WeightedMatchingEngine:
                     reasoning_parts.append(f"Duration bonus NOT applied (artist_score={artist_fuzzy_score:.1%} < 60%)")
 
         # Clamp to 0-100 range
+        if _score_boost:
+            normalized_score += _score_boost
+            reasoning_parts.append(
+                f"Plugin score_boost applied: +{_score_boost:.1f} → "
+                f"adjusted={normalized_score:.1f}"
+            )
         final_score = max(0.0, min(100.0, normalized_score))
 
         reasoning_parts.append(f"FINAL SCORE: {final_score:.1f}/100")
@@ -815,7 +859,12 @@ class WeightedMatchingEngine:
         weighted_score = sum(score * weight for _, score, weight in scores) / total_weight
         return weighted_score
 
-    def _calculate_duration_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> float:
+    def _calculate_duration_match(
+        self,
+        source: SoulSyncTrack,
+        candidate: SoulSyncTrack,
+        tolerance_override_ms: Optional[int] = None,
+    ) -> float:
         """
         Calculate duration match score
 
@@ -828,7 +877,11 @@ class WeightedMatchingEngine:
             return 1.0
 
         diff_ms = abs(source.duration - candidate.duration)
-        tolerance_ms = self.weights.duration_tolerance_ms
+        tolerance_ms = (
+            tolerance_override_ms
+            if tolerance_override_ms is not None
+            else self.weights.duration_tolerance_ms
+        )
 
         if diff_ms <= tolerance_ms:
             # Within tolerance - score based on how close

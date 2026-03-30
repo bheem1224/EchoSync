@@ -99,7 +99,10 @@ class SoulSyncTrack:
     # Quality tags and flags
     quality_tags: Optional[List[str]] = None
     is_compilation: Optional[bool] = None
-    
+
+    # Plugin-private scratch space — populated by pre_normalize_title hooks.
+    # Excluded from equality / repr so it doesn't affect matching identity checks.
+    plugin_context: Dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     # External Provider Links
     identifiers: Dict[str, Any] = field(default_factory=dict)
@@ -172,6 +175,13 @@ class SoulSyncTrack:
             self.artist_name = normalize_chars(self.artist_name)
         if self.album_title:
             self.album_title = normalize_chars(self.album_title)
+
+        # 0b. Fire pre_normalize_title hook so plugins (e.g. CJK Language Pack) can
+        #     extract contextual signals (e.g. drama / series names inside CJK brackets)
+        #     into plugin_context BEFORE the subsequent cleaning strips those brackets.
+        #     The hook runs after normalize_chars so Unicode variants are already unified.
+        from core.hook_manager import hook_manager as _hm
+        _hm.apply_filters('pre_normalize_title', self.raw_title, plugin_context=self.plugin_context)
 
         # 0. Handle legacy identifiers (List[Dict]) -> Dict[str, str]
         if isinstance(self.identifiers, list):

@@ -56,6 +56,17 @@ _CJK_RE = re.compile(
     r"[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u1100-\u11ff]"
 )
 
+# All CJK paired brackets: capture content between each pair.
+# Groups: 《》 「」 『』 〈〉 【】 （） 《》
+_CJK_BRACKET_RE = re.compile(
+    r'\u300a([^\u300b]*)\u300b'   # 《》 double-angle / title mark
+    r'|\u300c([^\u300d]*)\u300d'  # 「」 corner brackets
+    r'|\u300e([^\u300f]*)\u300f'  # 『』 white corner brackets
+    r'|\u3008([^\u3009]*)\u3009'  # 〈〉 angle brackets
+    r'|\u3010([^\u3011]*)\u3011'  # 【】 lenticular brackets
+    r'|\uff08([^\uff09]*)\uff09'  # （） full-width parentheses
+)
+
 
 def _has_cjk(text: str) -> bool:
     return isinstance(text, str) and bool(_CJK_RE.search(text))
@@ -464,6 +475,92 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         )
 
 
+# ── Hook 4: pre_normalize_title (drama/series context extraction) ─────────────
+
+def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
+    """
+    Filter registered on the ``pre_normalize_title`` hook.
+
+    Fires BEFORE ``normalize_text`` strips CJK brackets from a title string.
+    Extracts the first bracketed CJK sequence (typically the drama or anime
+    series name, e.g. ``태양의 후예`` from ``晴天 - MBC 드라마《太陽의 後裔》OST``)
+    and stores it in ``plugin_context['cjk_drama']`` for later use by the
+    ``scoring_modifier`` hook.
+
+    The title string is returned **unchanged** — this hook is purely additive.
+    """
+    plugin_context = kwargs.get('plugin_context')
+    if plugin_context is None:
+        return raw_title
+    if not isinstance(raw_title, str) or not _has_cjk(raw_title):
+        return raw_title
+
+    match = _CJK_BRACKET_RE.search(raw_title)
+    if match:
+        # The regex has 6 alternating groups (one per bracket type).
+        # The first non-None group is the drama/series name.
+        drama = next((g for g in match.groups() if g is not None), None)
+        if drama and drama.strip():
+            plugin_context['cjk_drama'] = drama.strip()
+            logger.debug(
+                "pre_normalize_title: extracted drama context %r from %r",
+                plugin_context['cjk_drama'], raw_title,
+            )
+
+    return raw_title
+
+
+# ── Hook 5: scoring_modifier (drama-context score boost) ─────────────────────
+
+def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
+    """
+    Filter registered on the ``scoring_modifier`` hook.
+
+    Compares the ``cjk_drama`` values stored in each track's ``plugin_context``
+    by the ``pre_normalize_title`` hook.  When both tracks carry drama context
+    and the two names fuzzy-match at ≥ 85 %, this returns:
+
+    * ``score_boost = +10.0`` — added to the final normalised score to reward
+      the verified drama match even when artist/title romanisation differs.
+    * ``duration_tolerance_override = 5000`` (ms) — prevents a strict duration
+      gate from killing an otherwise correct OST match, since TV-edit, trailer,
+      and full-album versions of the same songs routinely differ by 3–5 s.
+
+    The modifier dict is returned unchanged when drama context is absent or when
+    the similarity is below the threshold.
+    """
+    result: dict = dict(modifier) if isinstance(modifier, dict) else {}
+
+    source = kwargs.get('source')
+    candidate = kwargs.get('candidate')
+    if source is None or candidate is None:
+        return result
+
+    local_drama: str = (
+        getattr(source, 'plugin_context', {}).get('cjk_drama', '') or ''
+    )
+    remote_drama: str = (
+        getattr(candidate, 'plugin_context', {}).get('cjk_drama', '') or ''
+    )
+
+    if not local_drama or not remote_drama:
+        return result
+
+    from difflib import SequenceMatcher
+    ratio = SequenceMatcher(None, local_drama, remote_drama).ratio()
+
+    if ratio >= 0.85:
+        result['score_boost'] = float(result.get('score_boost', 0.0)) + 10.0
+        result['duration_tolerance_override'] = 5000
+        logger.debug(
+            "scoring_modifier: drama match %r ≈ %r (ratio=%.2f) "
+            "→ score_boost=+10, duration_tolerance_override=5000ms",
+            local_drama, remote_drama, ratio,
+        )
+
+    return result
+
+
 def _on_post_metadata_enrichment(track_obj: Any) -> Any:
     """
     After the MetadataEnhancerService pipeline:
@@ -535,11 +632,14 @@ def initialize_plugin() -> None:
     hook_manager.add_filter("register_metadata_requirements", _on_register_metadata_requirements)
     hook_manager.add_filter("pre_provider_search",            _on_pre_provider_search)
     hook_manager.add_filter("pre_normalize_text",             _on_pre_normalize_text)
+    hook_manager.add_filter("pre_normalize_title",            _on_pre_normalize_title)
+    hook_manager.add_filter("scoring_modifier",               _on_scoring_modifier)
     hook_manager.add_filter("post_metadata_enrichment",       _on_post_metadata_enrichment)
     logger.info(
         "CJK Language Pack: registered hooks "
         "(register_metadata_requirements / pre_provider_search / "
-        "pre_normalize_text / post_metadata_enrichment)"
+        "pre_normalize_text / pre_normalize_title / "
+        "scoring_modifier / post_metadata_enrichment)"
     )
 
 

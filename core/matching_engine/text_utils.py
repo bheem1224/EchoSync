@@ -6,7 +6,7 @@ to normalize track data before creating SoulSyncTrack objects.
 """
 
 import re
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 import base64
 
 
@@ -85,6 +85,26 @@ def normalize_chars(text: Optional[str]) -> str:
     # Ellipsis → three dots
     text = text.replace("\u2026", "...")
 
+    # ── CJK bracket / parenthesis content removal ──────────────────────────────
+    # Strip anything inside full-width parentheses（）, lenticular brackets【】,
+    # and double-angle / title marks《》, including the delimiters themselves.
+    # These commonly contain OST episode notes, version labels, and show titles
+    # that break fuzzy matching against plain-Latin equivalents.
+    text = re.sub(r'\uff08[^\uff09]*\uff09', '', text)   # （...）full-width parens
+    text = re.sub(r'\u3010[^\u3011]*\u3011', '', text)   # 【...】lenticular brackets
+    text = re.sub(r'\u300a[^\u300b]*\u300b', '', text)   # 《...》double-angle brackets
+    text = re.sub(r'\u300c[^\u300d]*\u300d', '', text)   # 「...」corner brackets
+    text = re.sub(r'\u300e[^\u300f]*\u300f', '', text)   # 『...』white corner brackets
+    text = re.sub(r'\u3008[^\u3009]*\u3009', '', text)   # 〈...〉angle brackets
+
+    # Strip individual CJK punctuation marks left after bracket removal
+    # (title-stop, enumeration comma, wave dash, etc.)
+    text = text.translate(str.maketrans('', '', '\u3001\u3002\u30fb\uff65\uff01\uff1f\uff1a\uff1b'))
+    # U+3001 IDEOGRAPHIC COMMA 、  U+3002 IDEOGRAPHIC FULL STOP 。
+    # U+30FB KATAKANA MIDDLE DOT ・  U+FF65 HALFWIDTH KATAKANA MIDDLE DOT ･
+    # U+FF01 FULLWIDTH EXCLAMATION !  U+FF1F FULLWIDTH QUESTION ?
+    # U+FF1A FULLWIDTH COLON ：  U+FF1B FULLWIDTH SEMICOLON ；
+
     return text
 
 
@@ -135,7 +155,7 @@ def remove_accents(text: str) -> str:
     )
 
 
-def normalize_title(title: Optional[str]) -> str:
+def normalize_title(title: Optional[str], plugin_context: Optional[Dict[str, Any]] = None) -> str:
     """
     Normalize track title for matching.
     
@@ -147,6 +167,10 @@ def normalize_title(title: Optional[str]) -> str:
     - Strip OST/Soundtrack/Movie metadata
     - Strip trailing/parenthetical featured-artist markers (feat./featuring/with)
     - Keep alphanumeric + common punctuation
+
+    plugin_context: optional dict that plugins may read/write.  When provided,
+    the ``pre_normalize_title`` hook fires before CJK bracket stripping so
+    plugins can extract drama/series context while brackets are still present.
     """
     if not title:
         return ""
@@ -154,10 +178,27 @@ def normalize_title(title: Optional[str]) -> str:
     # STEP 1: Replace underscores and periods with spaces BEFORE other normalization
     # This helps with filenames like "Artist_Name-Song.Title.mp3"
     title = title.replace('_', ' ').replace('.', ' ')
-    
+
+    # STEP 1b: Strip CJK OST dash-suffixes that appear before CJK bracket removal.
+    # Covers patterns like:  - 电视剧《...》片头曲 / - (드라마) OST / - 드라마 OST Part N
+    # Must run before normalize_text so the CJK brackets are still present as anchors.
+    _ost_dash_cjk = (
+        # dash followed by any mix of CJK text + brackets (《》【】（）) then optional suffix
+        r'\s*-\s*[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\uff00-\uffef'
+        r'\u3000-\u303f\u300a-\u300f\u3010\u3011\uff08\uff09\u300c-\u300f]+[^-]*$'
+    )
+    title = re.sub(_ost_dash_cjk, '', title).strip()
+
+    # STEP 1c: If a plugin_context dict was supplied, fire the pre_normalize_title
+    # hook NOW — while CJK brackets are still present.  Plugins extract drama /
+    # series names into plugin_context as a side-effect and return the title
+    # unchanged.  The return value is intentionally ignored here.
+    if plugin_context is not None:
+        from core.hook_manager import hook_manager
+        hook_manager.apply_filters('pre_normalize_title', title, plugin_context=plugin_context)
+
     normalized = normalize_text(title)
-    
-    # STEP 2: Strip technical audio terms that pollute fuzzy matching
+
     # Pattern covers: flac, mp3, aac, ogg, wav, m4a, 320kbps, 192kbps, 44.1khz, 96khz, 16bit, 24bit, etc.
     audio_terms_pattern = r'\b(?:flac|mp3|aac|ogg|wav|m4a|opus|alac|ape|dsd|dsf|dff|wma|' \
                           r'\d+kbps|\d+k|' \
@@ -181,16 +222,22 @@ def normalize_title(title: Optional[str]) -> str:
     ]
     for pattern in ost_patterns:
         normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
-    
-    # Remove parenthetical/bracketed featured artist clauses
-    normalized = re.sub(r"\s*[\(\[\{]\s*(feat\.?|featuring|with)\b[^\)\]\}]*[\)\]\}]", "", normalized, flags=re.IGNORECASE)
-    # Remove trailing feat/with clauses
+
+    # Strip full-width / ASCII bracketed content not already handled by normalize_text.
+    # normalize_text removes CJK bracket content; here we also remove ASCII-bracket
+    # and full-width-paren content that survived (e.g. version/edit labels).
+    normalized = re.sub(r'\s*\([^)]*\)', '', normalized)   # (anything)
+    normalized = re.sub(r'\s*\[[^\]]*\]', '', normalized)  # [anything]
+
+    # Remove trailing feat/with clauses (normalize_text already converts "feat" → "&",
+    # so both the original keyword and the "&" form need to be handled).
+    normalized = re.sub(r"\s+&\s+\S+.*$", "", normalized)
     normalized = re.sub(r"\s+(feat\.?|featuring|with)\b.*$", "", normalized, flags=re.IGNORECASE)
-    
-    # Keep alphanumeric, spaces, hyphens, parentheses, quotes
-    normalized = re.sub(r'[^\w\s\-\(\)\'\"]', '', normalized)
-    
-    # STEP 3: Compress multiple consecutive spaces into single space
+
+    # Keep alphanumeric, spaces, hyphens, and plain quotes/apostrophes.
+    normalized = re.sub(r'[^\w\s\-\'\"]', '', normalized)
+
+
     normalized = re.sub(r'\s+', ' ', normalized)
     
     return normalized.strip()
