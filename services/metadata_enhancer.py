@@ -31,6 +31,14 @@ from database.working_database import get_working_database, ReviewTask
 
 logger = get_logger("services.metadata_enhancer")
 
+# ── DIAGNOSTIC FLAG ────────────────────────────────────────────────────────────
+# Set True to bypass ALL network calls (Steps 2.5 / 3 / 4 / 5).
+# Only MBIDs already embedded in file tags are saved.  Tracks with no embedded
+# MBID have their plugin-required keys stamped and are left with musicbrainz_id
+# = NULL so real processing can run later.  Flips back to False for production.
+_NETWORK_DISABLED = False
+# ───────────────────────────────────────────────────────────────────────────────
+
 
 def _title_similarity(a: str, b: str) -> float:
     """Jaccard word-set similarity for comparing track titles (case-insensitive)."""
@@ -267,6 +275,41 @@ class MetadataEnhancerService:
                         if tag_isrc and not track.isrc:
                             logger.info(f"Step 2 (Local Tags): Found ISRC {tag_isrc} for {local_path.name}, will attempt ISRC lookup")
                             track.isrc = tag_isrc
+
+                    # ── DIAGNOSTIC SHORT-CIRCUIT ───────────────────────────────────────────────
+                    # When _NETWORK_DISABLED is True, skip all AcoustID / MusicBrainz network
+                    # calls.  Only the MBID read from file tags (Step 2 above) is used.
+                    # Tracks without an embedded MBID are left unidentified (musicbrainz_id
+                    # stays NULL) so real processing can pick them up when the flag is off.
+                    if _NETWORK_DISABLED:
+                        if new_musicbrainz_id:
+                            track.musicbrainz_id = new_musicbrainz_id
+                            found_new_data = True
+                            logger.info(
+                                "DIAGNOSTIC: tag-only MBID %s saved for %s",
+                                new_musicbrainz_id, local_path.name,
+                            )
+                        else:
+                            logger.debug(
+                                "DIAGNOSTIC: no MBID in file tags for %s — left unidentified.",
+                                local_path.name,
+                            )
+                        # Stamp every plugin-required key so this track leaves the queue.
+                        status = dict(track.metadata_status or {})
+                        for _diag_key in required_keys:
+                            if _diag_key not in status:
+                                status[_diag_key] = True
+                        track.metadata_status = status
+                        if found_new_data:
+                            _tagging_write(local_path, {
+                                'musicbrainz_id': track.musicbrainz_id,
+                                'recording_id':   track.musicbrainz_id,
+                            })
+                        track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                        flag_modified(track, "metadata_status")
+                        total_processed += 1
+                        continue
+                    # ── END DIAGNOSTIC SHORT-CIRCUIT ──────────────────────────────────────────
 
                     # Step 2.5 (ISRC Fast-Path): If the track already has an ISRC stored in
                     # the DB (from previous scan or Step 2 above), resolve the MBID from
