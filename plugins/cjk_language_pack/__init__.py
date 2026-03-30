@@ -403,6 +403,18 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
                 "Queued %d TrackAlias row(s) for Track ID %s (commit deferred to caller).",
                 added, track_obj.id,
             )
+            # Flush immediately so the INSERTs reach SQLite within the current
+            # open transaction.  Without this, an exception raised by the
+            # immediately-following _persist_artist_aliases call (before the
+            # session_scope commit) can leave the session in a state where
+            # SQLAlchemy discards the pending rows on the next rollback/close.
+            try:
+                session.flush()
+            except Exception as flush_exc:
+                logger.warning(
+                    "TrackAlias flush failed for Track ID %s: %s",
+                    track_obj.id, flush_exc,
+                )
     except Exception as exc:
         logger.warning(
             "TrackAlias persistence failed for Track ID %s: %s",
@@ -424,7 +436,8 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         from sqlalchemy.orm import object_session
         from sqlalchemy import inspect as sa_inspect
 
-        if object_session(track_obj) is None:
+        session = object_session(track_obj)   # store result — used for no_autoflush below
+        if session is None:
             return
 
         artist_obj = getattr(track_obj, "artist", None)
