@@ -37,4 +37,5 @@ dependencies = [
     "alembic>=1.18.4",
     "pypinyin>=0.55.0",
     "opencc-python-reimplemented>=0.1.7",
+    "pykakasi>=2.3.0",
 ]
