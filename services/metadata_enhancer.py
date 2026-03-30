@@ -420,15 +420,10 @@ class MetadataEnhancerService:
                                 if meta:
                                     if not track.isrc and meta.get('isrc'):
                                         track.isrc = meta.get('isrc')
-                                    # Only fetch cover art from coverartarchive.org if the
-                                    # Plex sync didn't already populate album art.  This
-                                    # avoids redundant network calls on well-tagged libraries.
-                                    if (
-                                        meta.get('cover_art_url')
-                                        and track.album
-                                        and not track.album.cover_image_url
-                                    ):
-                                        track.album.cover_image_url = meta.get('cover_art_url')
+                                    # Cover art is sourced from the media server (Plex) during
+                                    # library sync.  We never write cover_image_url here so
+                                    # that fast Plex-supplied art is never overwritten and no
+                                    # slow coverartarchive.org HEAD requests are made.
                             except Exception:
                                 pass
                     else:

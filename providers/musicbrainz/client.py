@@ -346,8 +346,7 @@ class MusicBrainzClient(ProviderBase):
                 result["album"] = release.get("title") or ""
                 result["release_id"] = release.get("id") or ""
                 result["date"] = release.get("date") or ""
-                if result["release_id"]:
-                    result["cover_art_url"] = self._get_cover_art(result["release_id"])
+                # cover_art_url intentionally left None — artwork comes from the media server
 
             isrcs = data.get("isrcs") or []
             if isrcs:
@@ -389,7 +388,7 @@ class MusicBrainzClient(ProviderBase):
             data = response.json() or {}
             album_title = str(data.get("title") or "").strip()
             release_date = str(data.get("date") or "").strip()
-            cover_art_url = self._get_cover_art(release_id)
+            cover_art_url = None  # artwork comes from the media server, not coverartarchive.org
 
             tracks: List[Dict[str, Any]] = []
             for medium in data.get("media", []) or []:
@@ -451,16 +450,7 @@ class MusicBrainzClient(ProviderBase):
             return None
 
     def _get_cover_art(self, release_id: str) -> Optional[str]:
-        try:
-            resp = self.http.request(
-                "HEAD",
-                f"https://coverartarchive.org/release/{release_id}/front",
-                allow_redirects=True,
-            )
-            if resp.status_code == 200:
-                return resp.url
-        except Exception:
-            pass
+        """Cover art fetching is disabled — artwork is sourced from the media server (Plex)."""
         return None
 
     # ProviderBase abstract methods
