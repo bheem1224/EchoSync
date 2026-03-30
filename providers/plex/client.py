@@ -1050,6 +1050,16 @@ class PlexClient(ProviderBase):
                     'raw_data': None # Avoid storing heavy object
                 })
 
+            # Extract album art URL from the Plex parentThumb (album thumbnail).
+            # PlexServer.url() appends X-Plex-Token automatically via includeToken=True.
+            cover_art_url = None
+            parent_thumb = getattr(plex_track, 'parentThumb', None)
+            if parent_thumb and self.server:
+                try:
+                    cover_art_url = self.server.url(parent_thumb, includeToken=True)
+                except Exception:
+                    cover_art_url = None
+
             track = SoulSyncTrack(
                 raw_title=title,
                 artist_name=artist,
@@ -1069,6 +1079,7 @@ class PlexClient(ProviderBase):
                 sample_rate=sample_rate,
                 bit_depth=bit_depth,
                 file_size_bytes=file_size_bytes,
+                cover_art_url=cover_art_url,
                 identifiers=identifiers
             )
             

@@ -87,7 +87,10 @@ class SoulSyncTrack:
     # Identifiers
     musicbrainz_id: Optional[str] = None
     isrc: Optional[str] = None
-    
+
+    # Album art (populated during Plex sync; used to skip coverartarchive.org downloads)
+    cover_art_url: Optional[str] = None
+
     # New Identifiers
     acoustid_id: Optional[str] = None
     mb_release_id: Optional[str] = None

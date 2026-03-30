@@ -417,8 +417,18 @@ class MetadataEnhancerService:
                             # arrive with only an embedded MBID and nothing else.
                             try:
                                 meta = metadata_provider.get_metadata(new_musicbrainz_id)
-                                if meta and not track.isrc and meta.get('isrc'):
-                                    track.isrc = meta.get('isrc')
+                                if meta:
+                                    if not track.isrc and meta.get('isrc'):
+                                        track.isrc = meta.get('isrc')
+                                    # Only fetch cover art from coverartarchive.org if the
+                                    # Plex sync didn't already populate album art.  This
+                                    # avoids redundant network calls on well-tagged libraries.
+                                    if (
+                                        meta.get('cover_art_url')
+                                        and track.album
+                                        and not track.album.cover_image_url
+                                    ):
+                                        track.album.cover_image_url = meta.get('cover_art_url')
                             except Exception:
                                 pass
                     else:

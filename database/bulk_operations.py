@@ -110,6 +110,7 @@ class LibraryManager:
         release_group_id: Optional[str] = None,
         mb_release_id: Optional[str] = None,
         original_release_date: Optional[date] = None,
+        cover_art_url: Optional[str] = None,
     ) -> Optional[Album]:
         """
         Get or create album. Uses cache first, then DB.
@@ -181,6 +182,7 @@ class LibraryManager:
                 release_group_id=release_group_id,
                 mb_release_id=mb_release_id,
                 original_release_date=original_release_date,
+                cover_image_url=cover_art_url or None,
             )
             session.add(album)
             session.flush()
@@ -196,6 +198,8 @@ class LibraryManager:
                 album.mb_release_id = mb_release_id
             if original_release_date and not album.original_release_date:
                 album.original_release_date = original_release_date
+            if cover_art_url and not album.cover_image_url:
+                album.cover_image_url = cover_art_url
 
         # Cache it
         self.album_cache[cache_key] = album.id
@@ -671,7 +675,8 @@ class LibraryManager:
                         album_type=track_data.album_type,
                         release_group_id=track_data.album_release_group_id,
                         mb_release_id=track_data.mb_release_id,
-                        original_release_date=track_data.original_release_date
+                        original_release_date=track_data.original_release_date,
+                        cover_art_url=getattr(track_data, 'cover_art_url', None),
                     )
                     if album and album.id:
                         seen_album_ids.add(album.id)
