@@ -478,8 +478,9 @@ def trigger_metadata_enhancement():
     try:
         body = request.get_json(silent=True, force=True) or {}
         size = int(body.get("batch_size", 100))
-        get_metadata_enhancer().enhance_library_metadata(batch_size=size)
-        return jsonify({"status": "ok", "batch_size": size}), 200
+        full_refresh = bool(body.get("full_refresh", False))
+        get_metadata_enhancer().enhance_library_metadata(batch_size=size, full_refresh=full_refresh)
+        return jsonify({"status": "ok", "batch_size": size, "full_refresh": full_refresh}), 200
     except Exception as exc:
         logger.error("Manual enhance trigger failed: %s", exc, exc_info=True)
         return jsonify({"error": str(exc)}), 500

@@ -136,12 +136,21 @@ class MetadataEnhancerService:
         from core.plugin_loader import get_provider
         return get_provider(capability)
 
-    def enhance_library_metadata(self, batch_size=100):
+    def enhance_library_metadata(self, batch_size=100, full_refresh: bool = False):
         """
         Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
 
         Loops through batches until no more tracks require enhancement.  Each batch is
         committed in its own session so memory stays flat even on large libraries.
+
+        Args:
+            batch_size:   Number of tracks to process per iteration.
+            full_refresh: When True, also (re-)processes tracks with null/NOT_FOUND MBIDs
+                          via the full fingerprint + network identification pipeline (slow).
+                          When False (the default), only tracks that already have a valid
+                          MBID but are missing a plugin-required metadata_status key are
+                          processed.  This lets plugins like the CJK pack run at ~100
+                          tracks/s because all work is local — zero MusicBrainz API calls.
         """
         from sqlalchemy import or_, and_, func, Integer
         required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
@@ -170,20 +179,32 @@ class MetadataEnhancerService:
         for _iteration in range(MAX_ITERATIONS):
           with db.session_scope() as session:
             # Step 1: Select tracks that still need work.
-            #   (a) MBID identification needed — NULL MBID, OR previously-failed NOT_FOUND
-            #       tracks that still have retry budget remaining.
-            #   (b) MBID already resolved but a plugin-required metadata_status key is absent.
-            needs_identification = or_(
-                Track.musicbrainz_id.is_(None),
-                and_(
-                    Track.musicbrainz_id == "NOT_FOUND",
-                    func.coalesce(
-                        func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
-                        0,
-                    ).cast(Integer) < MAX_REATTEMPTS,
-                ),
-            )
-            conditions = [needs_identification]
+            #
+            # Fast (default) mode — full_refresh=False:
+            #   Only select tracks that already have a valid MBID but are missing a
+            #   plugin-required metadata_status key.  Every such track takes the fast path
+            #   in the loop below (hook manager only, zero network calls), so throughput is
+            #   limited only by CPU / SQLite speed (~100 tracks/s).
+            #
+            # Full-refresh mode — full_refresh=True:
+            #   Also include tracks with NULL / NOT_FOUND MBIDs that still have retry
+            #   budget.  Those go through the full fingerprint + network pipeline (Steps
+            #   2-5), which is throttled by MusicBrainz / AcoustID rate limits.
+            conditions = []
+
+            if full_refresh:
+                needs_identification = or_(
+                    Track.musicbrainz_id.is_(None),
+                    and_(
+                        Track.musicbrainz_id == "NOT_FOUND",
+                        func.coalesce(
+                            func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
+                            0,
+                        ).cast(Integer) < MAX_REATTEMPTS,
+                    ),
+                )
+                conditions.append(needs_identification)
+
             for key in required_keys:
                 conditions.append(
                     and_(
@@ -192,6 +213,16 @@ class MetadataEnhancerService:
                         func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
                     )
                 )
+
+            if not conditions:
+                # Nothing to do: no plugins registered requirements and full_refresh is off.
+                logger.info(
+                    "No tracks require enhancement "
+                    "(no plugins registered requirements; pass full_refresh=True to "
+                    "(re-)identify tracks missing a MusicBrainz ID)."
+                )
+                return
+
             tracks_to_process = (
                 session.query(Track).filter(or_(*conditions)).limit(batch_size).all()
             )
