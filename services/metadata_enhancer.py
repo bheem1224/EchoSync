@@ -227,6 +227,8 @@ class MetadataEnhancerService:
                     status = dict(track.metadata_status or {})
                     status['enhancement_attempts'] = 99
                     track.metadata_status = status
+                    flag_modified(track, "metadata_status")
+                    session.commit()
                     total_processed += 1
                     continue
 
@@ -238,8 +240,10 @@ class MetadataEnhancerService:
                         "Plugin-only enrichment for already-identified track: %s (MBID: %s)",
                         local_path.name, track.musicbrainz_id,
                     )
-                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    # flag_modified BEFORE hook_manager so we always operate on the session-tracked object.
                     flag_modified(track, "metadata_status")
+                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    session.commit()
                     total_processed += 1
                     continue
 
@@ -296,17 +300,20 @@ class MetadataEnhancerService:
                             )
                         # Stamp every plugin-required key so this track leaves the queue.
                         status = dict(track.metadata_status or {})
+                        status['enhanced'] = True
                         for _diag_key in required_keys:
                             if _diag_key not in status:
                                 status[_diag_key] = True
                         track.metadata_status = status
+                        # flag_modified BEFORE hook_manager so we always operate on the session-tracked object.
+                        flag_modified(track, "metadata_status")
                         if found_new_data:
                             _tagging_write(local_path, {
                                 'musicbrainz_id': track.musicbrainz_id,
                                 'recording_id':   track.musicbrainz_id,
                             })
                         track = hook_manager.apply_filters('post_metadata_enrichment', track)
-                        flag_modified(track, "metadata_status")
+                        session.commit()
                         total_processed += 1
                         continue
                     # ── END DIAGNOSTIC SHORT-CIRCUIT ──────────────────────────────────────────
@@ -450,6 +457,11 @@ class MetadataEnhancerService:
                         found_new_data = True
                         logger.info(f"Identified MBID {new_musicbrainz_id} for {local_path.name}")
 
+                        # Mark as successfully enhanced so the track exits the enhancement queue.
+                        status = dict(track.metadata_status or {})
+                        status['enhanced'] = True
+                        track.metadata_status = status
+
                         if new_isrc and not track.isrc:
                             track.isrc = new_isrc
 
@@ -491,9 +503,11 @@ class MetadataEnhancerService:
                         if update_tags:
                             _tagging_write(local_path, update_tags)
 
-                    # Apply post-enrichment hooks before SQLAlchemy auto-commits at the end of the session context
-                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    # flag_modified BEFORE hook_manager so we always operate on the session-tracked object.
                     flag_modified(track, "metadata_status")
+                    # Apply post-enrichment hooks (hook_manager may return a new object; flag already done above).
+                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    session.commit()
                     total_processed += 1
 
                 except Exception as e:
@@ -503,12 +517,17 @@ class MetadataEnhancerService:
                         getattr(local_path, 'name', str(track.file_path) if track.file_path else '?'),
                         exc_info=True,
                     )
+                    # Roll back this track's partial changes so the session stays clean.
+                    session.rollback()
                     # Increment the attempt counter so persistently-broken tracks eventually
                     # exhaust their retry budget rather than blocking the batch indefinitely.
+                    # After rollback, ORM attributes are expired and reload from DB on first access.
                     try:
                         status = dict(getattr(track, 'metadata_status', None) or {})
                         status['enhancement_attempts'] = status.get('enhancement_attempts', 0) + 1
                         track.metadata_status = status
+                        flag_modified(track, "metadata_status")
+                        session.commit()
                     except Exception:
                         pass
                     total_processed += 1
