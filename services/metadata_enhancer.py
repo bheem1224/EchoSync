@@ -217,12 +217,13 @@ class MetadataEnhancerService:
                 conditions.append(needs_identification)
 
             for key in required_keys:
+                # Include ALL tracks missing the plugin key, regardless of MBID.
+                # Tracks with a valid MBID go through the full gatekeeper below;
+                # tracks without an MBID go through the no-MBID gatekeeper branch
+                # (CJK check only, no network calls in either case).
                 conditions.append(
-                    and_(
-                        Track.musicbrainz_id.isnot(None),
-                        Track.musicbrainz_id != "NOT_FOUND",
-                        func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
-                    )
+                    func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
+                )
                 )
 
             if not conditions:
@@ -289,6 +290,30 @@ class MetadataEnhancerService:
                     else:
                         logger.debug(
                             "CJK gatekeeper: no CJK chars — fast-stamping cjk_restored for %s",
+                            local_path.name,
+                        )
+                        status = dict(track.metadata_status or {})
+                        status['cjk_restored'] = True
+                        track.metadata_status = status
+                    flag_modified(track, "metadata_status")
+                    total_processed += 1
+                    continue
+
+                elif not full_refresh:
+                    # No MBID yet, but we're in default (plugin-only) mode.
+                    # The CJK plugin only needs title + artist_name — both are already
+                    # in the DB — so we can still run the gatekeeper without any network
+                    # calls.  MBID identification is left for a full_refresh=True run.
+                    artist_name_for_gate = track.artist.name if track.artist else None
+                    if _has_cjk(track.title, artist_name_for_gate):
+                        logger.debug(
+                            "CJK gatekeeper (no MBID): CJK chars found — running hooks for %s",
+                            local_path.name,
+                        )
+                        track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    else:
+                        logger.debug(
+                            "CJK gatekeeper (no MBID): Latin track — fast-stamping cjk_restored for %s",
                             local_path.name,
                         )
                         status = dict(track.metadata_status or {})
