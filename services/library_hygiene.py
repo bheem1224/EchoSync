@@ -95,14 +95,9 @@ class DuplicateHygieneService:
                 consistent_metadata = False
                 break
 
-        serialized_tracks = [self._serialize_track(t) for t in tracks]
-
         if consistent_metadata:
             # Scenario A: Auto-Resolve
-            # Find the best quality track to keep
-
-            # Sort tracks by quality (descending)
-            # Criteria: Bitrate -> Sample Rate -> File Size
+            # Sort tracks by quality (descending): Bitrate -> Sample Rate -> File Size
             sorted_tracks = sorted(tracks, key=lambda t: (
                 t.bitrate or 0,
                 t.sample_rate or 0,
@@ -110,20 +105,23 @@ class DuplicateHygieneService:
             ), reverse=True)
 
             winner = sorted_tracks[0]
-            losers = sorted_tracks[1:]
+            # Always include all tracks in a unified 'tracks' list (winner first)
+            serialized_tracks = [self._serialize_track(t) for t in sorted_tracks]
 
             return {
                 "type": "auto_resolve",
                 "chromaprint": chromaprint,
-                "keep": self._serialize_track(winner),
-                "delete": [self._serialize_track(t) for t in losers]
+                "tracks": serialized_tracks,
+                "recommended_keep_id": winner.id,
             }
         else:
-            # Scenario B: Manual Review
+            # Scenario B: Manual Review — no quality recommendation possible
+            serialized_tracks = [self._serialize_track(t) for t in tracks]
             return {
                 "type": "manual_review",
                 "chromaprint": chromaprint,
-                "tracks": serialized_tracks
+                "tracks": serialized_tracks,
+                "recommended_keep_id": None,
             }
 
     def _serialize_track(self, track: Track) -> Dict:
@@ -199,10 +197,10 @@ class DuplicateHygieneService:
         details = []
 
         for group in auto_resolve_groups:
-            # Keep the winner, delete losers
-            delete_candidates = group['delete']
-            delete_ids = [t['id'] for t in delete_candidates]
-            keep_track = group['keep']
+            # Keep the recommended winner, delete the rest
+            keep_id = group['recommended_keep_id']
+            delete_ids = [t['id'] for t in group['tracks'] if t['id'] != keep_id]
+            keep_track = next((t for t in group['tracks'] if t['id'] == keep_id), group['tracks'][0])
 
             logger.info(f"Pruning group: Keeping '{keep_track['title']}' (ID: {keep_track['id']}), Deleting {len(delete_ids)} duplicates.")
 

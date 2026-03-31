@@ -331,9 +331,16 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
             result = service.find_duplicates()
             auto_count = len((result or {}).get("auto_resolve", []))
             manual_count = len((result or {}).get("manual_review", []))
-            logger.info(
-                f"Duplicate scan complete: auto_resolve_groups={auto_count}, manual_review_groups={manual_count}"
-            )
+            total = auto_count + manual_count
+            if total:
+                logger.info(
+                    "Duplicate scan complete: %d group(s) queued for manual review "
+                    "(%d quality-ranked, %d metadata-conflict). "
+                    "Review at Library > Manager > Duplicate Resolution.",
+                    total, auto_count, manual_count,
+                )
+            else:
+                logger.info("Duplicate scan complete: no duplicates found.")
         except Exception as e:
             logger.error(f"Duplicate scan job failed: {e}", exc_info=True)
 

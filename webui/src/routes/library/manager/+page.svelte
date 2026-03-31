@@ -445,20 +445,38 @@
                             <div class="group-item">
                                 <div class="group-meta">
                                     <span class="fp">FP: {group.chromaprint.substring(0, 8)}...</span>
+                                    {#if group.type === 'auto_resolve'}
+                                        <span class="badge-type quality">Quality Ranked</span>
+                                    {:else}
+                                        <span class="badge-type conflict">Metadata Conflict</span>
+                                    {/if}
                                 </div>
                                 <div class="tracks-stack">
                                     {#each group.tracks as track}
-                                        <div class="track-option">
+                                        {@const isRecommended = group.recommended_keep_id === track.id}
+                                        <div class="track-option" class:recommended={isRecommended}>
                                             <div class="info">
-                                                <div class="title">{track.title}</div>
+                                                <div class="header-row">
+                                                    <div class="title">{track.title}</div>
+                                                    {#if isRecommended}
+                                                        <span class="badge-type keep-rec">Keep</span>
+                                                    {:else if group.recommended_keep_id}
+                                                        <span class="badge-type del-rec">Lower Quality</span>
+                                                    {/if}
+                                                </div>
                                                 <div class="artist">{track.artist}</div>
-                                                <div class="meta">{track.bitrate ? Math.round(track.bitrate/1000) + 'k' : '?'} • {track.sample_rate}Hz • {(track.file_size/1024/1024).toFixed(1)}MB</div>
+                                                <div class="meta">
+                                                    {track.bitrate ? Math.round(track.bitrate/1000) + 'k' : '?'} •
+                                                    {track.sample_rate ? track.sample_rate + 'Hz' : '?'} •
+                                                    {track.file_size ? (track.file_size/1024/1024).toFixed(1) + 'MB' : '?'} •
+                                                    {track.format || '?'}
+                                                </div>
                                             </div>
                                             <button
                                                 on:click={() => resolveConflict(track.id, group.tracks)}
-                                                class="btn btn--small btn--success"
+                                                class="btn btn--small {isRecommended ? 'btn--success' : 'btn--ghost'}"
                                             >
-                                                Keep This
+                                                {isRecommended ? 'Keep (Recommended)' : 'Keep This'}
                                             </button>
                                         </div>
                                     {/each}
@@ -671,12 +689,19 @@
     .group-item { padding: 16px; border-bottom: 1px solid var(--glass-border); }
     .group-item:last-child { border-bottom: none; }
     .group-item:hover { background: rgba(255,255,255,0.02); }
-    .group-meta { display: flex; justify-content: space-between; margin-bottom: 8px; }
+    .group-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
     .fp { font-family: monospace; font-size: 11px; color: var(--muted); }
 
+    .badge-type { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+    .badge-type.quality { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .badge-type.conflict { background: rgba(234, 179, 8, 0.15); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3); }
+    .badge-type.keep-rec { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+    .badge-type.del-rec { background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.25); }
+
     .tracks-stack { display: flex; flex-direction: column; gap: 8px; }
-    .track-option { background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-    .info { overflow: hidden; }
+    .track-option { background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid transparent; }
+    .track-option.recommended { border-color: rgba(34, 197, 94, 0.25); background: rgba(34, 197, 94, 0.04); }
+    .info { overflow: hidden; flex: 1; min-width: 0; }
     .title { font-weight: 600; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .artist { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .meta { font-size: 11px; color: var(--muted); opacity: 0.8; margin-top: 2px; }

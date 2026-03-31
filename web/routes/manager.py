@@ -392,12 +392,14 @@ def run_prune_job():
 
 @bp.route("/duplicates", methods=["GET"])
 def get_duplicates():
-    """Get manual review duplicates."""
+    """Get all duplicate groups (auto-resolve and manual-review) for the queue."""
     try:
         service = DuplicateHygieneService()
-        # find_duplicates returns {'auto_resolve': [...], 'manual_review': [...]}
         result = service.find_duplicates()
-        return jsonify({"success": True, "duplicates": result.get('manual_review', [])}), 200
+        # Combine both types — auto_resolve groups are sorted by quality (recommended_keep_id set),
+        # manual_review groups have recommended_keep_id=None. Both have a unified 'tracks' list.
+        all_duplicates = result.get('auto_resolve', []) + result.get('manual_review', [])
+        return jsonify({"success": True, "duplicates": all_duplicates}), 200
     except Exception as e:
         logger.error(f"Error getting duplicates: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
