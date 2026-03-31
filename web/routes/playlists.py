@@ -39,6 +39,15 @@ _OST_SAFE_RE = re.compile(
 )
 # ──────────────────────────────────────────────────────────────────────────────
 
+# ── Pinyin artist-matching constants ─────────────────────────────────────────
+# When the best artist score after primary-name + alias checks is still below
+# _PINYIN_ARTIST_THRESHOLD, a Hanzi → Pinyin transliteration fallback is tried.
+# _PINYIN_ARTIST_PASS is the minimum token_sort_ratio (0–100) required for that
+# fallback to override the alias-based score and accept the match.
+_PINYIN_ARTIST_THRESHOLD = 0.85  # only enter Pinyin path when score is below this
+_PINYIN_ARTIST_PASS      = 90    # token_sort_ratio needed to accept the match
+# ──────────────────────────────────────────────────────────────────────────────
+
 
 def _get_provider_for_account(provider_name, acc_id=None):
     from core.provider import ProviderRegistry
@@ -616,6 +625,59 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 if _a_score > _best_artist_score:
                                     _best_artist_score = _a_score
                                     _best_artist_name = _artist_alias
+
+                            # ── Pinyin transliteration fallback ────────────────────────────────
+                            # If the best score after primary name + aliases is still below the
+                            # threshold, convert both sides through the CJK transliterator so
+                            # Hanzi characters become space-separated Pinyin syllables:
+                            #   Spotify source: '陳雪燃'  → 'chen xue ran'
+                            #   Local DB:       'Xueran Chen' → 'xueran chen' (Latin, no-op)
+                            # token_sort_ratio handles Eastern vs Western name-token ordering
+                            # ('chen xue ran' vs 'xueran chen').  Primary name AND all stored
+                            # aliases are checked; the highest Pinyin score wins.
+                            if _best_artist_score < _PINYIN_ARTIST_THRESHOLD:
+                                try:
+                                    from plugins.cjk_language_pack.transliterator import CJKTransliterator
+                                    from rapidfuzz import fuzz as _rfuzz
+
+                                    def _py_strip(s: str) -> str:
+                                        return re.sub(r'[^\w\s]', '', s, flags=re.UNICODE).strip().lower()
+
+                                    _xlate = CJKTransliterator()
+                                    _src_py = _py_strip(_xlate.to_pinyin(source_track.artist_name))
+
+                                    _py_best_score = 0
+                                    _py_best_name  = _best_artist_name or ''
+                                    # Check primary candidate name + every alias in Pinyin space.
+                                    _py_candidates = [_best_artist_name or ''] + list(
+                                        _artist_alias_map.get(candidate_row[5], [])
+                                    )
+                                    for _py_cand in _py_candidates:
+                                        if not _py_cand:
+                                            continue
+                                        _cand_py = _py_strip(_xlate.to_pinyin(_py_cand))
+                                        if _src_py and _cand_py:
+                                            _ts = _rfuzz.token_sort_ratio(_src_py, _cand_py)
+                                            if _ts > _py_best_score:
+                                                _py_best_score = _ts
+                                                _py_best_name  = _py_cand
+
+                                    if _py_best_score >= _PINYIN_ARTIST_PASS:
+                                        _best_artist_score = _py_best_score / 100.0
+                                        # Substitute the source's artist name so the downstream
+                                        # matching engine sees identical strings on both sides
+                                        # and awards the maximum artist component score.
+                                        _best_artist_name = source_track.artist_name
+                                        logger.debug(
+                                            "Pinyin fallback: '%s' ↔ '%s' → py_src='%s' "
+                                            "token_sort=%d — artist accepted.",
+                                            source_track.artist_name, _py_best_name,
+                                            _src_py, _py_best_score,
+                                        )
+                                except Exception as _py_exc:
+                                    logger.debug("Pinyin artist fallback error: %s", _py_exc)
+                            # ── End Pinyin fallback ────────────────────────────────────────────
+
                             if _best_artist_name and _best_artist_name != candidate_track.artist_name:
                                 candidate_track.artist_name = _best_artist_name
 
