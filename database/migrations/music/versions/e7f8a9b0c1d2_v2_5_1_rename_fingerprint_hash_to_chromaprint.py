@@ -25,12 +25,26 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _column_exists(table: str, column: str) -> bool:
+    """Return True if *column* exists in *table* in the current database."""
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    return any(c["name"] == column for c in insp.get_columns(table))
+
+
 def upgrade() -> None:
+    # On a fresh install the baseline migration already creates the column as
+    # 'chromaprint', so 'fingerprint_hash' will not exist.  Skip gracefully.
+    if not _column_exists('audio_fingerprints', 'fingerprint_hash'):
+        return
     # SQLite requires batch mode for column renames.
     with op.batch_alter_table('audio_fingerprints', schema=None) as batch_op:
         batch_op.alter_column('fingerprint_hash', new_column_name='chromaprint')
 
 
 def downgrade() -> None:
+    # Only rename back if 'chromaprint' exists and the old name is absent.
+    if not _column_exists('audio_fingerprints', 'chromaprint'):
+        return
     with op.batch_alter_table('audio_fingerprints', schema=None) as batch_op:
         batch_op.alter_column('chromaprint', new_column_name='fingerprint_hash')
