@@ -626,6 +626,63 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                     _best_artist_score = _a_score
                                     _best_artist_name = _artist_alias
 
+                            # ── Bilingual Double-Lock ──────────────────────────────────────────
+                            # Handles Spotify combined bilingual tags like 'Faye 詹雯婷' or
+                            # 'Lu Han 鹿晗' where neither pure fuzzy score nor substring
+                            # containment alone is safe enough.
+                            #
+                            # Check 1 — Space-Agnostic Exact Match:
+                            #   Strip ALL spaces from both normalised names; if they are
+                            #   identical ('Lu Han' → 'luhan' == 'luhan') score = 1.0.
+                            #   Handles split-romanisation variants without false positives.
+                            #
+                            # Check 2 — Double-Lock Containment Failsafe:
+                            #   Requires BOTH the candidate's primary name AND at least one
+                            #   stored artist alias to appear inside the Spotify artist string.
+                            #   One alone is too weak (e.g. a common given-name substring
+                            #   like 'Faye' could match unrelated artists); two independent
+                            #   anchors from different scripts make a false positive virtually
+                            #   impossible.
+                            if _best_artist_score < 1.0:
+                                def _dl_norm(s: str) -> str:
+                                    """Lowercase + strip punctuation; keep spaces for containment."""
+                                    return re.sub(r'[^\w\s]', '', s, flags=re.UNICODE).strip().lower()
+
+                                _dl_src  = _dl_norm(source_track.artist_name)
+                                _dl_cand = _dl_norm(_best_artist_name)
+
+                                # Check 1: space-agnostic exact match.
+                                if _dl_src and _dl_cand and _dl_src.replace(' ', '') == _dl_cand.replace(' ', ''):
+                                    _best_artist_score = 1.0
+                                    _best_artist_name  = source_track.artist_name
+                                    logger.debug(
+                                        "Double-Lock (space-agnostic): '%s' ≡ '%s' "
+                                        "(stripped) → artist_score=1.0",
+                                        source_track.artist_name, _best_artist_name,
+                                    )
+                                else:
+                                    # Check 2: primary name + ≥1 alias both present in Spotify string.
+                                    _dl_primary = _dl_norm(candidate_track.artist_name or '')
+                                    _dl_aliases  = [
+                                        _dl_norm(a)
+                                        for a in _artist_alias_map.get(candidate_row[5], [])
+                                        if a
+                                    ]
+                                    if (
+                                        _dl_primary
+                                        and _dl_primary in _dl_src
+                                        and any(a and a in _dl_src for a in _dl_aliases)
+                                    ):
+                                        _best_artist_score = 1.0
+                                        _best_artist_name  = source_track.artist_name
+                                        logger.debug(
+                                            "Double-Lock (bilingual containment): primary '%s' "
+                                            "and an alias both found in Spotify artist '%s' "
+                                            "→ artist_score=1.0",
+                                            _dl_primary, _dl_src,
+                                        )
+                            # ── End Bilingual Double-Lock ──────────────────────────────────────
+
                             # ── Pinyin transliteration fallback ────────────────────────────────
                             # If the best score after primary name + aliases is still below the
                             # threshold, convert both sides through the CJK transliterator so
