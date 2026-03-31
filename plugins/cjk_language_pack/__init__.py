@@ -417,12 +417,28 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             return
         TrackAlias = rel.mapper.class_
 
+        import os as _os
+        _dev_mode = _os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+
+        # Dev mode: clear existing aliases so they are rebuilt from fresh data,
+        # bypassing the "skip if already present" deduplication guard.
+        # Production mode: the guard remains active (no needless re-inserts).
+        if _dev_mode and track_obj.aliases:
+            for _stale in list(track_obj.aliases):
+                session.delete(_stale)
+            session.flush()
+            track_obj.aliases.clear()
+            logger.debug(
+                "DEV_MODE: Flushed existing TrackAlias rows for Track ID %s — rebuilding.",
+                track_obj.id,
+            )
+
         added = 0
         for entry in alias_entries:
             name = entry.get("name") or ""
             if not name:
                 continue
-            if any(
+            if not _dev_mode and any(
                 a.name == name
                 and a.locale == entry.get("locale")
                 and a.script == entry.get("script")
@@ -478,12 +494,27 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             return
         ArtistAlias = rel.mapper.class_
 
+        import os as _os
+        _dev_mode = _os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+
+        # Dev mode: clear existing aliases so they are rebuilt from fresh data,
+        # bypassing the "skip if already present" deduplication guard.
+        if _dev_mode and artist_obj.aliases:
+            for _stale in list(artist_obj.aliases):
+                session.delete(_stale)
+            session.flush()
+            artist_obj.aliases.clear()
+            logger.debug(
+                "DEV_MODE: Flushed existing ArtistAlias rows for Artist ID %s — rebuilding.",
+                artist_obj.id,
+            )
+
         added = 0
         for entry in alias_entries:
             name = entry.get("name") or ""
             if not name:
                 continue
-            if any(
+            if not _dev_mode and any(
                 a.name == name
                 and a.locale == entry.get("locale")
                 and a.script == entry.get("script")

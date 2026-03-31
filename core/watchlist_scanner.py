@@ -144,20 +144,37 @@ class WatchlistScanner:
 
             # OPTIMIZATION: Select up to 50 artists to scan
             # 1. Must scan: Artists not scanned in 7+ days (or never scanned)
-            seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
-            must_scan = []
-            can_skip = []
+            import os as _os
+            _dev_mode = _os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
 
-            for artist in all_watchlist_artists:
-                if artist.last_scan_timestamp is None:
-                    # Never scanned - must scan
-                    must_scan.append(artist)
-                elif artist.last_scan_timestamp < seven_days_ago:
-                    # Not scanned in 7+ days - must scan
-                    must_scan.append(artist)
-                else:
-                    # Scanned recently - can skip (but might randomly select)
-                    can_skip.append(artist)
+            if _dev_mode:
+                # Dev mode: bypass the 7-day staleness check entirely.
+                # Every watchlist artist is treated as requiring an immediate rescan so
+                # that alias data (and any other enrichment) is always fresh during
+                # development/testing.  The random-fill logic below still applies to
+                # honour MAX_ARTISTS_PER_SCAN; only the TTL gate is removed.
+                logger.info(
+                    "DEV_MODE active: 7-day scan interval bypassed — "
+                    "all %d watchlist artists queued for must_scan.",
+                    len(all_watchlist_artists),
+                )
+                must_scan = list(all_watchlist_artists)
+                can_skip = []
+            else:
+                seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+                must_scan = []
+                can_skip = []
+
+                for artist in all_watchlist_artists:
+                    if artist.last_scan_timestamp is None:
+                        # Never scanned - must scan
+                        must_scan.append(artist)
+                    elif artist.last_scan_timestamp < seven_days_ago:
+                        # Not scanned in 7+ days - must scan
+                        must_scan.append(artist)
+                    else:
+                        # Scanned recently - can skip (but might randomly select)
+                        can_skip.append(artist)
 
             logger.info(f"Artists requiring scan (not scanned in 7+ days): {len(must_scan)}")
             logger.info(f"Artists scanned recently (< 7 days): {len(can_skip)}")
