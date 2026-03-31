@@ -331,21 +331,29 @@ class LibraryManager:
                 track_number=track_data.track_number,
                 file_path=track_data.file_path,
             )
-            # If we matched via metadata but the incoming identifier for this provider
-            # is not already linked to the returned track then we should treat
-            # the record as a *new* track rather than merging. This prevents
-            # distinct Plex items (different ratingKeys) with identical
-            # metadata from collapsing into one row.
+            # If we matched via metadata, only discard the match (create a new row) when
+            # the same provider source ALREADY has a *different* identifier on the existing
+            # track.  That case means two genuinely distinct provider items share metadata
+            # (e.g. two separate Plex ratingKeys that resolved to the same title/artist).
+            #
+            # When the existing track has *no* entry for the incoming source at all (e.g. a
+            # track first imported by auto_importer / local_server has no 'plex' row), this
+            # is a new provider discovering the same real-world track — keep the existing
+            # row and let the identifier-sync loop below add the ratingKey/ID to it.
+            # This ensures every Plex DB pull enriches locally-imported tracks with their
+            # Plex ratingKeys so playlist sync can use them.
             if track is not None and track_data.identifiers:
-                # build set of (source, id) currently attached to track
-                existing_ids = { (e.provider_source, e.provider_item_id) for e in track.external_identifiers }
-                mismatch = True
+                existing_ids     = { (e.provider_source, e.provider_item_id) for e in track.external_identifiers }
+                existing_sources = { e.provider_source for e in track.external_identifiers }
+                conflict = False
                 for src, pid in track_data.identifiers.items():
-                    if src and pid and (src, str(pid)) in existing_ids:
-                        mismatch = False
-                        break
-                if mismatch:
-                    # nullify track so creation path runs
+                    if src and pid and src in existing_sources:
+                        # Same provider already has an entry on this track; if it's a
+                        # different ID it's a genuine different item → don't merge.
+                        if (src, str(pid)) not in existing_ids:
+                            conflict = True
+                            break
+                if conflict:
                     track = None
 
         if track is None:
