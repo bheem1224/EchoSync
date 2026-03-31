@@ -643,44 +643,61 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                     _best_artist_score = _a_score
                                     _best_artist_name = _artist_alias
 
-                            # ── Bilingual Double-Lock ──────────────────────────────────────────
-                            # Handles Spotify combined bilingual tags like 'Faye 詹雯婷' or
-                            # 'Lu Han 鹿晗' where neither pure fuzzy score nor substring
-                            # containment alone is safe enough.
+                            # ── Multi-Artist Substring + Bilingual Double-Lock ─────────────────
+                            # Three-way spaceless check:
                             #
-                            # Check 1 — Space-Agnostic Exact Match:
-                            #   Strip ALL spaces from both normalised names; if they are
-                            #   identical ('Lu Han' → 'luhan' == 'luhan') score = 1.0.
-                            #   Handles split-romanisation variants without false positives.
+                            # Check 1 — Equal (space-agnostic exact match):
+                            #   'Axwell /\ Ingrosso' → 'axwellingrosso' == 'axwellingrosso'
                             #
-                            # Check 2 — Double-Lock Containment Failsafe:
-                            #   Requires BOTH the candidate's primary name AND at least one
-                            #   stored artist alias to appear inside the Spotify artist string.
-                            #   One alone is too weak (e.g. a common given-name substring
-                            #   like 'Faye' could match unrelated artists); two independent
-                            #   anchors from different scripts make a false positive virtually
-                            #   impossible.
+                            # Check 2 — Safe direction (Spotify primary ⊆ local candidate):
+                            #   Local DB tracks tagged with ALL credited artists contain the
+                            #   Spotify primary as a substring.  Score=1.0 with no further
+                            #   verification required because the extra artists come from the
+                            #   local file tags, not from an untrusted Spotify string.
+                            #   e.g. candidate 'Axwell /\ Ingrosso, Axwell, Sebastian Ingrosso'
+                            #        contains Spotify 'Axwell /\ Ingrosso'.
+                            #
+                            # Check 3 — Risky direction (local candidate ⊆ Spotify string):
+                            #   The Spotify artist string is longer — it might be a combined
+                            #   bilingual tag ('Faye 詹雯婷') or a feat. credit.  Apply the
+                            #   Double-Lock Containment Failsafe: require BOTH the candidate's
+                            #   primary name AND at least one stored alias to appear inside the
+                            #   Spotify string.  Two independent anchors make a false positive
+                            #   virtually impossible.
                             if _best_artist_score < 1.0:
-                                def _dl_norm(s: str) -> str:
-                                    """Lowercase + strip punctuation; keep spaces for containment."""
-                                    return re.sub(r'[^\w\s]', '', s, flags=re.UNICODE).strip().lower()
+                                def _ss_norm(s: str) -> str:
+                                    """Strip ALL whitespace and non-word chars, lowercase."""
+                                    return re.sub(r'[\s\W_]+', '', s, flags=re.UNICODE).lower()
 
-                                _dl_src  = _dl_norm(source_track.artist_name)
-                                _dl_cand = _dl_norm(_best_artist_name)
+                                _ss_src  = _ss_norm(source_track.artist_name)
+                                _ss_cand = _ss_norm(_best_artist_name)
 
-                                # Check 1: space-agnostic exact match.
-                                if _dl_src and _dl_cand and _dl_src.replace(' ', '') == _dl_cand.replace(' ', ''):
+                                if _ss_src and _ss_cand and _ss_src == _ss_cand:
+                                    # Check 1: exact spaceless match.
                                     _best_artist_score = 1.0
                                     _best_artist_name  = source_track.artist_name
                                     logger.debug(
-                                        "Double-Lock (space-agnostic): '%s' ≡ '%s' "
-                                        "(stripped) → artist_score=1.0",
+                                        "Multi-Artist (exact spaceless): '%s' ≡ '%s' → artist_score=1.0",
                                         source_track.artist_name, _best_artist_name,
                                     )
-                                else:
-                                    # Check 2: primary name + ≥1 alias both present in Spotify string.
+                                elif _ss_src and _ss_cand and _ss_src in _ss_cand:
+                                    # Check 2: safe direction — local candidate contains the Spotify primary.
+                                    _best_artist_score = 1.0
+                                    _best_artist_name  = source_track.artist_name
+                                    logger.debug(
+                                        "Multi-Artist (safe containment): Spotify '%s' found inside "
+                                        "local '%s' → artist_score=1.0",
+                                        source_track.artist_name, _best_artist_name,
+                                    )
+                                elif _ss_src and _ss_cand and _ss_cand in _ss_src:
+                                    # Check 3: risky direction — apply Double-Lock.
+                                    def _dl_norm(s: str) -> str:
+                                        """Lowercase + strip punctuation; keep spaces for containment."""
+                                        return re.sub(r'[^\w\s]', '', s, flags=re.UNICODE).strip().lower()
+
+                                    _dl_src     = _dl_norm(source_track.artist_name)
                                     _dl_primary = _dl_norm(candidate_track.artist_name or '')
-                                    _dl_aliases  = [
+                                    _dl_aliases = [
                                         _dl_norm(a)
                                         for a in _artist_alias_map.get(candidate_row[5], [])
                                         if a
@@ -698,7 +715,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                             "→ artist_score=1.0",
                                             _dl_primary, _dl_src,
                                         )
-                            # ── End Bilingual Double-Lock ──────────────────────────────────────
+                            # ── End Multi-Artist Substring + Bilingual Double-Lock ─────────────
 
                             # ── Pinyin transliteration fallback ────────────────────────────────
                             # If the best score after primary name + aliases is still below the
@@ -762,22 +779,39 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             )
 
                         # ── Dynamic Duration Expansion ─────────────────────────────────────
-                        # When artist identity is confirmed with a perfect score (1.0), widen
-                        # the engine's duration tolerance from the profile default (3 s) to
-                        # 10 000 ms for this one candidate evaluation.  This prevents
-                        # radio-edit / album-edit length differences (e.g. the 8-second gap
-                        # between a Spotify radio edit and the local album version of
-                        # 'Payphone') from penalising a match we are already certain about.
+                        # Tiered tolerance based on how strongly artist + title are confirmed:
+                        #
+                        # Tier A — Perfect semantic match (artist ≥ 95 % AND titles identical):
+                        #   90 000 ms (90 s) — absorbs unlabelled Extended / Album versions
+                        #   whose only difference from the Spotify track is extra runtime.
+                        #   Title identity guarantees no Remix/Acoustic confusion.
+                        #
+                        # Tier B — Strong artist match only (artist ≥ 95 %, title differs):
+                        #   15 000 ms (15 s) — allows reasonable edit-length variation while
+                        #   staying tight enough to reject unrelated versions.
+                        #
                         # The original tolerance is restored immediately after the call so
                         # all other candidates in the same batch remain unaffected.
+                        _ss_src_title  = re.sub(r'[\s\W_]+', '', (source_track.title or ''), flags=re.UNICODE).lower()
+                        _ss_cand_title = re.sub(r'[\s\W_]+', '', (candidate_track.title or ''), flags=re.UNICODE).lower()
+                        _title_exact   = bool(_ss_src_title and _ss_cand_title and _ss_src_title == _ss_cand_title)
+
                         _orig_dur_tol = None
-                        if _best_artist_score >= 1.0:
+                        if _best_artist_score >= 0.95 and _title_exact:
                             _orig_dur_tol = matching_engine.weights.duration_tolerance_ms
-                            matching_engine.weights.duration_tolerance_ms = 10000
+                            matching_engine.weights.duration_tolerance_ms = 90000
                             logger.debug(
-                                "Duration expansion: artist_score=1.0 for '%s' — "
-                                "duration_tolerance raised from %d ms to 10000 ms.",
-                                candidate_track.artist_name, _orig_dur_tol,
+                                "Duration expansion (Tier A): artist_score=%.2f + exact title '%s' — "
+                                "duration_tolerance raised from %d ms to 90000 ms.",
+                                _best_artist_score, candidate_track.title, _orig_dur_tol,
+                            )
+                        elif _best_artist_score >= 0.95:
+                            _orig_dur_tol = matching_engine.weights.duration_tolerance_ms
+                            matching_engine.weights.duration_tolerance_ms = 15000
+                            logger.debug(
+                                "Duration expansion (Tier B): artist_score=%.2f for '%s' — "
+                                "duration_tolerance raised from %d ms to 15000 ms.",
+                                _best_artist_score, candidate_track.title, _orig_dur_tol,
                             )
                         # ── End Dynamic Duration Expansion ────────────────────────────────
 
