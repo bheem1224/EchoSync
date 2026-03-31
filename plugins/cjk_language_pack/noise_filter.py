@@ -69,6 +69,66 @@ _FW_BRACKET_RE = re.compile(
     r"[【「『〈《]([^】」』〉》]*?)[】」』〉》]"
 )
 
+# ---------------------------------------------------------------------------
+# OST Block "Black Hole" — strips the entire descriptive metadata block
+# ---------------------------------------------------------------------------
+#
+# Problem: individual term stripping (e.g. removing only 主题曲) leaves behind
+# dirty fragments like "电视剧温情" from an original "电视剧《苍兰诀》温情主题曲".
+#
+# Solution: match the COMPLETE block from a *media-type indicator* all the way
+# through to a *song-role indicator*, consuming everything in between (random
+# adjectives, character names, decorated brackets, etc.).
+#
+# Pattern anatomy (each group is non-capturing):
+#
+#   LEAD_SEP   — optional leading separator: space / hyphen / ～ / · / （ / (
+#   MEDIA      — media-type word:  电视剧 | 网剧 | 影视剧 | 影視劇 | 剧集 |
+#                                  电影 | 动画片 | 动画 | 手游 | 游戏
+#   MID        — anything between: brackets, adjectives, character names, spaces
+#                (non-greedy; won't swallow an unrelated separator like " - ")
+#   SONG       — song-role word:   主题曲 | 插曲 | 片尾曲 | 片头曲 | 人物曲 |
+#                                  推广曲 | 同行曲 | 时光曲 | 原声带 | 大碟 |
+#                                  片頭曲 | 片尾曲 (trad.) | 主題曲 (trad.)
+#   TRAIL_SEP  — optional trailing separator / closing bracket: 】 ） ) etc.
+#
+# The regex is applied in a loop (re.sub with count=0) because a title may
+# contain multiple consecutive OST blocks.
+
+_OST_BLOCK_MEDIA = (
+    r"(?:"
+    r"电视剧|网剧|影视剧|影視劇|剧集"
+    r"|电影|动画片|动画|手游|游戏"
+    r")"
+)
+
+_OST_BLOCK_SONG = (
+    r"(?:"
+    r"[\u4e00-\u9fff]{1,5}曲"   # any 1–5 CJK chars ending in 曲 —
+                                 # catches 主题曲, 插曲, 片头曲, 片尾曲, 人物曲,
+                                 #         推广曲, 同行曲, 时光曲, 勇气曲, etc.
+    r"|原声带|原聲帶"             # Soundtrack (no 曲 ending)
+    r"|大碟"                     # Album marker (no 曲 ending)
+    r")"
+)
+
+# Full "Black Hole" pattern — optional lead separator, media word, freeform
+# middle (lazy), song-role word, optional trailing bracket/separator.
+_OST_BLOCK_RE = re.compile(
+    r"(?:"
+    r"[\s\-–—～·]"             # optional lead separator (space, dash, middle dot)
+    r"|[（(【「]"               # …or an opening bracket
+    r")*"
+    + _OST_BLOCK_MEDIA
+    + r"(?:[^。！？\n]*?)"      # freeform middle — lazy, won't cross sentence boundary
+    + _OST_BLOCK_SONG
+    + r"(?:"
+    r"[）)】」]"                # optional closing bracket
+    r"|[\s\-–—～·]"             # …or a trailing separator
+    r")*",
+    re.UNICODE,
+)
+
 # Japanese structural noise — standalone terms (word-boundary aware for mixed strings)
 _JAPANESE_NOISE_RE = re.compile(
     r"(?:"
@@ -123,7 +183,41 @@ _SPACE_RE = re.compile(r"\s{2,}")
 # Empty / whitespace-only bracket pairs left after noise stripping
 # Covers ASCII (), full-width （）, and square []
 _EMPTY_PARENS_RE = re.compile(r"[(\[（]\s*[)\]）]")
-
+# Leading character / actor tag injected by streaming services (e.g. Spotify).
+#
+# Some platforms prefix a track title with the character or actor name in
+# brackets when a song is associated with a specific role in a drama/anime:
+#
+#   [Jiang Cheng] Hen Bie      →  Hen Bie
+#   【薛洋】荒城渡              →  荒城渡
+#   （宸玖）同行               →  同行
+#   （林深）见鹿                →  见鹿
+#
+# The local database holds the bare title without the actor prefix, so the
+# prefix must be stripped before fuzzy scoring takes place.
+#
+# Match criteria:
+#   • The bracket pair must start at the very beginning of the string (^).
+#   • Content inside the brackets is non-greedy and may contain any
+#     character EXCEPT a newline.
+#   • One or more trailing whitespace characters are consumed so the
+#     remaining title does not start with a stray space.
+#   • Three bracket flavours are matched:
+#       [ ... ]   ASCII square brackets  (used by Spotify for Latin names)
+#       【 ... 】  CJK square brackets    (used in Chinese streaming metadata)
+#       （ ... ）  Full-width parentheses  (used in Japanese/Chinese metadata)
+#
+# IMPORTANT: this pattern is intentionally NOT guarded by the CJK tripwire
+# because `[Jiang Cheng] Hen Bie` is pure ASCII yet still needs stripping.
+_LEADING_BRACKET_RE = re.compile(
+    r"^(?:"
+    r"\[.*?\]"          # ASCII square brackets  [ ... ]
+    r"|【.*?】"           # CJK corner brackets   【 ... 】
+    r"|（.*?）"           # Full-width parens      （ ... ）
+    r")\s*"              # consume any trailing whitespace (including zero for CJK)
+    r"(?=\S)",           # lookahead: something must follow — prevents stripping lone [Tag]
+    re.UNICODE,
+)
 
 # ---------------------------------------------------------------------------
 # Public class
@@ -162,6 +256,43 @@ class NoiseFilter:
         """Remove full-width bracket pairs 【…】「…」『…』〈…〉《…》."""
         return _FW_BRACKET_RE.sub("", text)
 
+    def strip_leading_character_tag(self, text: str) -> str:
+        """Remove a leading bracketed character/actor tag from the start of *text*.
+
+        Targets patterns injected by streaming services (e.g. Spotify) that
+        prefix a track title with the associated drama character or actor name::
+
+            [Jiang Cheng] Hen Bie   →  Hen Bie
+            【薛洋】荒城渡           →  荒城渡
+            （宸玖）同行            →  同行
+
+        The bracket pair must be at position 0 and must be followed by at
+        least one whitespace character — this prevents accidental stripping of
+        titles that are legitimately wrapped in brackets (e.g. ``[Single]``).
+
+        Unlike most NoiseFilter passes this method is NOT guarded by the CJK
+        tripwire: ASCII square brackets (``[Name]``) occur on purely Latin
+        titles and must be handled even when ``has_cjk_or_fullwidth`` returns
+        False.
+        """
+        if not isinstance(text, str):
+            return text
+        return _LEADING_BRACKET_RE.sub("", text)
+
+    def strip_ost_block(self, text: str) -> str:
+        """Strip the entire media+song-role descriptive OST block in one pass.
+
+        Replaces patterns like:
+          - 《苍兰诀》温情主题曲      (adjective 温情 is consumed, not left behind)
+          - （影视劇宸玖·同行曲）  (full decorated block)
+          - (剧集自爱勇气曲)           (ASCII-paren variant)
+          - 动画片头曲               (no separator, plain inline block)
+
+        Runs re.sub with no count limit so multiple consecutive blocks are all
+        removed in a single call.
+        """
+        return _OST_BLOCK_RE.sub("", text)
+
     def strip_japanese_noise(self, text: str) -> str:
         """Remove Japanese OST/theme structural terms."""
         return _JAPANESE_NOISE_RE.sub("", text)
@@ -194,17 +325,24 @@ class NoiseFilter:
         fast tripwire — zero regex work for pure ASCII / Latin input.
 
         Pass order:
-            1. Full-width bracket removal   (structural wrappers first)
-            2. Full-width Latin noise       (ｆｅａｔ, ＯＳＴ, ＆)
-            3. Japanese noise terms
-            4. Chinese noise terms
-            5. Korean noise terms
-            6. Japanese 'と' separator
-            7. Whitespace collapse
+            0. Leading character/actor tag  (bracket at string start, pre-CJK check)
+            1. OST Block "Black Hole"       (media+freeform+song-role in one sweep)
+            2. Full-width bracket removal   (structural wrappers)
+            3. Full-width Latin noise       (ｆｅａｔ, ＯＳＴ, ＆)
+            4. Japanese noise terms
+            5. Chinese noise terms
+            6. Korean noise terms
+            7. Japanese 'と' separator
+            8. Whitespace collapse
         """
+        # Pass 0 runs BEFORE the CJK tripwire — it handles pure-ASCII titles
+        # like "[Jiang Cheng] Hen Bie" that contain no CJK/full-width chars.
+        text = self.strip_leading_character_tag(text)
+
         if not isinstance(text, str) or not self.has_cjk_or_fullwidth(text):
             return text
 
+        text = self.strip_ost_block(text)        # ← NEW: black-hole pass first
         text = self.strip_fullwidth_brackets(text)
         text = self.strip_fullwidth_latin_noise(text)
         text = self.strip_japanese_noise(text)
