@@ -53,8 +53,41 @@ class LocalServerProvider(ProviderBase):
                     if not title:
                         title = path.stem
 
-                    artist = tags.get('artist')
-                    if not artist:
+                    # ── Singer-First prioritization rule ─────────────────────
+                    # tagging_io reads:
+                    #   tags['artist']       ← TPE1 / ARTIST   (individual track performer)
+                    #   tags['album_artist'] ← TPE2 / ALBUMARTIST (album-level, often 'Various Artists')
+                    #
+                    # Rule: prefer the individual track artist (TPE1).  Only
+                    # fall back to the album artist when TPE1 is completely
+                    # absent.  Critically, if TPE1 itself reads 'Various
+                    # Artists' (mis-tagged compilation), treat it as absent so
+                    # Track.artist_id is never linked to that placeholder when
+                    # a real per-track performer is stored elsewhere.
+                    _VA_TERMS = {'various artists', 'various', 'va'}
+
+                    _tag_artist   = (tags.get('artist')       or '').strip()
+                    _album_artist = (tags.get('album_artist') or '').strip()
+
+                    if _tag_artist and _tag_artist.lower() not in _VA_TERMS:
+                        # TPE1 has a real performer — always use it.
+                        artist = _tag_artist
+                    elif _album_artist and _album_artist.lower() not in _VA_TERMS:
+                        # TPE1 is absent or is a VA placeholder, but TPE2
+                        # carries a specific band/artist name (uncommon but
+                        # valid for certain compilation formats).
+                        artist = _album_artist
+                        logger.debug(
+                            "Singer-First: '%s' — using album_artist '%s' "
+                            "(TPE1 was %r)",
+                            path.name, artist, _tag_artist or '<empty>',
+                        )
+                    elif _tag_artist:
+                        # TPE1 exists but is 'Various Artists'; keep it so the
+                        # metadata_enhancer's Step 0.5 can back-fill the real
+                        # artist from online sources or the file structure.
+                        artist = _tag_artist
+                    else:
                         artist = "Unknown Artist"
 
                     duration_ms = tags.get('duration_ms')

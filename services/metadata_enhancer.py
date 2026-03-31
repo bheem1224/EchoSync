@@ -201,13 +201,16 @@ class MetadataEnhancerService:
                         func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
                     )
                 )
-            # Condition (c): tracks whose artist row is 'Various Artists' and whose
-            # physical-file artist tag has not yet been read.  These tracks must be
-            # processed regardless of whether musicbrainz_id or spotify_id is populated —
-            # we need to overwrite the placeholder with the real per-track performer.
+            # Condition (c): tracks whose artist row is any 'Various Artist(s)' variant
+            # and whose physical-file artist tag has not yet been read.  These tracks must
+            # be processed regardless of whether musicbrainz_id or spotify_id is populated
+            # — we need to overwrite the placeholder with the real per-track performer.
+            # ilike('various artist%') catches: 'Various Artist', 'Various Artists',
+            # 'various ARTISTS', etc.  Both the query and the runtime guard below use the
+            # same broadened definition so they stay in sync.
             _va_artist_ids_subq = (
                 session.query(Artist.id)
-                .filter(func.lower(Artist.name) == 'various artists')
+                .filter(Artist.name.ilike('various artist%'))
             )
             conditions.append(
                 and_(
@@ -263,9 +266,14 @@ class MetadataEnhancerService:
                 # correction runs BEFORE the MBID fast-path — ensuring it is never skipped
                 # even when musicbrainz_id or spotify_id is already populated.
                 _artist_was_va = False
+                # Match any 'Various Artist(s)' variant — keeps in sync with the
+                # ilike('various artist%') subquery used to select these tracks.
+                _is_va_artist = (
+                    track.artist is not None
+                    and track.artist.name.strip().lower().startswith('various artist')
+                )
                 if (
-                    track.artist
-                    and track.artist.name.strip().lower() == 'various artists'
+                    _is_va_artist
                     and not (track.metadata_status or {}).get('artist_fixed_from_tags')
                 ):
                     _artist_was_va = True
@@ -276,7 +284,13 @@ class MetadataEnhancerService:
                             or (_va_tags or {}).get('artist_name')
                         )
                         _tag_artist_lower = (_tag_artist or '').strip().lower()
-                        if _tag_artist and _tag_artist_lower not in ('', 'various artists', 'various'):
+                        # Exclude any VA placeholder: 'various artists', 'various artist',
+                        # 'various' — prevents writing back another VA row as the 'fix'.
+                        _tag_is_va = (
+                            _tag_artist_lower.startswith('various artist')
+                            or _tag_artist_lower == 'various'
+                        )
+                        if _tag_artist and not _tag_is_va:
                             _real_name = _tag_artist.strip()
                             # Find or create the real artist row (case-insensitive lookup).
                             _real_artist = (

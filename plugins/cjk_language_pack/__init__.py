@@ -72,6 +72,31 @@ _CJK_BRACKET_RE = re.compile(
 # Used to extract romanised drama/series context from purely-Latin titles.
 _ASCII_BRACKET_RE = re.compile(r'\[([^\]]+)\]|\(([^)]+)\)')
 
+# OST keyword anchor — used in the fallback drama-extraction path.
+# When a title lacks 《》 guillemets, SoulSync looks for these keywords inside
+# standard bracket pairs and treats the text BEFORE the keyword as the drama
+# name.  Examples:
+#   （苍兰诀 吟唱版）          → drama = '苍兰诀'  (keyword: 吟唱版)
+#   (点燃我温暖你 插曲)         → drama = '点燃我温暖你' (keyword: 插曲)
+#   （莲花楼 片尾曲）           → drama = '莲花楼'
+_OST_KEYWORD_RE = re.compile(
+    r'(?:'
+    r'主题曲|主題曲'
+    r'|插曲'
+    r'|片头曲|片頭曲'
+    r'|片尾曲'
+    r'|推广曲'
+    r'|人物曲'
+    r'|同行曲'
+    r'|时光曲|時光曲'
+    r'|吟唱版'          # variant lyric / chant version marker
+    r'|原声版'          # original-sound version marker
+    r'|剧情版'          # drama-cut version marker
+    r'|原声带|原聲帶'
+    r')',
+    re.UNICODE,
+)
+
 
 def _has_cjk(text: str) -> bool:
     return isinstance(text, str) and bool(_CJK_RE.search(text))
@@ -511,13 +536,59 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
     # ── CJK bracket extraction (《》 【】 etc.) ─────────────────────────────
     # Only attempted when native CJK characters are present.
     if _has_cjk(raw_title):
+        # Priority 1: look for a 《series name》 guillemet pair — the most
+        # unambiguous marker. Use the first captured group that isn't empty.
+        match = _CJK_BRACKET_RE.search(raw_title)
+        guillemet_content = None
+        if match:
+            # Only treat 《》 content as drama context; skip other bracket types
+            # here because they are handled by the fallback path below.
+            guillemet_content = match.group(1)  # group 1 = 《》 content
+
+        if guillemet_content and guillemet_content.strip():
+            plugin_context['cjk_drama'] = guillemet_content.strip()
+            logger.debug(
+                "pre_normalize_title: extracted 《》 drama context %r from %r",
+                plugin_context['cjk_drama'], raw_title,
+            )
+            return raw_title
+
+        # Priority 2 (fallback): no 《》 guillemets — scan （）or () brackets for
+        # an OST-role keyword (插曲, 主题曲, 吟唱版, …).  When found, extract the
+        # text that *precedes* the keyword inside the same bracket as the drama
+        # name. Example: （苍兰诀 吟唱版） → drama = '苍兰诀'.
+        # Also handles inverted order where the media-type word comes first and
+        # the keyword is the whole bracket content, e.g. '电视剧《苍兰诀》片头曲'
+        # is already covered by priority 1, but '（苍兰诀 插曲附词版）' is not.
+        for bracket_re, open_ch, close_ch in (
+            (re.compile(r'（([^）]*)）'), '（', '）'),   # full-width parens
+            (re.compile(r'\(([^)]*)\)'), '(', ')'),       # ASCII parens
+        ):
+            for bracket_match in bracket_re.finditer(raw_title):
+                inner = bracket_match.group(1)
+                kw_match = _OST_KEYWORD_RE.search(inner)
+                if kw_match:
+                    # Text before the keyword is the drama/series name.
+                    candidate_drama = inner[:kw_match.start()].strip()
+                    # Strip common separators left after splitting.
+                    candidate_drama = re.sub(r'^[\s\-–—·,，、]+|[\s\-–—·,，、]+$', '', candidate_drama)
+                    if candidate_drama and _has_cjk(candidate_drama):
+                        plugin_context['cjk_drama'] = candidate_drama
+                        logger.debug(
+                            "pre_normalize_title: fallback bracket extraction "
+                            "drama=%r (keyword=%r) from %r",
+                            candidate_drama, kw_match.group(0), raw_title,
+                        )
+                        return raw_title
+
+        # Priority 3: any other CJK bracket type (【】 「」 etc.) — original behaviour.
         match = _CJK_BRACKET_RE.search(raw_title)
         if match:
             drama = next((g for g in match.groups() if g is not None), None)
             if drama and drama.strip():
                 plugin_context['cjk_drama'] = drama.strip()
                 logger.debug(
-                    "pre_normalize_title: extracted CJK drama context %r from %r",
+                    "pre_normalize_title: extracted CJK bracket drama context %r from %r",
                     plugin_context['cjk_drama'], raw_title,
                 )
                 return raw_title
