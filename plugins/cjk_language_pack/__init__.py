@@ -625,13 +625,20 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
                 return raw_title
 
     # ── ASCII bracket extraction ([bracket] / (parens)) ────────────────────
-    # Fires for pure-Latin titles such as "[Jiang Cheng] Hen Bie" so the
-    # scoring_modifier hook receives romanised drama context even when the
-    # Spotify title carries no native CJK characters.
+    # Fires for titles such as "[Jiang Cheng] Hen Bie" or "(苍兰诀 OST)" so the
+    # scoring_modifier hook receives drama context even when the Spotify title
+    # carries no native CJK guillemets.
+    #
+    # Guard: only treat bracket content as drama context when it contains at
+    # least one CJK character OR an explicit OST keyword.  This prevents
+    # pure-English descriptors like "(Are Made of This)" or "(Remastered 2013)"
+    # from being misclassified as drama names.
     match = _ASCII_BRACKET_RE.search(raw_title)
     if match:
         drama = next((g for g in match.groups() if g is not None), None)
-        if drama and drama.strip():
+        if drama and drama.strip() and (
+            _has_cjk(drama) or _OST_KEYWORD_RE.search(drama)
+        ):
             plugin_context['cjk_drama'] = drama.strip()
             logger.debug(
                 "pre_normalize_title: extracted ASCII bracket drama context %r from %r",

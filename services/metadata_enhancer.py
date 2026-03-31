@@ -854,6 +854,52 @@ class MetadataEnhancerService:
 
         return results
 
+    def tag_file(self, file_path: Path, metadata: Dict[str, Any]) -> None:
+        """Write *metadata* to the physical audio file at *file_path*.
+
+        Translates the flat metadata dict produced by ``identify_file`` /
+        ``auto_importer`` into the tag keys understood by ``_tagging_write``,
+        then writes them via Mutagen.  Called by ``auto_importer.finalize_import``
+        before the file is moved into the library.
+        """
+        tags_to_write: Dict[str, Any] = {}
+
+        field_map = {
+            'title':        'title',
+            'artist':       'artist',
+            'album':        'album',
+            'date':         'date',
+            'track_number': 'track_number',
+            'disc_number':  'disc_number',
+            'isrc':         'isrc',
+            'recording_id': 'recording_id',
+            'musicbrainz_id': 'musicbrainz_id',
+            'acoustid_id':  'acoustid_id',
+            'cover_art_url': 'cover_art_url',
+        }
+
+        for src_key, dst_key in field_map.items():
+            value = metadata.get(src_key)
+            if value is not None and value != '':
+                tags_to_write[dst_key] = value
+
+        # Ensure both MBID keys stay in sync (some tag readers check one, others the other).
+        if tags_to_write.get('musicbrainz_id') and not tags_to_write.get('recording_id'):
+            tags_to_write['recording_id'] = tags_to_write['musicbrainz_id']
+        elif tags_to_write.get('recording_id') and not tags_to_write.get('musicbrainz_id'):
+            tags_to_write['musicbrainz_id'] = tags_to_write['recording_id']
+
+        if not tags_to_write:
+            logger.debug("tag_file: no writable tags for %s — skipping write.", file_path.name)
+            return
+
+        try:
+            _tagging_write(file_path, tags_to_write)
+            logger.info("tag_file: wrote %d tag(s) to %s", len(tags_to_write), file_path.name)
+        except Exception as exc:
+            logger.warning("tag_file: failed to write tags for %s: %s", file_path.name, exc)
+            raise
+
     def create_or_update_review_task(self, file_path: Path, metadata: Optional[Dict[str, Any]], confidence: float, status='pending'):
         """Create or update a task in the review queue."""
         try:

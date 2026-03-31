@@ -33,7 +33,21 @@ _OST_SAFE_RE = re.compile(
     r'|电视剧|网剧|影视剧|影視劇|电影'              # drama-type classifiers
     r'|片头曲|片尾曲|主题曲|插曲|推广曲'             # song-role labels
     r'|原声带|原声|配乐'                              # soundtrack labels
-    r'|ost|theme|opening|ending|soundtrack|original'  # English equivalents
+    r'|ost|theme|opening|ending|soundtrack|original'  # English equivalents (original set)
+    # ── Extended English metadata terms ──────────────────────────────────
+    # These words appear in longer title variants (remaster editions, release
+    # format suffixes, event-specific tags) but do NOT change track identity.
+    # Longer forms are listed before shorter prefixes so the regex engine
+    # consumes them greedily before attempting a shorter alternative
+    # (e.g. 'remastered' is tried before 'remaster').
+    # \d+ covers year tokens (2013, 2024) and track numbers.
+    r'|remastered|remaster'                          # remaster suffix variants
+    r'|acoustic|live'                                # performance/recording type
+    r'|radio|single'                                 # release format descriptors
+    r'|version|edit|mix'                             # common music metadata
+    r'|official|song|shanty'                         # descriptor words
+    r'|deluxe'                                       # edition descriptor
+    r'|\d+'                                          # years / track numbers (2013, 2024)
     r')+$',
     re.IGNORECASE | re.UNICODE,
 )
@@ -615,6 +629,9 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         # than 'Zhou Shen' vs '\u5468\u6df1' (primary).  _cmp_artists assigns a 0.95
                         # floor when one normalised name contains the other as a substring,
                         # handling credit-group tags like '\u6469\u767b\u5144\u5f1f\u5218\u5b87\u5b81' vs '\u5218\u5b87\u5b81'.
+                        # Initialised to 0.0 so the Dynamic Duration Expansion below can
+                        # read this value even when source_track.artist_name is empty.
+                        _best_artist_score = 0.0
                         if source_track.artist_name:
                             _best_artist_name = candidate_track.artist_name or ''
                             _best_artist_score = _cmp_artists(source_track.artist_name, _best_artist_name)
@@ -744,6 +761,26 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 f"(source_title='{source_track.title}', candidate_title='{candidate_track.title}')"
                             )
 
+                        # ── Dynamic Duration Expansion ─────────────────────────────────────
+                        # When artist identity is confirmed with a perfect score (1.0), widen
+                        # the engine's duration tolerance from the profile default (3 s) to
+                        # 10 000 ms for this one candidate evaluation.  This prevents
+                        # radio-edit / album-edit length differences (e.g. the 8-second gap
+                        # between a Spotify radio edit and the local album version of
+                        # 'Payphone') from penalising a match we are already certain about.
+                        # The original tolerance is restored immediately after the call so
+                        # all other candidates in the same batch remain unaffected.
+                        _orig_dur_tol = None
+                        if _best_artist_score >= 1.0:
+                            _orig_dur_tol = matching_engine.weights.duration_tolerance_ms
+                            matching_engine.weights.duration_tolerance_ms = 10000
+                            logger.debug(
+                                "Duration expansion: artist_score=1.0 for '%s' — "
+                                "duration_tolerance raised from %d ms to 10000 ms.",
+                                candidate_track.artist_name, _orig_dur_tol,
+                            )
+                        # ── End Dynamic Duration Expansion ────────────────────────────────
+
                         if tier2_mode:
                             result = matching_engine.calculate_title_duration_match(
                                 source_track,
@@ -758,6 +795,9 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 target_source=target_source,
                                 target_identifier=candidate_target_id,
                             )
+
+                        if _orig_dur_tol is not None:
+                            matching_engine.weights.duration_tolerance_ms = _orig_dur_tol
 
                         logger.debug(f"Match score for '{track_title}' vs '{candidate_track.title}': {result.confidence_score}")
 
