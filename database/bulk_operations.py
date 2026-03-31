@@ -775,34 +775,35 @@ class LibraryManager:
         When ``auto_importer`` or ``local_server`` creates a track row, it carries
         no identifier for the media-server provider (e.g. ``plex``).  A subsequent
         Plex DB pull matched by ``file_path`` would previously create a *second*
-        row (the ghost duplicate) that held the ``ratingKey``, leaving the original
-        row — the one the playlist-scoring engine matched against — without it.
+        (ghost) row that held the ``ratingKey``, leaving the original row — the one
+        the playlist-scoring engine matched against — without it.
 
-        This method performs a purely in-database pass:
+        This method performs a purely in-database repair pass:
 
-        1.  Builds a map of ``file_path → provider_item_id`` from tracks that
-            already have a ``provider_source`` identifier.
-        2.  For all tracks at those file paths that are *missing* that provider's
-            identifier, inserts the missing ``ExternalIdentifier`` row.
-        3.  Ghost duplicates (same file_path, same provider ID already linked to a
-            different track) are left in place; the score engine will now find the
-            original row correctly so ghost cleanup can happen separately.
+        1.  Builds a map of ``file_path → (provider_item_id, ext_id_row_id)`` from
+            tracks that already have a ``provider_source`` identifier.
+        2.  Finds all tracks at those file_paths that are *missing* that provider's
+            identifier.
+        3.  For each orphan track, **re-points** the existing ``ExternalIdentifier``
+            row (UPDATE track_id) rather than inserting a new one.  This avoids the
+            UNIQUE constraint on ``(provider_source, provider_item_id)`` and also
+            effectively re-homes the ghost row's ratingKey onto the canonical track.
 
-        Returns the number of new ``ExternalIdentifier`` rows written.
+        Returns the number of ``ExternalIdentifier`` rows re-pointed.
         """
         session = self.session_factory()
         try:
-            # --- Step 1: build file_path → provider_item_id map ---
-            rows = (
-                session.query(Track.file_path, ExternalIdentifier.provider_item_id)
+            # --- Step 1: build file_path → (provider_item_id, ext_id pk) map ---
+            rows = session.execute(
+                select(Track.file_path, ExternalIdentifier.provider_item_id, ExternalIdentifier.id)
                 .join(ExternalIdentifier, ExternalIdentifier.track_id == Track.id)
-                .filter(
+                .where(
                     ExternalIdentifier.provider_source == provider_source,
                     Track.file_path.isnot(None),
                     Track.file_path != '',
                 )
-                .all()
-            )
+            ).all()
+
             if not rows:
                 logger.info(
                     "backfill_provider_identifiers(%s): no source rows found — nothing to backfill.",
@@ -810,65 +811,65 @@ class LibraryManager:
                 )
                 return 0
 
-            # Keep the first (or only) provider_item_id seen per file_path.
-            fp_to_pid: Dict[str, str] = {}
-            for fp, pid in rows:
-                if fp and fp not in fp_to_pid:
-                    fp_to_pid[fp] = pid
+            # Keep the first (earliest) ext_id row seen per file_path.
+            fp_to_info: Dict[str, tuple] = {}  # fp → (provider_item_id, ext_id_pk)
+            for fp, pid, ext_pk in rows:
+                if fp and fp not in fp_to_info:
+                    fp_to_info[fp] = (pid, ext_pk)
 
-            target_file_paths = list(fp_to_pid.keys())
+            target_file_paths = list(fp_to_info.keys())
             logger.info(
-                "backfill_provider_identifiers(%s): %d tracks carry an identifier for this provider.",
+                "backfill_provider_identifiers(%s): %d file paths carry an identifier for this provider.",
                 provider_source, len(target_file_paths),
             )
 
             # --- Step 2: find tracks at those file_paths that lack the identifier ---
-            # Subquery: all track_ids that already have this provider's identifier.
+            # Use a proper select() subquery (SQLAlchemy 2.0 style) to avoid SAWarning.
             already_linked_subq = (
-                session.query(ExternalIdentifier.track_id)
-                .filter(ExternalIdentifier.provider_source == provider_source)
-                .subquery()
+                select(ExternalIdentifier.track_id)
+                .where(ExternalIdentifier.provider_source == provider_source)
+                .scalar_subquery()
             )
 
-            # Process in batches to avoid huge IN clauses.
             BACKFILL_BATCH = 500
-            added_count = 0
+            updated_count = 0
 
             for batch_start in range(0, len(target_file_paths), BACKFILL_BATCH):
                 batch_paths = target_file_paths[batch_start : batch_start + BACKFILL_BATCH]
 
-                orphan_tracks = (
-                    session.query(Track)
-                    .filter(
-                        Track.file_path.in_(batch_paths),
-                        ~Track.id.in_(already_linked_subq),
-                    )
-                    .all()
-                )
+                # Fetch orphan tracks without triggering autoflush of pending state.
+                with session.no_autoflush:
+                    orphan_tracks = session.execute(
+                        select(Track).where(
+                            Track.file_path.in_(batch_paths),
+                            Track.id.not_in(already_linked_subq),
+                        )
+                    ).scalars().all()
 
                 for track in orphan_tracks:
-                    pid = fp_to_pid.get(track.file_path)
-                    if not pid:
+                    pid, ext_pk = fp_to_info.get(track.file_path, (None, None))
+                    if not pid or not ext_pk:
                         continue
-                    new_ext = ExternalIdentifier(
-                        track_id=track.id,
-                        provider_source=provider_source,
-                        provider_item_id=pid,
-                        raw_data=None,
-                    )
-                    session.add(new_ext)
-                    added_count += 1
+
+                    # Re-point the existing ExternalIdentifier row to this track.
+                    # This is an UPDATE, not an INSERT, so no UNIQUE violation occurs.
+                    ext_row = session.get(ExternalIdentifier, ext_pk)
+                    if ext_row is None:
+                        continue
+                    old_track_id = ext_row.track_id
+                    ext_row.track_id = track.id
+                    updated_count += 1
                     logger.debug(
-                        "backfill: linked %s identifier '%s' to track %d ('%s')",
-                        provider_source, pid, track.id, track.title,
+                        "backfill: re-pointed %s identifier '%s' from track %d → track %d ('%s')",
+                        provider_source, pid, old_track_id, track.id, track.title,
                     )
 
             session.commit()
             logger.info(
-                "backfill_provider_identifiers(%s): added %d missing identifier(s).",
-                provider_source, added_count,
+                "backfill_provider_identifiers(%s): re-pointed %d missing identifier(s).",
+                provider_source, updated_count,
             )
-            return added_count
+            return updated_count
 
         except Exception as exc:
             session.rollback()
