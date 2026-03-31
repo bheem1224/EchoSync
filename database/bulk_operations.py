@@ -767,3 +767,114 @@ class LibraryManager:
             session.close()
 
         return total_processed
+
+    def backfill_provider_identifiers(self, provider_source: str) -> int:
+        """
+        Repair missing external identifiers caused by the old duplicate-row bug.
+
+        When ``auto_importer`` or ``local_server`` creates a track row, it carries
+        no identifier for the media-server provider (e.g. ``plex``).  A subsequent
+        Plex DB pull matched by ``file_path`` would previously create a *second*
+        row (the ghost duplicate) that held the ``ratingKey``, leaving the original
+        row — the one the playlist-scoring engine matched against — without it.
+
+        This method performs a purely in-database pass:
+
+        1.  Builds a map of ``file_path → provider_item_id`` from tracks that
+            already have a ``provider_source`` identifier.
+        2.  For all tracks at those file paths that are *missing* that provider's
+            identifier, inserts the missing ``ExternalIdentifier`` row.
+        3.  Ghost duplicates (same file_path, same provider ID already linked to a
+            different track) are left in place; the score engine will now find the
+            original row correctly so ghost cleanup can happen separately.
+
+        Returns the number of new ``ExternalIdentifier`` rows written.
+        """
+        session = self.session_factory()
+        try:
+            # --- Step 1: build file_path → provider_item_id map ---
+            rows = (
+                session.query(Track.file_path, ExternalIdentifier.provider_item_id)
+                .join(ExternalIdentifier, ExternalIdentifier.track_id == Track.id)
+                .filter(
+                    ExternalIdentifier.provider_source == provider_source,
+                    Track.file_path.isnot(None),
+                    Track.file_path != '',
+                )
+                .all()
+            )
+            if not rows:
+                logger.info(
+                    "backfill_provider_identifiers(%s): no source rows found — nothing to backfill.",
+                    provider_source,
+                )
+                return 0
+
+            # Keep the first (or only) provider_item_id seen per file_path.
+            fp_to_pid: Dict[str, str] = {}
+            for fp, pid in rows:
+                if fp and fp not in fp_to_pid:
+                    fp_to_pid[fp] = pid
+
+            target_file_paths = list(fp_to_pid.keys())
+            logger.info(
+                "backfill_provider_identifiers(%s): %d tracks carry an identifier for this provider.",
+                provider_source, len(target_file_paths),
+            )
+
+            # --- Step 2: find tracks at those file_paths that lack the identifier ---
+            # Subquery: all track_ids that already have this provider's identifier.
+            already_linked_subq = (
+                session.query(ExternalIdentifier.track_id)
+                .filter(ExternalIdentifier.provider_source == provider_source)
+                .subquery()
+            )
+
+            # Process in batches to avoid huge IN clauses.
+            BACKFILL_BATCH = 500
+            added_count = 0
+
+            for batch_start in range(0, len(target_file_paths), BACKFILL_BATCH):
+                batch_paths = target_file_paths[batch_start : batch_start + BACKFILL_BATCH]
+
+                orphan_tracks = (
+                    session.query(Track)
+                    .filter(
+                        Track.file_path.in_(batch_paths),
+                        ~Track.id.in_(already_linked_subq),
+                    )
+                    .all()
+                )
+
+                for track in orphan_tracks:
+                    pid = fp_to_pid.get(track.file_path)
+                    if not pid:
+                        continue
+                    new_ext = ExternalIdentifier(
+                        track_id=track.id,
+                        provider_source=provider_source,
+                        provider_item_id=pid,
+                        raw_data=None,
+                    )
+                    session.add(new_ext)
+                    added_count += 1
+                    logger.debug(
+                        "backfill: linked %s identifier '%s' to track %d ('%s')",
+                        provider_source, pid, track.id, track.title,
+                    )
+
+            session.commit()
+            logger.info(
+                "backfill_provider_identifiers(%s): added %d missing identifier(s).",
+                provider_source, added_count,
+            )
+            return added_count
+
+        except Exception as exc:
+            session.rollback()
+            logger.error(
+                "backfill_provider_identifiers(%s) failed: %s", provider_source, exc, exc_info=True
+            )
+            raise
+        finally:
+            session.close()

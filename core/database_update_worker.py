@@ -98,6 +98,25 @@ class DatabaseUpdateWorker:
             )
             self.processed_tracks = imported_count
             self.successful_operations = imported_count
+
+            # --- Backfill missing provider identifiers ---
+            # Repair any tracks that were imported from a different source (e.g.
+            # local_server / auto_importer) and therefore lack an identifier for
+            # the media-server provider (e.g. 'plex' ratingKey).  The bulk import
+            # above may have just written the identifier onto a new/updated row for
+            # the same file; this pass propagates it to any older row at the same
+            # file_path so playlist sync can use them immediately.
+            try:
+                backfill_count = library_manager.backfill_provider_identifiers(self.server_type)
+                if backfill_count:
+                    logger.info(
+                        "Backfill: linked %d missing '%s' identifier(s) to existing tracks.",
+                        backfill_count, self.server_type,
+                    )
+            except Exception as bf_err:
+                logger.warning(
+                    "Backfill of provider identifiers failed (non-fatal): %s", bf_err, exc_info=True
+                )
             
         except Exception as e:
             logger.error(f"Error in DatabaseUpdateWorker: {e}", exc_info=True)

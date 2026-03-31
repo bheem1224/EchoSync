@@ -305,6 +305,40 @@ def get_database_update_status():
         return jsonify({"error": str(e)}), 500
 
 
+@bp.post("/backfill-identifiers")
+def backfill_identifiers():
+    """
+    Repair tracks that are missing their media-server external identifier (e.g. Plex
+    ratingKey) due to the historical duplicate-row bug.
+
+    Scans all tracks in the database that share a ``file_path`` with a track that
+    already has an identifier for the active media server, then writes the missing
+    ``ExternalIdentifier`` row so playlist sync can include them.
+
+    Returns the number of new identifier rows written.
+    """
+    try:
+        active_server = config_manager.get_active_media_server()
+        if not active_server:
+            return jsonify({"error": "No active media server configured"}), 400
+
+        from database import MusicDatabase, LibraryManager
+        db = MusicDatabase()
+        library_manager = LibraryManager(db.session_factory)
+
+        added = library_manager.backfill_provider_identifiers(active_server)
+        return jsonify({
+            "success": True,
+            "provider": active_server,
+            "identifiers_added": added,
+            "message": f"Linked {added} missing '{active_server}' identifier(s) to existing tracks.",
+        }), 200
+
+    except Exception as e:
+        logger.error("backfill_identifiers error: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @bp.post("/update-cancel")
 def cancel_database_update():
     """Cancel the running database update."""
