@@ -1,0 +1,12 @@
+{
+    "id": "core.jellyfin",
+    "name": "Jellyfin",
+    "description": "Official EchoSync provider for jellyfin",
+    "version": "1.0.0",
+    "author": "EchoSync",
+    "type": "media_server",
+    "requirements": [],
+    "hooks": [],
+    "min_echosync_version": "2.4.0",
+    "verified_source": "official"
+}

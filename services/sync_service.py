@@ -554,7 +554,7 @@ class PlaylistSyncService:
             logger.error(f"Error fetching {server_type} tracks: {e}")
             return []
     
-    async def _publish_download_intents(self, unmatched_tracks: List[MatchResult]) -> int:
+    async def _publish_download_intents(self, unmatched_tracks: List[TrackMatchResult]) -> int:
         """Publish DOWNLOAD_INTENT events via event bus for missing tracks instead of downloading inline.
         
         This allows asynchronous handling and prevents blocking sync operations.
