@@ -13,11 +13,14 @@ EchoSync is a highly resilient, self-hosted middleware application designed to p
 EchoSync is built with an uncompromising focus on database integrity, security, and metadata resilience.
 
 ### 🧠 The Advanced Matching Engine
-Commercial streaming metadata is notoriously messy. EchoSync features a custom-built fuzzy matching engine designed to conquer bilingual tags and inconsistent formatting:
-* **Bilingual Failsafes:** Automatically transliterates Hanzi/Kanji to Pinyin and utilizes space-agnostic token-sort algorithms to match Eastern and Western name flips.
-* **The "Double-Lock" Logic:** Safely maps combined artist names (e.g., `Faye 詹雯婷` vs `Faye`) without risking false-positive library corruption.
-* **Dynamic Duration Amnesty:** Intelligently widens duration tolerances for unlabelled Extended/Album versions when exact semantic artist/title matches are proven.
-* **CJK OST Extraction:** Aggressively scrubs injected lore, character names, and TV drama tags from track titles before scoring.
+Commercial streaming metadata is notoriously inconsistent. EchoSync features a custom-built, multi-tiered matching engine designed to bridge the gap between structured API data (Spotify/Tidal) and messy local metadata:
+* **Global ID Utilization:** Instant 100% match execution using ISRC, MBID (MusicBrainz), and Audio Fingerprinting when available.
+* **Tiered Fallback Strategies:** Utilizes an `EXACT_SYNC` profile for strict, high-precision text and duration matching, gracefully falling back to a Tier-2 (Title + strict Duration) search when artist tags are wildly inaccurate.
+* **Fuzzy Logic & Gating:** A 5-step gating algorithm evaluates title, artist, album, and duration, applying penalties for version mismatches (e.g., rejecting a "Remix" when the "Original" is requested).
+* **Text Normalization:** Built-in metadata cleanup that standardizes apostrophes/dashes, extracts edition info (e.g., "Deluxe", "Remastered"), and strips trailing "feat." clauses to normalize comparisons.
+* **Artist Subset Rescue:** Intelligently maps tracks when compilation or featured artists cause low fuzzy scores (e.g., recognizing that "Macklemore" is a valid subset of "Macklemore & Ryan Lewis" if the duration is tight).
+* **Extensible Plugin Hooks:** The scoring engine allows community plugins to dynamically inject score boosts, override duration tolerances, or normalize text (e.g., the CJK Language Pack plugin).
+
 
 ### 🏛️ Enterprise-Grade Architecture
 * **The Database Bedrock:** Powered by strict Alembic migrations across a discrete multi-database environment (`config.db`, `working.db`, `music.db`).
@@ -31,11 +34,12 @@ Commercial streaming metadata is notoriously messy. EchoSync features a custom-b
 
 **Streaming Sources:**
 * Spotify (Supports Multiple Accounts)
-
+* Tidal (up coming)
+* YouTube Music (up coming)
 **Local Media Servers:**
 * Plex
 * Jellyfin
-* Navidrome
+* Navidrome (up coming)
 
 **Acquisition & Metadata:**
 * Soulseek (via slskd integration)
@@ -45,26 +49,21 @@ Commercial streaming metadata is notoriously messy. EchoSync features a custom-b
 
 ---
 
-## 🚀 Quick Start (Docker)
+## 🚀 Quick Start
 
-The easiest way to run EchoSync is via Docker Compose. 
+### ⚠️ CRITICAL: The Master Encryption Key
+EchoSync AES-encrypts your sensitive provider credentials (Spotify, Tidal, Slskd) inside `config.db`. **You must provide a `MASTER_KEY` environment variable.** * **Option A (Pre-generate):** Generate a random base64 string and add it to your compose file *before* your first boot.
+* **Option B (Auto-generate):** If you boot without one, EchoSync will auto-generate a base64 key and print it to your Docker logs. **You must copy this key and add it to your compose file immediately.** If you reboot the container without setting the `MASTER_KEY` environment variable, EchoSync will not be able to decrypt `config.db`, effectively resetting your configuration.
 
-```yaml
-version: '3.8'
-services:
-  EchoSync:
-    image: bheem1224/EchoSync:latest
-    container_name: EchoSync
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./config:/app/config
-      - ./data:/app/data
-      - /path/to/your/music:/music
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/New_York
+### Standard Docker (Recommended)
+EchoSync provides a pre-configured `docker-compose.yml` file in the root of the repository. 
+
+1. Download the docker-compose.yml file.
+2. Ensure your mounts (specifically `/data`, `/config`, and your `/downloads`/`/library` paths) are correctly mapped in the `docker-compose.yml`.
+3. Run the Docker Compose command:
+```bash
+docker compose up -d
+
 
 🛠️ Tech Stack
 Backend: Python 3.11+, Alembic, SQLite, FastAPI/Flask.
@@ -77,4 +76,4 @@ Security: AES-encrypted credential storage (No plaintext API keys).
 Because EchoSync utilizes strict database migrations and an AST-sandboxed plugin architecture, please refer to our CONTRIBUTING.md and ARCHITECTURE_CORE.md before submitting PRs involving database models or plugin hooks.
 
 📜 Origin & Acknowledgement
-EchoSync began as a fork of Nezreka's Echosync. As we introduced Svelte, Alembic migrations, encrypted storage, and the Zero-Trust Sandbox, the codebase became a 100% structural rewrite. To respect the original author's namespace while reflecting the new architecture, the project was rebranded in v2.5.0. We thank Nezreka for the original inspiration!
+EchoSync began as a fork of Nezreka's SoulSync. As we introduced Svelte, Alembic migrations, encrypted storage, and the Zero-Trust Sandbox, the codebase became a 100% structural rewrite. To respect the original author's namespace while reflecting the new architecture, the project was rebranded in v2.5.0. We thank Nezreka for the original inspiration!

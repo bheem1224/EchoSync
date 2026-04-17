@@ -25,18 +25,20 @@ services:
       - TZ=America/New_York
     ports:
       - "5000:5000"      # Main web app
-      - "8888:8888"      # Spotify OAuth callback
-      - "8889:8889"      # Tidal OAuth callback
+      - "5001:5001"      # OAuth callback
     volumes:
       # Configuration and encrypted secrets
       - ./config:/config
       # Persistent data, logs, downloads
       - ./data:/data
-      # IMPORTANT: Mount the drives containing your download and transfer folders
-      # Example for Windows:
-      # - "E:/Downloads:/downloads"
-      # Example for Linux/macOS:
-      # - "/path/to/your/downloads:/downloads"
+      # Library DIR for whare your media files are stored
+      - /path/to/your/library:/data/library 
+      # Downloads DIR whare your download client stores files before they are moved to the library
+      - /path/to/your/downloads:/data/downloads
+      # optinal define logs DIR if you want to have logs in a separate location
+      - /path/to/your/logs:/data/logs
+      # optinal define plugins dir if you want to have plugins in a separate location
+      - /path/to/your/plugins:/data/plugins
     extra_hosts:
       # Allow container to reach host services
       - "host.docker.internal:host-gateway"

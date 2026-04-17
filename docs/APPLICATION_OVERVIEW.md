@@ -583,7 +583,7 @@ Echosync uses **fingerprint-based deduplication** to identify identical audio:
 
 ## Support & Resources
 
-- **GitHub**: https://github.com/Nezreka/Echosync
+- **GitHub**: https://github.com/bheem1224/Echosync
 - **Documentation**: See `/docs` folder
 - **Issues**: Report bugs on GitHub Issues
 - **Configuration**: See `config.example.json`
