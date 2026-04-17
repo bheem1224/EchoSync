@@ -45,36 +45,44 @@ Commercial streaming metadata is notoriously messy. EchoSync features a custom-b
 
 ---
 
-## 🚀 Quick Start (Docker)
+## 🚀 Quick Start (Docker Compose)
 
-The easiest way to run EchoSync is via Docker Compose. 
+The easiest way to run EchoSync is via Docker Compose.
 
 ```yaml
 version: '3.8'
 services:
   EchoSync:
-    image: bheem1224/EchoSync:latest
+    image: ghcr.io/bheem1224/echosync:latest
     container_name: EchoSync
     ports:
-      - "8080:8080"
+      - "5000:5000" # Web UI
+      - "5001:5001" # OAuth Callback
     volumes:
       - ./config:/app/config
-      - ./data:/app/data
-      - /path/to/your/music:/music
+      - ./data:/data
+      - /path/to/your/music:/host/music
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=99
+      - PGID=100
       - TZ=America/New_York
+```
 
-🛠️ Tech Stack
-Backend: Python 3.11+, Alembic, SQLite, FastAPI/Flask.
+---
 
-Frontend: Svelte, TailwindCSS, Vite.
+## 🛠️ Tech Stack
+* **Backend:** Python 3.11+, Alembic, SQLite, FastAPI/Flask.
+* **Frontend:** Svelte, TailwindCSS, Vite.
+* **Security:** AES-encrypted credential storage (No plaintext API keys).
 
-Security: AES-encrypted credential storage (No plaintext API keys).
+---
 
-🤝 Contributing
-Because EchoSync utilizes strict database migrations and an AST-sandboxed plugin architecture, please refer to our CONTRIBUTING.md and ARCHITECTURE_CORE.md before submitting PRs involving database models or plugin hooks.
+## 📜 Origin & Acknowledgement
 
-📜 Origin & Acknowledgement
-EchoSync began as a fork of Nezreka's Echosync. As we introduced Svelte, Alembic migrations, encrypted storage, and the Zero-Trust Sandbox, the codebase became a 100% structural rewrite. To respect the original author's namespace while reflecting the new architecture, the project was rebranded in v2.5.0. We thank Nezreka for the original inspiration!
+EchoSync began as a fork of Nezreka's SoulSync. As we introduced Svelte, Alembic migrations, encrypted storage, and the Zero-Trust Sandbox, the codebase became a 100% structural rewrite. To respect the original author's namespace while reflecting the new architecture, the project was officially rebranded to EchoSync for the v2.5.0 release. We thank Nezreka for the original inspiration!
+
+---
+
+## 🤝 Plugins & Hooks [PENDING v2.5.0]
+
+We are currently building out a robust Hook and Skip-Hook lifecycle system inside the AST Sandbox. This will allow community plugins to completely intercept core functionalities (such as fuzzy matching or metadata generation) and return custom payloads. See the `docs/` folder for more information on hook points.

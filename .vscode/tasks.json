@@ -2,7 +2,7 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "Build SoulSync (pre-test)",
+			"label": "Build EchoSync (pre-test)",
 			"type": "shell",
 			"command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
 			"args": [
