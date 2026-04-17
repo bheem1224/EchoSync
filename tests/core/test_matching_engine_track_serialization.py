@@ -1,4 +1,4 @@
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 
 
 def test_matching_engine_from_dict_hydrates_duration_ms_and_isrc_from_identifiers():
@@ -13,14 +13,14 @@ def test_matching_engine_from_dict_hydrates_duration_ms_and_isrc_from_identifier
         },
     }
 
-    track = SoulSyncTrack.from_dict(payload)
+    track = EchosyncTrack.from_dict(payload)
 
     assert track.duration == 201000
     assert track.isrc == 'USRC10000003'
 
 
 def test_matching_engine_to_dict_includes_version_and_is_compilation():
-    track = SoulSyncTrack(
+    track = EchosyncTrack(
         raw_title='Track Name',
         artist_name='Artist Name',
         album_title='Album Name',

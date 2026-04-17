@@ -17,7 +17,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.caching.provider_cache import provider_cache
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger
 
 logger = get_logger("isrc_lookup")
@@ -41,8 +41,8 @@ def _normalise_isrc(raw: str) -> Optional[str]:
 
 # ─── Result normalisation ────────────────────────────────────────────────────
 
-def _track_to_dict(track: SoulSyncTrack, source: str) -> Dict[str, Any]:
-    """Convert a SoulSyncTrack to a serialisable result dict."""
+def _track_to_dict(track: EchosyncTrack, source: str) -> Dict[str, Any]:
+    """Convert a EchosyncTrack to a serialisable result dict."""
     return {
         "source": source,
         "isrc": track.isrc,
@@ -97,9 +97,9 @@ def _dispatch_isrc_via_providers(
             logger.warning("ISRC provider %s raised: %s", provider_name, exc)
             track = None
         if track is not None:
-            if not isinstance(track, SoulSyncTrack):
+            if not isinstance(track, EchosyncTrack):
                 logger.warning(
-                    "ISRC provider %s returned unexpected type %s (expected SoulSyncTrack) "
+                    "ISRC provider %s returned unexpected type %s (expected EchosyncTrack) "
                     "— skipping to next provider.",
                     provider_name,
                     type(track).__name__,

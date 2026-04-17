@@ -8,7 +8,7 @@ from pathlib import Path
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.provider import DownloaderProvider, ProviderRegistry, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.request_manager import RequestManager, RateLimitConfig, HttpError
 
 logger = get_logger("slskd_provider")
@@ -337,12 +337,12 @@ class SlskdProvider(DownloaderProvider):
             logger.error(f"Error making API request: {e}")
             return None
 
-    def _convert_to_soulsync_track(self, result: TrackResult) -> SoulSyncTrack:
-        """Convert TrackResult to SoulSyncTrack with injected technical stats"""
+    def _convert_to_echosync_track(self, result: TrackResult) -> EchosyncTrack:
+        """Convert TrackResult to EchosyncTrack with injected technical stats"""
         safe_filename = _sanitize_peer_filename(result.filename)
         # Create base track
         # result.duration is stored as milliseconds by the JSON parser
-        soul_track = self.create_soul_sync_track(
+        echo_track = self.create_echo_sync_track(
             title=result.title or safe_filename,
             artist=result.artist or "Unknown Artist",
             album=result.album or "",
@@ -356,27 +356,27 @@ class SlskdProvider(DownloaderProvider):
         )
 
         # Manually inject metadata into identifiers for Matching Engine
-        if soul_track:
-             soul_track.identifiers['username'] = result.username
-             soul_track.identifiers['size'] = result.size
-             soul_track.identifiers['free_upload_slots'] = result.free_upload_slots
-             soul_track.identifiers['upload_speed'] = result.upload_speed
-             soul_track.identifiers['queue_length'] = result.queue_length
-             soul_track.identifiers['provider_item_id'] = result.filename
-             soul_track.identifiers['local_filename'] = safe_filename
-             soul_track.identifiers['bitrate'] = result.bitrate
+        if echo_track:
+             echo_track.identifiers['username'] = result.username
+             echo_track.identifiers['size'] = result.size
+             echo_track.identifiers['free_upload_slots'] = result.free_upload_slots
+             echo_track.identifiers['upload_speed'] = result.upload_speed
+             echo_track.identifiers['queue_length'] = result.queue_length
+             echo_track.identifiers['provider_item_id'] = result.filename
+             echo_track.identifiers['local_filename'] = safe_filename
+             echo_track.identifiers['bitrate'] = result.bitrate
 
              # Technical metadata
              if result.bit_depth:
-                soul_track.bit_depth = result.bit_depth
-                soul_track.identifiers['bit_depth'] = result.bit_depth
+                echo_track.bit_depth = result.bit_depth
+                echo_track.identifiers['bit_depth'] = result.bit_depth
              if result.sample_rate:
-                soul_track.sample_rate = result.sample_rate
-                soul_track.identifiers['sample_rate'] = result.sample_rate
+                echo_track.sample_rate = result.sample_rate
+                echo_track.identifiers['sample_rate'] = result.sample_rate
              if result.size:
-                soul_track.file_size_bytes = result.size
+                echo_track.file_size_bytes = result.size
 
-        return soul_track
+        return echo_track
 
     def _process_search_responses(
         self,
@@ -474,7 +474,7 @@ class SlskdProvider(DownloaderProvider):
         quality_profile: Optional[Dict[str, Any]] = None,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
-    ) -> List[SoulSyncTrack]:
+    ) -> List[EchosyncTrack]:
         """
         Atomic Search: Post -> Poll -> Parse -> Delete.
         Applies coarse filtering (basic_filters) before returning.
@@ -544,7 +544,7 @@ class SlskdProvider(DownloaderProvider):
         quality_profile: Optional[Dict[str, Any]] = None,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
-    ) -> List[SoulSyncTrack]:
+    ) -> List[EchosyncTrack]:
         """Internal async search implementation (called under semaphore lock)."""
         if not self.base_url:
             logger.error("Slskd client not configured")
@@ -679,10 +679,10 @@ class SlskdProvider(DownloaderProvider):
                 if min_bitrate > 0 and tr.bitrate and tr.bitrate < min_bitrate:
                     continue
                 
-                # Convert to SoulSyncTrack
-                soul_track = self._convert_to_soulsync_track(tr)
-                if soul_track:
-                    valid_tracks.append(soul_track)
+                # Convert to EchosyncTrack
+                echo_track = self._convert_to_echosync_track(tr)
+                if echo_track:
+                    valid_tracks.append(echo_track)
 
             logger.info(f"After coarse filtering: {len(valid_tracks)} candidates")
 
@@ -843,7 +843,7 @@ class SlskdProvider(DownloaderProvider):
         quality_profile: Optional[Dict[str, Any]] = None,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
-    ) -> List[SoulSyncTrack]:
+    ) -> List[EchosyncTrack]:
         """Synchronous wrapper for atomic search"""
         try:
             loop = asyncio.new_event_loop()
@@ -889,10 +889,10 @@ class SlskdProvider(DownloaderProvider):
 
     # Required Abstract Methods Stubs
 
-    def search_tracks(self, query: str) -> List[SoulSyncTrack]:
+    def search_tracks(self, query: str) -> List[EchosyncTrack]:
         return self.search(query)
 
-    def get_track_by_id(self, item_id: str) -> Optional[SoulSyncTrack]:
+    def get_track_by_id(self, item_id: str) -> Optional[EchosyncTrack]:
         return None
 
     def get_artist_details(self, artist_id: str) -> Dict[str, Any]:
@@ -918,11 +918,11 @@ class SlskdProvider(DownloaderProvider):
         return bool(self.base_url)
 
     # Legacy stubs (not used but required by abstract base class if not careful)
-    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]: return None
+    def get_track(self, track_id: str) -> Optional[EchosyncTrack]: return None
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]: return None
     def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]: return None
     def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]: return []
-    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]: return []
+    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]: return []
 
 
 # Register the provider

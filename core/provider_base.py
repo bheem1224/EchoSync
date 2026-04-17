@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from core.enums import Capability
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine import text_utils
 from core.request_manager import RequestManager
 
@@ -14,8 +14,8 @@ class ProviderBase(ABC):
     """
     Abstract base class for all music providers (Spotify, Tidal, Plex, Jellyfin, etc.).
     
-    KEY PRINCIPLE: Providers are DUMB - they only convert their native format to SoulSyncTrack.
-    Core/Database/MatchingEngine are SMART - they process SoulSyncTrack objects.
+    KEY PRINCIPLE: Providers are DUMB - they only convert their native format to EchosyncTrack.
+    Core/Database/MatchingEngine are SMART - they process EchosyncTrack objects.
     
     All providers must implement these methods.
     
@@ -115,8 +115,8 @@ class ProviderBase(ABC):
         quality_profile: Optional[Dict[str, Any]] = None,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
-    ) -> List[SoulSyncTrack]:
-        """Search for tracks. Must return SoulSyncTrack objects.
+    ) -> List[EchosyncTrack]:
+        """Search for tracks. Must return EchosyncTrack objects.
 
         Args:
             quality_profile: Optional active quality profile for provider-side pre-filtering.
@@ -128,8 +128,8 @@ class ProviderBase(ABC):
         pass
 
     @abstractmethod
-    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
-        """Fetch a single track by ID. Must return SoulSyncTrack object."""
+    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
+        """Fetch a single track by ID. Must return EchosyncTrack object."""
         pass
 
     @abstractmethod
@@ -148,8 +148,8 @@ class ProviderBase(ABC):
         pass
 
     @abstractmethod
-    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
-        """Fetch tracks for a playlist. Must return List[SoulSyncTrack]."""
+    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
+        """Fetch tracks for a playlist. Must return List[EchosyncTrack]."""
         pass
 
     def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: List[str]) -> bool:
@@ -190,7 +190,7 @@ class ProviderBase(ABC):
         """Return a URL or path to the provider's logo/icon."""
         pass
 
-    def search_by_isrc(self, isrc: str) -> Optional[SoulSyncTrack]:
+    def search_by_isrc(self, isrc: str) -> Optional[EchosyncTrack]:
         """Look up a single track by its ISRC code.
 
         Providers that support ISRC lookup MUST set ``supports_isrc_lookup = True``
@@ -201,7 +201,7 @@ class ProviderBase(ABC):
             isrc: A canonical 12-character ISRC (no hyphens, already validated).
 
         Returns:
-            A ``SoulSyncTrack`` populated with as much metadata as the provider
+            A ``EchosyncTrack`` populated with as much metadata as the provider
             can supply, or ``None`` if the ISRC was not found.
         """
         return None
@@ -209,7 +209,7 @@ class ProviderBase(ABC):
     # ===== HELPER METHODS (Reusable by all providers) =====
     
     @staticmethod
-    def create_soul_sync_track(
+    def create_echo_sync_track(
         title: str,
         artist: str,
         album: Optional[str] = None,
@@ -228,9 +228,9 @@ class ProviderBase(ABC):
         provider_id: Optional[str] = None,
         source: Optional[str] = None,
         **extra_fields
-    ) -> SoulSyncTrack:
+    ) -> EchosyncTrack:
         """
-        Factory method to create SoulSyncTrack with normalized metadata.
+        Factory method to create EchosyncTrack with normalized metadata.
         
         This centralizes normalization logic used by all providers.
         Providers call this after extracting their native data.
@@ -250,10 +250,10 @@ class ProviderBase(ABC):
             bitrate: Bitrate in kbps
             file_format: File format (mp3, flac, etc.)
             source: Provider name (spotify, plex, etc.)
-            **extra_fields: Additional SoulSyncTrack fields
+            **extra_fields: Additional EchosyncTrack fields
             
         Returns:
-            SoulSyncTrack with normalized metadata
+            EchosyncTrack with normalized metadata
         """
         # Defensive coercion helpers for provider-provided values
         def _coerce_to_str(val):
@@ -342,8 +342,8 @@ class ProviderBase(ABC):
                 'raw_data': extra_fields or None
             })
         
-        # Create SoulSyncTrack
-        return SoulSyncTrack(
+        # Create EchosyncTrack
+        return EchosyncTrack(
             raw_title=title_str,
             artist_name=artist_str,
             album_title=album_str,

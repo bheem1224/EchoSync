@@ -14,7 +14,7 @@ from core.file_handling.storage import get_storage_service
 
 logger = get_logger("spotify_adapter")
 
-# SpotifyAdapter class deprecated - use convert_spotify_track_to_soulsync instead
+# SpotifyAdapter class deprecated - use convert_spotify_track_to_echosync instead
 class SpotifyAdapter:
     def __init__(self, spotify_client=None):
         storage = get_storage_service()
@@ -132,7 +132,7 @@ try:
         scope=[PluginScope.SYNC, PluginScope.SEARCH],
         version="1.0.0",
         description="Spotify Adapter providing Track stubs and enrichment",
-        author="SoulSync",
+        author="Echosync",
         priority=100,
     )
     register_plugin(decl)

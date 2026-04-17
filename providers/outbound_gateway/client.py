@@ -1,12 +1,12 @@
 from typing import Any, Dict, List, Optional
 from core.provider_base import ProviderBase
 from core.enums import Capability
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 
 class OutboundGatewayProvider(ProviderBase):
     """
     Outbound Gateway Provider acts as the translator to convert internal
-    SoulSyncTrack models into standard, external-friendly JSON schemas for
+    EchosyncTrack models into standard, external-friendly JSON schemas for
     the upcoming v2.4/v2.5 API Gateway.
     """
     name = "outbound_gateway"
@@ -30,11 +30,11 @@ class OutboundGatewayProvider(ProviderBase):
     def get_logo_url(self) -> str:
         return ""
 
-    def export_track_to_json(self, track: SoulSyncTrack) -> dict:
+    def export_track_to_json(self, track: EchosyncTrack) -> dict:
         """
-        Converts a SoulSyncTrack into a standard, external-friendly JSON dictionary.
+        Converts a EchosyncTrack into a standard, external-friendly JSON dictionary.
 
-        Strips out internal SoulSync routing data (sync_id, internal file paths, DB primary keys).
+        Strips out internal Echosync routing data (sync_id, internal file paths, DB primary keys).
         Formats the output to resemble standard MusicBrainz/ListenBrainz JSON schemas.
         """
         # Expose standard metadata keys, ensuring duration is in seconds
@@ -83,10 +83,10 @@ class OutboundGatewayProvider(ProviderBase):
         type: str = "track",
         limit: int = 10,
         quality_profile: Optional[Dict[str, Any]] = None,
-    ) -> List[SoulSyncTrack]:
+    ) -> List[EchosyncTrack]:
         return []
 
-    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
+    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         return None
 
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
@@ -98,5 +98,5 @@ class OutboundGatewayProvider(ProviderBase):
     def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         return []
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
+    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
         return []

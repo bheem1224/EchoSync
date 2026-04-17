@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from core.tiered_logger import get_logger
 from core.provider_base import ProviderBase
 from core.provider import SyncServiceProvider, get_provider_capabilities, ProviderRegistry, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 from core.caching.provider_cache import provider_cache
 
@@ -529,8 +529,8 @@ class SpotifyClient(SyncServiceProvider):
                 return False
         return self.user_id is not None
 
-    def _convert_track(self, spotify_track_data: Dict[str, Any]) -> Optional[SoulSyncTrack]:
-        """Convert Spotify track data to SoulSyncTrack."""
+    def _convert_track(self, spotify_track_data: Dict[str, Any]) -> Optional[EchosyncTrack]:
+        """Convert Spotify track data to EchosyncTrack."""
         if not spotify_track_data or not spotify_track_data.get('name'):
             return None
 
@@ -555,7 +555,7 @@ class SpotifyClient(SyncServiceProvider):
             if external_ids:
                 isrc = external_ids.get('isrc')
 
-            return self.create_soul_sync_track(
+            return self.create_echo_sync_track(
                 title=raw_title,
                 artist=artist_name,
                 album=album_title,
@@ -577,7 +577,7 @@ class SpotifyClient(SyncServiceProvider):
     # ProviderBase Implementations
     # ==========================================
 
-    def search(self, query: str, type: str = "track", limit: int = 10) -> List[SoulSyncTrack]:
+    def search(self, query: str, type: str = "track", limit: int = 10) -> List[EchosyncTrack]:
         if not self.is_authenticated():
             return []
         
@@ -596,11 +596,11 @@ class SpotifyClient(SyncServiceProvider):
             logger.error(f"Error searching Spotify: {e}")
             return []
 
-    def search_by_isrc(self, isrc: str) -> Optional[SoulSyncTrack]:
+    def search_by_isrc(self, isrc: str) -> Optional[EchosyncTrack]:
         """Implement ProviderBase.search_by_isrc via Spotify's ISRC filter query.
 
         Uses the ``isrc:<code>`` qualifier supported by the Spotify search endpoint.
-        Returns a single ``SoulSyncTrack`` on an exact match, ``None`` otherwise.
+        Returns a single ``EchosyncTrack`` on an exact match, ``None`` otherwise.
         """
         if not self.is_authenticated():
             logger.debug("search_by_isrc: Spotify not authenticated, skipping.")
@@ -627,13 +627,13 @@ class SpotifyClient(SyncServiceProvider):
             logger.error(f"Error fetching raw track {track_id}: {e}")
             return None
 
-    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
+    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         raw = self._raw_track(track_id)
         return self._convert_track(raw) if raw else None
 
     # Alias for Provider protocol compatibility if needed,
     # though ProviderBase uses get_track
-    def get_track_by_id(self, item_id: str) -> Optional[SoulSyncTrack]:
+    def get_track_by_id(self, item_id: str) -> Optional[EchosyncTrack]:
         return self.get_track(item_id)
 
     @provider_cache(ttl_seconds=2592000)
@@ -699,7 +699,7 @@ class SpotifyClient(SyncServiceProvider):
             logger.error(f"Error getting user playlists: {e}")
             return
 
-    def get_playlist_tracks(self, playlist_id: str, force_refresh: bool = False) -> List[SoulSyncTrack]:
+    def get_playlist_tracks(self, playlist_id: str, force_refresh: bool = False) -> List[EchosyncTrack]:
         """Return the tracks for *playlist_id*.
 
         When *force_refresh* is False (default, used by the background job), the
@@ -806,24 +806,24 @@ class SpotifyClient(SyncServiceProvider):
             logger.error(f"Error adding tracks to playlist {playlist_id}: {e}")
             return False
 
-    def search_and_get_uri(self, track: SoulSyncTrack) -> Optional[str]:
+    def search_and_get_uri(self, track: EchosyncTrack) -> Optional[str]:
         """
-        Helper to find a Spotify URI for a SoulSyncTrack.
+        Helper to find a Spotify URI for a EchosyncTrack.
         Useful when Spotify is the target.
         """
         query = f"track:{track.title} artist:{track.artist_name}"
         results = self.search(query, limit=1)
         if results:
-            # We need the URI, but search returns SoulSyncTrack.
+            # We need the URI, but search returns EchosyncTrack.
             # We stored the ID in identifiers.
             found = results[0]
             # Retrieve ID from identifiers
             # identifiers structure: [{'provider_source': 'spotify', 'provider_item_id': '...'}]
-            # or dict if normalized. SoulSyncTrack normalizes to dict in post_init?
-            # Let's check SoulSyncTrack definition. It has 'identifiers' dict by default.
+            # or dict if normalized. EchosyncTrack normalizes to dict in post_init?
+            # Let's check EchosyncTrack definition. It has 'identifiers' dict by default.
 
-            # The factory `create_soul_sync_track` adds it as a list item first,
-            # then `SoulSyncTrack.__post_init__` converts list to dict if needed.
+            # The factory `create_echo_sync_track` adds it as a list item first,
+            # then `EchosyncTrack.__post_init__` converts list to dict if needed.
 
             # Safe retrieval
             if isinstance(found.identifiers, dict):

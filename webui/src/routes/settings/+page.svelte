@@ -61,7 +61,7 @@
 </script>
 
 <svelte:head>
-  <title>Settings • SoulSync</title>
+  <title>Settings • Echosync</title>
 </svelte:head>
 
 <section class="page">

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, cast
 
 from flask import Blueprint, jsonify, request, send_file
 
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.enums import Capability
 from core.plugin_loader import get_provider
 from core.track_parser import TrackParser
@@ -217,7 +217,7 @@ def _build_track_from_metadata(file_path: Path, metadata: Dict[str, Any]):
         if len(date_value) >= 4 and date_value[:4].isdigit():
             release_year = int(date_value[:4])
 
-    track = SoulSyncTrack(
+    track = EchosyncTrack(
         raw_title=title,
         artist_name=artist,
         album_title=album,

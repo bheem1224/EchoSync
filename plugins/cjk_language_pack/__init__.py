@@ -73,7 +73,7 @@ _CJK_BRACKET_RE = re.compile(
 _ASCII_BRACKET_RE = re.compile(r'\[([^\]]+)\]|\(([^)]+)\)')
 
 # OST keyword anchor — used in the fallback drama-extraction path.
-# When a title lacks 《》 guillemets, SoulSync looks for these keywords inside
+# When a title lacks 《》 guillemets, Echosync looks for these keywords inside
 # standard bracket pairs and treats the text BEFORE the keyword as the drama
 # name.  Examples:
 #   （苍兰诀 吟唱版）          → drama = '苍兰诀'  (keyword: 吟唱版)
@@ -891,4 +891,4 @@ class CJKMatchingEngine(WeightedMatchingEngine):
     """
 
 
-ServiceRegistry.register_override("com.soulsync.cjk-pack", CJKMatchingEngine)
+ServiceRegistry.register_override("com.echosync.cjk-pack", CJKMatchingEngine)

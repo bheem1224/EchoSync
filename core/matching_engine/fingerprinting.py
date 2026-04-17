@@ -1,5 +1,5 @@
 """
-Chromaprint Fingerprinting Module for SoulSync
+Chromaprint Fingerprinting Module for Echosync
 
 Handles audio fingerprint generation and comparison for high-accuracy track matching.
 Uses Chromaprint via pyacoustid to generate and compare fingerprints.

@@ -1,10 +1,10 @@
 from core.matching_engine.matching_engine import WeightedMatchingEngine
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 
 
 def make_track(isrc=None, **kwargs):
-    tr = SoulSyncTrack(raw_title=kwargs.get('raw_title','T'), artist_name=kwargs.get('artist_name','A'), album_title=kwargs.get('album_title','B'))
+    tr = EchosyncTrack(raw_title=kwargs.get('raw_title','T'), artist_name=kwargs.get('artist_name','A'), album_title=kwargs.get('album_title','B'))
     tr.duration = kwargs.get('duration', 180000)
     if isrc is not None:
         tr.isrc = isrc

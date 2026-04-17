@@ -34,7 +34,7 @@ try:
 except ImportError:
     MUTAGEN_AVAILABLE = False
 
-from ..matching_engine import SoulSyncTrack
+from ..matching_engine import EchosyncTrack
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class PostProcessor:
     def write_tags(
         self,
         file_path: Path,
-        track: SoulSyncTrack,
+        track: EchosyncTrack,
         cover_art_url: Optional[str] = None,
         preserve_existing: bool = False,
     ) -> TagWriteResult:
@@ -104,7 +104,7 @@ class PostProcessor:
 
         Args:
             file_path: Path to audio file
-            track: SoulSyncTrack with metadata
+            track: EchosyncTrack with metadata
             cover_art_url: URL to cover art image
             preserve_existing: Keep existing tags that aren't being overwritten
 
@@ -180,7 +180,7 @@ class PostProcessor:
     def organize_file(
         self,
         file_path: Path,
-        track: SoulSyncTrack,
+        track: EchosyncTrack,
         pattern: str,
         destination_dir: Path,
         handle_duplicates: bool = True,
@@ -190,7 +190,7 @@ class PostProcessor:
 
         Args:
             file_path: Source file path
-            track: SoulSyncTrack with metadata
+            track: EchosyncTrack with metadata
             pattern: Pattern like "{Artist}/{Year} - {Album}/{Title}{ext}"
             destination_dir: Base destination directory
             handle_duplicates: Handle duplicate filenames
@@ -293,7 +293,7 @@ class PostProcessor:
 
         return format_map.get(ext, AudioFormat.UNKNOWN)
 
-    def _write_id3_tags(self, file_path: Path, track: SoulSyncTrack) -> Tuple[List[str], List[str]]:
+    def _write_id3_tags(self, file_path: Path, track: EchosyncTrack) -> Tuple[List[str], List[str]]:
         """Write ID3v2 tags to MP3 file"""
         tags = []
         errors = []
@@ -345,7 +345,7 @@ class PostProcessor:
 
         return tags, errors
 
-    def _write_flac_tags(self, file_path: Path, track: SoulSyncTrack) -> Tuple[List[str], List[str]]:
+    def _write_flac_tags(self, file_path: Path, track: EchosyncTrack) -> Tuple[List[str], List[str]]:
         """Write Vorbis tags to FLAC file"""
         tags = []
         errors = []
@@ -391,7 +391,7 @@ class PostProcessor:
 
         return tags, errors
 
-    def _write_vorbis_tags(self, file_path: Path, track: SoulSyncTrack) -> Tuple[List[str], List[str]]:
+    def _write_vorbis_tags(self, file_path: Path, track: EchosyncTrack) -> Tuple[List[str], List[str]]:
         """Write Vorbis comments to OGG file"""
         tags = []
         errors = []
@@ -440,7 +440,7 @@ class PostProcessor:
 
         return tags, errors
 
-    def _write_m4a_tags(self, file_path: Path, track: SoulSyncTrack) -> Tuple[List[str], List[str]]:
+    def _write_m4a_tags(self, file_path: Path, track: EchosyncTrack) -> Tuple[List[str], List[str]]:
         """Write tags to M4A/AAC file"""
         tags = []
         errors = []
@@ -549,7 +549,7 @@ class PostProcessor:
     def _generate_path_from_pattern(
         self,
         file_path: Path,
-        track: SoulSyncTrack,
+        track: EchosyncTrack,
         pattern: str,
     ) -> Optional[Path]:
         """

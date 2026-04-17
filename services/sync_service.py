@@ -6,7 +6,7 @@ from core.tiered_logger import get_logger
 from core.provider import ProviderRegistry
 from services.download_manager import get_download_manager
 from services.match_service import MatchService, MatchContext
-from core.matching_engine import SoulSyncTrack
+from core.matching_engine import EchosyncTrack
 from time_utils import utc_isoformat, utc_now
 
 logger = get_logger("sync_service")
@@ -14,7 +14,7 @@ logger = get_logger("sync_service")
 @dataclass
 class TrackMatchResult:
     """Simple result object for track matching in playlist sync"""
-    spotify_track: SoulSyncTrack
+    spotify_track: EchosyncTrack
     provider_track_id: Optional[str] = None  # Raw track ID from provider (e.g., ratingKey, db ID)
     confidence: float = 0.0
     
@@ -27,7 +27,7 @@ class TrackMatchResult:
 class SpotifyPlaylist:
     id: str
     name: str
-    tracks: List[SoulSyncTrack] = field(default_factory=list)
+    tracks: List[EchosyncTrack] = field(default_factory=list)
     account_id: Optional[int] = None
     account_name: Optional[str] = None
 
@@ -423,7 +423,7 @@ class PlaylistSyncService:
             self.clear_progress_callback(playlist.name)
             self._cancelled = False
     
-    async def _find_track_in_media_server(self, spotify_track: SoulSyncTrack) -> Tuple[Optional[str], float]:
+    async def _find_track_in_media_server(self, spotify_track: EchosyncTrack) -> Tuple[Optional[str], float]:
         """Find a track in the media server using database matching.
         
         Returns:
@@ -930,7 +930,7 @@ class PlaylistSyncService:
         """
         Phase 2 Lightweight Syncing: Accepts an array of SyncID strings.
         Performs a fast bulk diff against the database to find missing tracks.
-        Only requests full SoulSyncTrack instantiations from the provider for the missing delta.
+        Only requests full EchosyncTrack instantiations from the provider for the missing delta.
         Queues the missing tracks for download.
         """
         from database.music_database import get_database, Track
@@ -1000,7 +1000,7 @@ class PlaylistSyncService:
         if not missing_sync_ids:
             return {"total": len(sync_ids), "existing": len(existing_sync_ids), "missing": 0, "queued": 0}
 
-        # 3. Fetch full SoulSyncTrack objects for the missing delta
+        # 3. Fetch full EchosyncTrack objects for the missing delta
         client = getattr(self, "provider", None) or getattr(self, "provider_client", None) or getattr(self, "active_provider", None) or getattr(self, "source_provider", None)
 
         if not client:

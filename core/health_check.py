@@ -1,5 +1,5 @@
 """
-Health Check System for SoulSync
+Health Check System for Echosync
 
 Allows services to register health checks that are scheduled via job_queue.
 Each health check is registered as a job with a configurable interval.

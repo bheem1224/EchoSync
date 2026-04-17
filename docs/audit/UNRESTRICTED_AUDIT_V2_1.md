@@ -1,4 +1,4 @@
-# SoulSync Unrestricted Audit Report V2.1
+# Echosync Unrestricted Audit Report V2.1
 
 ## Critical
 
@@ -91,7 +91,7 @@
 
 **Mismatched Search Payload Key: `acoustid` vs `acoustid_id`**
 *   **Files:** `database/music_database.py:108`, `web/routes/tracks.py:95`
-*   **Inconsistency:** The database column for `AudioFingerprint` and `Track` (as well as identifiers in `SoulSyncTrack`) is strictly named `acoustid_id`. However, the tracks search route (`/api/tracks`) looks for a query parameter specifically named `acoustid` (`request.args.get('acoustid')`) without the `_id` suffix, meaning search payloads using `acoustid_id` will fail to filter correctly.
+*   **Inconsistency:** The database column for `AudioFingerprint` and `Track` (as well as identifiers in `EchosyncTrack`) is strictly named `acoustid_id`. However, the tracks search route (`/api/tracks`) looks for a query parameter specifically named `acoustid` (`request.args.get('acoustid')`) without the `_id` suffix, meaning search payloads using `acoustid_id` will fail to filter correctly.
 
 ### 2. Status Flags & Enums
 

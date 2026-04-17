@@ -1,7 +1,7 @@
 # Architecture Overview: Core, Providers & Services
 
 This document describes the high‑level architecture of the three primary
-packages inside **SoulSync**: the `core` engine, the `providers` plugin layer,
+packages inside **Echosync**: the `core` engine, the `providers` plugin layer,
 and the `services` background workers.  It also includes a short summary of
 what each Python module is responsible for.
 

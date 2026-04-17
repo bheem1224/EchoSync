@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Simple launcher for the SoulSync Flask API backend.
+Simple launcher for the Echosync Flask API backend.
 
 Usage:
     python run_api.py                    # Run in standard HTTP mode (Production)
@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 
-# Load .env file from project root explicitly so SOULSYNC_* vars are available before config_manager
+# Load .env file from project root explicitly so ECHOSYNC_* vars are available before config_manager
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=True)
 
 # Determine development mode
@@ -52,7 +52,7 @@ else:
 # Alternatively, we could set an environment variable or directly configure the PluginLoader.
 # Setting it in environment is reliable.
 if safe_mode:
-    os.environ['SOULSYNC_SAFE_MODE'] = '1'
+    os.environ['ECHOSYNC_SAFE_MODE'] = '1'
 
 
 # Run Phase 1 Database Migrations securely

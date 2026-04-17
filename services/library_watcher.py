@@ -4,7 +4,7 @@ Library Watcher Service — Real-time file-system monitoring for the local libra
 Architecture
 ============
 This service bridges the OS file-system notification layer (watchdog) with the
-SoulSync event bus so new audio files land in the database and trigger
+Echosync event bus so new audio files land in the database and trigger
 TRACK_IMPORTED *immediately*, without waiting for the next scheduled scan.
 
 Flow
@@ -51,7 +51,7 @@ from watchdog.observers import Observer  # type: ignore[import-untyped]
 
 from core.event_bus import event_bus
 from core.file_handling.local_io import LocalFileHandler
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from database.bulk_operations import LibraryManager
@@ -191,11 +191,11 @@ def _process_new_file(path: Path) -> None:
                 duration_ms = None
 
         # ── 2. Upsert into the music database ─────────────────────────────
-        # Build a minimal SoulSyncTrack so the existing LibraryManager
+        # Build a minimal EchosyncTrack so the existing LibraryManager
         # upsert pipeline handles Artist / Album / Track creation.
-        # album_title is a required positional field on SoulSyncTrack; fall
+        # album_title is a required positional field on EchosyncTrack; fall
         # back to empty string when the tag is absent.
-        track_obj = SoulSyncTrack(
+        track_obj = EchosyncTrack(
             raw_title=title,
             artist_name=artist_name,
             album_title=album_title or "",

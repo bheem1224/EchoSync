@@ -360,7 +360,7 @@ def oauth_callback():
     return (
         """<html><body style='font-family:sans-serif;padding:24px;text-align:center;'>
         <h2 style='color:#21ba45;'>&#10003; MusicBrainz Authenticated!</h2>
-        <p>You may close this window and return to SoulSync.</p>
+        <p>You may close this window and return to Echosync.</p>
         <script>setTimeout(function(){ window.close(); }, 2000);</script>
         </body></html>""",
         200,

@@ -1,4 +1,4 @@
-# SoulSync Matching Engine - Complete Reference Guide
+# Echosync Matching Engine - Complete Reference Guide
 
 **Last Updated:** January 17, 2026  
 **Version:** 2.0 (Tier-2 Fallback + Artist Subset Rescue + ISRC Instant Match)
@@ -29,7 +29,7 @@
 
 ## Executive Summary
 
-The SoulSync Matching Engine is a **multi-tiered, weighted scoring system** designed to match music tracks across different services (Spotify, Tidal, Plex, Apple Music) with high accuracy despite metadata inconsistencies.
+The Echosync Matching Engine is a **multi-tiered, weighted scoring system** designed to match music tracks across different services (Spotify, Tidal, Plex, Apple Music) with high accuracy despite metadata inconsistencies.
 
 ### Key Innovation: Tiered Candidate Retrieval
 
@@ -104,7 +104,7 @@ core/matching_engine/
 ├── matching_engine.py          # WeightedMatchingEngine (main logic)
 ├── scoring_profile.py          # ScoringProfile + weights (ExactSyncProfile, etc)
 ├── text_utils.py              # normalize_title, normalize_artist, normalize_album
-├── soul_sync_track.py         # SoulSyncTrack dataclass
+├── echo_sync_track.py         # EchosyncTrack dataclass
 ├── fingerprinting.py          # FingerprintMatcher (ISRC, MusicBrainz)
 └── __init__.py
 
@@ -1015,7 +1015,7 @@ def _extract_version_suffix(self, text: str) -> tuple[str, Optional[str]]:
     return text, None
 ```
 
-**Integration in `_convert_track_to_soulsync()`:**
+**Integration in `_convert_track_to_echosync()`:**
 ```python
 title_base, title_version = self._extract_version_suffix(title)
 album_base, album_version = self._extract_version_suffix(album)
@@ -1230,4 +1230,4 @@ For matching engine issues:
 
 **Document Version:** 2.0  
 **Last Update:** January 17, 2026  
-**Maintainer:** SoulSync Development Team
+**Maintainer:** Echosync Development Team

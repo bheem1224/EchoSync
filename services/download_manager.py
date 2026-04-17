@@ -1,9 +1,9 @@
 """
 Download Manager Service - Central Orchestrator for Downloads
 
-This service acts as the "Source of Truth" for all downloads in SoulSync.
+This service acts as the "Source of Truth" for all downloads in Echosync.
 It manages the download lifecycle:
-1. Queueing: Accepts SoulSyncTrack objects
+1. Queueing: Accepts EchosyncTrack objects
 2. Selection: Uses SlskdProvider (Atomic Search) + Matching Engine (Selection)
 3. Execution: Triggers download on Slskd
 4. Monitoring: Polls for status and updates DB
@@ -22,7 +22,7 @@ import re
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 from core.matching_engine.text_utils import normalize_artist, normalize_title
@@ -69,7 +69,7 @@ class DownloadManager:
                 logger.warning("TRACK_IMPORTED received with no track data; ignoring")
                 return
 
-            track = SoulSyncTrack.from_dict(track_data)
+            track = EchosyncTrack.from_dict(track_data)
             logger.info(f"TRACK_IMPORTED: {track.artist_name} - {track.title}. Checking queue for duplicates.")
 
             target_sig = self._normalize_track_signature(track.to_dict())
@@ -83,19 +83,19 @@ class DownloadManager:
             with self.work_db.session_scope() as session:
                 items = session.query(Download).filter(Download.status.in_(active_states)).all()
                 for item in items:
-                    item_sig = self._normalize_track_signature(item.soul_sync_track or {})
+                    item_sig = self._normalize_track_signature(item.echo_sync_track or {})
                     # Match on ISRC if present
                     target_isrc = track.isrc
-                    item_isrc = (item.soul_sync_track or {}).get("isrc")
+                    item_isrc = (item.echo_sync_track or {}).get("isrc")
 
                     if (target_isrc and item_isrc and target_isrc == item_isrc) or (target_sig[:2] == item_sig[:2] and any(target_sig[:2])):
                         # Soft Cancel
                         item.status = "cancelled"
                         item.updated_at = utc_now()
                         # Append a cancellation message to the track JSON to preserve why it was cancelled
-                        track_json = dict(item.soul_sync_track)
+                        track_json = dict(item.echo_sync_track)
                         track_json["cancellation_reason"] = "Job cancelled: Track already confirmed in local library."
-                        item.soul_sync_track = track_json
+                        item.echo_sync_track = track_json
 
                         logger.info(f"Silently cancelled download {item.id} matching imported track '{track.title}'")
                         cancelled_count += 1
@@ -113,7 +113,7 @@ class DownloadManager:
             if not track_data:
                 logger.warning("DOWNLOAD_INTENT received with no track data; ignoring")
                 return
-            track = SoulSyncTrack.from_dict(track_data)
+            track = EchosyncTrack.from_dict(track_data)
             self.queue_download(track)
         except Exception as e:
             logger.error(f"Error handling DOWNLOAD_INTENT: {e}", exc_info=True)
@@ -154,12 +154,12 @@ class DownloadManager:
         query: str,
         strategy_filters: Dict[str, Any],
         quality_profile: Optional[Dict[str, Any]],
-        target_track: Optional[SoulSyncTrack] = None,
+        target_track: Optional[EchosyncTrack] = None,
         strategy_name: str = "",
         perfect_match_threshold: int = 90,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
-    ) -> Tuple[List[SoulSyncTrack], bool]:
+    ) -> Tuple[List[EchosyncTrack], bool]:
         """Search a single provider for one strategy query, expanding via hooks.
 
         Returns ``(results, sniper_hit)`` where ``sniper_hit=True`` means a
@@ -181,7 +181,7 @@ class DownloadManager:
             q for q in queries if isinstance(q, str) and q.strip()
         ))
 
-        accumulated: List[SoulSyncTrack] = []
+        accumulated: List[EchosyncTrack] = []
         for q in ordered_queries:
             batch = await self._invoke_provider_search_single(
                 provider, q, strategy_filters, quality_profile,
@@ -211,11 +211,11 @@ class DownloadManager:
 
     def _evaluate_search_batch(
         self,
-        batch: List[SoulSyncTrack],
-        target_track: SoulSyncTrack,
+        batch: List[EchosyncTrack],
+        target_track: EchosyncTrack,
         quality_profile: Optional[Dict[str, Any]],
         threshold: float,
-    ) -> Optional[SoulSyncTrack]:
+    ) -> Optional[EchosyncTrack]:
         """Run tier filtering + matching on a raw result batch.
 
         Returns the best candidate if ``confidence_score >= threshold``, else
@@ -244,7 +244,7 @@ class DownloadManager:
         quality_profile: Optional[Dict[str, Any]],
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
-    ) -> List[SoulSyncTrack]:
+    ) -> List[EchosyncTrack]:
         """Invoke provider search while passing quality_profile when supported."""
 
         if hasattr(provider, '_async_search'):
@@ -355,7 +355,7 @@ class DownloadManager:
             logger.error(f"Error getting active download providers: {e}", exc_info=True)
             return []
 
-    def queue_download(self, track: SoulSyncTrack, quality_profile_id: Optional[str] = None) -> int:
+    def queue_download(self, track: EchosyncTrack, quality_profile_id: Optional[str] = None) -> int:
         """
         Add a track to the download queue.
         Returns the database ID of the new download record.
@@ -387,7 +387,7 @@ class DownloadManager:
 
             download = Download(
                 sync_id=track.sync_id.split('?')[0],
-                soul_sync_track=track_json,
+                echo_sync_track=track_json,
                 status="queued",
                 created_at=utc_now(),
                 updated_at=utc_now()
@@ -541,7 +541,7 @@ class DownloadManager:
         """
         target_track = None
 
-        # Reload fresh state and reconstruct SoulSyncTrack from queue payload
+        # Reload fresh state and reconstruct EchosyncTrack from queue payload
         # This ensures no metadata (ISRC, Album, etc) is lost
         with self.work_db.session_scope() as session:
             download = session.query(Download).get(download_id)
@@ -549,7 +549,7 @@ class DownloadManager:
                 logger.error(f"Download ID {download_id} not found in DB.")
                 return
             # Reconstruct from stored JSON to preserve all metadata
-            target_track = SoulSyncTrack.from_dict(download.soul_sync_track)
+            target_track = EchosyncTrack.from_dict(download.echo_sync_track)
 
         if not target_track:
             logger.error(f"Failed to deserialize track for download {download_id}")
@@ -579,8 +579,8 @@ class DownloadManager:
 
             # 1. Get quality profile from config to determine allowed formats
             requested_profile_id = (
-                (download.soul_sync_track.get("identifiers") or {}).get("quality_profile_id")
-                if isinstance(download.soul_sync_track, dict)
+                (download.echo_sync_track.get("identifiers") or {}).get("quality_profile_id")
+                if isinstance(download.echo_sync_track, dict)
                 else None
             )
             quality_profile = self._get_quality_profile(requested_profile_id)
@@ -622,7 +622,7 @@ class DownloadManager:
                 provider_candidates = []
 
                 # Try all strategies for this provider
-                sniper_winner: Optional[SoulSyncTrack] = None
+                sniper_winner: Optional[EchosyncTrack] = None
                 for strategy_idx, strategy in enumerate(strategies, 1):
                     query = strategy["query"]
                     strategy_tolerance = strategy["duration_tolerance_ms"]
@@ -639,7 +639,7 @@ class DownloadManager:
                     )
 
                     # Call provider search (evaluation-driven short-circuit)
-                    search_results: List[SoulSyncTrack] = []
+                    search_results: List[EchosyncTrack] = []
                     sniper_hit = False
                     try:
                         logger.debug(f"    Invoking search on {provider.name} with quality profile")
@@ -904,7 +904,7 @@ class DownloadManager:
             except Exception as e:
                 logger.error(f"Error checking status for {db_id}: {e}")
 
-    def _generate_search_queries(self, track: SoulSyncTrack) -> List[str]:
+    def _generate_search_queries(self, track: EchosyncTrack) -> List[str]:
         """
         Generate multiple search query variations for fallback strategies.
         Returns queries in priority order (most specific to most generic).
@@ -953,7 +953,7 @@ class DownloadManager:
         
         return unique_queries
 
-    def _generate_search_strategies(self, track: SoulSyncTrack, base_duration_tolerance_ms: int) -> List[Dict[str, Any]]:
+    def _generate_search_strategies(self, track: EchosyncTrack, base_duration_tolerance_ms: int) -> List[Dict[str, Any]]:
         """Generate ordered search fallback strategies with per-strategy duration tolerance.
 
         Strategy order:
@@ -1041,14 +1041,14 @@ class DownloadManager:
 
         return normalize_title(core_title)
 
-    def _deduplicate_candidates(self, candidates: List[SoulSyncTrack]) -> List[SoulSyncTrack]:
+    def _deduplicate_candidates(self, candidates: List[EchosyncTrack]) -> List[EchosyncTrack]:
         """Deduplicate candidates collected from multiple fallback strategies.
 
         Only removes true duplicates (same peer, same file path, and same core
         technical metadata). This preserves meaningful variants of the same track
         that may differ by bitrate/size/sample-rate/bit-depth.
         """
-        unique: List[SoulSyncTrack] = []
+        unique: List[EchosyncTrack] = []
         seen = set()
 
         for candidate in candidates:
@@ -1183,7 +1183,7 @@ class DownloadManager:
         
         return min_bitrate if min_bitrate < 9999 else 128
 
-    def _filter_by_quality_profile(self, candidates: List[SoulSyncTrack], quality_profile: Optional[Dict[str, Any]]) -> List[SoulSyncTrack]:
+    def _filter_by_quality_profile(self, candidates: List[EchosyncTrack], quality_profile: Optional[Dict[str, Any]]) -> List[EchosyncTrack]:
         """Filter candidates using the quality profile rules."""
         if not quality_profile or not candidates:
             return candidates
@@ -1269,7 +1269,7 @@ class DownloadManager:
         sorted_tiers = sorted(priority_map.items(), key=lambda x: x[0])
         return sorted_tiers
     
-    def _filter_by_formats(self, candidates: List[SoulSyncTrack], formats: List[str]) -> List[SoulSyncTrack]:
+    def _filter_by_formats(self, candidates: List[EchosyncTrack], formats: List[str]) -> List[EchosyncTrack]:
         """Filter candidates by format and apply quality profile constraints."""
         quality_profile = self._get_quality_profile()
         if not quality_profile:
@@ -1364,14 +1364,14 @@ class DownloadManager:
 
     def _select_prefiltered_candidate(
         self,
-        candidates: List[SoulSyncTrack],
+        candidates: List[EchosyncTrack],
         prefer_larger_files: bool,
-    ) -> Optional[SoulSyncTrack]:
+    ) -> Optional[EchosyncTrack]:
         """Choose the best candidate using lightweight quality and peer heuristics only."""
         if not candidates:
             return None
 
-        def candidate_key(candidate: SoulSyncTrack) -> Tuple[int, int, int, int, int, int]:
+        def candidate_key(candidate: EchosyncTrack) -> Tuple[int, int, int, int, int, int]:
             bitrate = int(candidate.identifiers.get('bitrate', 0) or 0)
             free_slots = int(candidate.identifiers.get('free_upload_slots', 0) or 0)
             upload_speed = int(candidate.identifiers.get('upload_speed', 0) or 0)
@@ -1421,7 +1421,7 @@ class DownloadManager:
                 
                 for item in queued_items:
                     try:
-                        track_data = item.soul_sync_track
+                        track_data = item.echo_sync_track
                         if not track_data:
                             continue
                         
@@ -1468,7 +1468,7 @@ class DownloadManager:
         with self.work_db.session_scope() as session:
             items = session.query(Download).filter(Download.status.in_(active_states)).all()
             for item in items:
-                other_sig = self._normalize_track_signature(item.soul_sync_track or {})
+                other_sig = self._normalize_track_signature(item.echo_sync_track or {})
                 if signature == other_sig:
                     return item.id, item.status
         return None
@@ -1503,7 +1503,7 @@ class DownloadManager:
                 return {
                     "id": download.id,
                     "status": download.status,
-                    "track": download.soul_sync_track,
+                    "track": download.echo_sync_track,
                     "provider_id": download.provider_id,
                     "updated_at": download.updated_at.isoformat()
                 }
@@ -1567,7 +1567,7 @@ class DownloadManager:
 
                 for item in queued_items:
                     try:
-                        track_data = item.soul_sync_track
+                        track_data = item.echo_sync_track
                         if not track_data:
                             continue
 
@@ -1718,7 +1718,7 @@ def register_download_manager_job(interval_seconds: int = 21600):
         interval_seconds=interval_seconds,
         start_after=interval_seconds,
         enabled=True,
-        tags=["soulsync", "downloads"],
+        tags=["echosync", "downloads"],
         max_retries=3
     )
 

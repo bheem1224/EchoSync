@@ -48,7 +48,7 @@
 </script>
 
 <svelte:head>
-  <title>Music Services • SoulSync</title>
+  <title>Music Services • Echosync</title>
 </svelte:head>
 
 <section class="page">

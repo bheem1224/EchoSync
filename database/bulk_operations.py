@@ -1,6 +1,6 @@
 """
 Bulk import operations using SQLAlchemy 2.0 and LibraryManager.
-Efficiently ingests SoulSyncTrack objects into the database with caching.
+Efficiently ingests EchosyncTrack objects into the database with caching.
 """
 from collections import defaultdict
 from typing import List, Dict, Optional, Tuple, Callable, Iterable
@@ -10,7 +10,7 @@ import time
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import sessionmaker, Session
 
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine import text_utils
 from core.tiered_logger import get_logger
 from .music_database import Artist, Album, Track, ExternalIdentifier, AudioFingerprint
@@ -22,7 +22,7 @@ BATCH_SIZE = 100  # Commit every N tracks
 
 class LibraryManager:
     """
-    SQLAlchemy 2.0 based bulk importer for SoulSyncTrack objects.
+    SQLAlchemy 2.0 based bulk importer for EchosyncTrack objects.
     Uses local caching to minimize database round-trips.
     """
 
@@ -209,7 +209,7 @@ class LibraryManager:
 
         Args:
             session: SQLAlchemy session
-            identifiers: Dict of identifiers from SoulSyncTrack (key=source, value=id)
+            identifiers: Dict of identifiers from EchosyncTrack (key=source, value=id)
 
         Returns:
             Track object or None
@@ -285,14 +285,14 @@ class LibraryManager:
         return session.execute(stmt).scalars().first()
 
     def _upsert_track(
-        self, session: Session, track_data: SoulSyncTrack, artist: Artist, album: Optional[Album]
+        self, session: Session, track_data: EchosyncTrack, artist: Artist, album: Optional[Album]
     ) -> tuple[Track, bool]:
         """
         Insert or update a single track.
 
         Args:
             session: SQLAlchemy session
-            track_data: SoulSyncTrack object
+            track_data: EchosyncTrack object
             artist: Artist object
             album: Album object (optional)
 
@@ -534,17 +534,17 @@ class LibraryManager:
 
     def bulk_import(
         self,
-        tracks: Iterable[SoulSyncTrack],
+        tracks: Iterable[EchosyncTrack],
         progress_callback: Optional[Callable[[Dict[str, int]], None]] = None,
         total_count: Optional[int] = None
     ) -> int:
         """
-        Bulk import SoulSyncTrack objects into database.
+        Bulk import EchosyncTrack objects into database.
         Uses local caching and batched commits for efficiency.
         Supports generators to minimize memory usage.
 
         Args:
-            tracks: Iterable (list or generator) of SoulSyncTrack objects
+            tracks: Iterable (list or generator) of EchosyncTrack objects
             total_count: Optional total count for progress reporting (if tracks is a generator)
 
         Returns:

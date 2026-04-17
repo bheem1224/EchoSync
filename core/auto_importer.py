@@ -1,5 +1,5 @@
 """
-Auto-Import Service for SoulSync
+Auto-Import Service for Echosync
 
 Monitors download folder for new files and automatically:
 1. Parses filenames and generates fingerprints
@@ -33,7 +33,7 @@ import logging  # Add this import for logging levels
 
 from time_utils import utc_isoformat, utc_now
 
-from .matching_engine import parse_file, SoulSyncTrack
+from .matching_engine import parse_file, EchosyncTrack
 from services.match_service import MatchService, MatchContext
 from .file_handling.post_processor import PostProcessor
 from core.tiered_logger import tiered_logger
@@ -90,7 +90,7 @@ class AutoImporter:
             func=self._scan_and_move_files,
             interval_seconds=self.check_interval,
             enabled=self.enabled,  # Respect config enabled state
-            tags=["soulsync", "auto_import"]
+            tags=["echosync", "auto_import"]
         )
         tiered_logger.log(
             "normal", logging.INFO,
@@ -222,7 +222,7 @@ class AutoImporter:
 
         return True
 
-    def _has_valid_tags(self, track: SoulSyncTrack) -> bool:
+    def _has_valid_tags(self, track: EchosyncTrack) -> bool:
         """Check if track already has valid metadata tags"""
         # Simple heuristic: if we have artist, title, and album, consider it valid
         return bool(track.artist and track.title and track.album)

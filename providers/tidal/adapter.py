@@ -14,7 +14,7 @@ from core.file_handling.storage import get_storage_service
 
 logger = get_logger("tidal_adapter")
 
-# TidalAdapter class deprecated - use convert_tidal_track_to_soulsync instead
+# TidalAdapter class deprecated - use convert_tidal_track_to_echosync instead
 class TidalAdapter:
     def __init__(self, tidal_client=None):
         storage = get_storage_service()
@@ -146,7 +146,7 @@ try:
         scope=[PluginScope.SYNC, PluginScope.SEARCH],
         version="1.0.0",
         description="TIDAL Adapter providing Track stubs and enrichment",
-        author="SoulSync",
+        author="Echosync",
         priority=90,
     )
     register_plugin(decl)

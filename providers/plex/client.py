@@ -1,11 +1,11 @@
 """
 Plex Music Provider - Refactored
-Simplified implementation using SoulSyncTrack and new core features.
+Simplified implementation using EchosyncTrack and new core features.
 """
 
 from core.provider_base import ProviderBase
 from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
 from core.file_handling.path_mapper import PathMapper
 from core.health_check import register_health_check_job, HealthCheckResult
@@ -134,7 +134,7 @@ class PlexClient(ProviderBase):
         """Compatibility method used by sync service."""
         return self.ensure_connection()
 
-    def search_tracks(self, query: str, limit: int = 10) -> List[SoulSyncTrack]:
+    def search_tracks(self, query: str, limit: int = 10) -> List[EchosyncTrack]:
         """Compatibility wrapper for services expecting search_tracks()."""
         return self.search(query=query, type="track", limit=limit)
 
@@ -321,7 +321,7 @@ class PlexClient(ProviderBase):
             return False
 
     # ===== SYNC HELPERS =====
-    def _find_managed_playlist(self, desired_name: str, marker: str = "⇄", management_tag: str = "managed by SoulSync"):
+    def _find_managed_playlist(self, desired_name: str, marker: str = "⇄", management_tag: str = "managed by Echosync"):
         """Find a managed playlist by name using the 3-step rule:
 
         1) Base name matches when stripping marker
@@ -471,7 +471,7 @@ class PlexClient(ProviderBase):
         """Ensure managed playlist exists and overwrite with provided ratingKeys.
 
         Marker defaults to U+21C4 (⇄). Playlist is considered managed if either name contains marker
-        or summary includes "managed by SoulSync".
+        or summary includes "managed by Echosync".
         """
         if not self.ensure_connection() or not self.server or not self.music_library:
             return False
@@ -507,9 +507,9 @@ class PlexClient(ProviderBase):
                     f"Failed to route to managed account for Plex user_id '{target_user_id}': {routing_err}. Defaulting to main account."
                 )
 
-        management_tag = "managed by SoulSync"
+        management_tag = "managed by Echosync"
         if source_account_name:
-            management_tag = f"managed by SoulSync. Synced from {source_account_name}."
+            management_tag = f"managed by Echosync. Synced from {source_account_name}."
         create_name = f"{playlist_name} {marker}".strip()
 
         original_server = self.server
@@ -629,7 +629,7 @@ class PlexClient(ProviderBase):
 
     # ===== CORE METHODS =====
     
-    def search(self, query: str, type: str = "track", limit: int = 10) -> List[SoulSyncTrack]:
+    def search(self, query: str, type: str = "track", limit: int = 10) -> List[EchosyncTrack]:
         """Search for tracks in Plex library."""
         if not self.ensure_connection() or not self.music_library:
             logger.warning("Plex not connected or no music library")
@@ -641,7 +641,7 @@ class PlexClient(ProviderBase):
             
             for result in results:
                 if isinstance(result, PlexTrack):
-                    track = self._convert_track_to_soulsync(result)
+                    track = self._convert_track_to_echosync(result)
                     if track:
                         tracks.append(track)
             
@@ -652,7 +652,7 @@ class PlexClient(ProviderBase):
             logger.error(f"Error searching Plex: {e}")
             return []
     
-    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
+    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         """Fetch single track by Plex ratingKey.
 
         Plex identifies tracks by an integer ratingKey.  The int() cast lives
@@ -670,7 +670,7 @@ class PlexClient(ProviderBase):
         try:
             track = self.music_library.fetchItem(rk_int)
             if isinstance(track, PlexTrack):
-                return self._convert_track_to_soulsync(track)
+                return self._convert_track_to_echosync(track)
         except Exception as e:
             logger.error(f"Error fetching Plex track ratingKey={rk_int}: {e}")
 
@@ -722,7 +722,7 @@ class PlexClient(ProviderBase):
             logger.error(f"Error fetching playlists: {e}")
             return []
     
-    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
+    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
         """Get all tracks from a playlist."""
         if not self.ensure_connection() or not self.server:
             return []
@@ -733,7 +733,7 @@ class PlexClient(ProviderBase):
             
             for item in playlist.items():
                 if isinstance(item, PlexTrack):
-                    track = self._convert_track_to_soulsync(item)
+                    track = self._convert_track_to_echosync(item)
                     if track:
                         tracks.append(track)
             
@@ -783,7 +783,7 @@ class PlexClient(ProviderBase):
         
         return False
     
-    def get_all_tracks(self, limit: Optional[int] = None) -> List[SoulSyncTrack]:
+    def get_all_tracks(self, limit: Optional[int] = None) -> List[EchosyncTrack]:
         """Get all tracks from active music library."""
         if not self.ensure_connection() or not self.music_library:
             logger.warning("No active music library")
@@ -817,7 +817,7 @@ class PlexClient(ProviderBase):
                 
                 if isinstance(item, PlexTrack):
                     try:
-                        track = self._convert_track_to_soulsync(item)
+                        track = self._convert_track_to_echosync(item)
                         if track:
                             tracks.append(track)
                             successful_conversions += 1
@@ -919,8 +919,8 @@ class PlexClient(ProviderBase):
         
         return text, None
     
-    def _convert_track_to_soulsync(self, plex_track: PlexTrack) -> Optional[SoulSyncTrack]:
-        """Convert Plex track to SoulSyncTrack using factory method."""
+    def _convert_track_to_echosync(self, plex_track: PlexTrack) -> Optional[EchosyncTrack]:
+        """Convert Plex track to EchosyncTrack using factory method."""
         try:
             # Extract basic metadata
             title = getattr(plex_track, 'title', None)
@@ -1033,7 +1033,7 @@ class PlexClient(ProviderBase):
                 bitrate, file_format, plex_track_id
             )
             
-            # Direct instantiation of SoulSyncTrack
+            # Direct instantiation of EchosyncTrack
             # Extract technical metadata
             sample_rate = None
             bit_depth = None
@@ -1072,7 +1072,7 @@ class PlexClient(ProviderBase):
                     'raw_data': None # Avoid storing heavy object
                 })
 
-            track = SoulSyncTrack(
+            track = EchosyncTrack(
                 raw_title=title,
                 artist_name=artist,
                 album_title=album,
@@ -1096,13 +1096,13 @@ class PlexClient(ProviderBase):
             
             if track:
                 logger.debug(
-                    "Successfully created SoulSyncTrack: '%s' by '%s' with identifiers=%s",
+                    "Successfully created EchosyncTrack: '%s' by '%s' with identifiers=%s",
                     track.title,
                     track.artist_name,
                     track.identifiers,
                 )
             else:
-                logger.warning(f"create_soul_sync_track returned None for '{title}' by '{artist}'")
+                logger.warning(f"create_echo_sync_track returned None for '{title}' by '{artist}'")
             
             return track
 
@@ -1475,7 +1475,7 @@ class PlexClient(ProviderBase):
 
     def _track_to_interaction(self, plex_track: Any) -> Optional[UserTrackInteraction]:
         """Convert a Plex history or library item into a standardized interaction."""
-        converted = self._convert_track_to_soulsync(plex_track)
+        converted = self._convert_track_to_echosync(plex_track)
         if not converted:
             return None
 

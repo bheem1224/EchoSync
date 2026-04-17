@@ -292,7 +292,7 @@ def poll_oauth(session_id: str):
         try:
             headers = {
                 'Accept': 'application/json',
-                'X-Plex-Client-Identifier': pin_login._headers().get('X-Plex-Client-Identifier', 'SoulSync')
+                'X-Plex-Client-Identifier': pin_login._headers().get('X-Plex-Client-Identifier', 'Echosync')
             }
             # Explicitly request the PIN status from Plex
             resp = requests.get(f"https://plex.tv/api/v2/pins/{pin_login._id}", headers=headers, timeout=5)

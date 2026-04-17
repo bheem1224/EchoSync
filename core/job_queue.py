@@ -1,5 +1,5 @@
 """
-Lightweight job queue / task scheduler for SoulSync.
+Lightweight job queue / task scheduler for Echosync.
 - Supports periodic and one-off jobs
 - Enable/disable per job
 - Retry with backoff

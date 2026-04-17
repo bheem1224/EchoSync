@@ -1,6 +1,6 @@
-# SoulSync Application Overview
+# Echosync Application Overview
 
-**SoulSync** is an intelligent music collection manager and automated discovery platform. It bridges streaming services (Spotify, Tidal, YouTube) with local music libraries (Plex, Jellyfin, Navidrome) by automatically downloading, organizing, and enriching music with metadata.
+**Echosync** is an intelligent music collection manager and automated discovery platform. It bridges streaming services (Spotify, Tidal, YouTube) with local music libraries (Plex, Jellyfin, Navidrome) by automatically downloading, organizing, and enriching music with metadata.
 
 ---
 
@@ -65,7 +65,7 @@
 
 ### Design Philosophy
 
-**SoulSync follows a centralized, provider-agnostic architecture:**
+**Echosync follows a centralized, provider-agnostic architecture:**
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -106,9 +106,9 @@
 
 1. **Central Control**: Core module controls ALL scheduling, database access, and orchestration
 2. **Dumb Providers**: Providers are read-only data fetchers. They don't schedule jobs or write to DB
-3. **Universal Data Format**: All providers use `SoulSyncTrack` object for interoperability
+3. **Universal Data Format**: All providers use `EchosyncTrack` object for interoperability
 4. **Rate Limiting**: Centralized HTTP client enforces per-provider rate limits
-5. **Provider-Agnostic Core**: Core knows nothing about specific providers; works with SoulSyncTrack only
+5. **Provider-Agnostic Core**: Core knows nothing about specific providers; works with EchosyncTrack only
 6. **Graceful Degradation**: Fallback chains ensure service continues if one provider fails
 
 ---
@@ -525,7 +525,7 @@ Stored in `config.db` with encryption:
 
 ### Deduplication Strategy
 
-SoulSync uses **fingerprint-based deduplication** to identify identical audio:
+Echosync uses **fingerprint-based deduplication** to identify identical audio:
 
 1. **Fingerprint Generation**: Chromaprint hash of audio content
 2. **Comparison**: Two files with same fingerprint = same audio
@@ -583,7 +583,7 @@ SoulSync uses **fingerprint-based deduplication** to identify identical audio:
 
 ## Support & Resources
 
-- **GitHub**: https://github.com/Nezreka/SoulSync
+- **GitHub**: https://github.com/Nezreka/Echosync
 - **Documentation**: See `/docs` folder
 - **Issues**: Report bugs on GitHub Issues
 - **Configuration**: See `config.example.json`

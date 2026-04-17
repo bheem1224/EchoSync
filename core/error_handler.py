@@ -1,5 +1,5 @@
 """
-Centralized Error Handling Module for SoulSync
+Centralized Error Handling Module for Echosync
 
 This module provides utilities for managing exceptions, retries, and logging
 across the application. It is designed to integrate with the JobQueue,

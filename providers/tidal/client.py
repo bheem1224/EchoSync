@@ -361,7 +361,7 @@ class TidalClient(SyncServiceProvider):
                     self.send_response(200)
                     self.send_header('Content-type', 'text/html')
                     self.end_headers()
-                    self.wfile.write(b'<h1>Success!</h1><p>You can close this window and return to SoulSync.</p>')
+                    self.wfile.write(b'<h1>Success!</h1><p>You can close this window and return to Echosync.</p>')
                 elif 'error' in query_params:
                     # Handle OAuth errors
                     error = query_params.get('error', ['unknown'])[0]
@@ -513,7 +513,7 @@ class TidalClient(SyncServiceProvider):
                     headers = {
                         'Authorization': f'Bearer {self.access_token}',
                         'accept': 'application/vnd.api+json',
-                        'User-Agent': 'SoulSync/1.0'
+                        'User-Agent': 'Echosync/1.0'
                     }
                     params = {}
                     
@@ -565,7 +565,7 @@ class TidalClient(SyncServiceProvider):
             return []
         url = f"{self.base_url}/searchresults"
         params = {'query': query, 'type': 'tracks', 'limit': limit, 'countryCode': 'US'}
-        headers = {'Authorization': f'Bearer {self.access_token}', 'User-Agent': 'SoulSync/1.0'}
+        headers = {'Authorization': f'Bearer {self.access_token}', 'User-Agent': 'Echosync/1.0'}
         response = self._http.get(url, params=params, headers=headers)
         if response.status_code != 200:
             return []

@@ -41,7 +41,7 @@ class LRCLibClient:
             if LrcLibAPI is None:
                 raise ImportError("lrclib not available")
 
-            self.api = LrcLibAPI(user_agent="SoulSync/1.0")
+            self.api = LrcLibAPI(user_agent="Echosync/1.0")
             logger.debug("LRClib API client initialized")
         except ImportError:
             logger.warning("LRClib API not available - lyrics functionality disabled")

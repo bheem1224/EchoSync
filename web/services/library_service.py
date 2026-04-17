@@ -21,7 +21,7 @@ def _metadata_completeness(richness: str) -> str:
 
 
 def _get_database_size_mb() -> float:
-    """Get the size of the SoulSync music database in MB."""
+    """Get the size of the Echosync music database in MB."""
     try:
         db_path = config_manager.get('media_database_path') or Path(__file__).parent.parent.parent / 'config' / 'media_library.db'
         if isinstance(db_path, str):
@@ -106,7 +106,7 @@ class LibraryAdapter:
                 logger.error(f"Error processing provider {provider_name}: {e}")
                 continue
 
-        # Get actual database stats (what's been synced to SoulSync database)
+        # Get actual database stats (what's been synced to Echosync database)
         db_tracks = 0
         db_artists = 0
         db_albums = 0
@@ -133,7 +133,7 @@ class LibraryAdapter:
         artists = []
         albums = []
         
-        # Stats should reflect what's actually in the SoulSync database
+        # Stats should reflect what's actually in the Echosync database
         stats = {
             "synced_tracks": db_tracks,
             "synced_artists": db_artists,

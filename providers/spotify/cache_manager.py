@@ -198,11 +198,11 @@ class SpotifyCacheManager:
             return {pid: None for pid in playlist_ids}
 
     def get_cached_tracks(self, playlist_id: str) -> list | None:
-        """Return the list of ``SoulSyncTrack`` objects stored in *raw_data*, or
+        """Return the list of ``EchosyncTrack`` objects stored in *raw_data*, or
         ``None`` when the playlist has not been cached yet.
 
         The raw Spotify track items are re-converted so callers always receive
-        the same ``SoulSyncTrack`` objects that the live API would produce.
+        the same ``EchosyncTrack`` objects that the live API would produce.
         """
         try:
             from sqlalchemy.orm import sessionmaker
@@ -219,7 +219,7 @@ class SpotifyCacheManager:
             if not items:
                 return None
             # Import lazily to avoid circular deps at module load time
-            from core.matching_engine.soul_sync_track import SoulSyncTrack
+            from core.matching_engine.echo_sync_track import EchosyncTrack
             tracks = []
             for item in items:
                 track_obj = item.get('track')
@@ -228,7 +228,7 @@ class SpotifyCacheManager:
                 artists = track_obj.get('artists', [])
                 artist_name = artists[0].get('name', '') if artists else ''
                 album = track_obj.get('album', {})
-                t = SoulSyncTrack(
+                t = EchosyncTrack(
                     raw_title=track_obj.get('name', ''),
                     artist_name=artist_name,
                     album_title=(album.get('name') if isinstance(album, dict) else '') or '',

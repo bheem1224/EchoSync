@@ -2,7 +2,7 @@
 Test suite for the refactored split-database schema.
 
 Covers:
-- SoulSyncTrack.sync_id @property (MBID path and base64 fallback path)
+- EchosyncTrack.sync_id @property (MBID path and base64 fallback path)
 - ProviderStorageBox table-name sandboxing (prv_{name}_ prefix enforcement)
 - Operational tables (user_ratings) accepting and returning URN strings for sync_id
 """
@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import Column, Integer, MetaData, String, create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
-from core.matching_engine import SoulSyncTrack
+from core.matching_engine import EchosyncTrack
 from database.working_database import ProviderStorageBox, UserRating, WorkingBase
 
 
@@ -45,20 +45,20 @@ def memory_working_session(memory_working_engine):
 
 
 # ---------------------------------------------------------------------------
-# SoulSyncTrack.sync_id – MBID path
+# EchosyncTrack.sync_id – MBID path
 # ---------------------------------------------------------------------------
 
 
-class TestSoulSyncTrackSyncId:
-    """Unit tests for the SoulSyncTrack.sync_id computed property."""
+class TestEchosyncTrackSyncId:
+    """Unit tests for the EchosyncTrack.sync_id computed property."""
 
-    def test_soulsync_track_sync_id_mbid(self):
+    def test_echosync_track_sync_id_mbid(self):
         """
         When musicbrainz_id is present, it must be appended as a query parameter ?mbid=
         to the base meta sync_id. The MBID branch is removed.
         """
         mbid = "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d"
-        track = SoulSyncTrack(
+        track = EchosyncTrack(
             raw_title="Bohemian Rhapsody",
             artist_name="Queen",
             album_title="A Night at the Opera",
@@ -70,13 +70,13 @@ class TestSoulSyncTrackSyncId:
         expected_urn = f"ss:track:meta:{base_b64}?mbid={mbid}"
         assert track.sync_id == expected_urn
 
-    def test_soulsync_track_sync_id_mbid_takes_priority_over_metadata(self):
+    def test_echosync_track_sync_id_mbid_takes_priority_over_metadata(self):
         """
         Legacy MBID test modified for new format.
         MBID is now a parameter, not the primary namespace.
         """
         mbid = "3d9a8f4e-b12c-4567-a890-fedcba098765"
-        track = SoulSyncTrack(
+        track = EchosyncTrack(
             raw_title="Some Other Song",
             artist_name="Some Artist",
             album_title="Album",
@@ -87,10 +87,10 @@ class TestSoulSyncTrackSyncId:
         assert f"?mbid={mbid}" in track.sync_id
 
     # ---------------------------------------------------------------------------
-    # SoulSyncTrack.sync_id – base64 fallback path
+    # EchosyncTrack.sync_id – base64 fallback path
     # ---------------------------------------------------------------------------
 
-    def test_soulsync_track_sync_id_fallback(self):
+    def test_echosync_track_sync_id_fallback(self):
         """
         When musicbrainz_id is absent, sync_id must return a URN
         in the form  ss:track:meta:{base64(lowercase_artist|lowercase_title)}.
@@ -98,7 +98,7 @@ class TestSoulSyncTrackSyncId:
         The base64 payload is: f"{artist.lower()}|{title.lower()}"
         encoded as UTF-8 and returned as a standard (padded) base64 string.
         """
-        track = SoulSyncTrack(
+        track = EchosyncTrack(
             raw_title="Bohemian Rhapsody",
             artist_name="Queen",
             album_title="A Night at the Opera",
@@ -110,19 +110,19 @@ class TestSoulSyncTrackSyncId:
 
         assert track.sync_id == f"ss:track:meta:{expected_b64}"
 
-    def test_soulsync_track_sync_id_fallback_lowercases_input(self):
+    def test_echosync_track_sync_id_fallback_lowercases_input(self):
         """
         Mixed-case artist and title must be normalised to lowercase before
         encoding so that the same track always produces the same sync_id
         regardless of how the caller supplied the metadata.
         """
-        track_upper = SoulSyncTrack(
+        track_upper = EchosyncTrack(
             raw_title="STAIRWAY TO HEAVEN",
             artist_name="LED ZEPPELIN",
             album_title="IV",
             musicbrainz_id=None,
         )
-        track_lower = SoulSyncTrack(
+        track_lower = EchosyncTrack(
             raw_title="stairway to heaven",
             artist_name="led zeppelin",
             album_title="iv",
@@ -131,13 +131,13 @@ class TestSoulSyncTrackSyncId:
 
         assert track_upper.sync_id == track_lower.sync_id
 
-    def test_soulsync_track_sync_id_fallback_is_valid_base64(self):
+    def test_echosync_track_sync_id_fallback_is_valid_base64(self):
         """
         The embedded segment of a meta sync_id must be decodable as base64
         and must reconstruct the expected  artist|title  payload.
         """
         artist, title = "radiohead", "creep"
-        track = SoulSyncTrack(
+        track = EchosyncTrack(
             raw_title=title.title(),   # "Creep"  — to confirm lowercasing
             artist_name=artist.title(),  # "Radiohead"
             album_title="Pablo Honey",
@@ -300,7 +300,7 @@ class TestOperationalTablesStringSyncId:
         The fallback (base64-meta) URN format must also round-trip correctly,
         confirming the column has no length constraint that would truncate it.
         """
-        # Construct the same URN a SoulSyncTrack would produce for the
+        # Construct the same URN a EchosyncTrack would produce for the
         # meta fallback path, and verify it survives a database round-trip.
         payload = "the beatles|hey jude"
         b64 = base64.b64encode(payload.encode("utf-8")).decode("ascii")

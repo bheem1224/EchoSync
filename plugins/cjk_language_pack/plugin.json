@@ -3,7 +3,7 @@
   "name": "CJK Language Pack",
   "description": "Solves the Anime/Drama OST Problem: expands CJK queries, scores via Pinyin/Romaji transliteration, and persists script-variant aliases entirely offline.",
   "version": "2.4.0",
-  "author": "SoulSync",
+  "author": "Echosync",
   "requirements": [
     "opencc-python-reimplemented",
     "pypinyin",

@@ -1,4 +1,4 @@
-# Docker ignore file for SoulSync WebUI
+# Docker ignore file for Echosync WebUI
 
 # Git
 .git

@@ -11,7 +11,7 @@ from core.provider import (
     ProviderRegistry,
 )
 from core.request_manager import RateLimitConfig
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger
 
 logger = get_logger("provider.musicbrainz")
@@ -42,7 +42,7 @@ class MusicBrainzClient(ProviderBase):
         self.http.rate = RateLimitConfig(requests_per_second=1.0)
         self.http._session.headers.update(
             {
-                "User-Agent": "SoulSync/0.1.0 ( https://github.com/soulsync/soulsync )",
+                "User-Agent": "Echosync/0.1.0 ( https://github.com/echosync/echosync )",
                 "Accept": "application/json",
             }
         )
@@ -52,7 +52,7 @@ class MusicBrainzClient(ProviderBase):
     def _fetch_artist_track_dicts(self, artist_name: str) -> List[Dict[str, Any]]:
         """Cached paginated recording fetch returning JSON-serialisable dicts.
 
-        Separating the API calls from SoulSyncTrack construction keeps the
+        Separating the API calls from EchosyncTrack construction keeps the
         provider_cache round-trip (JSON → SQLite → JSON) lossless.  Called
         exclusively by get_artist_tracks.
         """
@@ -151,16 +151,16 @@ class MusicBrainzClient(ProviderBase):
                 deduped[key] = d
         return list(deduped.values())
 
-    def get_artist_tracks(self, artist_name: str) -> List[SoulSyncTrack]:
+    def get_artist_tracks(self, artist_name: str) -> List[EchosyncTrack]:
         """Fetch a full-ish artist tracklist from MusicBrainz recordings search.
 
-        The discovery engine uses SoulSyncTrack.sync_id to diff these results
+        The discovery engine uses EchosyncTrack.sync_id to diff these results
         against local libraries, so tracks must be created through the standard
         factory path to ensure deterministic IDs.
         """
-        tracks: List[SoulSyncTrack] = []
+        tracks: List[EchosyncTrack] = []
         for d in self._fetch_artist_track_dicts(artist_name):
-            track_obj = self.create_soul_sync_track(
+            track_obj = self.create_echo_sync_track(
                 title=d["title"],
                 artist=d["artist"],
                 album=d["album"],
@@ -248,7 +248,7 @@ class MusicBrainzClient(ProviderBase):
             logger.warning(f"MusicBrainz search_metadata exception for '{query}': {exc}")
             return []
 
-    def search_by_isrc(self, isrc: str) -> Optional[SoulSyncTrack]:
+    def search_by_isrc(self, isrc: str) -> Optional[EchosyncTrack]:
         """Implement ProviderBase.search_by_isrc via the MusicBrainz ISRC endpoint."""
         isrc = str(isrc or "").strip().upper()
         if not isrc:
@@ -286,7 +286,7 @@ class MusicBrainzClient(ProviderBase):
             except (TypeError, ValueError):
                 duration_ms = None
 
-            return self.create_soul_sync_track(
+            return self.create_echo_sync_track(
                 title=str(recording.get("title") or ""),
                 artist=artist_str,
                 album=str(first_release.get("title") or "") or None,
@@ -463,16 +463,16 @@ class MusicBrainzClient(ProviderBase):
         type: str = "track",
         limit: int = 10,
         quality_profile: Optional[Dict[str, Any]] = None,
-    ) -> List[SoulSyncTrack]:
+    ) -> List[EchosyncTrack]:
         if type != "track":
             return []
         return self.get_artist_tracks(query)[:limit]
 
-    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
+    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         metadata = self.get_metadata(track_id)
         if not metadata:
             return None
-        return self.create_soul_sync_track(
+        return self.create_echo_sync_track(
             title=metadata.get("title") or "",
             artist=metadata.get("artist") or "",
             album=metadata.get("album") or "Unknown Album",
@@ -492,7 +492,7 @@ class MusicBrainzClient(ProviderBase):
     def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         return []
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
+    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
         return []
 
     def get_active_access_token(self, account_id: Optional[int] = None) -> Optional[str]:
@@ -570,7 +570,7 @@ class MusicBrainzClient(ProviderBase):
         try:
             resp = self.http.post(
                 f"{self.api_base}/recording/{mbid}",
-                params={"client": "SoulSync-0.1.0-https://github.com/soulsync/soulsync"},
+                params={"client": "Echosync-0.1.0-https://github.com/echosync/echosync"},
                 data=xml_body,
                 headers={
                     "Authorization": f"Bearer {access_token}",

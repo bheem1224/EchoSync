@@ -9,7 +9,7 @@ from database.music_database import MusicDatabase
 from core.tiered_logger import get_logger
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import ScoringProfile
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine.text_utils import normalize_title as _normalize_candidate_title
 from core.job_queue import job_queue
 from core.event_bus import event_bus
@@ -567,7 +567,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             if version_match:
                                 edition_candidate = version_match.group(0)
 
-                        candidate_track = SoulSyncTrack(
+                        candidate_track = EchosyncTrack(
                             raw_title=raw_title_candidate,
                             artist_name=candidate_row[4],
                             album_title=candidate_row[7] or "",
@@ -965,7 +965,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         if version_match:
                                             edition_candidate = version_match.group(0)
 
-                                    candidate_track = SoulSyncTrack(
+                                    candidate_track = EchosyncTrack(
                                         raw_title=raw_title_candidate,
                                         artist_name=candidate_row[4],
                                         album_title=candidate_row[7] or "",
@@ -1184,16 +1184,16 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
 
         duplicate_matches = {k: v for k, v in matched_map.items() if len(v) > 1}
         if duplicate_matches and logger.isEnabledFor(logging.DEBUG):
-            logger.debug("[system] - Duplicate match analysis: found %d SoulSync tracks matched by multiple source tracks", len(duplicate_matches))
-            for soul_id, entries in duplicate_matches.items():
+            logger.debug("[system] - Duplicate match analysis: found %d Echosync tracks matched by multiple source tracks", len(duplicate_matches))
+            for echo_id, entries in duplicate_matches.items():
                 try:
                     lines = []
                     for e in entries:
                         src_id = e.get("source_identifier") or "<unknown_source_id>"
                         lines.append(f"{src_id} ('{e.get('title')}' by '{e.get('artist')}')")
-                    logger.debug(f"[system] - Duplicate match: {', '.join([f'{l} matched SoulSyncTrack {soul_id}' for l in lines])}")
+                    logger.debug(f"[system] - Duplicate match: {', '.join([f'{l} matched EchosyncTrack {echo_id}' for l in lines])}")
                 except Exception as dup_err:
-                    logger.debug(f"[system] - Duplicate match formatting failed for SoulSyncTrack {soul_id}: {dup_err}")
+                    logger.debug(f"[system] - Duplicate match formatting failed for EchosyncTrack {echo_id}: {dup_err}")
     except Exception as dup_all_err:
         logger.debug(f"[system] - Duplicate match analysis failed: {dup_all_err}")
 
@@ -1616,7 +1616,7 @@ def download_missing_tracks():
     
     try:
         from services.download_manager import get_download_manager
-        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        from core.matching_engine.echo_sync_track import EchosyncTrack
         
         download_manager = get_download_manager()
         success_count = 0
@@ -1629,7 +1629,7 @@ def download_missing_tracks():
                 # Prefer full serialized source track when present so metadata survives queueing.
                 source_track_payload = track_info.get("source_track")
                 if isinstance(source_track_payload, dict):
-                    track = SoulSyncTrack.from_dict(source_track_payload)
+                    track = EchosyncTrack.from_dict(source_track_payload)
                 else:
                     duration_ms = track_info.get("duration_ms")
                     if duration_ms is None:
@@ -1640,8 +1640,8 @@ def download_missing_tracks():
                     if source_identifier:
                         identifiers["spotify"] = str(source_identifier)
 
-                    # Create SoulSyncTrack from fallback metadata, preserving ISRC when provided.
-                    track = SoulSyncTrack(
+                    # Create EchosyncTrack from fallback metadata, preserving ISRC when provided.
+                    track = EchosyncTrack(
                         raw_title=track_info.get("title"),
                         artist_name=track_info.get("artist"),
                         album_title=track_info.get("album") or "",

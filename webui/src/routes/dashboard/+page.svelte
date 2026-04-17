@@ -55,7 +55,7 @@
         // Get stats from the API response
         const stats = response.data.stats || {};
         
-        // Use synced_tracks/artists/albums (what's actually in SoulSync database)
+        // Use synced_tracks/artists/albums (what's actually in Echosync database)
         dbStats.tracks = stats.synced_tracks || 0;
         dbStats.artists = stats.synced_artists || 0;
         dbStats.albums = stats.synced_albums || 0;
@@ -183,7 +183,7 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard • SoulSync</title>
+  <title>Dashboard • Echosync</title>
 </svelte:head>
 
 <section class="page">

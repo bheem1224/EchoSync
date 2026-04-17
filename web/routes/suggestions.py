@@ -300,7 +300,7 @@ def approve_suggestion():
     
     Request body:
     {
-        "track": { ... },  # SoulSyncTrack object
+        "track": { ... },  # EchosyncTrack object
         "account_id": int,
         "playlist_name": "Suggestions for You"  # optional
     }
@@ -317,11 +317,11 @@ def approve_suggestion():
         # Queue the track for download
         dm = get_download_manager()
         
-        # Create a simple SoulSyncTrack from the payload
-        from core.content_models import SoulSyncTrack
+        # Create a simple EchosyncTrack from the payload
+        from core.content_models import EchosyncTrack
         
         try:
-            track = SoulSyncTrack.from_dict(track_data)
+            track = EchosyncTrack.from_dict(track_data)
         except Exception as e:
             logger.warning(f"Failed to parse track from payload: {e}")
             return jsonify({'error': 'Invalid track data'}), 400

@@ -5,7 +5,7 @@ from pathlib import Path
 import asyncio
 
 from services.download_manager import DownloadManager
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from database.music_database import Track, Artist, Album, MusicDatabase
 from database.working_database import Download, ReviewTask, WorkingDatabase
 
@@ -37,7 +37,7 @@ class TestDownloadManagerLogic:
             session.commit()
 
         # 2. Action: Attempt to queue "Track A"
-        track_to_download = SoulSyncTrack(
+        track_to_download = EchosyncTrack(
             raw_title="Track A",
             artist_name="The Artist",
             album_title="Some Album"
@@ -56,7 +56,7 @@ class TestDownloadManagerLogic:
         manager.work_db = mock_work_db
 
         # 1. Setup: Add "Track B" to library AND download queue
-        track_obj = SoulSyncTrack(
+        track_obj = EchosyncTrack(
             raw_title="Track B",
             artist_name="The Artist",
             album_title="Some Album"
@@ -83,7 +83,7 @@ class TestDownloadManagerLogic:
             # Queue entry (simulating stale state)
             download = Download(
                 sync_id=track_obj.sync_id,
-                soul_sync_track=track_obj.to_dict(),
+                echo_sync_track=track_obj.to_dict(),
                 status="queued"
             )
             session.add(download)
@@ -106,7 +106,7 @@ class TestDownloadManagerLogic:
         manager.db = mock_db
         manager.work_db = mock_work_db
 
-        track_obj = SoulSyncTrack(
+        track_obj = EchosyncTrack(
             raw_title="Track C",
             artist_name="The Artist",
             album_title="Some Album"
@@ -116,7 +116,7 @@ class TestDownloadManagerLogic:
             # Add item in terminal failure state
             download = Download(
                 sync_id=track_obj.sync_id,
-                soul_sync_track=track_obj.to_dict(),
+                echo_sync_track=track_obj.to_dict(),
                 status="failed_max_retries"
             )
             session.add(download)

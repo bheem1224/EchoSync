@@ -4,7 +4,7 @@ Verification tests for Phase 2 Memory Optimization.
 
 import pytest
 from unittest.mock import MagicMock, patch, call
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from database.bulk_operations import LibraryManager
 from providers.spotify.client import SpotifyClient
 from services.sync_service import PlaylistSyncService, SpotifyPlaylist
@@ -20,7 +20,7 @@ class TestBulkImportGenerator:
         # Generator function yielding tracks
         def track_generator():
             for i in range(5):
-                yield SoulSyncTrack(
+                yield EchosyncTrack(
                     raw_title=f"Track {i}",
                     artist_name="Artist",
                     album_title="Album"

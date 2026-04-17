@@ -1,5 +1,5 @@
 """
-TrackParser Service - Converts raw filenames/strings into SoulSyncTrack objects
+TrackParser Service - Converts raw filenames/strings into EchosyncTrack objects
 
 This service handles:
 1. Regex-based parsing of artist/title/version information
@@ -14,7 +14,7 @@ import re
 from typing import Optional, List, Dict, Set
 from dataclasses import dataclass
 from pathlib import Path
-from .soul_sync_track import SoulSyncTrack, QualityTag
+from .echo_sync_track import EchosyncTrack, QualityTag
 from .fingerprinting import FingerprintGenerator, FingerprintCache
 
 
@@ -30,7 +30,7 @@ class ParseConfig:
 
 
 class TrackParser:
-    """Parser for converting raw filename/string input into SoulSyncTrack objects"""
+    """Parser for converting raw filename/string input into EchosyncTrack objects"""
 
     # Regex patterns for common filename formats
     PATTERNS = {
@@ -117,15 +117,15 @@ class TrackParser:
         """Set the database path for fingerprint caching"""
         self.fingerprint_cache = FingerprintCache(database_path)
 
-    def parse_filename(self, raw_string: str) -> Optional[SoulSyncTrack]:
+    def parse_filename(self, raw_string: str) -> Optional[EchosyncTrack]:
         """
-        Parse a raw filename/string into a SoulSyncTrack object
+        Parse a raw filename/string into a EchosyncTrack object
 
         Args:
             raw_string: Raw filename or track description
 
         Returns:
-            SoulSyncTrack object if parsing succeeds, None otherwise
+            EchosyncTrack object if parsing succeeds, None otherwise
         """
         if not raw_string or not isinstance(raw_string, str):
             return None
@@ -173,13 +173,13 @@ class TrackParser:
         if self.config.normalize_text:
             parsed_data = self._normalize_parsed_data(parsed_data)
 
-        # Build SoulSyncTrack
+        # Build EchosyncTrack
         try:
             album_title = parsed_data.get('album')
             if not album_title:
                 album_title = ""
 
-            track = SoulSyncTrack(
+            track = EchosyncTrack(
                 raw_title=parsed_data.get('title', ''),
                 artist_name=parsed_data.get('artist', ''),
                 album_title=album_title,
@@ -197,7 +197,7 @@ class TrackParser:
             return None
 
         except Exception as e:
-            print(f"Error creating SoulSyncTrack: {e}")
+            print(f"Error creating EchosyncTrack: {e}")
             return None
 
     def _try_parse_patterns(self, working_string: str) -> Optional[Dict[str, str]]:
@@ -357,12 +357,12 @@ class TrackParser:
         return data
 
 
-def parse_track(raw_string: str, config: Optional[ParseConfig] = None) -> Optional[SoulSyncTrack]:
+def parse_track(raw_string: str, config: Optional[ParseConfig] = None) -> Optional[EchosyncTrack]:
     """Convenience function to parse a track with default settings"""
     parser = TrackParser(config)
     return parser.parse_filename(raw_string)
 
-def parse_file(file_path: str, config: Optional[ParseConfig] = None, generate_fingerprint: bool = True) -> Optional[SoulSyncTrack]:
+def parse_file(file_path: str, config: Optional[ParseConfig] = None, generate_fingerprint: bool = True) -> Optional[EchosyncTrack]:
     """
     Parse a file path and optionally generate fingerprint
 
@@ -372,7 +372,7 @@ def parse_file(file_path: str, config: Optional[ParseConfig] = None, generate_fi
         generate_fingerprint: Whether to generate Chromaprint fingerprint
 
     Returns:
-        SoulSyncTrack with parsed metadata and optional fingerprint
+        EchosyncTrack with parsed metadata and optional fingerprint
     """
     parser = TrackParser(config)
     

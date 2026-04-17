@@ -237,7 +237,7 @@ class MusicDatabase:
     """Helper for creating the engine/session and managing the schema."""
 
     def __init__(self, database_path: Optional[str] = None) -> None:
-        data_dir = os.getenv("SOULSYNC_DATA_DIR")
+        data_dir = os.getenv("ECHOSYNC_DATA_DIR")
         if database_path:
             resolved_path = Path(database_path)
         elif data_dir:
@@ -340,9 +340,9 @@ class MusicDatabase:
     def search_canonical_fuzzy(self, title: str, artist: Optional[str] = None, limit: int = 10) -> List:
         """Fuzzy search canonical tracks by title and optional artist substring.
 
-        Returns a list of ``SoulSyncTrack`` objects (each has a ``to_dict()`` method).
+        Returns a list of ``EchosyncTrack`` objects (each has a ``to_dict()`` method).
         """
-        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        from core.matching_engine.echo_sync_track import EchosyncTrack
         results = []
         with self.session_scope() as session:
             query = (
@@ -355,7 +355,7 @@ class MusicDatabase:
                 query = query.filter(Artist.name.ilike(f"%{artist}%"))
             tracks = query.limit(limit).all()
             for t in tracks:
-                results.append(SoulSyncTrack(
+                results.append(EchosyncTrack(
                     raw_title=t.title,
                     artist_name=t.artist.name,
                     album_title=t.album.title if t.album else "",
@@ -380,9 +380,9 @@ class MusicDatabase:
         """Search canonical tracks by global identifiers (ISRC, MBID, AcoustID).
 
         The ``acoustid`` parameter filters via the ``audio_fingerprints`` table.
-        Returns a list of ``SoulSyncTrack`` objects.
+        Returns a list of ``EchosyncTrack`` objects.
         """
-        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        from core.matching_engine.echo_sync_track import EchosyncTrack
         from sqlalchemy import or_
         results = []
         filters = []
@@ -405,7 +405,7 @@ class MusicDatabase:
                 .all()
             )
             for t in tracks:
-                results.append(SoulSyncTrack(
+                results.append(EchosyncTrack(
                     raw_title=t.title,
                     artist_name=t.artist.name,
                     album_title=t.album.title if t.album else "",
@@ -479,7 +479,7 @@ class MusicDatabase:
         # Local imports to avoid potential circular dependency at module level
         from core.matching_engine.matching_engine import WeightedMatchingEngine
         from core.matching_engine.scoring_profile import ExactSyncProfile
-        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        from core.matching_engine.echo_sync_track import EchosyncTrack
         from sqlalchemy import or_
         import re
 
@@ -487,7 +487,7 @@ class MusicDatabase:
         engine = WeightedMatchingEngine(profile)
 
         # Create source track object
-        source_track = SoulSyncTrack(
+        source_track = EchosyncTrack(
             raw_title=title,
             artist_name=artist,
             album_title=""
@@ -513,8 +513,8 @@ class MusicDatabase:
             ).limit(50).all()
 
             for candidate in candidates:
-                # Convert DB track to SoulSyncTrack for comparison
-                cand_obj = SoulSyncTrack(
+                # Convert DB track to EchosyncTrack for comparison
+                cand_obj = EchosyncTrack(
                     raw_title=candidate.title,
                     artist_name=candidate.artist.name,
                     album_title=candidate.album.title if candidate.album else "",

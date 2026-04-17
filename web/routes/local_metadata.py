@@ -1,7 +1,7 @@
 """
 REST API routes for the Local Metadata provider.
 
-Purpose: acts as SoulSync's outward-facing API translator so external apps
+Purpose: acts as Echosync's outward-facing API translator so external apps
 (e.g. native players, third-party tools) can connect to and query the local
 music library without direct database access.
 

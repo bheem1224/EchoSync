@@ -1871,27 +1871,27 @@ class JellyfinClient(MediaServerProvider):
             logger.error(f"Error setting metadata-only mode: {e}")
             return False
     
-    def get_album_tracks_as_soulsync(self, album) -> List:
+    def get_album_tracks_as_echosync(self, album) -> List:
         """
-        Get all tracks from a Jellyfin album converted to SoulSyncTrack objects.
+        Get all tracks from a Jellyfin album converted to EchosyncTrack objects.
         
         Args:
             album: Jellyfin album object
             
         Returns:
-            List of SoulSyncTrack objects with ISRC/MBID extracted
+            List of EchosyncTrack objects with ISRC/MBID extracted
         """
-        from core.matching_engine.soul_sync_track import SoulSyncTrack
-        from providers.jellyfin.adapter import convert_jellyfin_track_to_soulsync
+        from core.matching_engine.echo_sync_track import EchosyncTrack
+        from providers.jellyfin.adapter import convert_jellyfin_track_to_echosync
         
-        soul_sync_tracks = []
+        echo_sync_tracks = []
         
         try:
             # Get album ID from the album object
             album_id = getattr(album, 'Id', getattr(album, 'id', None))
             if not album_id:
                 logger.warning("Could not get album ID for Jellyfin album")
-                return soul_sync_tracks
+                return echo_sync_tracks
             
             # Get tracks for this album
             tracks = self.get_tracks_for_album(album_id)
@@ -1900,9 +1900,9 @@ class JellyfinClient(MediaServerProvider):
             failed_count = 0
             for track in tracks:
                 try:
-                    soul_track = convert_jellyfin_track_to_soulsync(track)
-                    if soul_track:
-                        soul_sync_tracks.append(soul_track)
+                    echo_track = convert_jellyfin_track_to_echosync(track)
+                    if echo_track:
+                        echo_sync_tracks.append(echo_track)
                     else:
                         failed_count += 1
                         logger.warning(f"Converter returned None for Jellyfin track at album {album_id}")
@@ -1911,9 +1911,9 @@ class JellyfinClient(MediaServerProvider):
                     logger.error(f"Error converting Jellyfin track: {track_err}")
             
             if failed_count > 0:
-                logger.warning(f"⚠️ Jellyfin album '{getattr(album, 'title', 'Unknown')}': {len(tracks)} tracks, {len(soul_sync_tracks)} converted, {failed_count} failed")
+                logger.warning(f"⚠️ Jellyfin album '{getattr(album, 'title', 'Unknown')}': {len(tracks)} tracks, {len(echo_sync_tracks)} converted, {failed_count} failed")
                 
         except Exception as e:
-            logger.error(f"Error getting Jellyfin album tracks as SoulSyncTrack: {e}")
+            logger.error(f"Error getting Jellyfin album tracks as EchosyncTrack: {e}")
         
-        return soul_sync_tracks
+        return echo_sync_tracks

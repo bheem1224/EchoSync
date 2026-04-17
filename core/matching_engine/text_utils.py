@@ -2,7 +2,7 @@
 Text normalization and parsing utilities for track metadata.
 
 These functions are provider-agnostic and reused by all providers
-to normalize track data before creating SoulSyncTrack objects.
+to normalize track data before creating EchosyncTrack objects.
 """
 
 import re
@@ -17,7 +17,7 @@ def normalize_chars(text: Optional[str]) -> str:
 
     This is a lightweight, case-preserving, structure-preserving pass — no lowercasing,
     no accent removal, no word removal.  It is safe to apply to display-facing strings
-    and is called from SoulSyncTrack.__post_init__ so that EVERY track (whether created
+    and is called from EchosyncTrack.__post_init__ so that EVERY track (whether created
     from a streaming provider or from a raw DB row) carries consistent characters before
     entering the matching engine or SQL search layer.
 

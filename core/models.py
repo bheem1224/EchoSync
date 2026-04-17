@@ -1,5 +1,5 @@
 """
-Canonical data models for SoulSync.
+Canonical data models for Echosync.
 
 The Track model is the single source of truth used by ALL providers.
 Providers never own data - they only create stubs, enrich fields, or attach references.
@@ -57,7 +57,7 @@ class ProviderRef:
 
 
 @dataclass
-class SoulSyncTrack:
+class EchosyncTrack:
     """
     Canonical Track model - single source of truth for all providers.
     
@@ -252,7 +252,7 @@ class SoulSyncTrack:
         }
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'SoulSyncTrack':
+    def from_dict(cls, data: Dict[str, Any]) -> 'EchosyncTrack':
         """Create Track from dictionary (database retrieval)."""
         # Parse provider_refs
         provider_refs = {}
@@ -310,7 +310,7 @@ class SoulSyncTrack:
 class Track:
     """
     Placeholder for the Track class.
-    This should be implemented with the actual logic or replaced with SoulSyncTrack.
+    This should be implemented with the actual logic or replaced with EchosyncTrack.
     """
     track_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     title: Optional[str] = None
@@ -326,7 +326,7 @@ class TrackAudioFeatures:
 
     All float fields are normalised to 0.0–1.0 except `tempo` (BPM).
     """
-    track_id: str           # Corresponds to SoulSyncTrack.track_id
+    track_id: str           # Corresponds to EchosyncTrack.track_id
     source: str             # Provider that supplied the data, e.g. "spotify", "listenbrainz"
 
     tempo: Optional[float] = None           # Beats per minute (e.g. 120.4)

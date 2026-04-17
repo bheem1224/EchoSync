@@ -27,7 +27,7 @@ from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.provider import ServiceRegistry
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from database.working_database import get_working_database, ReviewTask
 
 logger = get_logger("services.metadata_enhancer")
@@ -158,7 +158,7 @@ class MetadataEnhancerService:
         from core.file_handling.path_mapper import PathMapper
         from core.matching_engine.scoring_profile import ExactSyncProfile
         from core.matching_engine.fingerprinting import FingerprintGenerator
-        from core.matching_engine.soul_sync_track import SoulSyncTrack
+        from core.matching_engine.echo_sync_track import EchosyncTrack
         from core.matching_engine.matching_engine import WeightedMatchingEngine
         from core.provider import ServiceRegistry
         from pathlib import Path
@@ -532,11 +532,11 @@ class MetadataEnhancerService:
                         logger.debug(f"Step 5 (Text Fallback): Searching MusicBrainz for {artist_name_str} - {track.title}")
                         try:
                             query = f"{artist_name_str} {track.title}"
-                            # Ensure we use standard search which returns List[SoulSyncTrack]
+                            # Ensure we use standard search which returns List[EchosyncTrack]
                             results = metadata_provider.search(query, type="track", limit=5)
                             if results:
                                 # Strict match evaluation
-                                file_track = SoulSyncTrack(
+                                file_track = EchosyncTrack(
                                     raw_title=track.title,
                                     artist_name=artist_name_str,
                                     album_title=track.album.title if track.album else "",
@@ -741,10 +741,10 @@ class MetadataEnhancerService:
                     results = metadata_provider.search_metadata(query, limit=10)
                     
                     if results:
-                        # Convert file to SoulSyncTrack for matching
+                        # Convert file to EchosyncTrack for matching
                         file_track = self._filename_to_track(file_path, duration_ms)
                         
-                        # Convert search results to SoulSyncTracks
+                        # Convert search results to EchosyncTracks
                         candidate_tracks = []
                         for result in results:
                             candidate = self._search_result_to_track(result)
@@ -936,8 +936,8 @@ class MetadataEnhancerService:
         auto_importer = get_auto_importer()
         auto_importer.finalize_import(file_path, metadata)
 
-    def _filename_to_track(self, file_path: Path, duration_ms: Optional[int]) -> SoulSyncTrack:
-        """Convert filename to SoulSyncTrack for matching using provider_base helper."""
+    def _filename_to_track(self, file_path: Path, duration_ms: Optional[int]) -> EchosyncTrack:
+        """Convert filename to EchosyncTrack for matching using provider_base helper."""
         from core.track_parser import TrackParser
         from core.provider_base import ProviderBase
         
@@ -946,7 +946,7 @@ class MetadataEnhancerService:
         parsed = parser.parse_filename(file_path.stem)
         
         # Use the standard factory method from ProviderBase
-        return ProviderBase.create_soul_sync_track(
+        return ProviderBase.create_echo_sync_track(
             title=(parsed.title if parsed else None) or file_path.stem,
             artist=(parsed.artist_name if parsed else None) or 'Unknown Artist',
             album=(parsed.album_title if parsed else None) or '',
@@ -955,12 +955,12 @@ class MetadataEnhancerService:
             source='local_file'
         )
     
-    def _search_result_to_track(self, result: Dict[str, Any]) -> Optional[SoulSyncTrack]:
-        """Convert MusicBrainz search result to SoulSyncTrack using provider_base helper."""
+    def _search_result_to_track(self, result: Dict[str, Any]) -> Optional[EchosyncTrack]:
+        """Convert MusicBrainz search result to EchosyncTrack using provider_base helper."""
         from core.provider_base import ProviderBase
         
         try:
-            return ProviderBase.create_soul_sync_track(
+            return ProviderBase.create_echo_sync_track(
                 title=result.get('title', ''),
                 artist=result.get('artist', ''),
                 album=result.get('album', ''),

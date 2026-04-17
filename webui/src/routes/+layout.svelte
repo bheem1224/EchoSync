@@ -35,7 +35,7 @@
       const response = await apiClient.get('/migration-status');
       if (response.data?.v2_1_migration_triggered) {
         showMigrationModal = true;
-        migrationMessage = response.data.message || 'SoulSync has been upgraded!';
+        migrationMessage = response.data.message || 'Echosync has been upgraded!';
       }
     } catch (error) {
       console.error('Failed to check migration status:', error);

@@ -1,5 +1,5 @@
 """
-Rate Limiter Module for SoulSync
+Rate Limiter Module for Echosync
 
 This module provides a generic rate limiter and a decorator for rate-limiting function calls.
 """

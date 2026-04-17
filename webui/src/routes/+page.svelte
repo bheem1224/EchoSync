@@ -8,7 +8,7 @@
 </script>
 
 <svelte:head>
-  <title>SoulSync</title>
+  <title>Echosync</title>
 </svelte:head>
 
 <div class="redirect">

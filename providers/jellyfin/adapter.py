@@ -10,14 +10,14 @@ from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
 from core.file_handling.storage import get_storage_service
 from core.provider_base import ProviderBase
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 
 logger = get_logger("jellyfin_adapter")
 
 
-def convert_jellyfin_track_to_soulsync(jellyfin_track) -> Optional[SoulSyncTrack]:
+def convert_jellyfin_track_to_echosync(jellyfin_track) -> Optional[EchosyncTrack]:
     """
-    Convert Jellyfin track object to SoulSyncTrack.
+    Convert Jellyfin track object to EchosyncTrack.
     
     Extracts Jellyfin metadata including audio quality info, ISRC, and MusicBrainz IDs.
     
@@ -25,7 +25,7 @@ def convert_jellyfin_track_to_soulsync(jellyfin_track) -> Optional[SoulSyncTrack
         jellyfin_track: Jellyfin track object or wrapper (JellyfinTrack)
         
     Returns:
-        SoulSyncTrack with all available metadata, or None if conversion fails
+        EchosyncTrack with all available metadata, or None if conversion fails
     """
     try:
         # Get raw data dict if this is a wrapper object
@@ -119,7 +119,7 @@ def convert_jellyfin_track_to_soulsync(jellyfin_track) -> Optional[SoulSyncTrack
             year = getattr(jellyfin_track, 'year', None)
         
         # Use ProviderBase factory method for normalization
-        return ProviderBase.create_soul_sync_track(
+        return ProviderBase.create_echo_sync_track(
             title=title,
             artist=artist,
             album=album,
@@ -139,7 +139,7 @@ def convert_jellyfin_track_to_soulsync(jellyfin_track) -> Optional[SoulSyncTrack
         )
     
     except Exception as e:
-        logger.error(f"Error converting Jellyfin track to SoulSyncTrack: {e}", exc_info=True)
+        logger.error(f"Error converting Jellyfin track to EchosyncTrack: {e}", exc_info=True)
         return None
 
 
@@ -245,7 +245,7 @@ try:
         scope=[PluginScope.LIBRARY],
         version="1.0.0",
         description="Jellyfin adapter populating local file metadata for canonical tracks",
-        author="SoulSync",
+        author="Echosync",
         priority=90,
     )
     register_plugin(decl)

@@ -29,7 +29,7 @@ def upgrade() -> None:
     op.create_table('downloads',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('sync_id', sa.String(), nullable=False),
-    sa.Column('soul_sync_track', sa.JSON(), nullable=False),
+    sa.Column('echo_sync_track', sa.JSON(), nullable=False),
     sa.Column('status', sa.String(), nullable=False),
     sa.Column('provider_id', sa.String(), nullable=True),
     sa.Column('retry_count', sa.Integer(), nullable=False),

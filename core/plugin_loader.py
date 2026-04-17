@@ -1,4 +1,4 @@
-"""Dynamic plugin loader for SoulSync providers and plugins."""
+"""Dynamic plugin loader for Echosync providers and plugins."""
 
 import ast
 import importlib
@@ -125,7 +125,7 @@ class PluginLoader:
         logger.info("Starting plugin discovery...")
         logger.debug(f"Using plugins directory: {self.plugins_dir}")
 
-        safe_mode = os.environ.get('SOULSYNC_SAFE_MODE') == '1'
+        safe_mode = os.environ.get('ECHOSYNC_SAFE_MODE') == '1'
 
         # 1. Load Core Providers
         self._scan_directory(self.providers_dir, source_type='core')

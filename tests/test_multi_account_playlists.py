@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from flask import Flask
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 
 # reuse client fixture from other tests
 
@@ -170,7 +170,7 @@ def test_download_missing_hydrates_from_full_source_track_payload(client, monkey
 
     monkeypatch.setattr('services.download_manager.get_download_manager', lambda: FakeDownloadManager())
 
-    source_track = SoulSyncTrack(
+    source_track = EchosyncTrack(
         raw_title='My Song',
         artist_name='My Artist',
         album_title='My Album',

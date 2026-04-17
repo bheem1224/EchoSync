@@ -2,7 +2,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from sqlalchemy import func
 from database.music_database import get_database, Track, AudioFingerprint, Artist
 from core.tiered_logger import get_logger
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
 from services.download_manager import get_download_manager
 import base64
@@ -265,7 +265,7 @@ class DuplicateHygieneService:
             manager_config = config_manager.get("manager", {}) or {}
             upgrade_quality_profile_id = manager_config.get("upgrade_quality_profile_id")
 
-        soul_track = SoulSyncTrack(
+        echo_track = EchosyncTrack(
             raw_title=track.title,
             artist_name=track.artist.name,
             album_title=track.album.title if track.album else "",
@@ -280,7 +280,7 @@ class DuplicateHygieneService:
         )
 
         dm = get_download_manager()
-        return dm.queue_download(soul_track, quality_profile_id=upgrade_quality_profile_id)
+        return dm.queue_download(echo_track, quality_profile_id=upgrade_quality_profile_id)
 
     def is_track_trending(
         self,

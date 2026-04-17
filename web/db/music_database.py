@@ -102,20 +102,20 @@ class MusicDatabaseWrapper:
 
     # === Track Operations ===
     # === Track Operations ===
-    def insert_or_update_soul_sync_track(
+    def insert_or_update_echo_sync_track(
         self,
-        soul_sync_track,
+        echo_sync_track,
         album_id: str,
         artist_id: str,
         server_source: str = 'plex'
     ) -> bool:
         """New primary method - pass through to underlying database"""
-        return self._db.insert_or_update_soul_sync_track(
-            soul_sync_track, album_id, artist_id, server_source
+        return self._db.insert_or_update_echo_sync_track(
+            echo_sync_track, album_id, artist_id, server_source
         )
     
     def insert_or_update_track(self, plex_track, album_id: int, artist_id: int) -> bool:
-        """DEPRECATED: use insert_or_update_soul_sync_track instead"""
+        """DEPRECATED: use insert_or_update_echo_sync_track instead"""
         return self._db.insert_or_update_track(plex_track, album_id, artist_id)
 
     def insert_or_update_media_track(
@@ -128,7 +128,7 @@ class MusicDatabaseWrapper:
         musicbrainz_id: str = None,
         acoustid: str = None
     ) -> bool:
-        """DEPRECATED: use insert_or_update_soul_sync_track instead"""
+        """DEPRECATED: use insert_or_update_echo_sync_track instead"""
         return self._db.insert_or_update_media_track(
             track_obj, album_id, artist_id, server_source,
             isrc=isrc, musicbrainz_id=musicbrainz_id, acoustid=acoustid

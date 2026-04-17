@@ -33,7 +33,7 @@ def get_settings():
                 auth_url = f"{base_url.rstrip('/')}/Users/AuthenticateByName"
                 headers = {
                     'Content-Type': 'application/json',
-                    'X-Emby-Authorization': 'MediaBrowser Client="SoulSync", Device="SoulSync", DeviceId="soulsync-1", Version="1.0.0"'
+                    'X-Emby-Authorization': 'MediaBrowser Client="Echosync", Device="Echosync", DeviceId="echosync-1", Version="1.0.0"'
                 }
                 auth_data = {
                     'Username': username,
@@ -138,7 +138,7 @@ def test_connection():
         auth_url = f"{base_url.rstrip('/')}/Users/AuthenticateByName"
         headers = {
             'Content-Type': 'application/json',
-            'X-Emby-Authorization': 'MediaBrowser Client="SoulSync", Device="SoulSync", DeviceId="soulsync-1", Version="1.0.0"'
+            'X-Emby-Authorization': 'MediaBrowser Client="Echosync", Device="Echosync", DeviceId="echosync-1", Version="1.0.0"'
         }
         auth_data = {
             'Username': username,
@@ -157,7 +157,7 @@ def test_connection():
                 access_token = data.get('AccessToken', '')
                 info_url = f"{base_url.rstrip('/')}/System/Info"
                 info_headers = {
-                    'X-Emby-Authorization': f'MediaBrowser Client="SoulSync", Device="SoulSync", DeviceId="soulsync-1", Version="1.0.0", Token="{access_token}"'
+                    'X-Emby-Authorization': f'MediaBrowser Client="Echosync", Device="Echosync", DeviceId="echosync-1", Version="1.0.0", Token="{access_token}"'
                 }
                 info_response = requests.get(info_url, headers=info_headers, timeout=5)
                 if info_response.status_code == 200:

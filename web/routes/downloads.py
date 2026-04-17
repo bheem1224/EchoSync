@@ -37,8 +37,8 @@ def get_queue():
             
             queue_items = []
             for download in downloads:
-                # Deserialize the SoulSyncTrack from JSON
-                track_data = download.soul_sync_track
+                # Deserialize the EchosyncTrack from JSON
+                track_data = download.echo_sync_track
                 
                 queue_items.append({
                     "id": download.id,

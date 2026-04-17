@@ -43,7 +43,7 @@ def ensure_ssl_certs(data_dir: str = "data") -> tuple[str, str]:
 
         # Generate public certificate
         subject = issuer = x509.Name([
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "SoulSync"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Echosync"),
             x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
         ])
 

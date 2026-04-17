@@ -1,5 +1,5 @@
 """
-Core Provider Module for SoulSync.
+Core Provider Module for Echosync.
 
 This module consolidates the internal machinery for the provider system, including:
 1. The `Provider` Protocol (Contract).
@@ -22,7 +22,7 @@ from datetime import datetime
 from core.enums import Capability
 from core.provider_base import ProviderBase
 from core.content_models import ContentChanges
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger
 
 logger = get_logger("core.provider")
@@ -37,13 +37,13 @@ class Provider(Protocol):
     Strict Contract that all future providers (Python or Rust) must adhere to.
     """
 
-    def search_tracks(self, query: str) -> List[SoulSyncTrack]:
+    def search_tracks(self, query: str) -> List[EchosyncTrack]:
         """
         Search for tracks based on a query string.
         """
         ...
 
-    def get_track_by_id(self, item_id: str) -> Optional[SoulSyncTrack]:
+    def get_track_by_id(self, item_id: str) -> Optional[EchosyncTrack]:
         """
         Retrieve a specific track by its ID.
         """

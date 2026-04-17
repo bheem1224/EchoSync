@@ -189,7 +189,7 @@ class VGMdbProxy:
         url = f"{_BASE_URL}/search/albums/{encoded}?format=json"
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "SoulSync/2.4.0"},
+            headers={"User-Agent": "Echosync/2.4.0"},
         )
         with urllib.request.urlopen(req, timeout=self._timeout) as resp:
             if resp.status != 200:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-SoulSync Database Module
+Echosync Database Module
 
 This module provides database functionality for storing and managing
 music library metadata from Plex. It includes:

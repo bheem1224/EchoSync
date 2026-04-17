@@ -272,7 +272,7 @@ def test_track_to_interaction_extracts_user_rating_and_play_count():
     converted.artist_name = 'Artist'
     converted.title = 'Song'
     converted.identifiers = {'plex': '100'}
-    client._convert_track_to_soulsync = lambda _: converted
+    client._convert_track_to_echosync = lambda _: converted
 
     plex_track = MagicMock()
     plex_track.ratingKey = '100'
@@ -294,7 +294,7 @@ def test_track_to_interaction_treats_zero_rating_as_unrated():
     converted.artist_name = 'Artist'
     converted.title = 'Song'
     converted.identifiers = {'plex': '100'}
-    client._convert_track_to_soulsync = lambda _: converted
+    client._convert_track_to_echosync = lambda _: converted
 
     plex_track = MagicMock()
     plex_track.ratingKey = '100'

@@ -35,7 +35,7 @@ def get_settings():
                     'u': username,
                     'p': password,
                     'v': '1.16.1',
-                    'c': 'SoulSync',
+                    'c': 'Echosync',
                     'f': 'json'
                 }
                 response = requests.get(auth_url, params=params, timeout=5)
@@ -141,7 +141,7 @@ def test_connection():
             'u': username,
             'p': password,
             'v': '1.16.1',
-            'c': 'SoulSync',
+            'c': 'Echosync',
             'f': 'json'
         }
         

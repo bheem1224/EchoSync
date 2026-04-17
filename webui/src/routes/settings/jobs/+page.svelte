@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>Jobs • SoulSync</title>
+  <title>Jobs • Echosync</title>
 </svelte:head>
 
 <section class="page">

@@ -6,8 +6,8 @@ version: '3.8'
 services:
   backend:
     build: .
-    image: soulsync:latest
-    container_name: soulsync_backend
+    image: echosync:latest
+    container_name: echosync_backend
     environment:
       # User/Group ID configuration (backend_entry.py is gone, the service now
       # launches `run_api.py` directly as in the Dockerfile)
@@ -18,9 +18,9 @@ services:
       - UVICORN_PORT=5000
       - PYTHONPATH=/app
       # Set the config directory for settings and encrypted secrets
-      - SOULSYNC_CONFIG_DIR=/config
+      - ECHOSYNC_CONFIG_DIR=/config
       # Set the data directory for database and logs
-      - SOULSYNC_DATA_DIR=/data
+      - ECHOSYNC_DATA_DIR=/data
       # Set timezone
       - TZ=America/New_York
     ports:
@@ -57,11 +57,11 @@ services:
           cpus: '0.5'
           memory: 512M
     networks:
-      - soulsync-network
+      - echosync-network
 
   frontend:
     image: node:20-slim
-    container_name: soulsync_frontend
+    container_name: echosync_frontend
     ports:
       - "5173:5173"
     working_dir: /app/webui
@@ -71,8 +71,8 @@ services:
     depends_on:
       - backend
     networks:
-      - soulsync-network
+      - echosync-network
 
 networks:
-  soulsync-network:
+  echosync-network:
     driver: bridge

@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 from core.provider_base import ProviderBase
 from core.provider import ProviderCapabilities
 from core.enums import Capability
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 
 class LocalPlayerProvider(ProviderBase):
     name = 'local_player'
@@ -19,10 +19,10 @@ class LocalPlayerProvider(ProviderBase):
     def authenticate(self, **kwargs) -> bool:
         return True
 
-    def search(self, query: str, type: str = "track", limit: int = 10, quality_profile: Optional[Dict[str, Any]] = None) -> List[SoulSyncTrack]:
+    def search(self, query: str, type: str = "track", limit: int = 10, quality_profile: Optional[Dict[str, Any]] = None) -> List[EchosyncTrack]:
         return []
 
-    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
+    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         return None
 
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
@@ -34,7 +34,7 @@ class LocalPlayerProvider(ProviderBase):
     def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         return []
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
+    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
         return []
 
     def is_configured(self) -> bool:

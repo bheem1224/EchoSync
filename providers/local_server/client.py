@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Generator
 from core.provider_base import ProviderBase
 from core.provider import ProviderCapabilities
 from core.enums import Capability
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
 from core.file_handling.local_io import LocalFileHandler
 from core.tiered_logger import get_logger
@@ -26,9 +26,9 @@ class LocalServerProvider(ProviderBase):
         ]
     )
 
-    def get_library_tracks(self) -> Generator[SoulSyncTrack, None, None]:
+    def get_library_tracks(self) -> Generator[EchosyncTrack, None, None]:
         """
-        Yields SoulSyncTrack objects by crawling the local library.
+        Yields EchosyncTrack objects by crawling the local library.
         Extracts duration, isrc, title, and artist via local tags.
         """
         library_dir = config_manager.get_library_dir()
@@ -101,7 +101,7 @@ class LocalServerProvider(ProviderBase):
 
                     isrc = tags.get('isrc')
 
-                    track = self.create_soul_sync_track(
+                    track = self.create_echo_sync_track(
                         title=title,
                         artist=artist,
                         duration_ms=duration_ms,
@@ -117,7 +117,7 @@ class LocalServerProvider(ProviderBase):
                 except Exception as e:
                     logger.debug(f"Failed to extract tags for {path}, falling back to filename: {e}")
 
-                    track = self.create_soul_sync_track(
+                    track = self.create_echo_sync_track(
                         title=path.stem,
                         artist="Unknown Artist",
                         file_path=str(path),
@@ -140,10 +140,10 @@ class LocalServerProvider(ProviderBase):
     def authenticate(self, **kwargs) -> bool:
         return True
 
-    def search(self, query: str, type: str = "track", limit: int = 10, quality_profile: Optional[Dict[str, Any]] = None) -> List[SoulSyncTrack]:
+    def search(self, query: str, type: str = "track", limit: int = 10, quality_profile: Optional[Dict[str, Any]] = None) -> List[EchosyncTrack]:
         return []
 
-    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
+    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         return None
 
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
@@ -155,7 +155,7 @@ class LocalServerProvider(ProviderBase):
     def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         return []
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
+    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
         return []
 
     def is_configured(self) -> bool:

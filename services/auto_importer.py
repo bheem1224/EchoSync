@@ -146,7 +146,7 @@ class AutoImportService:
             interval_seconds=10800,  # 3 hours fallback — real-time coverage is via Watchdog
             start_after=600,  # Wait 10 minutes before first poll so boot completes first
             enabled=True,
-            tags=["soulsync", "import"],
+            tags=["echosync", "import"],
             max_retries=3
         )
 

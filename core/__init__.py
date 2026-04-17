@@ -2,15 +2,15 @@
 Core matching system module
 
 Main components:
-- SoulSyncTrack: Central data model for track metadata
-- TrackParser: Converts raw filenames to SoulSyncTrack objects
+- EchosyncTrack: Central data model for track metadata
+- TrackParser: Converts raw filenames to EchosyncTrack objects
 - WeightedMatchingEngine: 5-step gating scoring algorithm
 - ScoringProfile: Strategy pattern for different match contexts
 - @provider_cache: Decorator for caching provider queries
 """
 
 from .matching_engine import (
-    SoulSyncTrack,
+    EchosyncTrack,
     QualityTag,
     TrackParser,
     ParseConfig,
@@ -50,7 +50,7 @@ from .matching_engine import (
 
 __all__ = [
     # Data models
-    'SoulSyncTrack',
+    'EchosyncTrack',
     'QualityTag',
     # Parsing
     'TrackParser',

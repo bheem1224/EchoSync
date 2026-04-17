@@ -19,7 +19,7 @@ from typing import List, Optional, Dict, Tuple
 from enum import Enum
 from dataclasses import dataclass
 
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine.track_parser import TrackParser
 from core.matching_engine.matching_engine import WeightedMatchingEngine, MatchResult
 from core.matching_engine.scoring_profile import ProfileFactory, ProfileType, ScoringProfile
@@ -38,7 +38,7 @@ class MatchContext(Enum):
 @dataclass
 class MatchcandiDate:
     """Represents a match candidate with result"""
-    candidate_track: SoulSyncTrack
+    candidate_track: EchosyncTrack
     confidence_score: float
     match_result: MatchResult
     rank: int = 0  # Rank in results (1 = best)
@@ -57,8 +57,8 @@ class MatchService:
 
     def find_best_match(
         self,
-        target: SoulSyncTrack,
-        candidates: List[SoulSyncTrack],
+        target: EchosyncTrack,
+        candidates: List[EchosyncTrack],
         context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
     ) -> Optional[MatchcandiDate]:
         """
@@ -125,8 +125,8 @@ class MatchService:
 
     def find_top_matches(
         self,
-        target: SoulSyncTrack,
-        candidates: List[SoulSyncTrack],
+        target: EchosyncTrack,
+        candidates: List[EchosyncTrack],
         context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
         top_n: int = 5,
         min_confidence: float = 70.0,
@@ -182,8 +182,8 @@ class MatchService:
 
     def compare_tracks(
         self,
-        track_a: SoulSyncTrack,
-        track_b: SoulSyncTrack,
+        track_a: EchosyncTrack,
+        track_b: EchosyncTrack,
         context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
     ) -> MatchResult:
         """
@@ -202,15 +202,15 @@ class MatchService:
         matcher = WeightedMatchingEngine(profile)
         return matcher.calculate_match(track_a, track_b)
 
-    def parse_filename(self, raw_string: str) -> Optional[SoulSyncTrack]:
+    def parse_filename(self, raw_string: str) -> Optional[EchosyncTrack]:
         """
-        Parse a raw filename into SoulSyncTrack (cached)
+        Parse a raw filename into EchosyncTrack (cached)
 
         Args:
             raw_string: Raw filename or track description
 
         Returns:
-            Parsed SoulSyncTrack or None
+            Parsed EchosyncTrack or None
         """
         import hashlib
         key_str = f"parse|{raw_string}"
@@ -219,9 +219,9 @@ class MatchService:
         cached_data = self.cache.get(cache_key)
         if cached_data:
             try:
-                # Ensure we return a SoulSyncTrack object, not a dict
+                # Ensure we return a EchosyncTrack object, not a dict
                 if isinstance(cached_data, dict):
-                    return SoulSyncTrack.from_dict(cached_data)
+                    return EchosyncTrack.from_dict(cached_data)
             except Exception as e:
                 logger.warning(f"Failed to deserialize cached track: {e}")
 
@@ -234,7 +234,7 @@ class MatchService:
     def parse_and_match(
         self,
         raw_string: str,
-        candidates: List[SoulSyncTrack],
+        candidates: List[EchosyncTrack],
         context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
     ) -> Optional[MatchcandiDate]:
         """
@@ -271,8 +271,8 @@ class MatchService:
 
     def get_match_stats(
         self,
-        target: SoulSyncTrack,
-        candidates: List[SoulSyncTrack],
+        target: EchosyncTrack,
+        candidates: List[EchosyncTrack],
         context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
     ) -> Dict:
         """
@@ -373,8 +373,8 @@ def get_match_service() -> MatchService:
 
 
 def find_best_match(
-    target: SoulSyncTrack,
-    candidates: List[SoulSyncTrack],
+    target: EchosyncTrack,
+    candidates: List[EchosyncTrack],
     context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
 ) -> Optional[MatchcandiDate]:
     """Convenience function using global MatchService"""
@@ -384,7 +384,7 @@ def find_best_match(
 
 def parse_and_match(
     raw_string: str,
-    candidates: List[SoulSyncTrack],
+    candidates: List[EchosyncTrack],
     context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
 ) -> Optional[MatchcandiDate]:
     """Convenience function using global MatchService"""

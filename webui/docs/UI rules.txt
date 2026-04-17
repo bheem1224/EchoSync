@@ -1,4 +1,4 @@
-ROLE: Expert Svelte Frontend Developer & UI/UX Designer. PROJECT: SoulSync (Music Sync & Manager). STACK: Svelte (Latest), CSS Variables for Theming.
+ROLE: Expert Svelte Frontend Developer & UI/UX Designer. PROJECT: Echosync (Music Sync & Manager). STACK: Svelte (Latest), CSS Variables for Theming.
 CORE DESIGN PHILOSOPHY: Modern, clean, data-dense but breathable. Avoid "noisy" UI. Prioritize visual hierarchy—users should see what they are editing clearly.
 
 1. COLOR PALETTE (DARK MODE DEFAULT) Use CSS variables for all colors to support future theming.

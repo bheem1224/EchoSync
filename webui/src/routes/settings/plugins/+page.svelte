@@ -54,7 +54,7 @@
 </script>
 
 <svelte:head>
-  <title>Installed Plugins • SoulSync</title>
+  <title>Installed Plugins • Echosync</title>
 </svelte:head>
 
 <!-- Restart-required dialog -->
@@ -71,7 +71,7 @@
       <div class="dialog-icon">🔄</div>
       <h2 class="dialog-title">Restart Required</h2>
       <p class="dialog-body">
-        Your plugin changes have been saved to <code>config.json</code>. SoulSync must be restarted
+        Your plugin changes have been saved to <code>config.json</code>. Echosync must be restarted
         for plugins to be fully loaded or unloaded — running hooks will not change until the
         process restarts.
       </p>
@@ -85,7 +85,7 @@
     <div>
       <h1>Installed Plugins</h1>
       <p class="subtitle">
-        System plugins extend or modify SoulSync's behaviour. Unlike Music Providers — which are
+        System plugins extend or modify Echosync's behaviour. Unlike Music Providers — which are
         data sources such as Spotify or Slskd — plugins operate on data that has already been
         fetched (e.g. CJK transliteration, custom matching rules).
       </p>

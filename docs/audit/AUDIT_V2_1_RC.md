@@ -39,7 +39,7 @@ I have audited the Svelte UI components in the `webui/src/` directory for async/
 **Status**: ✅ Fixed
 
 *   **Payload Alignment**:
-    *   `SoulSyncTrack` and the payloads handled in `metadata_review.py` naturally extract `isrc` and `acoustid_id`.
+    *   `EchosyncTrack` and the payloads handled in `metadata_review.py` naturally extract `isrc` and `acoustid_id`.
     *   **Bug found**: `acoustid_id` was missing entirely from the `Track` schema in `database/music_database.py`. The matching engine relies on this for accurate identification, but it was previously only tracked in `AudioFingerprint` or lost during bulk operations if the track itself needed direct linkage.
     *   **Fix Applied**:
         1. Added `acoustid_id: Mapped[Optional[str]] = mapped_column(String)` to the `Track` ORM model.

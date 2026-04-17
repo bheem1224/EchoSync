@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 from core.provider_base import ProviderBase
 from core.provider import ProviderCapabilities
 from core.enums import Capability
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 
 
 class LocalMetadataProvider(ProviderBase):
@@ -27,7 +27,7 @@ class LocalMetadataProvider(ProviderBase):
         type: str = "track",
         limit: int = 10,
         quality_profile: Optional[Dict[str, Any]] = None,
-    ) -> List[SoulSyncTrack]:
+    ) -> List[EchosyncTrack]:
         """Search the local MusicDatabase by title (and optionally artist).
 
         ``query`` may be a plain title string or an ``"artist - title"``
@@ -45,7 +45,7 @@ class LocalMetadataProvider(ProviderBase):
 
         return db.search_canonical_fuzzy(title=title, artist=artist, limit=limit)
 
-    def get_track(self, track_id: str) -> Optional[SoulSyncTrack]:
+    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         """Fetch a single track from the local MusicDatabase by its integer ID."""
         from database.music_database import get_database, Track
         from sqlalchemy.orm import joinedload
@@ -65,7 +65,7 @@ class LocalMetadataProvider(ProviderBase):
             )
             if not t:
                 return None
-            return self.create_soul_sync_track(
+            return self.create_echo_sync_track(
                 title=t.title,
                 artist=t.artist.name if t.artist else "Unknown Artist",
                 album=t.album.title if t.album else "",
@@ -90,7 +90,7 @@ class LocalMetadataProvider(ProviderBase):
     def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         return []
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[SoulSyncTrack]:
+    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
         return []
 
     def is_configured(self) -> bool:

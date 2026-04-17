@@ -20,7 +20,7 @@ def get_cipher() -> Fernet:
         return _cipher_instance
     
     # Try to load from file
-    config_dir_env = os.environ.get('SOULSYNC_CONFIG_DIR')
+    config_dir_env = os.environ.get('ECHOSYNC_CONFIG_DIR')
     if config_dir_env:
         config_dir = Path(config_dir_env)
     else:

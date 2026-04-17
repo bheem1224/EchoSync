@@ -129,7 +129,7 @@ class Download(WorkingBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    soul_sync_track: Mapped[dict] = mapped_column(JSON, nullable=False)  # Serialized SoulSyncTrack
+    echo_sync_track: Mapped[dict] = mapped_column(JSON, nullable=False)  # Serialized EchosyncTrack
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -297,7 +297,7 @@ class SuggestionStagingQueue(WorkingBase):
     # NULL for playlist-gap suggestions where the track does not yet exist locally.
     music_db_track_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
 
-    # Deterministic SoulSync sync_id (``ss:track:meta:{hash}``) used to identify a
+    # Deterministic Echosync sync_id (``ss:track:meta:{hash}``) used to identify a
     # track that is absent from the local library.  NULL for near-miss / vibe rows
     # where ``music_db_track_id`` is the canonical identifier instead.
     sync_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
@@ -383,7 +383,7 @@ class WorkingDatabase:
     """Helper for creating the engine/session and managing the working schema."""
 
     def __init__(self, database_path: Optional[str] = None) -> None:
-        data_dir = os.getenv("SOULSYNC_DATA_DIR")
+        data_dir = os.getenv("ECHOSYNC_DATA_DIR")
         if database_path:
             resolved_path = Path(database_path)
         elif data_dir:
@@ -428,13 +428,13 @@ class WorkingDatabase:
     def get_system_user_id(self) -> int:
         """Get or create the system user ID for automated flags."""
         with self.session_scope() as session:
-            user = session.query(User).filter(User.username == "SoulSync System").first()
+            user = session.query(User).filter(User.username == "Echosync System").first()
             if user:
                 return user.id
 
             # Create system user
             system_user = User(
-                username="SoulSync System",
+                username="Echosync System",
                 provider_identifier="system_local_admin",
                 provider="local"
             )

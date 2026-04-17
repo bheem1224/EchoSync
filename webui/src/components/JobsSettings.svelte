@@ -12,7 +12,7 @@
   // Category definitions
   const categories = {
     user: { label: 'User Tasks', order: 1, description: 'User-configured tasks and plugin operations' },
-    soulsync: { label: 'SoulSync Tasks', order: 2, description: 'Recurring background tasks managed by SoulSync' },
+    echosync: { label: 'Echosync Tasks', order: 2, description: 'Recurring background tasks managed by Echosync' },
     system: { label: 'System Tasks', order: 3, description: 'Core system operations and maintenance' }
   };
 
@@ -46,12 +46,12 @@
   function categorizeJob(job) {
     // Categorize based on tags
     if (job.tags && job.tags.includes('system')) return 'system';
-    if (job.tags && job.tags.includes('soulsync')) return 'soulsync';
+    if (job.tags && job.tags.includes('echosync')) return 'echosync';
     if (job.plugin || (job.tags && job.tags.includes('user'))) return 'user';
     
     // Fallback: heuristic based on job name
     if (job.name.startsWith('health_check') || job.name.startsWith('system:')) return 'system';
-    if (job.name.startsWith('download:') || job.name.startsWith('scan:') || job.name.startsWith('provider:')) return 'soulsync';
+    if (job.name.startsWith('download:') || job.name.startsWith('scan:') || job.name.startsWith('provider:')) return 'echosync';
     
     return 'user';
   }
@@ -166,7 +166,7 @@
 </script>
 
 <svelte:head>
-  <title>Jobs • SoulSync</title>
+  <title>Jobs • Echosync</title>
 </svelte:head>
 
 <div class="jobs-container">

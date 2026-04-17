@@ -32,7 +32,7 @@ jobs:
           # CRITICAL FIX 1: Pass commit message securely to handle multiline markdown and quotes
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          BASE_IMAGE="ghcr.io/${{ github.repository_owner }}/soulsync"
+          BASE_IMAGE="ghcr.io/${{ github.repository_owner }}/echosync"
           
           # Check for version string securely using the env var
           if echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then

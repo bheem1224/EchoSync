@@ -1,5 +1,5 @@
 """
-Unified Logger Module for SoulSync
+Unified Logger Module for Echosync
 
 This module provides a centralized logging utility that integrates:
 - Standard Python logging with `get_logger(name)`
@@ -244,7 +244,7 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
 
     # Use Env vars if provided
     if not log_dir:
-        log_dir = os.getenv("SOULSYNC_LOG_DIR", "data/logs") # Default relative to cwd if not absolute
+        log_dir = os.getenv("ECHOSYNC_LOG_DIR", "data/logs") # Default relative to cwd if not absolute
 
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.NOTSET) # Capture everything, handlers will filter
@@ -301,7 +301,7 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
 
         # If the caller supplied an explicit log_file path (legacy config key), also
         # write to that exact file at DEBUG level.  External log viewers (e.g.
-        # logterminal) are usually pointed at this named path (e.g. SoulSync.log)
+        # logterminal) are usually pointed at this named path (e.g. Echosync.log)
         # and would otherwise see nothing because the tiered files use different names.
         if log_file:
             try:

@@ -1,10 +1,10 @@
 from typing import Any, Dict
 
-from core.models import SoulSyncTrack
+from core.models import EchosyncTrack
 
 
 def test_core_model_to_dict_includes_extended_metadata_fields():
-    track = SoulSyncTrack(
+    track = EchosyncTrack(
         title='Serialize Me',
         artists=['Artist'],
         album='Album',
@@ -60,7 +60,7 @@ def test_core_model_from_dict_hydrates_extended_metadata_fields():
         'fingerprint_confidence': 0.87,
     }
 
-    track = SoulSyncTrack.from_dict(payload)
+    track = EchosyncTrack.from_dict(payload)
 
     assert track.duration_ms == 222000
     assert track.isrc == 'USRC10000002'

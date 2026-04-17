@@ -2,15 +2,15 @@
 Core matching engine module
 
 Main components:
-- SoulSyncTrack: Central data model for track metadata
+- EchosyncTrack: Central data model for track metadata
 - QualityTag: Audio quality indicators
-- TrackParser: Converts raw filenames to SoulSyncTrack objects
+- TrackParser: Converts raw filenames to EchosyncTrack objects
 - WeightedMatchingEngine: 5-step gating scoring algorithm
 - ScoringProfile: Strategy pattern for different match contexts
 - FingerprintMatcher: Audio fingerprinting for acoustic matching
 """
 
-from .soul_sync_track import SoulSyncTrack, QualityTag
+from .echo_sync_track import EchosyncTrack, QualityTag
 from .track_parser import TrackParser, ParseConfig, parse_file
 from .matching_engine import WeightedMatchingEngine, MatchResult
 from .scoring_profile import (
@@ -26,7 +26,7 @@ from .fingerprinting import FingerprintMatcher
 
 __all__ = [
     # Data models
-    'SoulSyncTrack',
+    'EchosyncTrack',
     'QualityTag',
     
     # Parsing

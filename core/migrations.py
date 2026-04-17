@@ -42,7 +42,7 @@ def _handle_v2_1_0_migration() -> bool:
     """
     global _v2_1_migration_triggered
     
-    data_dir = os.getenv("SOULSYNC_DATA_DIR")
+    data_dir = os.getenv("ECHOSYNC_DATA_DIR")
     if data_dir:
         base_path = Path(data_dir)
     else:

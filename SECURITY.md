@@ -1,8 +1,8 @@
-# Security Policy for SoulSync
+# Security Policy for Echosync
 
 ## Supported Versions
 
-SoulSync is actively maintained. Security updates and patches are provided for the current major stable release. 
+Echosync is actively maintained. Security updates and patches are provided for the current major stable release. 
 
 | Version | Supported          |
 | ------- | ------------------ |

@@ -265,7 +265,7 @@
 </script>
 
 <svelte:head>
-    <title>Suggestion Engine Dashboard • SoulSync</title>
+    <title>Suggestion Engine Dashboard • Echosync</title>
 </svelte:head>
 
 <svelte:window

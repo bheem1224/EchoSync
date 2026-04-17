@@ -219,7 +219,7 @@ def discover_new_tracks(user_id: str) -> List[dict]:
         logging.getLogger("discovery_engine").error("ListenBrainz provider not found.")
         return []
 
-    # get_similar_artists should return a list of SoulSyncTrack or similar dictionary objects from those artists
+    # get_similar_artists should return a list of EchosyncTrack or similar dictionary objects from those artists
     # Depending on implementation, we assume it returns top tracks by similar artists
     if not hasattr(lb_provider, 'get_similar_artists'):
         import logging

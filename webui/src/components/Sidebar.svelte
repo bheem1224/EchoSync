@@ -63,7 +63,7 @@
 
 <nav class="sidebar glass">
   <div class="sidebar-header">
-    <div class="logo">SoulSync</div>
+    <div class="logo">Echosync</div>
     <p class="app-subtitle">Music Sync & Manager</p>
   </div>
 

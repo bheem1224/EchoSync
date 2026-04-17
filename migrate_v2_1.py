@@ -15,7 +15,7 @@ from core.tiered_logger import get_logger
 logger = get_logger("migrate_v2_1")
 
 def run_migration():
-    data_dir = os.getenv("SOULSYNC_DATA_DIR")
+    data_dir = os.getenv("ECHOSYNC_DATA_DIR")
     if data_dir:
         db_path = Path(data_dir) / "music_library.db"
     else:

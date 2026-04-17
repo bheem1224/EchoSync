@@ -71,7 +71,7 @@
 </script>
 
 <svelte:head>
-  <title>Search • SoulSync</title>
+  <title>Search • Echosync</title>
 </svelte:head>
 
 <section class="page">

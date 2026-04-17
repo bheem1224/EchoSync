@@ -12,7 +12,7 @@ Coverage:
   • ISRC match in 'searching' state    → status becomes 'cancelled'
   • ISRC match in 'downloading' state  → status becomes 'cancelled'
   • ISRC mismatch                      → download left untouched
-  • Cancellation reason recorded       → soul_sync_track dict gets the key
+  • Cancellation reason recorded       → echo_sync_track dict gets the key
   • Already-cancelled download         → not in active_states, stays as-is
   • Empty / malformed payload          → method returns silently, no exception
   • Multiple matching downloads        → all are cancelled
@@ -23,7 +23,7 @@ from unittest.mock import patch
 
 from time_utils import utc_now
 from database.working_database import Download
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from services.download_manager import DownloadManager
 
 
@@ -73,7 +73,7 @@ def _insert_download(work_db, isrc: str, status: str = "queued") -> int:
     with work_db.session_scope() as session:
         dl = Download(
             sync_id=f"ss:isrc:{isrc}",
-            soul_sync_track=track_json,
+            echo_sync_track=track_json,
             status=status,
             created_at=utc_now(),
             updated_at=utc_now(),
@@ -159,7 +159,7 @@ class TestTrackImportedCancelsQueue:
 
     def test_cancellation_reason_written_to_track_json(self, manager, mock_work_db):
         """
-        After cancellation, the download's soul_sync_track dict must contain
+        After cancellation, the download's echo_sync_track dict must contain
         a 'cancellation_reason' key so operators can audit why it was dropped.
         """
         isrc = "DECP12345672"
@@ -170,9 +170,9 @@ class TestTrackImportedCancelsQueue:
         with mock_work_db.session_scope() as session:
             dl = session.get(Download, dl_id)
             assert dl.status == "cancelled"
-            assert isinstance(dl.soul_sync_track, dict)
-            assert "cancellation_reason" in dl.soul_sync_track
-            assert len(dl.soul_sync_track["cancellation_reason"]) > 0
+            assert isinstance(dl.echo_sync_track, dict)
+            assert "cancellation_reason" in dl.echo_sync_track
+            assert len(dl.echo_sync_track["cancellation_reason"]) > 0
 
     def test_already_cancelled_download_is_not_reprocessed(self, manager, mock_work_db):
         """

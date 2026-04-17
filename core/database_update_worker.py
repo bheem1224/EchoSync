@@ -12,7 +12,7 @@ logger = get_logger("database_update_worker")
 
 class DatabaseUpdateWorker:
     """
-    Worker for updating SoulSync database with media server library data.
+    Worker for updating Echosync database with media server library data.
     Syncs all tracks from media client into the database using bulk operations.
 
     The ``run()`` method is a plain synchronous callable — it can be invoked
@@ -59,7 +59,7 @@ class DatabaseUpdateWorker:
             library_manager = LibraryManager(db.session_factory)
             logger.debug("Database path resolved to %s", db.database_path)
             
-            # Fetch all tracks from media client (now returns SoulSyncTrack objects)
+            # Fetch all tracks from media client (now returns EchosyncTrack objects)
             logger.debug(f"Fetching library from {self.server_type}...")
             all_tracks = self.media_client.get_all_tracks()
             

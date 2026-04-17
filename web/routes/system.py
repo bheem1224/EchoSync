@@ -69,7 +69,7 @@ def get_settings():
         data = config_manager.get_all() if hasattr(config_manager, "get_all") else {}
         dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
         data["dev_mode"] = dev_mode
-        safe_mode = os.getenv('SOULSYNC_SAFE_MODE', '') in ('1', 'true')
+        safe_mode = os.getenv('ECHOSYNC_SAFE_MODE', '') in ('1', 'true')
         data["safe_mode"] = safe_mode
         # Inject live console log level.  In DEV_MODE the startup level is always
         # DEBUG (set by run_api.py), so we can short-circuit the handler scan which
@@ -120,7 +120,7 @@ def get_migration_status():
         is_migrated = was_v2_1_migration_triggered()
         return jsonify({
             "v2_1_migration_triggered": is_migrated,
-            "message": "SoulSync has been upgraded to v2.1.0! The database schema has undergone a massive structural upgrade to support the new Matching Engine. Your configuration is safe, but your media library database has been wiped and is currently being rebuilt from scratch in the background."
+            "message": "Echosync has been upgraded to v2.1.0! The database schema has undergone a massive structural upgrade to support the new Matching Engine. Your configuration is safe, but your media library database has been wiped and is currently being rebuilt from scratch in the background."
         }), 200
     except Exception as e:
         logger.error(f"Error checking migration status: {e}")

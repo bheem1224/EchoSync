@@ -34,7 +34,7 @@ class ListenBrainzClient:
             rate=RateLimitConfig(requests_per_second=2.0)
         )
         self._http._session.headers.update({
-            'User-Agent': 'SoulSync/1.0'
+            'User-Agent': 'Echosync/1.0'
         })
 
         # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration

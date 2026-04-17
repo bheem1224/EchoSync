@@ -4,7 +4,7 @@ Tests for the Zero-Trust AST Plugin Security Scanner.
 Covers two orthogonal categories:
   BLOCK  — code that the scanner must flag as a violation.
   ALLOW  — code that is fully legitimate and must NOT produce false positives
-            (e.g. normal stdlib imports, internal SoulSync imports).
+            (e.g. normal stdlib imports, internal Echosync imports).
 
 The scanner operates entirely on source strings parsed with ast.parse(), so no
 real files or imports are required — every test is pure unit-level.
@@ -196,8 +196,8 @@ class TestAllowedImports:
         assert _scan("from abc import ABC, abstractmethod") == []
 
 
-class TestAllowedInternalSoulSyncImports:
-    """SoulSync-internal from-import patterns that must never be flagged."""
+class TestAllowedInternalEchosyncImports:
+    """Echosync-internal from-import patterns that must never be flagged."""
 
     def test_allows_from_core_hook_manager(self):
         assert _scan("from core.hook_manager import hook_manager") == []
@@ -216,7 +216,7 @@ class TestAllowedInternalSoulSyncImports:
 
     def test_allows_from_core_matching_engine(self):
         assert _scan(
-            "from core.matching_engine.soul_sync_track import SoulSyncTrack"
+            "from core.matching_engine.echo_sync_track import EchosyncTrack"
         ) == []
 
     def test_allows_multi_line_internal_plugin_skeleton(self):

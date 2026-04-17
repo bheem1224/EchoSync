@@ -117,7 +117,7 @@ _db_update_lock = threading.Lock()
 @bp.post("/update-database")
 def update_database():
     """
-    Update SoulSync database from active media server library.
+    Update Echosync database from active media server library.
     
     Query params:
         - mode: 'full' or 'incremental' (default: 'incremental')

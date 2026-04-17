@@ -1,5 +1,5 @@
 """
-SoulSyncTrack: The core data structure for music track representation in SoulSync.
+EchosyncTrack: The core data structure for music track representation in Echosync.
 
 This model unifies all metadata about a track across different providers, quality levels,
 and matching contexts. It serves as the bridge between raw filenames, parsed candidates,
@@ -46,7 +46,7 @@ class QualityTag(Enum):
 # - 'spotify_id'                (Spotify ID)
 
 @dataclass
-class SoulSyncTrack:
+class EchosyncTrack:
     """
     Track data container matching the SQLAlchemy database schema.
     Acts as a smart object that auto-cleans data on initialization.
@@ -114,7 +114,7 @@ class SoulSyncTrack:
         import base64
 
         # Base identity: ss:track:meta:{base64(lowercase_artist|lowercase_title)}
-        # Ensure we safely access artist_name instead of artists[0] since artists doesn't exist on SoulSyncTrack
+        # Ensure we safely access artist_name instead of artists[0] since artists doesn't exist on EchosyncTrack
         artist = self.artist_name.lower() if getattr(self, "artist_name", None) else "unknown"
         title = self.title.lower() if getattr(self, "title", None) else "unknown"
         payload = f"{artist}|{title}"
@@ -164,7 +164,7 @@ class SoulSyncTrack:
         Auto-clean and normalize data upon instantiation.
         """
         # 0a. Normalize Unicode character variants on raw string fields so that
-        #     EVERY SoulSyncTrack — whether built from a streaming provider or
+        #     EVERY EchosyncTrack — whether built from a streaming provider or
         #     directly from a raw DB row — carries consistent characters before
         #     any regex, fuzzy-matching, or SQL search runs on them.
         #     (e.g. smart apostrophe ' U+2019 → plain ' U+0027, em-dash → hyphen)
@@ -335,8 +335,8 @@ class SoulSyncTrack:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SoulSyncTrack":
-        """Create a SoulSyncTrack from a dictionary."""
+    def from_dict(cls, data: Dict[str, Any]) -> "EchosyncTrack":
+        """Create a EchosyncTrack from a dictionary."""
         added_at = data.get('added_at')
         if added_at and isinstance(added_at, str):
             try:

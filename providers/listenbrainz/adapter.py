@@ -14,7 +14,7 @@ from core.file_handling.storage import get_storage_service
 
 logger = get_logger("listenbrainz_adapter")
 
-# ListenBrainzAdapter class deprecated - use convert_listenbrainz_track_to_soulsync instead
+# ListenBrainzAdapter class deprecated - use convert_listenbrainz_track_to_echosync instead
 class ListenBrainzAdapter:
     def __init__(self, listenbrainz_client=None):
         storage = get_storage_service()
@@ -108,7 +108,7 @@ try:
         scope=[PluginScope.SYNC, PluginScope.SEARCH],
         version="1.0.0",
         description="ListenBrainz Adapter ingesting playlists and enriching MBIDs",
-        author="SoulSync",
+        author="Echosync",
         priority=70,
     )
     register_plugin(decl)

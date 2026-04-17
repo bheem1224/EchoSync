@@ -15,7 +15,7 @@
 </script>
 
 <svelte:head>
-  <title>Servers • SoulSync</title>
+  <title>Servers • Echosync</title>
 </svelte:head>
 
 <section class="page">

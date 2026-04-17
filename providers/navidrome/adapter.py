@@ -1,7 +1,7 @@
 """
 Navidrome ProviderAdapter implementation.
 
-Creates SoulSyncTrack from Navidrome library with extracted metadata including
+Creates EchosyncTrack from Navidrome library with extracted metadata including
 ISRC, MusicBrainz IDs, and audio quality information.
 
 Adheres to Track-centric architecture.
@@ -12,14 +12,14 @@ from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
 from core.file_handling.storage import get_storage_service
 from core.provider_base import ProviderBase
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 
 logger = get_logger("navidrome_adapter")
 
 
-def convert_navidrome_track_to_soulsync(navidrome_track) -> Optional[SoulSyncTrack]:
+def convert_navidrome_track_to_echosync(navidrome_track) -> Optional[EchosyncTrack]:
     """
-    Convert Navidrome track object to SoulSyncTrack.
+    Convert Navidrome track object to EchosyncTrack.
     
     Extracts Navidrome metadata including ISRC, MusicBrainz IDs, and audio quality.
     
@@ -27,7 +27,7 @@ def convert_navidrome_track_to_soulsync(navidrome_track) -> Optional[SoulSyncTra
         navidrome_track: Navidrome track object or wrapper (NavidromeTrack)
         
     Returns:
-        SoulSyncTrack with all available metadata, or None if conversion fails
+        EchosyncTrack with all available metadata, or None if conversion fails
     """
     try:
         # Get raw data dict if this is a wrapper object
@@ -119,7 +119,7 @@ def convert_navidrome_track_to_soulsync(navidrome_track) -> Optional[SoulSyncTra
             year = getattr(navidrome_track, 'year', None)
         
         # Use ProviderBase factory method for normalization
-        return ProviderBase.create_soul_sync_track(
+        return ProviderBase.create_echo_sync_track(
             title=title,
             artist=artist,
             album=album,
@@ -139,7 +139,7 @@ def convert_navidrome_track_to_soulsync(navidrome_track) -> Optional[SoulSyncTra
         )
     
     except Exception as e:
-        logger.error(f"Error converting Navidrome track to SoulSyncTrack: {e}", exc_info=True)
+        logger.error(f"Error converting Navidrome track to EchosyncTrack: {e}", exc_info=True)
         return None
 
 
@@ -259,7 +259,7 @@ try:
         scope=[PluginScope.LIBRARY, PluginScope.SEARCH],
         version="1.0.0",
         description="Navidrome Adapter providing Track stubs from server library",
-        author="SoulSync",
+        author="Echosync",
         priority=85,
     )
     register_plugin(decl)

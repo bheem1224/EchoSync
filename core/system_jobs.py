@@ -1,5 +1,5 @@
 """
-System Jobs Registration for SoulSync
+System Jobs Registration for Echosync
 
 This module registers periodic system maintenance jobs with the global job_queue.
 System jobs run automatically at configured intervals and handle core operations like:

@@ -130,10 +130,10 @@ class SpotifyAdapter:
         
         # Find best match (using new MatchService)
         from services.match_service import MatchService, MatchContext
-        from core.matching_engine import SoulSyncTrack
+        from core.matching_engine import EchosyncTrack
         service = MatchService()
         
-        source = SoulSyncTrack(
+        source = EchosyncTrack(
             title=track.title,
             artist=track.artists[0] if track.artists else "",
             album=track.album or "",
@@ -141,7 +141,7 @@ class SpotifyAdapter:
         )
         
         candidates = [
-            SoulSyncTrack(
+            EchosyncTrack(
                 title=result['name'],
                 artist=result['artists'][0]['name'] if result['artists'] else "",
                 album=result['album']['name'] if result.get('album') else "",

@@ -1,19 +1,19 @@
 <?xml version="1.0"?>
 <Container version="2">
-  <Name>SoulSync</Name>
-  <Repository>ghcr.io/bheem1224/soulsync:latest</Repository>
-  <Registry>https://github.com/bheem1224/SoulSync</Registry>
+  <Name>Echosync</Name>
+  <Repository>ghcr.io/bheem1224/echosync:latest</Repository>
+  <Registry>https://github.com/bheem1224/Echosync</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/bheem1224/SoulSync/issues</Support>
-  <Project>https://github.com/bheem1224/SoulSync</Project>
+  <Support>https://github.com/bheem1224/Echosync/issues</Support>
+  <Project>https://github.com/bheem1224/Echosync</Project>
   <Overview>Automated music discovery and collection manager. Sync Spotify/Tidal/YouTube playlists to Plex/Jellyfin/Navidrome via Soulseek with FLAC priority, customizable file organization templates, metadata enhancement, and smart matching. Features include wishlist management, artist watchlist, intelligent discovery playlists, and automatic lyrics integration.</Overview>
   <Category>MediaApp:Music</Category>
   <WebUI>http://[IP]:[PORT:5000]</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/bheem1224/SoulSync/refs/heads/main/templates/soulsync.xml?token=GHSAT0AAAAAADS4D7MTJH52ZE42S7TASLWO2NBEAIQ</TemplateURL>
-  <Icon>https://github.com/bheem1224/SoulSync/blob/main/assets/trans.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/bheem1224/Echosync/refs/heads/main/templates/echosync.xml?token=GHSAT0AAAAAADS4D7MTJH52ZE42S7TASLWO2NBEAIQ</TemplateURL>
+  <Icon>https://github.com/bheem1224/Echosync/blob/main/assets/trans.png</Icon>
   <ExtraParams>--restart unless-stopped --add-host=host.docker.internal:host-gateway</ExtraParams>
   <PostArgs/>
   <CPUset/>
@@ -23,8 +23,8 @@
   <Requires>slskd running on host machine or container. Spotify API credentials required.</Requires>
   <Config Name="WebUI Port" Target="5000" Default="5000" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8008</Config>
   <Config Name="OAuth Port" Target="5001" Default="5001" Mode="tcp" Description="Spotify OAuth callback port" Type="Port" Display="always" Required="true" Mask="false">8888</Config>
-  <Config Name="Data Directory" Target="/data" Default="/mnt/user/appdata/soulsync/data" Mode="rw" Description="Stores all application data including configuration and database." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/soulsync/data</Config>
-  <Config Name="Logs Directory" Target="/app/logs" Default="/mnt/user/appdata/soulsync/logs" Mode="rw" Description="Application logs storage." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/soulsync/logs</Config>
+  <Config Name="Data Directory" Target="/data" Default="/mnt/user/appdata/echosync/data" Mode="rw" Description="Stores all application data including configuration and database." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/echosync/data</Config>
+  <Config Name="Logs Directory" Target="/app/logs" Default="/mnt/user/appdata/echosync/logs" Mode="rw" Description="Application logs storage." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/echosync/logs</Config>
   <Config Name="Music Share" Target="/host/music" Default="/mnt/user/Music" Mode="rw" Description="Mount your music share (containing slskd downloads and music library). Use /host/music/... in settings." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Music</Config>
   <Config Name="Timezone" Target="TZ" Default="America/New_York" Mode="" Description="Container timezone (e.g., America/New_York, Europe/London)" Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
   <Config Name="User ID" Target="PUID" Default="99" Mode="" Description="User ID for file permissions (typically 99 for Unraid)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
@@ -32,5 +32,5 @@
   <Config Name="PYTHONPATH" Target="PYTHONPATH" Default="/app" Mode="" Description="Python path (do not change)" Type="Variable" Display="advanced" Required="true" Mask="false">/app</Config>
   <Config Name="FLASK_ENV" Target="FLASK_ENV" Default="production" Mode="" Description="Flask environment (do not change)" Type="Variable" Display="advanced" Required="true" Mask="false">production</Config>
   <Config Name="FLASK_APP" Target="FLASK_APP" Default="web_server.py" Mode="" Description="Flask app entry point (do not change)" Type="Variable" Display="advanced" Required="true" Mask="false">web_server.py</Config>
-  <Config Name="Data Directory Env" Target="SOULSYNC_DATA_DIR" Default="/data" Mode="" Description="[ADVANCED] Container path for application data." Type="Variable" Display="advanced" Required="true" Mask="false">/data</Config>
+  <Config Name="Data Directory Env" Target="ECHOSYNC_DATA_DIR" Default="/data" Mode="" Description="[ADVANCED] Container path for application data." Type="Variable" Display="advanced" Required="true" Mask="false">/data</Config>
 </Container>

@@ -1,4 +1,4 @@
-# SoulSync Dockerfile
+# Echosync Dockerfile
 # Multi-stage build for Svelte Web UI and Python Backend
 
 # ---- Node Stage: Build Svelte Web UI ----
@@ -32,7 +32,7 @@ curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
-RUN useradd --create-home --shell /bin/bash --uid 1000 soulsync
+RUN useradd --create-home --shell /bin/bash --uid 1000 echosync
 
 # --- UV INSTALLATION & DEPENDENCY SYNC ---
 # Install uv directly from the official astral-sh image
@@ -56,7 +56,7 @@ COPY --from=node /app/webui/build /app/webui/build
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /config /data/logs /data/downloads /data/Transfer && \
-    chown -R soulsync:soulsync /config /data
+    chown -R echosync:echosync /config /data
 
 # Create defaults directory and copy template files
 # (Using || true to ensure build doesn't fail if example config is missing)
@@ -78,12 +78,12 @@ ENV PYTHONPATH=/app
 ENV PUID=1000
 ENV PGID=1000
 ENV UMASK=022
-ENV SOULSYNC_CONFIG_DIR=/config
-ENV SOULSYNC_DATA_DIR=/data
+ENV ECHOSYNC_CONFIG_DIR=/config
+ENV ECHOSYNC_DATA_DIR=/data
 ENV UVICORN_PORT=5000
 # default timezone and log verbosity (can be overridden at runtime)
 ENV TZ=UTC
-ENV SOULSYNC_LOG_LEVEL=INFO
+ENV ECHOSYNC_LOG_LEVEL=INFO
 
 # Default command; using the uv virtual environment
 CMD ["python", "run_api.py"]

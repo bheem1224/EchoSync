@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from providers.slskd.client import SlskdProvider
-from core.matching_engine.soul_sync_track import SoulSyncTrack
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from services.download_manager import DownloadManager
 
 
@@ -86,13 +86,13 @@ class TestDownloadManagerPrefilterBypass:
     async def test_execute_waterfall_search_skips_matcher_for_prefiltered_provider(self):
         manager = object.__new__(DownloadManager)
 
-        target_track = SoulSyncTrack(
+        target_track = EchosyncTrack(
             raw_title="Song",
             artist_name="Artist",
             album_title="Album",
             duration=180000,
         )
-        queued_download = SimpleNamespace(soul_sync_track=target_track.to_dict())
+        queued_download = SimpleNamespace(echo_sync_track=target_track.to_dict())
 
         class FakeQuery:
             def __init__(self, item):
@@ -135,7 +135,7 @@ class TestDownloadManagerPrefilterBypass:
         status_updates = []
         manager._update_status = lambda download_id, status, provider_id=None: status_updates.append((download_id, status, provider_id))
 
-        candidate = SoulSyncTrack(
+        candidate = EchosyncTrack(
             raw_title="Song",
             artist_name="Artist",
             album_title="Album",

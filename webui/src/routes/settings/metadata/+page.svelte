@@ -301,7 +301,7 @@
 </script>
 
 <svelte:head>
-  <title>Metadata Manager • SoulSync</title>
+  <title>Metadata Manager • Echosync</title>
 </svelte:head>
 
 <section class="page">

@@ -21,16 +21,16 @@ from difflib import SequenceMatcher
 import logging
 import os
 
-from .soul_sync_track import SoulSyncTrack
+from .echo_sync_track import EchosyncTrack
 from .scoring_profile import ScoringProfile, ScoringWeights, ProfileType
 from .fingerprinting import FingerprintMatcher
 
 logger = logging.getLogger(__name__)
 
-# DEV_MODE killswitch: set SOULSYNC_DEV_MODE=1 (or "true"/"yes") in the environment
+# DEV_MODE killswitch: set ECHOSYNC_DEV_MODE=1 (or "true"/"yes") in the environment
 # to bypass the ISRC instant-match fast-path during development/testing.
 # Uses .get() with a safe default so the app never raises if the variable is absent.
-_ISRC_FAST_PATH_ENABLED = os.environ.get("SOULSYNC_DEV_MODE", "").strip().lower() not in ("1", "true", "yes")
+_ISRC_FAST_PATH_ENABLED = os.environ.get("ECHOSYNC_DEV_MODE", "").strip().lower() not in ("1", "true", "yes")
 
 
 @dataclass
@@ -98,8 +98,8 @@ class WeightedMatchingEngine:
 
     def calculate_match(
         self,
-        source: SoulSyncTrack,
-        candidate: SoulSyncTrack,
+        source: EchosyncTrack,
+        candidate: EchosyncTrack,
         target_source: Optional[str] = None,
         target_identifier: Optional[str] = None,
     ) -> MatchResult:
@@ -171,8 +171,8 @@ class WeightedMatchingEngine:
 
     def calculate_title_duration_match(
         self,
-        source: SoulSyncTrack,
-        candidate: SoulSyncTrack,
+        source: EchosyncTrack,
+        candidate: EchosyncTrack,
         target_source: Optional[str] = None,
         target_identifier: Optional[str] = None,
     ) -> MatchResult:
@@ -323,8 +323,8 @@ class WeightedMatchingEngine:
 
     def _calculate_standard_match(
         self,
-        source: SoulSyncTrack,
-        candidate: SoulSyncTrack
+        source: EchosyncTrack,
+        candidate: EchosyncTrack
     ) -> MatchResult:
         """
         Standard matching logic (original calculate_match implementation)
@@ -739,7 +739,7 @@ class WeightedMatchingEngine:
             result.target_exists = bool(target_identifier)
         return result
 
-    def _check_version_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> Tuple[bool, str]:
+    def _check_version_match(self, source: EchosyncTrack, candidate: EchosyncTrack) -> Tuple[bool, str]:
         """
         Check if versions match
 
@@ -799,7 +799,7 @@ class WeightedMatchingEngine:
         # Otherwise, consider it a version mismatch
         return False, f"Different versions: '{source.edition}' vs '{candidate.edition}'"
 
-    def _check_edition_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> Tuple[bool, str]:
+    def _check_edition_match(self, source: EchosyncTrack, candidate: EchosyncTrack) -> Tuple[bool, str]:
         """
         Check if editions match (disc_number, etc)
         
@@ -857,7 +857,7 @@ class WeightedMatchingEngine:
         
         return normalized
     
-    def _check_artist_subset_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> Tuple[bool, float, str]:
+    def _check_artist_subset_match(self, source: EchosyncTrack, candidate: EchosyncTrack) -> Tuple[bool, float, str]:
         """
         Check if one artist list is a subset of the other (tokenized intersection).
         Used as a rescue mechanism when fuzzy matching fails.
@@ -897,7 +897,7 @@ class WeightedMatchingEngine:
             else:
                 return False, 0.0, "No artist token overlap"
 
-    def _calculate_fuzzy_text_match(self, source: SoulSyncTrack, candidate: SoulSyncTrack) -> float:
+    def _calculate_fuzzy_text_match(self, source: EchosyncTrack, candidate: EchosyncTrack) -> float:
         """
         Calculate fuzzy text match score for title, artist, album.
         Includes artist subset rescue mechanism and dual-pass base string matching.
@@ -971,8 +971,8 @@ class WeightedMatchingEngine:
 
     def _calculate_duration_match(
         self,
-        source: SoulSyncTrack,
-        candidate: SoulSyncTrack,
+        source: EchosyncTrack,
+        candidate: EchosyncTrack,
         tolerance_override_ms: Optional[int] = None,
     ) -> float:
         """
@@ -1077,9 +1077,9 @@ class WeightedMatchingEngine:
 
     def select_best_download_candidate(
         self,
-        target_track: SoulSyncTrack,
-        candidates: list[SoulSyncTrack]
-    ) -> Optional[SoulSyncTrack]:
+        target_track: EchosyncTrack,
+        candidates: list[EchosyncTrack]
+    ) -> Optional[EchosyncTrack]:
         """
         Select the best download candidate from a list of raw search results.
         Uses the profile weights to score and rank candidates.
@@ -1089,7 +1089,7 @@ class WeightedMatchingEngine:
             candidates: List of raw results from SlskdProvider
 
         Returns:
-            The winning SoulSyncTrack or None if no acceptable match found
+            The winning EchosyncTrack or None if no acceptable match found
         """
         if not candidates:
             return None

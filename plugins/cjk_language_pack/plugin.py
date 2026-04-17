@@ -1,5 +1,5 @@
 """
-CJK Language Pack — SoulSync community plugin.
+CJK Language Pack — Echosync community plugin.
 
 Registers a ``pre_normalize_text`` filter that transliterates Chinese
 (Simplified and Traditional), Japanese (Kanji/Kana), and Korean (Hangul)

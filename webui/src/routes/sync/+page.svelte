@@ -468,7 +468,7 @@
 </script>
 
 <svelte:head>
-  <title>Sync • SoulSync</title>
+  <title>Sync • Echosync</title>
 </svelte:head>
 
 <section class="page">

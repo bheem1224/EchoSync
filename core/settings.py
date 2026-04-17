@@ -78,7 +78,7 @@ class ConfigManager:
     def __init__(self, config_path: str = "config/config.json"):
         # STEP 1: Set config_dir from ENV (NOT from config.json)
         # config_dir is special: it's set only by ENV variables (for encryption key security)
-        config_dir_env = os.environ.get('SOULSYNC_CONFIG_DIR')
+        config_dir_env = os.environ.get('ECHOSYNC_CONFIG_DIR')
         if config_dir_env:
             self.config_dir = Path(config_dir_env)
         elif Path('/config').exists() and os.path.isdir('/config'):
@@ -89,7 +89,7 @@ class ConfigManager:
             self.config_dir = Path(__file__).parent.parent / 'config'
 
         # STEP 2: Set data_dir from ENV (takes precedence over config.json)
-        data_dir_env = os.environ.get('SOULSYNC_DATA_DIR')
+        data_dir_env = os.environ.get('ECHOSYNC_DATA_DIR')
         if data_dir_env:
             self.data_dir = Path(data_dir_env)
         elif Path('/data').exists() and os.path.isdir('/data'):
@@ -105,12 +105,12 @@ class ConfigManager:
         
         # At DEBUG level, also log the source (ENV vs default)
         if config_dir_env:
-            logger.debug(f"Config directory from SOULSYNC_CONFIG_DIR")
+            logger.debug(f"Config directory from ECHOSYNC_CONFIG_DIR")
         else:
             logger.debug(f"Config directory from fallback default")
         
         if data_dir_env:
-            logger.debug(f"Data directory from SOULSYNC_DATA_DIR")
+            logger.debug(f"Data directory from ECHOSYNC_DATA_DIR")
         else:
             logger.debug(f"Data directory from fallback default")
 
@@ -130,9 +130,9 @@ class ConfigManager:
         self.plugins_path = self.data_dir / 'plugins'
 
         # STEP 3: Set individual storage paths from ENV (take precedence over data_dir and config.json)
-        download_dir_env = os.environ.get('SOULSYNC_DOWNLOAD_DIR')
-        library_dir_env = os.environ.get('SOULSYNC_LIBRARY_DIR')
-        log_dir_env = os.environ.get('SOULSYNC_LOG_DIR')
+        download_dir_env = os.environ.get('ECHOSYNC_DOWNLOAD_DIR')
+        library_dir_env = os.environ.get('ECHOSYNC_LIBRARY_DIR')
+        log_dir_env = os.environ.get('ECHOSYNC_LOG_DIR')
         
         # Initialize with data_dir defaults
         self.downloads_path = self.data_dir / 'downloads'

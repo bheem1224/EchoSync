@@ -52,7 +52,7 @@ def set_download_provider_priority(provider_list: List[str]) -> bool:
 ##### `_execute_waterfall_search_and_download(download_id, providers)`
 Replaces the old `_execute_search_and_download()` method with complete waterfall logic:
 
-1. **Load Track**: Deserializes SoulSyncTrack from queue payload (preserves metadata)
+1. **Load Track**: Deserializes EchosyncTrack from queue payload (preserves metadata)
 2. **Prepare Filters**: Gets quality profile and creates search filters
 3. **Generate Strategies**: Creates search strategies (artist+title, album+title, title-only)
 
@@ -176,10 +176,10 @@ If no user-defined priority is configured:
 
 ## Metadata Preservation
 
-The waterfall strategy **reconstructs** the SoulSyncTrack from the database queue payload:
+The waterfall strategy **reconstructs** the EchosyncTrack from the database queue payload:
 
 ```python
-target_track = SoulSyncTrack.from_dict(download.soul_sync_track)
+target_track = EchosyncTrack.from_dict(download.echo_sync_track)
 ```
 
 This ensures **no metadata is lost**:
@@ -253,7 +253,7 @@ config_db.set_download_provider_priority(["slskd", "yt_dlp"])
 
 # 2. Queue a download
 downloader = DownloadManager.get_instance()
-track_id = downloader.queue_download(soul_sync_track)
+track_id = downloader.queue_download(echo_sync_track)
 
 # 3. Monitor logs for waterfall execution
 # Logs will show provider tryout order and matching scores
