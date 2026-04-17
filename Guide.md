@@ -2,22 +2,33 @@
 
 Welcome to the EchoSync Homelab Guide! This document is designed for system administrators and power users deploying EchoSync in a local Docker/Unraid environment.
 
-## 📁 Volume Mounts
+## 📁 Volume Mounts & Directory Structure
 
-EchoSync expects specific directories to function smoothly, especially when interfacing with slskd and your media server.
+EchoSync automatically resolves its internal paths based on the root data directory, but these can be mapped directly for fine-grained control:
 
-*   **/app/config (or /config):** Stores your safe mode booting locks and environment variables.
-*   **/data:** The lifeblood of the application. Stores `config.db`, `music.db`, and `working.db`. It also holds the cryptographic keys used to encrypt your external API tokens. **BACK THIS FOLDER UP.**
-*   **/host/music (or /music):** This must be the root directory where your actual music files live. This is usually the same directory that Plex/Jellyfin/Navidrome sees, AND the directory that slskd downloads into.
+*   **/app/config (or /config):** Stores your core configuration files and the `config.db` database.
+*   **/data:** The main application directory. This holds your operational and media databases, as well as the cryptographic keys used to encrypt API tokens. **BACK THIS FOLDER UP.**
+*   **/data/library:** The default internal path for your organized music library.
+*   **/data/downloads:** The default internal path where active downloads are placed before being processed.
+*   **/host/music (or /music):** Typically used to map your existing external media share so EchoSync can scan and enhance it alongside Plex/Jellyfin/Navidrome.
+
+## 🗄️ Database Architecture
+
+EchoSync utilizes a strict multi-database architecture using SQLite (with WAL journaling and enforced foreign keys):
+
+1.  **`config.db` (in `/config`):** Stores provider configurations, OAuth tokens (encrypted via AES), and global application settings.
+2.  **`music_library.db` (in `/data`):** The "Physical Media" ledger. It only contains models representing the actual files on your disk: `Track`, `Album`, `Artist`, `AudioFingerprint` (AcoustID), and `ExternalIdentifier`.
+3.  **`working.db` (in `/data`):** The "Operational State" ledger. It tracks transient and operational data such as active Downloads, User Ratings, Suggestion algorithms, and Review Queue tasks.
+
+*By keeping physical media separated from operational state, EchoSync ensures that destroying the working database does not corrupt your core library metadata.*
 
 ## 🔑 Core Environment Variables
 
 EchoSync uses several environment variables for deep configuration:
 
-*   **`ECHOSYNC_ENCRYPTION_KEY`**: A custom 32-byte base64 key used to encrypt API secrets in the database. If not provided, the system auto-generates one and saves it in `/data`.
-*   **`ECHOSYNC_DEV_MODE`**: Set to `1` or `true` to enable verbose debug logging and disable caching for rapid development.
-*   **`ECHOSYNC_SAFE_MODE`**: Set to `1` to bypass all community plugins. If the app crashes during boot, a lockfile is written to force this mode on the next start to prevent crash loops.
-*   **`ECHOSYNC_DATA_DIR`**: Overrides the default `/data` location.
+*   **`ECHOSYNC_ENCRYPTION_KEY`**: A custom 32-byte base64 key used to encrypt API secrets in `config.db`. If not provided, the system auto-generates one and saves it in `/data`.
+*   **`ECHOSYNC_DEV_MODE`**: Set to `1` or `true` (or `0`/`false`) to toggle verbose debug logging and disable caching for rapid development.
+*   **`ECHOSYNC_DATA_DIR`**: Overrides the default `/data` root directory location.
 *   **`PUID` & `PGID`**: Sets the Unix user/group permissions for files downloaded and modified by EchoSync (usually 99/100 for Unraid).
 
 ## 🌐 The Global HTTPS OAuth Sidecar
