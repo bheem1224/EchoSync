@@ -81,6 +81,11 @@ class PluginSecurityScanner(ast.NodeVisitor):
             self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
         self.generic_visit(node)
 
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr in ("__class__", "__base__", "__subclasses__", "__mro__", "__dict__", "__globals__"):
+            self.violations.append((node.lineno, f"forbidden attribute access to '{node.attr}'"))
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
         func = node.func
 

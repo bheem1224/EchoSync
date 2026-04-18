@@ -148,7 +148,11 @@ class ProviderBase(ABC):
         self.core_system = _PluginCoreSystemFacade(self._name)
         self.models = _PluginModelFacade()
         from core.tiered_logger import get_logger
-        self.logger = get_logger(f"plugin.{self._name}")
+
+    @property
+    def logger(self):
+        from core.tiered_logger import get_logger
+        return get_logger(f"plugin.{self.name}")
 
     def get_oauth_redirect_uri(self) -> str:
         """
