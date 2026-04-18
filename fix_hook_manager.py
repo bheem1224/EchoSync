@@ -1,11 +1,11 @@
-import asyncio
+content = """import asyncio
 from typing import Callable, Dict, List, Any
 
 class HookManager:
-    """
+    \"\"\"
     Middleware filter registry for plugins.
     Allows plugins to register hooks that intercept and modify data.
-    """
+    \"\"\"
     def __init__(self):
         # hook_name -> list of callback functions
         self._filters: Dict[str, List[Callable]] = {}
@@ -14,16 +14,16 @@ class HookManager:
         self.MAX_DEPTH = 10
 
     def add_filter(self, hook_name: str, callback: Callable) -> None:
-        """Register a callback for a specific hook."""
+        \"\"\"Register a callback for a specific hook.\"\"\"
         if hook_name not in self._filters:
             self._filters[hook_name] = []
         self._filters[hook_name].append(callback)
 
     def apply_filters(self, hook_name: str, default_value: Any, *args, **kwargs) -> Any:
-        """
+        \"\"\"
         Pass a value through all registered filters for a hook.
         Each callback must accept the value (and optionally args) and return the modified value.
-        """
+        \"\"\"
         if not hasattr(self._local, 'depths'):
             self._local.depths = {}
 
@@ -63,3 +63,6 @@ class HookManager:
 
 # Global singleton
 hook_manager = HookManager()
+"""
+with open('core/hook_manager.py', 'w') as f:
+    f.write(content)

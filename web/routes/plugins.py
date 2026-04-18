@@ -1,6 +1,8 @@
 import json
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, abort, send_from_directory
 from core.settings import config_manager
+from werkzeug.utils import safe_join
+import os
 from core.plugin_loader import get_all_plugins
 from core.plugin_store import plugin_store
 
@@ -84,3 +86,14 @@ def install_plugin():
         return jsonify({"success": True})
     else:
         return jsonify({"error": "Failed to install plugin"}), 500
+
+
+@bp.route('/<plugin_id>/ui/<path:filename>', methods=['GET'])
+def serve_plugin_ui(plugin_id, filename):
+    plugins_dir = str(config_manager.get_plugins_dir())
+    ui_dir = safe_join(plugins_dir, plugin_id, 'ui')
+
+    if ui_dir is None or not os.path.exists(ui_dir):
+        abort(404)
+
+    return send_from_directory(ui_dir, filename)
