@@ -96,7 +96,12 @@ def safe_move(src: Union[str, Path], dest: Union[str, Path]) -> Path:
                 logger.error(f"Error in CUSTOM_FILE_IO hook: {e}")
 
             resolved_dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(resolved_src), str(resolved_dest))
+            try:
+                shutil.move(str(resolved_src), str(resolved_dest))
+            except Exception as e:
+                # If shutil.move fails mid-copy (e.g. out of space across partitions), clean up corrupted destination
+                resolved_dest.unlink(missing_ok=True)
+                raise
             logger.debug("safe_move: %s → %s", resolved_src, resolved_dest)
             return resolved_dest
 

@@ -64,6 +64,12 @@ class PluginSecurityScanner(ast.NodeVisitor):
     def __init__(self) -> None:
         # Each entry is (line_number, human_readable_description)
         self.violations: list = []
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        forbidden_attrs = {"__class__", "__base__", "__subclasses__", "__mro__", "__dict__", "__globals__"}
+        if node.attr in forbidden_attrs:
+            self.violations.append((node.lineno, f"access to forbidden attribute '{node.attr}'"))
+        self.generic_visit(node)
+
     def visit_Name(self, node: ast.Name) -> None:
         if node.id == "__builtins__":
             self.violations.append((node.lineno, "access to __builtins__ is forbidden"))
