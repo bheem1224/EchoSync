@@ -213,4 +213,32 @@ class PluginStore:
             logger.error(f"Failed to download and extract plugin: {e}")
             return False
 
+    def uninstall_plugin(self, plugin_id: str) -> bool:
+        import re
+        import shutil
+        dest_dir = self.plugins_dir / plugin_id
+        if not dest_dir.exists():
+            return False
+        
+        # Drop associated tables
+        try:
+            from database.working_database import get_working_database
+            from database.music_database import get_database
+            
+            safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', plugin_id).lower()
+            prefix = f"plugin_{safe_id}_%"
+            
+            for db_engine in [get_working_database().engine, get_database().engine]:
+                with db_engine.connect() as conn:
+                    tables = conn.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '{prefix}'").fetchall()
+                    for (table_name,) in tables:
+                        conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+        except Exception as e:
+            logger.error(f"Failed to drop tables for {plugin_id}: {e}")
+            
+        # Delete directory
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        return True
+
+
 plugin_store = PluginStore()
