@@ -90,13 +90,17 @@ class PluginStore:
                     except Exception as e:
                         logger.debug(f"Could not fetch {check_url}: {e}")
 
-                return self._scan_github_api(user, repo, repo_url)
+                return self._scan_github_api(user, repo, branch, subfolder, repo_url)
             except IndexError:
                 logger.error(f"Malformed GitHub URL: {repo_url}")
         return []
 
-    def _scan_github_api(self, user: str, repo: str, original_repo_url: str) -> List[Dict]:
+    def _scan_github_api(self, user: str, repo: str, branch: str, subfolder: str, original_repo_url: str) -> List[Dict]:
         api_url = f"https://api.github.com/repos/{user}/{repo}/contents"
+        if subfolder:
+            api_url += f"/{subfolder}"
+        api_url += f"?ref={branch}"
+        
         plugins = []
         try:
             resp = requests.get(api_url, timeout=10)
@@ -114,7 +118,7 @@ class PluginStore:
                                     if manifest_resp.status_code == 200:
                                         plugin_info = manifest_resp.json()
                                         plugin_info["_source_repo"] = original_repo_url
-                                        plugin_info["_download_url"] = f"https://github.com/{user}/{repo}/archive/refs/heads/main.zip"
+                                        plugin_info["_download_url"] = f"https://github.com/{user}/{repo}/archive/refs/heads/{branch}.zip"
                                         plugin_info["_folder_path"] = item.get("path")
                                         plugins.append(plugin_info)
         except Exception as e:
