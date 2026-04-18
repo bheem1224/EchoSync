@@ -165,6 +165,13 @@ def create_app() -> Flask:
         except Exception as e:
             print(f"[ERROR] Failed to register blueprint {bp.name}: {e}")
 
+    # Trigger ON_API_STARTUP hook
+    try:
+        from core.hook_manager import hook_manager
+        hook_manager.trigger('ON_API_STARTUP', app)
+    except Exception as e:
+        print(f"[WARN] Failed to trigger ON_API_STARTUP hook: {e}")
+
     # Day-1 / periodic user history ingestion is handled by the 'user_history_sync'
     # system job (registered below) which fires 10 minutes after startup so as not
     # to block create_app() or hammer Plex/Jellyfin during boot.

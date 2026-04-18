@@ -187,7 +187,13 @@ class PluginStore:
                     if zi.filename.startswith(target_prefix):
                         rel_path = zi.filename[len(target_prefix):]
                         if rel_path:
-                            target_file = dest_dir / rel_path
+                            if '..' in rel_path or rel_path.startswith('/'):
+                                logger.error(f"Malicious path detected in zip: {rel_path}")
+                                return False
+                            target_file = (dest_dir / rel_path).resolve()
+                            if not str(target_file).startswith(str(dest_dir.resolve())):
+                                logger.error(f"Zip Slip prevented for: {target_file}")
+                                return False
                             target_file.parent.mkdir(parents=True, exist_ok=True)
                             with target_file.open('wb') as f:
                                 f.write(z.read(zi))
@@ -223,16 +229,26 @@ class PluginStore:
         # Drop associated tables
         try:
             from database.working_database import get_working_database
-            from database.music_database import get_database
+            from database.config_database import get_config_database
             
             safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', plugin_id).lower()
             prefix = f"plugin_{safe_id}_%"
             
-            for db_engine in [get_working_database().engine, get_database().engine]:
+            for db_engine in [get_working_database().engine, get_config_database().engine]:
                 with db_engine.connect() as conn:
-                    tables = conn.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '{prefix}'").fetchall()
-                    for (table_name,) in tables:
-                        conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+                    try:
+                        from sqlalchemy import text
+                        tables = conn.execute(text(f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '{prefix}'")).fetchall()
+                        for (table_name,) in tables:
+                            conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+                            try:
+                                conn.commit()
+                            except Exception:
+                                pass
+                    except ImportError:
+                        tables = conn.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '{prefix}'").fetchall()
+                        for (table_name,) in tables:
+                            conn.execute(f"DROP TABLE IF EXISTS {table_name}")
         except Exception as e:
             logger.error(f"Failed to drop tables for {plugin_id}: {e}")
             
