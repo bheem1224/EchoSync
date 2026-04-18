@@ -1166,6 +1166,15 @@ class WeightedMatchingEngine:
         )
 
         if not ranked_candidates:
+            try:
+                from core.hook_manager import hook_manager
+                plugin_match = hook_manager.apply_filters('ON_MATCH_FAILED', None, target_track=target_track.to_dict(), candidates=[c.to_dict() for c in candidates])
+                if plugin_match is not None and isinstance(plugin_match, dict):
+                    logger.info(f"Plugin salvaged failed match for: '{target_track.title}'")
+                    return EchosyncTrack.from_dict(plugin_match)
+            except Exception as e:
+                logger.error(f"Error in ON_MATCH_FAILED hook: {e}")
+
             logger.warning(
                 f"No candidates passed minimum confidence threshold ({self.weights.min_confidence_to_accept}%). "
                 f"Target: '{target_track.title}' by '{target_track.artist_name}'"

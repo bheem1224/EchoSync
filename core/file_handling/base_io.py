@@ -64,18 +64,19 @@ def resolve_path(path: Union[str, Path]) -> Path:
 def safe_move(src: Union[str, Path], dest: Union[str, Path]) -> Path:
     """
     Securely move a file from *src* to *dest*.
-
-    - Both paths are jail-checked.
-    - Locks are acquired in lexicographic order to prevent deadlock when two
-      threads move files in opposite directions.
-    - Parent directories of *dest* are created automatically.
-    - Returns the resolved destination path.
-
-    Raises:
-        SecurityError: If either path escapes its allowed root.
     """
     resolved_src = resolve_path(src)
     resolved_dest = _map_to_local(dest).resolve()   # dest may not exist yet
+
+    try:
+        from core.hook_manager import hook_manager
+        plugin_dest = hook_manager.apply_filters('BEFORE_FILE_RENAME', str(resolved_dest), src_path=str(resolved_src))
+        if plugin_dest and plugin_dest != str(resolved_dest):
+            resolved_dest = Path(plugin_dest).resolve()
+            logger.info(f"Plugin altered destination path to: {resolved_dest}")
+    except Exception as e:
+        logger.error(f"Error in BEFORE_FILE_RENAME hook: {e}")
+
     file_jail.validate(resolved_src)
     file_jail.validate(resolved_dest)
 

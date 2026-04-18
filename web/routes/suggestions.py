@@ -233,9 +233,19 @@ def get_pending_suggestions(account_id: int):
         - limit: Max number of suggestions to return (default 15, max 20)
     """
     try:
+        from core.hook_manager import hook_manager
         limit = request.args.get('limit', default=15, type=int)
         limit = min(limit, 20)  # Cap at 20
         
+        try:
+            # Let plugins modify the parameters
+            hook_params = hook_manager.apply_filters('BEFORE_SUGGESTION_GENERATION', {'account_id': account_id, 'limit': limit})
+            if isinstance(hook_params, dict):
+                account_id = hook_params.get('account_id', account_id)
+                limit = hook_params.get('limit', limit)
+        except Exception as e:
+            logger.error(f"Error in BEFORE_SUGGESTION_GENERATION hook: {e}")
+
         config_db = get_config_database()
         working_db = get_working_database()
         music_db = get_music_database()
@@ -282,6 +292,15 @@ def get_pending_suggestions(account_id: int):
         except Exception as e:
             logger.warning(f"Error fetching pending suggestions: {e}")
         
+        try:
+            from core.hook_manager import hook_manager
+            # Let plugins filter or add tracks to the list
+            plugin_tracks = hook_manager.apply_filters('ON_SUGGESTION_READY', pending_tracks, account_id=account_id)
+            if isinstance(plugin_tracks, list):
+                pending_tracks = plugin_tracks
+        except Exception as e:
+            logger.error(f"Error in ON_SUGGESTION_READY hook: {e}")
+
         return jsonify({
             'account_id': account_id,
             'pending_tracks': pending_tracks[:limit],

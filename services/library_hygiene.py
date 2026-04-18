@@ -165,6 +165,15 @@ class DuplicateHygieneService:
                 # Delete file
                 if track.file_path and os.path.exists(track.file_path):
                     try:
+                        from core.hook_manager import hook_manager
+                        plugin_decision = hook_manager.apply_filters('ON_CORRUPTION_DETECTED', None, file_path=track.file_path)
+                        if plugin_decision == "SKIP":
+                            logger.info(f"Plugin quarantined/skipped deletion for file: {track.file_path}")
+                            return False
+                    except Exception as e:
+                        logger.error(f"Error in ON_CORRUPTION_DETECTED hook: {e}")
+
+                    try:
                         os.remove(track.file_path)
                         logger.info(f"Deleted file: {track.file_path}")
                     except OSError as e:
