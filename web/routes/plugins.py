@@ -2,6 +2,7 @@ import json
 from flask import Blueprint, jsonify, request
 from core.settings import config_manager
 from core.plugin_loader import get_all_plugins
+from core.plugin_store import plugin_store
 
 bp = Blueprint('plugins', __name__, url_prefix='/api/system/plugins')
 
@@ -34,3 +35,33 @@ def update_plugin_config():
         config_manager.set('settings.active_matching_engine', active_matching_engine)
 
     return jsonify({"success": True})
+
+
+def get_plugin_store():
+    try:
+        plugins = plugin_store.get_all_store_plugins()
+        return jsonify({'plugins': plugins})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route('/store', methods=['GET'])
+def get_plugin_store():
+    try:
+        plugins = plugin_store.get_all_store_plugins()
+        return jsonify({'plugins': plugins})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@bp.route('/install', methods=['POST'])
+def install_plugin():
+    data = request.json or {}
+    plugin_info = data.get('plugin')
+    if not plugin_info:
+        return jsonify({"error": "Plugin info required"}), 400
+
+    success = plugin_store.download_plugin(plugin_info)
+    if success:
+        return jsonify({"success": True})
+    else:
+        return jsonify({"error": "Failed to install plugin"}), 500
