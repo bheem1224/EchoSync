@@ -25,7 +25,7 @@ logger = get_logger("plugin_loader")
 # Zero-Trust Plugin Security Scanner
 # ---------------------------------------------------------------------------
 # Forbidden bare-name calls (Python builtins used for direct file I/O)
-_FORBIDDEN_BARE_CALLS: frozenset = frozenset({"open", "__import__"})
+_FORBIDDEN_BARE_CALLS: frozenset = frozenset({"open", "__import__", "eval", "exec", "getattr", "setattr", "globals", "locals"})
 
 # Forbidden module.method() patterns
 _FORBIDDEN_MODULE_CALLS: dict = {
@@ -64,6 +64,11 @@ class PluginSecurityScanner(ast.NodeVisitor):
     def __init__(self) -> None:
         # Each entry is (line_number, human_readable_description)
         self.violations: list = []
+    def visit_Name(self, node: ast.Name) -> None:
+        if node.id == "__builtins__":
+            self.violations.append((node.lineno, "access to __builtins__ is forbidden"))
+        self.generic_visit(node)
+
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
