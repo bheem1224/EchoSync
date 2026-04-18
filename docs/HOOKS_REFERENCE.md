@@ -34,10 +34,20 @@ This document serves as a directory of the Core hooks available in the **Total F
 | :--- | :--- | :--- | :--- |
 | `ON_CORRUPTION_DETECTED` | Skip | Fires during deduplication or library sweeps when a file is flagged for deletion. If a plugin quarantines the file instead, returning `"SKIP"` prevents the core deletion logic from running. | `services/library_hygiene.py` |
 
+
+## Metadata Enhancer
+
+| Hook Name | Type | Core Concept / Example Use Case | File Reference |
+| :--- | :--- | :--- | :--- |
+| `register_metadata_requirements` | Event | Returns a list of required track dictionary keys expected from metadata enhancement logic. | `services/metadata_enhancer.py` |
+| `post_metadata_enrichment` | Mutator | Fires after metadata is retrieved (from local tags or APIs) but before committing to the DB, allowing plugins to append genres, tags, or lyrics. | `services/metadata_enhancer.py` |
+
 ## Download Manager
 
 | Hook Name | Type | Core Concept / Example Use Case | File Reference |
 | :--- | :--- | :--- | :--- |
+
+| `pre_provider_search` | Mutator | Generates alternative search queries (e.g., CJK title translations) before executing a download provider search query. | `services/download_manager.py` |
 | `BEFORE_DOWNLOAD_START` | Skip | Fires immediately before the network request to acquire the file begins. A VPN Checker plugin could check interface status and return `"ABORT"` to fail the download gracefully. | `services/download_manager.py` |
 | `ON_DOWNLOAD_PROGRESS` | Event | Fired during the download polling loop. Throttle-limited natively (emits events only when progress changes by ~5%). Useful for real-time plugin dashboards. | `services/download_manager.py` |
 
@@ -45,6 +55,11 @@ This document serves as a directory of the Core hooks available in the **Total F
 
 | Hook Name | Type | Core Concept / Example Use Case | File Reference |
 | :--- | :--- | :--- | :--- |
+
+| `pre_normalize_text` | Mutator | Normalizes string text (e.g. Traditional -> Simplified Chinese) before fuzzy matching. Returning early for non-CJK text ensures zero overhead. | `core/matching_engine/text_utils.py` |
+| `pre_normalize_title` | Mutator | Extracts specific contexts (like Drama/Anime titles) from track names and populates `plugin_context`. | `core/matching_engine/text_utils.py`, `web/routes/playlists.py` |
+| `search_expansion` | Mutator | Returns alternative search strings (e.g. translated titles) to augment SQL/API searches. | `web/routes/playlists.py` |
+| `scoring_modifier` | Mutator | Modifies the base matching confidence score, often based on `plugin_context` (e.g., matching Drama titles). | `core/matching_engine/matching_engine.py` |
 | `ON_MATCH_FAILED` | Skip | Fires when the Waterfall Search evaluates all raw candidates and rejects them due to low confidence scores. A plugin (e.g., an Acoustic Fingerprinter) can step in, find a match via external lookup, and return a valid candidate dictionary to override the failure. | `core/matching_engine/matching_engine.py` |
 
 ## Suggestion Engine
