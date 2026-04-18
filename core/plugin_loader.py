@@ -5,8 +5,11 @@ import importlib
 import importlib.util
 import os
 import sys
+import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+
+from core.plugin_venv import setup_plugin_venv
 
 from flask import Blueprint
 
@@ -126,6 +129,42 @@ class PluginLoader:
         logger.debug(f"Using plugins directory: {self.plugins_dir}")
 
         safe_mode = os.environ.get('ECHOSYNC_SAFE_MODE') == '1'
+
+        # Collect requirements before loading
+        all_requirements = set()
+
+        def _collect_requirements(directory: Path, source_type: str):
+            if not directory.exists() or safe_mode and source_type == 'community':
+                return
+            for item in directory.iterdir():
+                if not item.is_dir() or item.name.startswith('_'):
+                    continue
+                # Skip if disabled in config
+                if source_type == 'community':
+                    disabled = config_manager.get_disabled_providers()
+                    if f"plugin.{item.name}" in disabled or item.name in disabled:
+                        continue
+
+                manifest_file = item / "manifest.json"
+                if manifest_file.exists():
+                    try:
+                        manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                        reqs = manifest_data.get("requirements", [])
+                        for req in reqs:
+                            all_requirements.add(req)
+                    except Exception as e:
+                        logger.error(f"Failed to read manifest for {item.name} to collect requirements: {e}")
+
+        # 0. Set up Plugin VENV and install dependencies
+        try:
+            _collect_requirements(self.plugins_dir, source_type='community')
+            # Assuming core plugins could theoretically have requirements too
+            _collect_requirements(self.providers_dir, source_type='core')
+
+            setup_plugin_venv(self.plugins_dir, all_requirements)
+        except Exception as e:
+            logger.critical(f"Failed to setup plugin virtual environment: {e}")
+            sys.exit(1) # Fatal error if we can't setup venv
 
         # 1. Load Core Providers
         self._scan_directory(self.providers_dir, source_type='core')
@@ -287,22 +326,8 @@ class PluginLoader:
             if provider_class and issubclass(provider_class, ProviderBase):
                 # Check for registry conflicts or disabling logic if needed
                 ProviderRegistry.register(provider_class, source_type=source_type)
-
-                # Instantiate immediately to trigger any self-setup if needed
-                # (Though strictly speaking, we might want to delay instantiation until needed,
-                # existing logic often instantiates them. We will stick to registration for now
-                # and let the app instantiate them via registry if needed, OR we can instantiate here
-                # if that was the legacy behavior. The legacy behavior was explicit instantiation in _init_provider_clients.
-                # BUT, ProviderRegistry.create_instance() is used later.
-                # HOWEVER, some providers might need instantiation to set up listeners?
-                # Let's check memory: "Instantiate provider clients so they self-register in plugin_registry" was the old way.
-                # Now we register the CLASS directly. Instantiation happens when used.
-                # BUT, we might want to instantiate them to verify config?
-                # For now, just register the class.
-                pass
             else:
                 # Fallback: Look for any ProviderBase subclass if not explicitly exported
-                # (Useful for transition or plugins that don't follow the new spec yet)
                 found = False
                 for attr_name in dir(module):
                     attr = getattr(module, attr_name)
@@ -321,11 +346,19 @@ class PluginLoader:
             elif blueprint is not None:
                 logger.warning(f"Invalid RouteBlueprint in {name}: expected flask.Blueprint, got {type(blueprint)}")
 
-        except ImportError as e:
-            logger.error(f"Failed to import {module_path}: {e}")
-            # Graceful failure: Log and continue
         except Exception as e:
-            logger.error(f"Unexpected error loading {module_path}: {e}", exc_info=True)
+            logger.error(f"Error loading plugin {module_path}: {e}", exc_info=True)
+            if name in ['local_server', 'local_metadata']:
+                logger.critical(f"FATAL: Core plugin '{name}' failed to load. This will cause cascading failures. Shutting down.")
+                sys.exit(1)
+            else:
+                logger.warning(f"Sandboxing: Disabling community plugin '{name}' due to load error.")
+                # The config prefix for plugins is typically just the name or 'plugin.name'.
+                # According to get_all_plugins in the same file, plugins have IDs like 'plugin.{name}'.
+                # Let's disable the name directly. The config manager usually checks both or just 'name'.
+                config_manager.disable_provider(f"plugin.{name}")
+                config_manager.disable_provider(name) # Just to be safe based on how disable works
+
 
     def get_all_blueprints(self) -> List[Blueprint]:
         return self.loaded_blueprints
