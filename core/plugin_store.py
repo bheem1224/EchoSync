@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class PluginStore:
     def __init__(self):
         self.plugins_dir = config_manager.get_plugins_dir()
-        self.default_repo = "https://github.com/EchoSync/echosync-plugins"
+        self.default_repo = "https://github.com/bheem1224/EchoSync/tree/main/plugins"
 
     def get_repositories(self) -> List[str]:
         repos = [self.default_repo]
@@ -54,24 +54,45 @@ class PluginStore:
     def scan_repository(self, repo_url: str) -> List[Dict]:
         parts = repo_url.rstrip('/').split('/')
         if "github.com" in parts:
-            user = parts[-2]
-            repo = parts[-1]
-            raw_url = f"https://raw.githubusercontent.com/{user}/{repo}/main/store-manifest.json"
-            master_raw_url = f"https://raw.githubusercontent.com/{user}/{repo}/master/store-manifest.json"
+            try:
+                gh_idx = parts.index("github.com")
+                user = parts[gh_idx + 1]
+                repo = parts[gh_idx + 2]
+                
+                branch = "main"
+                subfolder = ""
+                if len(parts) > gh_idx + 4 and parts[gh_idx + 3] == "tree":
+                    branch = parts[gh_idx + 4]
+                    subfolder = "/".join(parts[gh_idx + 5:])
+                
+                if subfolder:
+                    raw_urls = [f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{subfolder}/store-manifest.json"]
+                else:
+                    raw_urls = [
+                        f"https://raw.githubusercontent.com/{user}/{repo}/main/store-manifest.json",
+                        f"https://raw.githubusercontent.com/{user}/{repo}/master/store-manifest.json"
+                    ]
 
-            for check_url in [raw_url, master_raw_url]:
-                try:
-                    resp = requests.get(check_url, timeout=10)
-                    if resp.status_code == 200:
-                        manifest_data = resp.json()
-                        plugins = manifest_data.get("plugins", [])
-                        for p in plugins:
-                            p["_source_repo"] = repo_url
-                        return plugins
-                except Exception as e:
-                    logger.debug(f"Could not fetch {check_url}: {e}")
+                for check_url in raw_urls:
+                    try:
+                        resp = requests.get(check_url, timeout=10)
+                        if resp.status_code == 200:
+                            manifest_data = resp.json()
+                            plugins = manifest_data.get("plugins", [])
+                            for p in plugins:
+                                p["_source_repo"] = repo_url
+                                if "download_url" not in p and "_download_url" not in p:
+                                    p["_download_url"] = f"https://github.com/{user}/{repo}/archive/refs/heads/{branch}.zip"
+                                    plugin_id = p.get("id", "")
+                                    if plugin_id:
+                                        p["_folder_path"] = f"{subfolder}/{plugin_id}" if subfolder else plugin_id
+                            return plugins
+                    except Exception as e:
+                        logger.debug(f"Could not fetch {check_url}: {e}")
 
-            return self._scan_github_api(user, repo, repo_url)
+                return self._scan_github_api(user, repo, repo_url)
+            except IndexError:
+                logger.error(f"Malformed GitHub URL: {repo_url}")
         return []
 
     def _scan_github_api(self, user: str, repo: str, original_repo_url: str) -> List[Dict]:
@@ -128,42 +149,42 @@ class PluginStore:
                 folder_path = plugin_info.get("_folder_path")
 
                 zip_infos = z.infolist()
+                
+                if not zip_infos:
+                    logger.error("Empty zip file")
+                    return False
+                    
+                root_dir = zip_infos[0].filename.split('/')[0]
 
-                files_to_extract = []
+                target_prefix = f"{root_dir}/{folder_path}/" if folder_path else f"{root_dir}/"
+                
+                if folder_path:
+                    prefix_exists = any(zi.filename.startswith(target_prefix) for zi in zip_infos)
+                    if not prefix_exists:
+                        for zi in zip_infos:
+                            if zi.filename.endswith('/manifest.json'):
+                                dir_path = zi.filename[:-14]
+                                if dir_path.endswith(f"/{plugin_id}"):
+                                    target_prefix = dir_path + "/"
+                                    break
+
+                extracted_count = 0
                 for zi in zip_infos:
                     if zi.filename.endswith('/'):
                         continue
-
-                    if folder_path:
-                        parts = zi.filename.split('/')
-                        if len(parts) > 1 and parts[1] == folder_path:
-                            files_to_extract.append(zi)
-                    else:
-                        files_to_extract.append(zi)
-
-                for zi in files_to_extract:
-                    parts = zi.filename.split('/')
-
-                    rel_path = None
-                    if folder_path:
-                        try:
-                            idx = parts.index(folder_path)
-                            rel_path = "/".join(parts[idx+1:])
-                        except ValueError:
-                            continue
-                    else:
-                        if len(parts) > 1 and not zip_infos[0].filename.endswith('/'):
-                            rel_path = zi.filename
-                        elif len(parts) > 1:
-                            rel_path = "/".join(parts[1:])
-                        else:
-                            rel_path = zi.filename
-
-                    if rel_path:
-                        target_file = dest_dir / rel_path
-                        target_file.parent.mkdir(parents=True, exist_ok=True)
-                        with target_file.open('wb') as f:
-                            f.write(z.read(zi))
+                        
+                    if zi.filename.startswith(target_prefix):
+                        rel_path = zi.filename[len(target_prefix):]
+                        if rel_path:
+                            target_file = dest_dir / rel_path
+                            target_file.parent.mkdir(parents=True, exist_ok=True)
+                            with target_file.open('wb') as f:
+                                f.write(z.read(zi))
+                            extracted_count += 1
+                
+                if extracted_count == 0:
+                    logger.error(f"No files extracted for plugin {plugin_id} with prefix {target_prefix}")
+                    return False
 
             manifest_file = dest_dir / "manifest.json"
             if manifest_file.exists():

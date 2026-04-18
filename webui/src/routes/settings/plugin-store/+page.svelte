@@ -4,11 +4,16 @@
   import { feedback } from '../../../stores/feedback';
 
   let plugins = [];
+  let repos = [];
   let loadError = '';
   let isLoading = true;
   let downloading = null;
 
-  onMount(async () => {
+  let showReposModal = false;
+  let newRepoUrl = '';
+
+  async function loadStore() {
+    isLoading = true;
     try {
       const response = await apiClient.get('/system/plugins/store');
       plugins = response.data?.plugins ?? [];
@@ -18,6 +23,20 @@
     } finally {
       isLoading = false;
     }
+  }
+
+  async function loadRepos() {
+    try {
+      const response = await apiClient.get('/system/plugins/repos');
+      repos = response.data?.repos ?? [];
+    } catch (err) {
+      console.error('Failed to load repos:', err);
+    }
+  }
+
+  onMount(async () => {
+    await loadRepos();
+    await loadStore();
   });
 
   async function installPlugin(plugin) {
@@ -38,6 +57,30 @@
       downloading = null;
     }
   }
+
+  async function addRepo() {
+    if (!newRepoUrl.trim()) return;
+    try {
+      await apiClient.post('/system/plugins/repos', { url: newRepoUrl.trim() });
+      newRepoUrl = '';
+      await loadRepos();
+      await loadStore();
+      feedback.addToast('Repository added', 'success');
+    } catch (err) {
+      feedback.addToast('Failed to add repository', 'error');
+    }
+  }
+
+  async function removeRepo(url) {
+    try {
+      await apiClient.delete('/system/plugins/repos', { data: { url } });
+      await loadRepos();
+      await loadStore();
+      feedback.addToast('Repository removed', 'success');
+    } catch (err) {
+      feedback.addToast('Failed to remove repository', 'error');
+    }
+  }
 </script>
 
 <svelte:head>
@@ -52,7 +95,32 @@
         Browse and install community and official plugins to extend Echosync's functionality.
       </p>
     </div>
+    <button class="btn-manage-repos" on:click={() => showReposModal = !showReposModal}>
+      {showReposModal ? 'Close Repositories' : 'Manage Repositories'}
+    </button>
   </header>
+
+  {#if showReposModal}
+    <div class="repos-panel">
+      <h2>Configured Repositories</h2>
+      <ul class="repo-list">
+        {#each repos as repo}
+          <li>
+            <span class="repo-url">{repo}</span>
+            {#if repo !== 'https://github.com/bheem1224/EchoSync/tree/main/plugins'}
+              <button class="btn-remove" on:click={() => removeRepo(repo)}>Remove</button>
+            {:else}
+              <span class="default-badge">Official</span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+      <div class="add-repo">
+        <input type="text" placeholder="https://github.com/user/repo" bind:value={newRepoUrl} />
+        <button on:click={addRepo} disabled={!newRepoUrl.trim()}>Add Repository</button>
+      </div>
+    </div>
+  {/if}
 
   {#if isLoading}
     <div class="loading-state">
@@ -124,11 +192,128 @@
     gap: 24px;
   }
 
+  .page__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
   .subtitle {
     color: var(--muted);
     font-size: 14px;
     max-width: 640px;
     margin-top: 4px;
+  }
+
+  .btn-manage-repos {
+    padding: 8px 16px;
+    border-radius: 8px;
+    background: var(--surface-2, rgba(255, 255, 255, 0.1));
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .btn-manage-repos:hover {
+    background: var(--surface-3, rgba(255, 255, 255, 0.15));
+  }
+
+  .repos-panel {
+    background: var(--surface-1, rgba(0, 0, 0, 0.2));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .repos-panel h2 {
+    font-size: 16px;
+    margin: 0;
+  }
+
+  .repo-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .repo-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 10px 14px;
+    border-radius: 8px;
+  }
+
+  .repo-url {
+    font-family: monospace;
+    font-size: 13px;
+    color: var(--text);
+    word-break: break-all;
+  }
+
+  .btn-remove {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    border: none;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .btn-remove:hover {
+    background: rgba(239, 68, 68, 0.3);
+  }
+
+  .default-badge {
+    font-size: 12px;
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.1);
+    padding: 4px 10px;
+    border-radius: 6px;
+  }
+
+  .add-repo {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+  }
+
+  .add-repo input {
+    flex: 1;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+    color: var(--text);
+    font-family: monospace;
+    font-size: 13px;
+  }
+
+  .add-repo button {
+    padding: 8px 16px;
+    border-radius: 8px;
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  .add-repo button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .empty-state, .loading-state {
