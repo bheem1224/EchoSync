@@ -617,25 +617,20 @@ class MetadataEnhancerService:
                     total_processed += 1
 
                 except OperationalError as _oe:
+                    try:
+                        session.rollback()
+                    except Exception:
+                        pass
                     if "database is locked" in str(_oe).lower():
-                        try:
-                            session.rollback()
-                        except Exception:
-                            pass
-                        logger.critical(
-                            "EMERGENCY ABORT: Database is locked by an external process. "
-                            "Halting job to prevent corruption."
+                        logger.warning(
+                            f"Database is locked processing track {getattr(track, 'id', '?')} ({getattr(local_path, 'name', str(track.file_path) if track.file_path else '?')}) — skipping to next track."
                         )
-                        raise
-                    # Non-lock OperationalError (disk full, corrupt DB, etc.) — also fatal;
-                    # do not silently continue and risk writing partial data.
-                    logger.error(
-                        "Fatal database error processing track %d (%s) — aborting job.",
-                        getattr(track, 'id', '?'),
-                        getattr(local_path, 'name', str(track.file_path) if track.file_path else '?'),
-                        exc_info=True,
-                    )
-                    raise
+                    else:
+                        logger.error(
+                            f"Database error processing track {getattr(track, 'id', '?')} ({getattr(local_path, 'name', str(track.file_path) if track.file_path else '?')}) — skipping to next track.",
+                            exc_info=True,
+                        )
+                    continue
                 except Exception as e:
                     logger.error(
                         "Unhandled error processing track %d (%s) — skipping to next track.",

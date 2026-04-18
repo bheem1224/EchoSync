@@ -983,8 +983,8 @@ class WeightedMatchingEngine:
         """
 
         if not source.duration or not candidate.duration:
-            # If either has no duration, assume match
-            return 1.0
+            # If either has no duration, return neutral score to avoid inflating confidence
+            return 0.5
 
         diff_ms = abs(source.duration - candidate.duration)
         tolerance_ms = (

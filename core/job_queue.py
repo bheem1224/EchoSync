@@ -377,6 +377,17 @@ class JobQueue:
         while self._running:
             with self._lock:
                 now = time.time()
+
+                # Pre-fetch watchdog to recover Zombie Jobs
+                for job_name, is_running in list(self._is_running.items()):
+                    if is_running:
+                        job_obj = self._jobs.get(job_name)
+                        if job_obj and job_obj.running and job_obj.last_started:
+                            if now - job_obj.last_started > 7200: # 2 hours
+                                logger.warning(f"Watchdog: Job '{job_name}' has been running for >2 hours. Resetting state.")
+                                job_obj.running = False
+                                self._is_running[job_name] = False
+
                 while self._heap and self._heap[0].next_run <= now:
                     job = heapq.heappop(self._heap)
                     if job.enabled:

@@ -643,6 +643,8 @@ class PostProcessor:
 
         counter = 1
         while True:
+            if counter > 1000:
+                raise FileExistsError(f"Too many filename collisions for {file_path}")
             new_name = f"{stem} ({counter}){suffix}"
             new_path = parent / new_name
             if not new_path.exists():
