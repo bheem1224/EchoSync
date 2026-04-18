@@ -37,13 +37,32 @@ def update_plugin_config():
     return jsonify({"success": True})
 
 
-def get_plugin_store():
-    try:
-        plugins = plugin_store.get_all_store_plugins()
-        return jsonify({'plugins': plugins})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@bp.route('/repos', methods=['GET'])
+def get_repos():
+    repos = plugin_store.get_repositories()
+    return jsonify({"repos": repos})
 
+@bp.route('/repos', methods=['POST'])
+def add_repo():
+    data = request.json or {}
+    url = data.get('url')
+    if not url:
+        return jsonify({"error": "URL required"}), 400
+    success = plugin_store.add_repository(url)
+    if success:
+        return jsonify({"success": True})
+    return jsonify({"error": "Failed to add repository"}), 500
+
+@bp.route('/repos', methods=['DELETE'])
+def remove_repo():
+    data = request.json or {}
+    url = data.get('url')
+    if not url:
+        return jsonify({"error": "URL required"}), 400
+    success = plugin_store.remove_repository(url)
+    if success:
+        return jsonify({"success": True})
+    return jsonify({"error": "Failed to remove repository"}), 500
 
 @bp.route('/store', methods=['GET'])
 def get_plugin_store():
