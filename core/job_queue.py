@@ -123,10 +123,36 @@ class JobQueue:
 
         Checks config for any saved interval overrides for this job.
         """
-        # Clamp max_retries to a safe upper bound to prevent a misconfigured job from
-        # permanently tying up a worker thread in an infinite retry spiral.
         _MAX_RETRIES_CAP = 10
         max_retries = max(0, min(max_retries, _MAX_RETRIES_CAP))
+
+        try:
+            from core.hook_manager import hook_manager
+            hook_kwargs = hook_manager.apply_filters('ON_JOB_ENQUEUED', {
+                'name': name,
+                'interval_seconds': interval_seconds,
+                'start_after': start_after,
+                'enabled': enabled,
+                'max_retries': max_retries,
+                'backoff_base': backoff_base,
+                'backoff_factor': backoff_factor,
+                'tags': tags,
+                'plugin': plugin
+            })
+            if isinstance(hook_kwargs, dict):
+                name = hook_kwargs.get('name', name)
+                interval_seconds = hook_kwargs.get('interval_seconds', interval_seconds)
+                start_after = hook_kwargs.get('start_after', start_after)
+                enabled = hook_kwargs.get('enabled', enabled)
+                max_retries = max(0, min(hook_kwargs.get('max_retries', max_retries), _MAX_RETRIES_CAP))
+                backoff_base = hook_kwargs.get('backoff_base', backoff_base)
+                backoff_factor = hook_kwargs.get('backoff_factor', backoff_factor)
+                tags = hook_kwargs.get('tags', tags)
+                plugin = hook_kwargs.get('plugin', plugin)
+        except Exception as e:
+            import logging
+            logging.getLogger("job_queue").error(f"Error in ON_JOB_ENQUEUED hook: {e}")
+
         with self._lock:
             # Check for saved overrides in config
             saved_config = config_manager.get(f"jobs.{name}")
@@ -413,6 +439,11 @@ class JobQueue:
                                 f"Job '{job.name}' exceeded max retries ({job.max_retries}); giving up. "
                                 f"Total failures: {job.total_failures}"
                             )
+                            try:
+                                from core.hook_manager import hook_manager
+                                hook_manager.apply_filters('ON_JOB_FAILED', None, job_name=job.name, error=error_msg, retries=job.current_retries)
+                            except Exception as hook_e:
+                                logger.error(f"Error in ON_JOB_FAILED hook: {hook_e}")
                             break
 
                         backoff = job.backoff_base * (job.backoff_factor ** (job.current_retries - 1))

@@ -67,3 +67,9 @@ def decrypt_string(ciphertext: str) -> str:
     except Exception:
         # Fallback to returning original string on decryption failure
         return ciphertext
+
+def verify_user_credentials(username, password):
+    """
+    Stub for native user authentication (coming in v2.6.0).
+    """
+    raise NotImplementedError("Native authentication is disabled/coming in v2.6.0")

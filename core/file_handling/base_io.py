@@ -86,6 +86,15 @@ def safe_move(src: Union[str, Path], dest: Union[str, Path]) -> Path:
     lock_b = lock_manager.lock_for(pair[1])
     with lock_a:
         with lock_b:
+            try:
+                from core.hook_manager import hook_manager
+                plugin_io = hook_manager.apply_filters('CUSTOM_FILE_IO', None, src_path=str(resolved_src), dest_path=str(resolved_dest))
+                if plugin_io == "SKIP":
+                    logger.info(f"Plugin intercepted CUSTOM_FILE_IO for {resolved_dest}, skipping local move")
+                    return resolved_dest
+            except Exception as e:
+                logger.error(f"Error in CUSTOM_FILE_IO hook: {e}")
+
             resolved_dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(resolved_src), str(resolved_dest))
             logger.debug("safe_move: %s → %s", resolved_src, resolved_dest)
