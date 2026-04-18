@@ -74,11 +74,11 @@ Spotify utilizes adaptive exponential backoff when it encounters 429 Too Many Re
 You do not need to configure this; the core handles it autonomously.
 
 6. Zero-Trust Plugin Sandbox
-If you are writing community plugins to manipulate metadata or add webhooks, be aware of the AST Sandbox.
+EchoSync embraces the **Total Freedom Plugin Architecture**. If you are writing community plugins to manipulate metadata, inject new API routes, or add webhooks via the `core.hook_manager`, be aware of the AST Sandbox.
 
-Plugins cannot import os, sys, subprocess, or write arbitrarily to the file system.
-
-Your plugin will automatically be skipped during boot if it throws an unhandled exception, ensuring your core sync jobs never go offline due to a bad community script.
+- Plugins cannot import `os`, `sys`, `subprocess`, or write arbitrarily to the file system outside of the `CUSTOM_FILE_IO` hook.
+- Your plugin will automatically be skipped during boot if it throws an unhandled exception, ensuring your core sync jobs never go offline due to a bad community script.
+- For a full list of available hooks to interact with the core engine, see `docs/HOOKS_REFERENCE.md`.
 
 7. Troubleshooting & Logs
 By default, logs are written to the console and to /data/logs.

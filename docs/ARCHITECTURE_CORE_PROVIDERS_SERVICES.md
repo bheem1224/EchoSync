@@ -69,46 +69,34 @@ deploy headless services.  Key responsibilities include:
 
 ---
 
-## 2. Providers
+## 2. Total Freedom Plugin Architecture (Formerly "Providers")
 
-Providers abstract the APIs of third‑party music sources (media servers like
-Plex, streaming services like Spotify, download networks like soulseek, etc.).
-Each provider lives as a Python package under `providers/` and is dynamically
-loaded by `core.plugin_loader`.  Core abstractions are defined in
-`core.provider` and `core.provider_base` which enforce a consistent interface.
+The legacy concept of hardcoded "Providers" has been deprecated. EchoSync now utilizes the **Total Freedom Plugin Architecture**.
 
-Providers may contain:
+Instead of writing rigid adapter classes, developers now write Plugins that interact with the core application via a comprehensive **Hook System**. This allows plugins to not just provide data, but to alter, intercept, or completely hijack almost any application state or lifecycle event.
 
-* an API client implementation (`client.py` when present)
-* Flask route definitions (`routes.py`) exposing REST endpoints for the UI
-* any auxiliary helpers or models specific to that service
+Plugins are dynamically loaded via `core.plugin_loader`.
 
-The top‑level `__init__.py` in the `providers` package performs automatic
-availability checks and exposes `ProviderRegistry` helpers.
+### The Hook System
 
-### Provider folders
+The architecture relies on three types of hooks dispatched through the central `core.hook_manager.HookManager`:
 
-| Provider | Description |
-|----------|-------------|
-| `acoustid/` | Fingerprinting lookup service used during metadata enhancement. |
-| `jellyfin/` | Media server provider for Jellyfin installations. |
-| `listenbrainz/` | Scrobbling / listening history service. |
-| `lrclib/` | Lyrics lookup via `.lrc` files or services. |
-| `musicbrainz/` | MusicBrainz metadata/ID provider. |
-| `navidrome/` | Media server provider for Navidrome. |
-| `plex/` | Media server provider for Plex, includes delete/scan APIs. |
-| `slskd/` | Soulseek download network provider using `slskd` daemon. |
-| `spotify/` | Sync service provider for Spotify playlists. Supports multiple user accounts; playlists returned by the API now include an associated `account_id` field, and the sync/analysis engine will instantiate a client for each account. |
-| `tidal/` | Sync service provider for Tidal playlists. |
+1. **Event Hooks (Read-Only)**
+   - **Purpose:** To notify plugins that an action has occurred so they can react (e.g., logging, triggering an external webhook, updating a dashboard).
+   - **Behavior:** The plugin receives data but cannot modify the core application's state or the data in transit.
+   - **Example:** `ON_PLAYLIST_SAVED` fires after a playlist is written to the database.
 
-Each of these directories generally contains:
+2. **Mutator Hooks (Modify in Transit)**
+   - **Purpose:** To allow plugins to alter data before the core engine processes it.
+   - **Behavior:** The plugin receives a payload, modifies it, and returns the modified payload. The core engine then continues using the altered data.
+   - **Example:** `BEFORE_FILE_RENAME` allows a plugin to change the destination path string before `shutil.move` is executed.
 
-* `routes.py` – HTTP endpoints consumed by the web UI (login, settings, scans)
-* `client.py` – helper for making authenticated API calls to the remote service
-* `__init__.py` – registers the provider and exposes any helper functions
+3. **Skip Hooks (Hijack/Bypass)**
+   - **Purpose:** To allow a plugin to completely take over a core function.
+   - **Behavior:** The core engine checks the hook's return value. If the plugin returns a specific payload (or a flag like `"SKIP"` / `"ABORT"`), the core engine immediately aborts its default logic and uses the plugin's result instead.
+   - **Example:** `AUTHENTICATE_USER` allows an OIDC plugin to validate a user. If successful, the core SQLite password check is entirely bypassed.
 
-> When creating a new provider, copy an existing implementation and modify the
-> interfaces defined in `core.provider`/`core.provider_base`.
+> **RULE: Point, Don't Print:** Do not hardcode exact code blocks or variable signatures in documentation. To see exactly what payload a hook receives, search the codebase for `hook_manager.apply_filters('HOOK_NAME'` or reference `docs/HOOKS_REFERENCE.md`.
 
 ---
 
