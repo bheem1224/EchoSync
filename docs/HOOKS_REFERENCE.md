@@ -1,9 +1,8 @@
 # EchoSync Hook Reference
 
-This document serves as a directory of the Core hooks available in the **Total Freedom Plugin Architecture**.
+This document serves as a directory of the Core hooks available in the **Plugin Architecture**.
 
-> **RULE: Point, Don't Print.**
-> To see the exact payload signatures or return values required by the system, look directly at the `hook_manager.apply_filters('HOOK_NAME', ...)` calls in the referenced source files.
+To see the exact payload signatures or return values required by the system, look directly at the `hook_manager.apply_filters('HOOK_NAME', ...)` calls in the referenced source files.
 
 ## Infrastructure & Core
 
