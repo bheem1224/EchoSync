@@ -284,6 +284,15 @@ def create_app() -> Flask:
         except Exception:
             pass
 
+    import atexit
+    def on_shutdown():
+        from core.hook_manager import hook_manager
+        try:
+            hook_manager.apply_filters('ON_SYSTEM_SHUTDOWN', None)
+        except Exception:
+            pass
+    atexit.register(on_shutdown)
+
     return app
 
 if __name__ == "__main__":
