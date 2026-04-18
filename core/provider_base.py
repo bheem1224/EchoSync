@@ -142,9 +142,10 @@ class ProviderBase(ABC):
         self.http = RequestManager(self.name, rate=rate_config)
 
         # Sandbox API facades for Plugin Architecture
-        self.secrets = _PluginSecrets(self.name)
-        self.config = _PluginConfig(self.name)
-        self.core_system = _PluginCoreSystemFacade(self.name)
+        self._name = self.name
+        self.secrets = _PluginSecrets(self._name)
+        self.config = _PluginConfig(self._name)
+        self.core_system = _PluginCoreSystemFacade(self._name)
         self.models = _PluginModelFacade()
 
     def get_oauth_redirect_uri(self) -> str:
