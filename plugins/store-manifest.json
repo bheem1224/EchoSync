@@ -1,0 +1,140 @@
+{
+    "plugins": [
+        {
+            "id": "core.acoustid",
+            "name": "Acoustid",
+            "description": "Official EchoSync provider for acoustid",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "metadata",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/acoustid"
+        },
+        {
+            "name": "CJK Language Pack",
+            "id": "cjk_language_pack",
+            "version": "1.0.0",
+            "author": "Echosync",
+            "description": "Transliterates Chinese (Simplified/Traditional), Japanese (Kanji/Kana), and Korean (Hangul) text to Romaji/Pinyin so the matching engine can compare CJK track titles against their Latin-script counterparts.",
+            "type": "language_pack",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/cjk_language_pack"
+        },
+
+        {
+            "id": "core.jellyfin",
+            "name": "Jellyfin",
+            "description": "Official EchoSync provider for jellyfin",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "media_server",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/jellyfin"
+        },
+        {
+            "id": "core.listenbrainz",
+            "name": "Listenbrainz",
+            "description": "Official EchoSync provider for listenbrainz",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "metadata",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/listenbrainz"
+        },
+        {
+            "id": "core.local_metadata",
+            "name": "Local Metadata",
+            "description": "Official EchoSync provider for local_metadata",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "metadata",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/local_metadata"
+        },
+        {
+            "id": "core.local_player",
+            "name": "Local Player",
+            "description": "Official EchoSync provider for local_player",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "media_player",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/local_player"
+        },
+        {
+            "id": "core.local_server",
+            "name": "Local Server",
+            "description": "Official EchoSync provider for local_server",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "media_server",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/local_server"
+        },
+        {
+            "id": "core.lrclib",
+            "name": "Lrclib",
+            "description": "Official EchoSync provider for lrclib",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "metadata",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/lrclib"
+        },
+        {
+            "id": "core.musicbrainz",
+            "name": "Musicbrainz",
+            "description": "Official EchoSync provider for musicbrainz",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "metadata",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/musicbrainz"
+        },
+        {
+            "id": "core.navidrome",
+            "name": "Navidrome",
+            "description": "Official EchoSync provider for navidrome",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "media_server",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/navidrome"
+        },
+        {
+            "id": "core.outbound_gateway",
+            "name": "Outbound Gateway",
+            "description": "Official EchoSync provider for outbound_gateway",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "gateway",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/outbound_gateway"
+        },
+        {
+            "id": "core.plex",
+            "name": "Plex",
+            "description": "Official EchoSync provider for plex",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "media_server",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/plex"
+        },
+        {
+            "id": "core.slskd",
+            "name": "Slskd",
+            "description": "Official EchoSync provider for slskd",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "download_client",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/slskd"
+        },
+        {
+            "id": "core.spotify",
+            "name": "Spotify",
+            "description": "Official EchoSync provider for spotify",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "metadata",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/spotify"
+        },
+        {
+            "id": "core.tidal",
+            "name": "Tidal",
+            "description": "Official EchoSync provider for tidal",
+            "version": "1.0.0",
+            "author": "EchoSync",
+            "type": "metadata",
+            "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/tidal"
+        }
+    ]
+}

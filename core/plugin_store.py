@@ -130,6 +130,13 @@ class PluginStore:
         all_plugins = []
         for repo in self.get_repositories():
             all_plugins.extend(self.scan_repository(repo))
+            
+        for plugin in all_plugins:
+            plugin_id = plugin.get("id", plugin.get("name", "unknown_plugin"))
+            plugin_id = plugin_id.split(".")[-1]
+            dest_dir = self.plugins_dir / plugin_id
+            plugin["_installed"] = dest_dir.exists() and (dest_dir / "manifest.json").exists()
+            
         return all_plugins
 
     def download_plugin(self, plugin_info: Dict) -> bool:
