@@ -31,6 +31,7 @@
     // ── System Plugins ────────────────────────────────────────────────────
     { label: '── Plugins', href: null, divider: true },
     { label: 'Installed Plugins', href: '/settings/plugins' },
+    { label: 'Plugin Store', href: '/settings/plugin-store' },
     // ── Other ─────────────────────────────────────────────────────────────
     { label: '── Other', href: null, divider: true },
     { label: 'Metadata', href: '/settings/metadata', badge: $metadataQueue.count },
