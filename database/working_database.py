@@ -327,13 +327,38 @@ class SuggestionStagingQueue(WorkingBase):
         return sync_id
 
 
+class RestrictedConnection:
+    def __init__(self, conn, provider_name):
+        self.conn = conn
+        self.provider_name = provider_name
+
+    def execute(self, statement, *args, **kwargs):
+        # Extremely basic DDL block for non-prefixed tables
+        import re
+        stmt_str = str(statement).upper()
+        if 'DROP TABLE' in stmt_str or 'ALTER TABLE' in stmt_str:
+            match = re.search(r'(DROP|ALTER) TABLE (IF EXISTS )?([a-zA-Z0-9_]+)', stmt_str)
+            if match:
+                table_name = match.group(3)
+                if not table_name.startswith(f"PRV_{self.provider_name.upper()}_"):
+                    raise PermissionError(f"Plugin '{self.provider_name}' is not allowed to modify table '{table_name}'")
+        return self.conn.execute(statement, *args, **kwargs)
+
+    def commit(self):
+        return self.conn.commit()
+
 class ProviderStorageBox:
     """Sandbox wrapper for providers to create their own tables."""
 
     def __init__(self, provider_name: str, engine, metadata: MetaData):
         self.provider_name = provider_name
-        self.engine = engine
+        self._engine = engine
         self.metadata = metadata
+
+    @contextmanager
+    def connect(self):
+        with self._engine.connect() as conn:
+            yield RestrictedConnection(conn, self.provider_name)
 
     def create_table(self, table_name_suffix: str, *columns_definition) -> Table:
         """
@@ -362,7 +387,7 @@ class ProviderStorageBox:
 
     def execute(self) -> None:
         """Execute the table creations."""
-        self.metadata.create_all(self.engine)
+        self.metadata.create_all(self._engine)
 
 
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:

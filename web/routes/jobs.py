@@ -1,3 +1,4 @@
+from web.auth import require_auth
 from flask import Blueprint, Response, request
 import json
 from core.tiered_logger import get_logger
@@ -64,6 +65,7 @@ def jobs_summary():
 
 
 @bp.post("/run")
+@require_auth
 def run_job():
     """Trigger immediate execution of a job."""
     payload = request.get_json(silent=True) or {}
@@ -109,6 +111,7 @@ def run_job():
 
 
 @bp.post("/<job_name>/interval")
+@require_auth
 def update_job_interval_route(job_name):
     """Update interval for any job and persist to config."""
     payload = request.get_json(silent=True) or {}

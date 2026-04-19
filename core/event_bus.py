@@ -29,6 +29,21 @@ class EventBus:
                 self._subscribers[event_name] = []
             self._subscribers[event_name].append(h)
 
+    def unsubscribe(self, event_name_or_handler, handler=None):
+        if handler is None:
+            event_name = "*"
+            h = event_name_or_handler
+        else:
+            event_name = event_name_or_handler
+            h = handler
+
+        with self._lock:
+            if event_name in self._subscribers:
+                try:
+                    self._subscribers[event_name].remove(h)
+                except ValueError:
+                    pass
+
     def publish_lightweight(self, payload: dict):
         event_name = payload.get("event", "UNKNOWN")
 
