@@ -1,6 +1,34 @@
 import json
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
+import socket
+import ipaddress
+import urllib.parse
+from core.tiered_logger import get_logger
+
+logger = get_logger("webhook_parsers")
+
+def validate_safe_url(url: str) -> bool:
+    """Validate that a URL does not point to an internal or private IP address."""
+    try:
+        if not url:
+            return False
+
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+
+        ip_addr = socket.gethostbyname(hostname)
+        ip = ipaddress.ip_address(ip_addr)
+
+        if ip.is_private or ip.is_loopback or ip.is_multicast or ip.is_link_local:
+            return False
+
+        return True
+    except Exception as e:
+        logger.warning(f"URL validation failed for {url}: {e}")
+        return False
 
 class WebhookParser(ABC):
     @abstractmethod
@@ -139,4 +167,16 @@ def parse_media_server_webhook(request, provider: str = "plex") -> Optional[Dict
     parser_cls = _PROVIDER_PARSERS.get((provider or "").lower())
     if parser_cls is None:
         return None
-    return parser_cls().parse(request)
+
+    parsed_data = parser_cls().parse(request)
+
+    if parsed_data:
+        # Sanitize any URL fields
+        url_fields = ["image_url", "artwork", "thumb", "art", "callback"]
+        for field in url_fields:
+            if field in parsed_data and parsed_data[field]:
+                if not validate_safe_url(parsed_data[field]):
+                    logger.warning(f"SSRF blocked: neutralized internal URL in field {field}")
+                    parsed_data[field] = None
+
+    return parsed_data

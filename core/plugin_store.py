@@ -180,6 +180,8 @@ class PluginStore:
                                     break
 
                 extracted_count = 0
+                uncompressed_size = 0
+                import shutil
                 for zi in zip_infos:
                     if zi.filename.endswith('/'):
                         continue
@@ -189,12 +191,21 @@ class PluginStore:
                         if rel_path:
                             if '..' in rel_path or rel_path.startswith('/'):
                                 logger.error(f"Malicious path detected in zip: {rel_path}")
+                                shutil.rmtree(dest_dir, ignore_errors=True)
                                 return False
                             target_file = (dest_dir / rel_path).resolve()
                             if not str(target_file).startswith(str(dest_dir.resolve())):
                                 logger.error(f"Zip Slip prevented for: {target_file}")
+                                shutil.rmtree(dest_dir, ignore_errors=True)
                                 return False
                             target_file.parent.mkdir(parents=True, exist_ok=True)
+
+                            uncompressed_size += zi.file_size
+                            if uncompressed_size > 50 * 1024 * 1024:
+                                logger.error(f"Zip bomb detected: uncompressed size exceeds 50MB limit.")
+                                shutil.rmtree(dest_dir, ignore_errors=True)
+                                return False
+
                             with target_file.open('wb') as f:
                                 f.write(z.read(zi))
                             extracted_count += 1
@@ -240,6 +251,9 @@ class PluginStore:
                         from sqlalchemy import text
                         tables = conn.execute(text(f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '{prefix}'")).fetchall()
                         for (table_name,) in tables:
+                            if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
+                                logger.warning(f"Skipping drop table due to invalid name: {table_name}")
+                                continue
                             conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
                             try:
                                 conn.commit()
@@ -248,6 +262,9 @@ class PluginStore:
                     except ImportError:
                         tables = conn.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '{prefix}'").fetchall()
                         for (table_name,) in tables:
+                            if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
+                                logger.warning(f"Skipping drop table due to invalid name: {table_name}")
+                                continue
                             conn.execute(f"DROP TABLE IF EXISTS {table_name}")
         except Exception as e:
             logger.error(f"Failed to drop tables for {plugin_id}: {e}")

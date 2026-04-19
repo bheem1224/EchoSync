@@ -78,12 +78,12 @@ class PluginSecurityScanner(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            if alias.name.split('.')[0] in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes"):
+            if alias.name.split('.')[0] in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc"):
                 self.violations.append((node.lineno, f"forbidden import '{alias.name}'"))
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        if node.module and node.module.split('.')[0] in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes"):
+        if node.module and node.module.split('.')[0] in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc"):
             self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
         self.generic_visit(node)
 

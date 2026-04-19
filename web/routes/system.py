@@ -1,5 +1,6 @@
 """System endpoints for status, settings, and logs."""
 
+from web.auth import require_auth
 from flask import Blueprint, jsonify, request, Response
 import json
 import os
@@ -128,6 +129,7 @@ def get_migration_status():
 
 
 @bp.post("/migration-acknowledge")
+@require_auth
 def acknowledge_migration():
     """Acknowledge the v2.1.0 migration notification."""
     try:
@@ -158,6 +160,7 @@ _SETTINGS_ALLOWLIST: frozenset = frozenset({
 
 
 @bp.post("/settings")
+@require_auth
 def update_settings():
     """Update application settings (partial update).
 
@@ -255,6 +258,7 @@ def list_quality_profiles():
 
 
 @bp.post('/quality-profiles')
+@require_auth
 def save_quality_profiles():
     """Accept and validate submitted quality profiles, then persist via config manager.
 
@@ -284,6 +288,7 @@ def save_quality_profiles():
 
 
 @bp.post('/quality-profile')
+@require_auth
 def save_single_quality_profile():
     """Save a single quality profile into the stored list.
 
@@ -426,6 +431,7 @@ def get_preferences():
 
 
 @bp.post("/settings/preferences")
+@require_auth
 def update_preferences():
     """Update metadata enhancement preferences."""
     try:
@@ -445,6 +451,7 @@ def update_preferences():
 
 
 @bp.post("/settings/preview-rename")
+@require_auth
 def preview_rename():
     """Preview file renaming based on template."""
     try:
@@ -468,6 +475,7 @@ def preview_rename():
 
 
 @bp.post("/enhance/trigger")
+@require_auth
 def trigger_metadata_enhancement():
     """Manually kick off a retroactive metadata enhancement batch.
 
@@ -486,6 +494,7 @@ def trigger_metadata_enhancement():
 
 
 @bp.post("/database/rebuild")
+@require_auth
 def rebuild_database():
     """Rebuild the music library database by dropping and recreating all tables.
 
