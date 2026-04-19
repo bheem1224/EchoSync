@@ -194,10 +194,10 @@ class PluginStore:
                                 shutil.rmtree(dest_dir, ignore_errors=True)
                                 return False
                             target_file = (dest_dir / rel_path).resolve()
-                            if not str(target_file).startswith(str(dest_dir.resolve())):
+                            if not target_file.is_relative_to(dest_dir.resolve()):
                                 logger.error(f"Zip Slip prevented for: {target_file}")
                                 shutil.rmtree(dest_dir, ignore_errors=True)
-                                return False
+                                raise ValueError("Path traversal attempt detected in zip")
                             target_file.parent.mkdir(parents=True, exist_ok=True)
 
                             uncompressed_size += zi.file_size
@@ -249,7 +249,7 @@ class PluginStore:
                 with db_engine.connect() as conn:
                     try:
                         from sqlalchemy import text
-                        tables = conn.execute(text(f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '{prefix}'")).fetchall()
+                        tables = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :prefix"), {"prefix": prefix}).fetchall()
                         for (table_name,) in tables:
                             if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
                                 logger.warning(f"Skipping drop table due to invalid name: {table_name}")
@@ -260,7 +260,7 @@ class PluginStore:
                             except Exception:
                                 pass
                     except ImportError:
-                        tables = conn.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '{prefix}'").fetchall()
+                        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?", (prefix,)).fetchall()
                         for (table_name,) in tables:
                             if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
                                 logger.warning(f"Skipping drop table due to invalid name: {table_name}")

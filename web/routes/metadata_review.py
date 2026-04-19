@@ -56,12 +56,31 @@ def _normalize_detected_metadata(value: object) -> Optional[Dict[str, Any]]:
 
 
 def _resolve_task_file(task: ReviewTask) -> Optional[Path]:
+    from core.settings import config_manager
     try:
         resolved = Path(task.file_path).expanduser().resolve(strict=True)
     except Exception:
         return None
 
     if not resolved.exists() or not resolved.is_file():
+        return None
+
+    # Jail / LFI protection
+    allowed_dirs = [
+        config_manager.get_library_dir().resolve(),
+        config_manager.get_download_dir().resolve()
+    ]
+
+    is_safe = False
+    for allowed in allowed_dirs:
+        try:
+            if resolved.is_relative_to(allowed):
+                is_safe = True
+                break
+        except Exception:
+            pass
+
+    if not is_safe:
         return None
 
     return resolved
