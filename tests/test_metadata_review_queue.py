@@ -35,6 +35,7 @@ def test_review_queue_includes_current_metadata(monkeypatch, mock_work_db, tmp_p
         'album': 'Current Album',
     }
 
+    monkeypatch.setattr(metadata_review.config_manager, 'get_library_dir', lambda: tmp_path.resolve())
     monkeypatch.setattr(metadata_review, 'get_working_database', lambda: mock_work_db)
     monkeypatch.setattr(metadata_review, 'get_metadata_enhancer', lambda: enhancer)
 
@@ -169,6 +170,7 @@ def test_acoustid_lookup_returns_acoustid_id_without_mbid(monkeypatch, mock_work
             return None
         return None
 
+    monkeypatch.setattr(metadata_review.config_manager, 'get_library_dir', lambda: tmp_path.resolve())
     monkeypatch.setattr(metadata_review, 'get_working_database', lambda: mock_work_db)
     monkeypatch.setattr(metadata_review, 'get_provider', fake_get_provider)
     monkeypatch.setattr(metadata_review.FingerprintGenerator, 'generate_with_duration', staticmethod(lambda _path: ('fake-fingerprint', 180)))
