@@ -1,4 +1,3 @@
-```markdown
 # EchoSync: The Advanced Home Lab Guide
 
 Welcome to the deep dive. This guide is intended for sysadmins, data hoarders, and home lab enthusiasts who want to leverage the full power of EchoSync. Here, we cover advanced configurations, metadata enforcement, and exactly how EchoSync interacts with your network and file system.
@@ -29,20 +28,18 @@ You can dynamically format your directory structure using variables.
     "playlist_path": "$playlist/$artist - $title"
   }
 }
+```
 
-The Import Workflow
-Detection: The auto_import_scan background job watches /downloads.
+### The Import Workflow
+1. **Detection:** The auto_import_scan background job watches `/downloads`.
+2. **Analysis:** Files are hashed via Chromaprint and queried against AcoustID/MusicBrainz.
+3. **Thresholding:** If the match confidence is ≥ 85% (Default EXACT_SYNC profile), the file is tagged (ID3v2.4/Vorbis) and moved to `/library`.
+4. **Review Queue:** If confidence is below the threshold, it is parked in the database under `review_tasks`. You must manually approve or reject these via the Web UI.
 
-Analysis: Files are hashed via Chromaprint and queried against AcoustID/MusicBrainz.
+## 3. Quality Profiles (The Soulseek Engine)
+EchoSync treats Soulseek as a targeted acquisition engine, not a blind downloader. The `quality_profile` determines exactly what is accepted.
 
-Thresholding: If the match confidence is ≥ 85% (Default EXACT_SYNC profile), the file is tagged (ID3v2.4/Vorbis) and moved to /music.
-
-Review Queue: If confidence is below the threshold, it is parked in the database under review_tasks. You must manually approve or reject these via the Web UI.
-
-3. Quality Profiles (The Soulseek Engine)
-EchoSync treats Soulseek as a targeted acquisition engine, not a blind downloader. The quality_profile determines exactly what is accepted.
-
-JSON
+```json
 "quality_profile": {
   "preset": "balanced",
   "allowed_file_types": ["flac", "mp3_320", "mp3_256"],
@@ -51,38 +48,34 @@ JSON
   "min_bit_depth": 16,
   "min_bitrate_kbps": 256
 }
-Waterfall Logic: EchoSync will search slskd prioritizing the top of your allowed_file_types array (e.g., FLAC). If a match isn't found within your timeout window, it cascades down to mp3_320, and so on.
+```
+* **Waterfall Logic:** EchoSync will search slskd prioritizing the top of your `allowed_file_types` array (e.g., FLAC). If a match isn't found within your timeout window, it cascades down to mp3_320, and so on.
+* **Fake FLAC Detection:** The engine verifies bit depth and bitrate. Upscaled MP3s labeled as FLAC are penalized in the scoring engine.
 
-Fake FLAC Detection: The engine verifies bit depth and bitrate. Upscaled MP3s labeled as FLAC are penalized in the scoring engine.
+## 4. Multi-Database Architecture
+If you need to query EchoSync manually or perform backups, note the Alembic-managed database split:
 
-4. Multi-Database Architecture
-If you need to query EchoSync manually or perform backups, note the Alembic-managed SQLite split:
+* **config.db:** Highly sensitive. AES-encrypted. Contains your Plex tokens, Spotify client secrets, and slskd passwords.
+* **music.db:** Your audio metadata truth. Safe to query for Grafana dashboards (e.g., tracking your library size, sync history, or matched track counts).
+* **working.db:** Ephemeral state. Holds active background jobs, retries, and rate-limit tracking. Safe to wipe if the system gets totally stuck.
 
-config.db: Highly sensitive. AES-encrypted. Contains your Plex tokens, Spotify client secrets, and slskd passwords.
+## 5. Security & Plugins (The Zero-Trust Sandbox)
 
-music.db: Your audio metadata truth. Safe to query for Grafana dashboards (e.g., tracking your library size, sync history, or matched track counts).
+EchoSync v2.4.1+ introduces the "Total Freedom" architecture, allowing the community to build powerful plugins. To keep your home lab secure, EchoSync runs a strict security model:
 
-working.db: Ephemeral state. Holds active background jobs, retries, and rate-limit tracking. Safe to wipe if the system gets totally stuck.
+* **The AST Sandbox:** When you install a community plugin, it doesn't just run blindly. EchoSync uses an Abstract Syntax Tree (AST) Scanner to read the plugin's code before it loads. If a plugin attempts to use dangerous Python modules (like `os` to delete files or `subprocess` to run terminal commands), EchoSync instantly blocks the plugin from loading.
+* **Safe File Management:** Because raw file access is blocked, plugins must use EchoSync's internal handlers. This guarantees that a community plugin can only modify media within your defined `/library` and `/downloads` folders, preventing it from touching the rest of your server.
+* **Privileged Mode:** Sometimes, advanced plugins (like a heavy audio analyzer) actually *need* system access. These plugins must declare `"privileged": true` in their manifest. EchoSync will explicitly warn you in the Web UI before you install them, putting the final security decision in your hands.
+* **Safe Mode:** If a plugin crashes the app during boot, the "Circuit Breaker" activates. EchoSync will reboot in Safe Mode, temporarily disabling all community plugins so you can access the Web UI and fix the issue.
 
-5. Centralized Rate Limiting
+## 6. Centralized Rate Limiting
 To prevent API bans from MusicBrainz or AcoustID, EchoSync routes all outbound requests through a central RequestManager.
-
-MusicBrainz is strictly locked to 1 request/second.
-
-Spotify utilizes adaptive exponential backoff when it encounters 429 Too Many Requests.
-
+* MusicBrainz is strictly locked to 1 request/second.
+* Spotify utilizes adaptive exponential backoff when it encounters 429 Too Many Requests.
 You do not need to configure this; the core handles it autonomously.
 
-6. Zero-Trust Plugin Sandbox
-EchoSync embraces the **Total Freedom Plugin Architecture**. If you are writing community plugins to manipulate metadata, inject new API routes, or add webhooks via the `core.hook_manager`, be aware of the AST Sandbox.
+## 7. Troubleshooting & Logs
+By default, logs are written to the console and to `/data/logs`.
 
-- Plugins cannot import `os`, `sys`, `subprocess`, or write arbitrarily to the file system outside of the `CUSTOM_FILE_IO` hook.
-- Your plugin will automatically be skipped during boot if it throws an unhandled exception, ensuring your core sync jobs never go offline due to a bad community script.
-- For a full list of available hooks to interact with the core engine, see `docs/HOOKS_REFERENCE.md`.
-
-7. Troubleshooting & Logs
-By default, logs are written to the console and to /data/logs.
-
-Database Locks: If you see database is locked, ensure your database.max_workers in config.json isn't set too high for your storage speed (Default is 2).
-
-Phantom Tracks: If your track count inflates without new files, check your Sync History in the UI. Ensure tracks aren't getting trapped as "orphans" (tracks with database entries but missing physical files or external provider links).
+* **Database Locks:** If you see database is locked, ensure your database workers aren't set too high for your storage speed.
+* **Phantom Tracks:** If your track count inflates without new files, check your Sync History in the UI. Ensure tracks aren't getting trapped as "orphans" (tracks with database entries but missing physical files or external provider links).
