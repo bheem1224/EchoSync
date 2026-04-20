@@ -1,5 +1,5 @@
-from providers.spotify.client import SpotifyClient
-from providers.spotify.routes import bp
+from plugins.spotify.client import SpotifyClient
+from plugins.spotify.routes import bp
 
 ProviderClass = SpotifyClient
 RouteBlueprint = bp

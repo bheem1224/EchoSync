@@ -44,7 +44,7 @@ def begin_auth():
     Query params: account_id (required)
     """
     from core.provider import ProviderRegistry
-    from providers.spotify.client import SpotifyClient
+    from plugins.spotify.client import SpotifyClient
     if ProviderRegistry.is_provider_disabled('spotify'):
         return jsonify({'error': 'Spotify provider is disabled'}), 403
     try:
@@ -150,7 +150,7 @@ def oauth_callback():
             return jsonify({"error": "Spotify client_id/client_secret not configured"}), 400
 
         # Use ConfigCacheHandler so tokens are persisted via StorageService
-        from providers.spotify.client import CallbackBypassCacheHandler
+        from plugins.spotify.client import CallbackBypassCacheHandler
         auth_manager = SpotifyOAuth(
             client_id=client_id,
             client_secret=decrypt_string(client_secret),

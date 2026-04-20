@@ -1,5 +1,5 @@
-from providers.slskd.client import SlskdProvider
-from providers.slskd.routes import bp
+from plugins.slskd.client import SlskdProvider
+from plugins.slskd.routes import bp
 
 ProviderClass = SlskdProvider
 RouteBlueprint = bp
