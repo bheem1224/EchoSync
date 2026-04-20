@@ -481,6 +481,10 @@ class JobQueue:
 job_queue = JobQueue()
 
 
+def register_scheduled_task(name: str, func: Callable[[], Any], frequency: float):
+    """SDK Helper to expose internal scheduler to plugins easily."""
+    job_queue.register_job(name=name, func=func, interval_seconds=frequency)
+
 def register_job(**kwargs):
     job_queue.register_job(**kwargs)
 

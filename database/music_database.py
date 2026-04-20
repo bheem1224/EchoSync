@@ -237,25 +237,35 @@ class MusicDatabase:
     """Helper for creating the engine/session and managing the schema."""
 
     def __init__(self, database_path: Optional[str] = None) -> None:
-        data_dir = os.getenv("ECHOSYNC_DATA_DIR")
-        if database_path:
-            resolved_path = Path(database_path)
-        elif data_dir:
-            resolved_path = Path(data_dir) / "music_library.db"
-        else:
-            resolved_path = Path("data") / "music_library.db"
+        from core.settings import config_manager
 
-        self.database_path = resolved_path
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        uri = config_manager.get("database.music_uri")
+        if uri:
+            engine_url = uri
+        else:
+            data_dir = os.getenv("ECHOSYNC_DATA_DIR")
+            if database_path:
+                resolved_path = Path(database_path)
+            elif data_dir:
+                resolved_path = Path(data_dir) / "music_library.db"
+            else:
+                resolved_path = Path("data") / "music_library.db"
+
+            self.database_path = resolved_path
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            engine_url = f"sqlite:///{self.database_path}"
+
+        connect_args = {"check_same_thread": False} if engine_url.startswith("sqlite") else {}
 
         self.engine = create_engine(
-            f"sqlite:///{self.database_path}",
+            engine_url,
             future=True,
             echo=False,
             poolclass=NullPool,
-            connect_args={"check_same_thread": False},
+            connect_args=connect_args,
         )
-        event.listen(self.engine, "connect", _sqlite_pragmas)
+        if engine_url.startswith("sqlite"):
+            event.listen(self.engine, "connect", _sqlite_pragmas)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
 
     def create_all(self) -> None:
