@@ -15,8 +15,19 @@ from . import execute_write, execute_write_sql, ensure_writer
 
 class ConfigDatabase:
     def __init__(self, db_path: Optional[str] = None):
-        # Use encrypted config database path from ConfigManager
-        self.database_path = Path(db_path) if db_path else Path(config_manager.database_path)
+        uri = config_manager.get("database.config_uri")
+        if uri:
+            # We assume the config_database.py wrapper is heavily SQLite-dependent right now,
+            # but we still support passing the URI. For SQLite it should extract the path.
+            # If it's a real postgres URI, we'd need SQLAlchemy, but config_database uses sqlite3 module.
+            # Assuming we just parse sqlite:/// path or fallback to the provided URI if it acts as a file.
+            if uri.startswith("sqlite:///"):
+                self.database_path = Path(uri.replace("sqlite:///", ""))
+            else:
+                self.database_path = Path(uri)
+        else:
+            self.database_path = Path(db_path) if db_path else Path(config_manager.database_path)
+
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         # Ensure writer queue is running for this DB
         try:

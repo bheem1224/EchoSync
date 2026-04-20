@@ -165,6 +165,14 @@ def create_app() -> Flask:
         except Exception as e:
             print(f"[ERROR] Failed to register blueprint {bp.name}: {e}")
 
+    # Register explicitly mounted Plugin SDK Routers
+    from core.plugin_router import PluginRouterRegistry
+    for bp in PluginRouterRegistry.get_all_routers():
+        try:
+            app.register_blueprint(bp)
+        except Exception as e:
+            print(f"[ERROR] Failed to register SDK router {bp.name}: {e}")
+
     # Trigger ON_API_STARTUP hook
     try:
         from core.hook_manager import hook_manager

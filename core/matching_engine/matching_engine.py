@@ -86,12 +86,21 @@ class WeightedMatchingEngine:
     def __init__(self, profile: ScoringProfile):
         """
         Initialize engine with a scoring profile
-
-        Args:
-            profile: ScoringProfile defining weights and penalties
         """
         self.profile = profile
         self.weights = profile.get_weights()
+
+        from core.hook_manager import hook_manager
+
+        # weights should be a dict-like or have a dict we can update, let's see.
+        # But wait, weights might be a dataclass. Let's convert to dict, let hook update it, then set back.
+        weights_dict = self.weights.__dict__.copy() if hasattr(self.weights, '__dict__') else self.weights
+        hook_result = hook_manager.apply_filters('ON_SCORING_WEIGHTS_CALCULATE', weights_dict)
+        if hook_result and isinstance(hook_result, dict):
+            if hasattr(self.weights, '__dict__'):
+                self.weights.__dict__.update(hook_result)
+            else:
+                self.weights.update(hook_result)
 
         if not self.weights.validate():
             raise ValueError("Invalid scoring weights")
@@ -105,14 +114,11 @@ class WeightedMatchingEngine:
     ) -> MatchResult:
         """
         Calculate match confidence between source and candidate tracks
-
-        Args:
-            source: Source track (what we're looking for)
-            candidate: Candidate track (what we're comparing)
-
-        Returns:
-            MatchResult with confidence score (0-100) and detailed breakdown
         """
+        from core.hook_manager import hook_manager
+        hook_result = hook_manager.apply_filters('ON_ENGINE_EVALUATE', {'skip': False, 'result': None}, source=source, candidate=candidate, target_source=target_source, target_identifier=target_identifier)
+        if hook_result and isinstance(hook_result, dict) and hook_result.get('skip'):
+            return hook_result.get('result')
 
         # Initialize scoring components
         score = 0.0
