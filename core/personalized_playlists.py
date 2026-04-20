@@ -520,13 +520,16 @@ class PersonalizedPlaylistsService:
     ) -> List[Dict[str, Any]]:
         """
         Generate a playlist using the selected or specified algorithm.
-        
-        Args:
-            playlist_type: Type of playlist source ('discovery', 'library', etc.)
-            limit: Maximum tracks to return
-            algorithm_id: Override default algorithm
-            **kwargs: Algorithm-specific parameters
         """
+        try:
+            from core.hook_manager import hook_manager
+            plugin_tracks = hook_manager.apply_filters('GENERATE_DYNAMIC_PLAYLIST', None, playlist_type=playlist_type, limit=limit, algorithm_id=algorithm_id, **kwargs)
+            if plugin_tracks is not None and isinstance(plugin_tracks, list):
+                logger.info("Plugin intercepted GENERATE_DYNAMIC_PLAYLIST")
+                return plugin_tracks
+        except Exception as e:
+            logger.error(f"Error in GENERATE_DYNAMIC_PLAYLIST hook: {e}")
+
         # Use specified algorithm or fall back to current
         algo_id = algorithm_id or self._current_algorithm_id
         

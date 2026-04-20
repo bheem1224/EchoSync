@@ -809,6 +809,16 @@ class DownloadManager:
             # Execute download on the winning provider
             provider_id = None
             try:
+                try:
+                    from core.hook_manager import hook_manager
+                    plugin_decision = hook_manager.apply_filters('BEFORE_DOWNLOAD_START', None, target_track=target_track.to_dict(), candidate=winning_candidate.to_dict(), provider=winning_provider_name)
+                    if plugin_decision == "ABORT":
+                        logger.warning(f"Plugin aborted download for: {winning_candidate.title} on {winning_provider_name}")
+                        self._update_status(download_id, "failed_start_download")
+                        return
+                except Exception as e:
+                    logger.error(f"Error in BEFORE_DOWNLOAD_START hook: {e}")
+
                 if hasattr(download_provider, '_async_download'):
                     provider_id = await download_provider._async_download(username, filename, size)
                 else:
@@ -879,6 +889,20 @@ class DownloadManager:
                 if status and found_provider:
                     # Map provider status to DB status
                     remote_state = status.get('status', '').lower()
+                    progress_pct = status.get('progress', 0)
+
+                    try:
+                        from core.hook_manager import hook_manager
+                        # Use a persistent dict on the class to track last announced progress
+                        if not hasattr(self, '_last_progress_event'):
+                            self._last_progress_event = {}
+
+                        last_pct = self._last_progress_event.get(db_id, -100)
+                        if abs(progress_pct - last_pct) >= 5 or progress_pct >= 100:
+                            hook_manager.apply_filters('ON_DOWNLOAD_PROGRESS', None, download_id=db_id, provider_id=provider_id, progress=progress_pct, state=remote_state)
+                            self._last_progress_event[db_id] = progress_pct
+                    except Exception as e:
+                        logger.error(f"Error in ON_DOWNLOAD_PROGRESS hook: {e}")
 
                     new_status = "downloading"
                     if remote_state == "complete":

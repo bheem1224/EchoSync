@@ -39,16 +39,18 @@ class PathMapper:
     def map_to_local(self, remote_path: str) -> str:
         """
         Map a remote path to a local path based on configured mappings.
-
-        Args:
-            remote_path: The path received from a remote service (e.g., Plex).
-
-        Returns:
-            The mapped local path, or the original path if no mapping matches.
-            The returned path is always normalized to use forward slashes.
         """
         if not remote_path:
             return ""
+
+        try:
+            from core.hook_manager import hook_manager
+            plugin_path = hook_manager.apply_filters('RESOLVE_STORAGE_PATH', None, remote_path=remote_path)
+            if plugin_path and isinstance(plugin_path, str):
+                return plugin_path
+        except Exception as e:
+            import logging
+            logging.getLogger("path_mapper").error(f"Error in RESOLVE_STORAGE_PATH hook: {e}")
 
         normalized_remote = self._normalize(remote_path)
 

@@ -10,6 +10,97 @@ if TYPE_CHECKING:
     from core.provider import ProviderCapabilities
 
 
+
+
+class _PluginSecrets:
+    def __init__(self, plugin_id: str):
+        self.plugin_id = plugin_id
+
+    def get(self, key: str, default=None) -> str:
+        from database.config_database import get_config_database
+        from core.security import decrypt_string
+        db = get_config_database()
+        service_id = db.get_or_create_service_id(f"plugin_{self.plugin_id}")
+        val = db.get_service_config(service_id, key)
+        if val is None:
+            return default
+        return decrypt_string(val) if str(val).startswith('enc:') else val
+
+    def set(self, key: str, value: str) -> None:
+        from database.config_database import get_config_database
+        from core.security import encrypt_string
+        db = get_config_database()
+        service_id = db.get_or_create_service_id(f"plugin_{self.plugin_id}")
+        enc_val = encrypt_string(value) if value else None
+        db.set_service_config(service_id, key, enc_val, is_sensitive=True)
+
+class _PluginConfig:
+    def __init__(self, plugin_id: str):
+        self.plugin_id = plugin_id
+
+    def get(self, key: str, default=None) -> Any:
+        from core.settings import config_manager
+        return config_manager.get(f"plugins.{self.plugin_id}.{key}", default)
+
+    def set(self, key: str, value: Any) -> None:
+        from core.settings import config_manager
+        config_manager.set(f"plugins.{self.plugin_id}.{key}", value)
+
+class _PluginCoreSystemFacade:
+    def __init__(self, plugin_id: str):
+        self.plugin_id = plugin_id
+
+    def toggle_feature(self, feature_key: str, enabled: bool) -> None:
+        from core.settings import config_manager
+        from core.event_bus import event_bus
+        config_manager.set(feature_key, enabled)
+        event_bus.publish({
+            "event": "FEATURE_TOGGLED",
+            "plugin_id": self.plugin_id,
+            "feature": feature_key,
+            "enabled": enabled
+        })
+
+    def get_setting(self, feature_key: str, default=None) -> Any:
+        from core.settings import config_manager
+        return config_manager.get(feature_key, default)
+
+class _PluginModelFacade:
+    def __init__(self):
+        # Lazy imports to avoid circular dependencies
+        pass
+
+    @property
+    def Track(self):
+        from database.music_database import Track
+        return Track
+
+    @property
+    def Album(self):
+        from database.music_database import Album
+        return Album
+
+    @property
+    def Artist(self):
+        from database.music_database import Artist
+        return Artist
+
+    @property
+    def Download(self):
+        from database.working_database import Download
+        return Download
+
+    @property
+    def UserRating(self):
+        from database.working_database import UserRating
+        return UserRating
+
+    @property
+    def PlaybackHistory(self):
+        from database.working_database import PlaybackHistory
+        return PlaybackHistory
+
+
 class ProviderBase(ABC):
     """
     Abstract base class for all music providers (Spotify, Tidal, Plex, Jellyfin, etc.).
@@ -49,6 +140,18 @@ class ProviderBase(ABC):
             rate_config = RateLimitConfig(requests_per_second=self.rate_limit)
 
         self.http = RequestManager(self.name, rate=rate_config)
+
+        # Sandbox API facades for Plugin Architecture
+        self._name = self.name
+        self.secrets = _PluginSecrets(self._name)
+        self.config = _PluginConfig(self._name)
+        self.core_system = _PluginCoreSystemFacade(self._name)
+        self.models = _PluginModelFacade()
+
+    @property
+    def logger(self):
+        from core.tiered_logger import get_logger
+        return get_logger(f"plugin.{self._name}")
 
     def get_oauth_redirect_uri(self) -> str:
         """

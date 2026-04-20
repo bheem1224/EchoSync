@@ -45,23 +45,29 @@ def setup_plugin_venv(plugins_dir: Path, requirements: Set[str]):
             logger.critical(f"Pip executable not found in virtual environment: {pip_executable}")
             raise RuntimeError("Corrupted virtual environment")
 
-        try:
-            # Run pip install with all requirements in a single batch
-            cmd = [str(pip_executable), "install", *list(requirements)]
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+        def _install_deps():
+            try:
+                # Run pip install with all requirements in a single batch
+                cmd = [str(pip_executable), "install", *list(requirements)]
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
 
-            if result.returncode != 0:
-                logger.error(f"Failed to install some plugin dependencies. Pip output:\n{result.stderr}")
-            else:
-                logger.debug("Plugin dependencies verified successfully.")
+                if result.returncode != 0:
+                    logger.error(f"Failed to install some plugin dependencies. Pip output:\n{result.stderr}")
+                else:
+                    logger.debug("Plugin dependencies verified successfully.")
 
-        except Exception as e:
-            logger.error(f"Error executing pip install for plugin dependencies: {e}")
+            except Exception as e:
+                logger.error(f"Error executing pip install for plugin dependencies: {e}")
+
+        import threading
+        t = threading.Thread(target=_install_deps, daemon=True, name="PluginVenvInstaller")
+        t.start()
+        logger.info("Plugin dependency installation started in background.")
 
     else:
         logger.debug("No plugin dependencies to install.")

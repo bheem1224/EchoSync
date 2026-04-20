@@ -327,13 +327,66 @@ class SuggestionStagingQueue(WorkingBase):
         return sync_id
 
 
+import threading
+from contextlib import contextmanager
+
+_override_local = threading.local()
+
+class RestrictedConnection:
+    def __init__(self, conn, provider_name):
+        self.conn = conn
+        self.provider_name = provider_name
+
+    def execute(self, statement, *args, **kwargs):
+        if getattr(_override_local, 'override_active', False):
+            return self.conn.execute(statement, *args, **kwargs)
+
+        # Extremely basic DDL block for non-prefixed tables
+        import re
+        stmt_str = str(statement).upper()
+
+        # Block DROP/ALTER
+        if 'DROP TABLE' in stmt_str or 'ALTER TABLE' in stmt_str:
+            match = re.search(r'(DROP|ALTER) TABLE (IF EXISTS )?([a-zA-Z0-9_]+)', stmt_str)
+            if match:
+                table_name = match.group(3)
+                if not table_name.startswith(f"PRV_{self.provider_name.upper()}_"):
+                    raise PermissionError(f"Plugin '{self.provider_name}' is not allowed to modify table '{table_name}'")
+
+        # Block INSERT/UPDATE/DELETE
+        if any(kw in stmt_str for kw in ['INSERT INTO', 'UPDATE', 'DELETE FROM']):
+            match = re.search(r'(INSERT INTO|UPDATE|DELETE FROM)\\s+([a-zA-Z0-9_]+)', stmt_str)
+            if match:
+                table_name = match.group(2)
+                if not table_name.startswith(f"PRV_{self.provider_name.upper()}_"):
+                    raise PermissionError(f"Plugin '{self.provider_name}' is not allowed to write to core table '{table_name}'")
+
+        return self.conn.execute(statement, *args, **kwargs)
+
+    def commit(self):
+        return self.conn.commit()
+
 class ProviderStorageBox:
     """Sandbox wrapper for providers to create their own tables."""
 
-    def __init__(self, provider_name: str, engine, metadata: MetaData):
+    def __init__(self, provider_name: str, engine, metadata):
         self.provider_name = provider_name
-        self.engine = engine
+        self._engine = engine
         self.metadata = metadata
+
+    @contextmanager
+    def connect(self):
+        with self._engine.connect() as conn:
+            yield RestrictedConnection(conn, self.provider_name)
+
+    @contextmanager
+    def core_write_override(self):
+        """Context manager to temporarily lift write restrictions."""
+        _override_local.override_active = True
+        try:
+            yield
+        finally:
+            _override_local.override_active = False
 
     def create_table(self, table_name_suffix: str, *columns_definition) -> Table:
         """
@@ -362,7 +415,7 @@ class ProviderStorageBox:
 
     def execute(self) -> None:
         """Execute the table creations."""
-        self.metadata.create_all(self.engine)
+        self.metadata.create_all(self._engine)
 
 
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
@@ -383,25 +436,35 @@ class WorkingDatabase:
     """Helper for creating the engine/session and managing the working schema."""
 
     def __init__(self, database_path: Optional[str] = None) -> None:
-        data_dir = os.getenv("ECHOSYNC_DATA_DIR")
-        if database_path:
-            resolved_path = Path(database_path)
-        elif data_dir:
-            resolved_path = Path(data_dir) / "working.db"
-        else:
-            resolved_path = Path("data") / "working.db"
+        from core.settings import config_manager
 
-        self.database_path = resolved_path
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        uri = config_manager.get("database.working_uri")
+        if uri:
+            engine_url = uri
+        else:
+            data_dir = os.getenv("ECHOSYNC_DATA_DIR")
+            if database_path:
+                resolved_path = Path(database_path)
+            elif data_dir:
+                resolved_path = Path(data_dir) / "working.db"
+            else:
+                resolved_path = Path("data") / "working.db"
+
+            self.database_path = resolved_path
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            engine_url = f"sqlite:///{self.database_path}"
+
+        connect_args = {"check_same_thread": False} if engine_url.startswith("sqlite") else {}
 
         self.engine = create_engine(
-            f"sqlite:///{self.database_path}",
+            engine_url,
             future=True,
             echo=False,
             poolclass=NullPool,
-            connect_args={"check_same_thread": False},
+            connect_args=connect_args,
         )
-        event.listen(self.engine, "connect", _sqlite_pragmas)
+        if engine_url.startswith("sqlite"):
+            event.listen(self.engine, "connect", _sqlite_pragmas)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
 
     def create_all(self) -> None:

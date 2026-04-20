@@ -1,3 +1,4 @@
+from web.auth import require_auth
 from flask import Blueprint, jsonify, request
 from web.services.provider_registry import list_providers, get_providers_for_capability, get_provider
 from core.tiered_logger import get_logger
@@ -136,6 +137,7 @@ def get_active_download_client():
         return jsonify({'error': str(e)}), 500
 
 @bp.post("/download-clients/activate")
+@require_auth
 def set_active_download_client():
     """Set the active download client."""
     try:
@@ -352,6 +354,7 @@ def get_provider_settings(provider_name):
         return jsonify({'error': str(e)}), 500
 
 @bp.post("/<provider_name>/settings")
+@require_auth
 def update_provider_settings(provider_name):
     """Update settings for a specific provider.
     
@@ -553,6 +556,7 @@ def get_provider_credentials(provider_name):
         return jsonify({'error': str(e)}), 500
 
 @bp.post("/<provider_name>/credentials")
+@require_auth
 def set_provider_credentials(provider_name):
     """Set credentials/configuration for a specific provider."""
     try:

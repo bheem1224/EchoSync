@@ -16,6 +16,25 @@ bp = Blueprint('webhooks', __name__, url_prefix='/api/webhooks')
 def handle_provider_webhook(provider: str):
     """Handle incoming webhooks from any supported media server (plex, navidrome, …)."""
     try:
+        try:
+            from core.hook_manager import hook_manager
+
+            # Extract raw payload data safely
+            raw_payload = None
+            if request.is_json:
+                raw_payload = request.get_json(silent=True)
+            elif request.form:
+                raw_payload = dict(request.form)
+            else:
+                raw_payload = request.get_data(as_text=True)
+
+            plugin_action = hook_manager.apply_filters('ON_INBOUND_WEBHOOK', None, provider=provider, payload=raw_payload, headers=dict(request.headers))
+            if plugin_action == "SKIP":
+                logger.info(f"Plugin intercepted and handled webhook for provider: {provider}")
+                return jsonify({"status": "ok"}), 200
+        except Exception as e:
+            logger.error(f"Error in ON_INBOUND_WEBHOOK hook: {e}")
+
         parsed_data = parse_media_server_webhook(request, provider=provider)
 
         if parsed_data:

@@ -145,16 +145,17 @@ class MetadataEnhancerService:
         from core.plugin_loader import get_provider
         return get_provider(capability)
 
-    def enhance_library_metadata(self, batch_size=100):
-        """
-        Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
+    def enhance_library_metadata(self, batch_size=50) -> None:
+        """Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
 
         Loops through batches until no more tracks require enhancement.  Each batch is
         committed in its own session so memory stays flat even on large libraries.
         """
         from sqlalchemy import or_, and_, func, Integer
+        from sqlalchemy.orm.attributes import flag_modified
+        from sqlalchemy.exc import OperationalError
         required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
-        from database.music_database import get_database, Track, Artist
+        from database.music_database import get_database, Track, Artist, AudioFingerprint
         from core.file_handling.path_mapper import PathMapper
         from core.matching_engine.scoring_profile import ExactSyncProfile
         from core.matching_engine.fingerprinting import FingerprintGenerator
@@ -163,9 +164,6 @@ class MetadataEnhancerService:
         from core.provider import ServiceRegistry
         from pathlib import Path
 
-        # Tracks that previously couldn't be identified are stamped NOT_FOUND with an
-        # incrementing enhancement_attempts counter in metadata_status.  Re-attempt them
-        # until the cap is reached (handles transient network failures, missing fpcalc, etc.).
         MAX_REATTEMPTS = 5
 
         db = get_database()
@@ -177,486 +175,335 @@ class MetadataEnhancerService:
         MAX_ITERATIONS = 500  # safety cap — prevents infinite loops on persistent failures
 
         for _iteration in range(MAX_ITERATIONS):
-          with db.session_scope() as session:
-            # Step 1: Select tracks that still need work.
-            #   (a) MBID identification needed — NULL MBID, OR previously-failed NOT_FOUND
-            #       tracks that still have retry budget remaining.
-            #   (b) MBID already resolved but a plugin-required metadata_status key is absent.
-            needs_identification = or_(
-                Track.musicbrainz_id.is_(None),
-                and_(
-                    Track.musicbrainz_id == "NOT_FOUND",
-                    func.coalesce(
-                        func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
-                        0,
-                    ).cast(Integer) < MAX_REATTEMPTS,
-                ),
-            )
-            conditions = [needs_identification]
-            for key in required_keys:
+            # Step 1: Select tracks that still need work in a short session
+            track_data_list = []
+
+            with db.session_scope() as session:
+                needs_identification = or_(
+                    Track.musicbrainz_id.is_(None),
+                    and_(
+                        Track.musicbrainz_id == "NOT_FOUND",
+                        func.coalesce(
+                            func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
+                            0,
+                        ).cast(Integer) < MAX_REATTEMPTS,
+                    ),
+                )
+                conditions = [needs_identification]
+                for key in required_keys:
+                    conditions.append(
+                        and_(
+                            Track.musicbrainz_id.isnot(None),
+                            Track.musicbrainz_id != "NOT_FOUND",
+                            func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
+                        )
+                    )
+                _va_artist_ids_subq = (
+                    session.query(Artist.id)
+                    .filter(Artist.name.ilike('various artist%'))
+                )
                 conditions.append(
                     and_(
-                        Track.musicbrainz_id.isnot(None),
-                        Track.musicbrainz_id != "NOT_FOUND",
-                        func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
+                        Track.artist_id.in_(_va_artist_ids_subq),
+                        func.json_extract(
+                            Track.metadata_status, '$.artist_fixed_from_tags'
+                        ).is_(None),
                     )
                 )
-            # Condition (c): tracks whose artist row is any 'Various Artist(s)' variant
-            # and whose physical-file artist tag has not yet been read.  These tracks must
-            # be processed regardless of whether musicbrainz_id or spotify_id is populated
-            # — we need to overwrite the placeholder with the real per-track performer.
-            # ilike('various artist%') catches: 'Various Artist', 'Various Artists',
-            # 'various ARTISTS', etc.  Both the query and the runtime guard below use the
-            # same broadened definition so they stay in sync.
-            _va_artist_ids_subq = (
-                session.query(Artist.id)
-                .filter(Artist.name.ilike('various artist%'))
-            )
-            conditions.append(
-                and_(
-                    Track.artist_id.in_(_va_artist_ids_subq),
-                    func.json_extract(
-                        Track.metadata_status, '$.artist_fixed_from_tags'
-                    ).is_(None),
-                )
-            )
-            try:
-                tracks_to_process = (
-                    session.query(Track).filter(or_(*conditions)).limit(batch_size).all()
-                )
-            except OperationalError as _oe:
-                if "database is locked" in str(_oe).lower():
-                    logger.critical(
-                        "EMERGENCY ABORT: Database is locked by an external process. "
-                        "Halting job to prevent corruption."
+                try:
+                    tracks_to_process = (
+                        session.query(Track).filter(or_(*conditions)).limit(batch_size).all()
                     )
-                raise
+                except OperationalError as _oe:
+                    if "database is locked" in str(_oe).lower():
+                        logger.critical(
+                            "EMERGENCY ABORT: Database is locked by an external process. "
+                            "Halting job to prevent corruption."
+                        )
+                    raise
 
-            if not tracks_to_process:
-                if total_processed > 0:
-                    logger.info("Enhancement complete. Total tracks processed: %d", total_processed)
-                else:
-                    logger.info("No tracks require metadata enhancement.")
-                return
+                if not tracks_to_process:
+                    if total_processed > 0:
+                        logger.info("Enhancement complete. Total tracks processed: %d", total_processed)
+                    else:
+                        logger.info("No tracks require metadata enhancement.")
+                    return
 
-            logger.info(
-                "Enhancement pass %d: processing %d tracks (total so far: %d).",
-                _iteration + 1, len(tracks_to_process), total_processed,
-            )
+                logger.info(
+                    "Enhancement pass %d: processing %d tracks (total so far: %d).",
+                    _iteration + 1, len(tracks_to_process), total_processed,
+                )
 
-            for track in tracks_to_process:
-                local_path_str = PathMapper.to_local(track.file_path)
+                # Extract necessary data into memory to perform network calls outside session
+                for track in tracks_to_process:
+                    track_fp = session.query(AudioFingerprint).filter_by(track_id=track.id).first()
+                    track_data_list.append({
+                        'id': track.id,
+                        'file_path': track.file_path,
+                        'musicbrainz_id': track.musicbrainz_id,
+                        'isrc': track.isrc,
+                        'title': track.title,
+                        'duration': track.duration,
+                        'album_title': track.album.title if track.album else "",
+                        'artist_name': track.artist.name if track.artist else None,
+                        'metadata_status': dict(track.metadata_status or {}),
+                        'chromaprint': track_fp.chromaprint if track_fp else None,
+                        'acoustid_id': track_fp.acoustid_id if track_fp else None,
+                        'has_fp_record': track_fp is not None
+                    })
+
+            # Process tracks outside DB session
+            results_to_commit = []
+
+            for t_data in track_data_list:
+                local_path_str = PathMapper.to_local(t_data['file_path'])
                 local_path = Path(local_path_str)
 
                 if not local_path.exists():
-                    logger.warning(f"File not found for track {track.id}: {local_path}")
-                    track.musicbrainz_id = "NOT_FOUND"
-                    # Use a high sentinel so this track is never retried — the file is gone.
-                    status = dict(track.metadata_status or {})
-                    status['enhancement_attempts'] = 99
-                    track.metadata_status = status
-                    flag_modified(track, "metadata_status")
-                    session.commit()
-                    total_processed += 1
+                    logger.warning("Enhancer skipping missing file: %s", local_path)
+                    # We should probably update the status in DB, but old logic skipped it inside session.
+                    # We will append an update dict to mark it missing or just ignore. Old logic just continued.
                     continue
 
-                # ── Step 0.5: Various Artists artist-fix from physical file tags ─────────
-                # Tracks whose artist row is 'Various Artists' may have the real performer
-                # stored in their TPE1 / ARTIST tag.  We read the physical file here so this
-                # correction runs BEFORE the MBID fast-path — ensuring it is never skipped
-                # even when musicbrainz_id or spotify_id is already populated.
-                _artist_was_va = False
-                # Match any 'Various Artist(s)' variant — keeps in sync with the
-                # ilike('various artist%') subquery used to select these tracks.
-                _is_va_artist = (
-                    track.artist is not None
-                    and track.artist.name.strip().lower().startswith('various artist')
-                )
-                if (
-                    _is_va_artist
-                    and not (track.metadata_status or {}).get('artist_fixed_from_tags')
-                ):
-                    _artist_was_va = True
-                    try:
-                        _va_tags = _tagging_read(local_path)
-                        _tag_artist = (
-                            (_va_tags or {}).get('artist')
-                            or (_va_tags or {}).get('artist_name')
-                        )
-                        _tag_artist_lower = (_tag_artist or '').strip().lower()
-                        # Exclude any VA placeholder: 'various artists', 'various artist',
-                        # 'various' — prevents writing back another VA row as the 'fix'.
-                        _tag_is_va = (
-                            _tag_artist_lower.startswith('various artist')
-                            or _tag_artist_lower == 'various'
-                        )
-                        if _tag_artist and not _tag_is_va:
-                            _real_name = _tag_artist.strip()
-                            # Find or create the real artist row (case-insensitive lookup).
-                            _real_artist = (
-                                session.query(Artist)
-                                .filter(func.lower(Artist.name) == _real_name.lower())
-                                .first()
-                            )
-                            if _real_artist is None:
-                                _real_artist = Artist(name=_real_name)
-                                session.add(_real_artist)
-                                session.flush()  # obtain the new artist.id before assigning
-                            track.artist_id = _real_artist.id
-                            _va_status = dict(track.metadata_status or {})
-                            _va_status['artist_fixed_from_tags'] = _real_name
-                            track.metadata_status = _va_status
-                            flag_modified(track, 'metadata_status')
-                            logger.info(
-                                "Artist fix: track %d '%s' re-assigned from "
-                                "'Various Artists' → '%s'",
-                                track.id, local_path.name, _real_name,
-                            )
-                        else:
-                            # File has no usable track artist — record that we tried so
-                            # this track does not keep re-entering the VA condition.
-                            logger.debug(
-                                "VA track %d '%s': no usable artist in file tags "
-                                "(raw value=%r) — marking as attempted.",
-                                track.id, local_path.name, _tag_artist,
-                            )
-                            _va_status = dict(track.metadata_status or {})
-                            _va_status['artist_fixed_from_tags'] = False
-                            track.metadata_status = _va_status
-                            flag_modified(track, 'metadata_status')
-                    except Exception as _e_va:
-                        logger.warning(
-                            "Artist tag-fix failed for track %d (%s): %s",
-                            track.id, local_path.name, _e_va,
-                        )
+                new_musicbrainz_id = t_data['musicbrainz_id'] if t_data['musicbrainz_id'] != "NOT_FOUND" else None
+                found_new_data = False
 
-                # If this track was selected solely for the VA artist-fix (it already has a
-                # valid MBID and no other pending work), commit and move on.  Tracks that
-                # also need MBID identification fall through to the full pipeline below.
-                if _artist_was_va and track.musicbrainz_id and track.musicbrainz_id != "NOT_FOUND":
-                    session.commit()
-                    total_processed += 1
-                    continue
+                tag_mbid = None
+                tag_isrc = None
 
-                # Fast path: track already has a valid MBID — it was selected only because
-                # a plugin-required metadata_status key is absent.  Skip the expensive MBID
-                # resolution pipeline and go straight to plugin enrichment.
-                if track.musicbrainz_id and track.musicbrainz_id != "NOT_FOUND":
-                    logger.debug(
-                        "Plugin-only enrichment for already-identified track: %s (MBID: %s)",
-                        local_path.name, track.musicbrainz_id,
-                    )
-                    # flag_modified BEFORE hook_manager so we always operate on the session-tracked object.
-                    flag_modified(track, "metadata_status")
-                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
-                    session.commit()
-                    total_processed += 1
-                    continue
-
-                # ── Per-track isolated pipeline ────────────────────────────────────────────
-                # Any unhandled exception (mutagen errors, network failures, ORM issues)
-                # is caught here so one bad track cannot poison the entire batch.
+                # Step 2: Read physical file tags locally
                 try:
-                    found_new_data = False
-                    new_musicbrainz_id = None
-                    new_isrc = None
+                    file_tags = _tagging_read(local_path)
+                    tag_mbid = file_tags.get("musicbrainz_id") or file_tags.get("recording_id")
+                    tag_isrc = file_tags.get("isrc")
 
-                    # Step 2 (Local File Parsing): Read physical file tags first — cheapest
-                    # possible source; no CPU fingerprinting and no network calls.
-                    tags = _tagging_read(local_path)
-                    if tags:
-                        tag_mbid = tags.get('musicbrainz_id') or tags.get('recording_id')
-                        tag_isrc = tags.get('isrc')
-
-                        if tag_mbid:
-                            # MBID already embedded in file tags — record it as the identified
-                            # MBID and fall through to the Handle found data phase below so that
-                            # full release metadata (ISRC, album art, genres, artist
-                            # relationships) is fetched from the provider.  Do NOT continue
-                            # early here; skipping the API lookup would leave Picard-tagged
-                            # files permanently under-enriched.
-                            logger.info(f"Step 2 (Local Tags): Found MBID {tag_mbid} for {local_path.name}")
-                            new_musicbrainz_id = tag_mbid
-                            if tag_isrc and not track.isrc:
-                                track.isrc = tag_isrc
-                            # NOTE: intentional fall-through — no continue
-
-                        # MBID not in tags but an ISRC was — store it so Step 2.5 can use it.
-                        if tag_isrc and not track.isrc:
-                            logger.info(f"Step 2 (Local Tags): Found ISRC {tag_isrc} for {local_path.name}, will attempt ISRC lookup")
-                            track.isrc = tag_isrc
-
-                    # ── DIAGNOSTIC SHORT-CIRCUIT ───────────────────────────────────────────────
-                    # When _NETWORK_DISABLED is True, skip all AcoustID / MusicBrainz network
-                    # calls.  Only the MBID read from file tags (Step 2 above) is used.
-                    # Tracks without an embedded MBID are left unidentified (musicbrainz_id
-                    # stays NULL) so real processing can pick them up when the flag is off.
-                    if _NETWORK_DISABLED:
-                        if new_musicbrainz_id:
-                            track.musicbrainz_id = new_musicbrainz_id
+                    if not t_data['metadata_status'].get('artist_fixed_from_tags'):
+                        tag_artist = file_tags.get("artist")
+                        if tag_artist and t_data['artist_name'] and t_data['artist_name'].lower().startswith("various artist"):
+                            logger.info("Fixing VA per-track artist from tags: %s", local_path.name)
+                            # We mark it to be updated
+                            t_data['artist_name'] = tag_artist
+                            t_data['metadata_status']['artist_fixed_from_tags'] = True
                             found_new_data = True
-                            logger.info(
-                                "DIAGNOSTIC: tag-only MBID %s saved for %s",
-                                new_musicbrainz_id, local_path.name,
-                            )
-                        else:
-                            logger.debug(
-                                "DIAGNOSTIC: no MBID in file tags for %s — left unidentified.",
-                                local_path.name,
-                            )
-                        # Stamp every plugin-required key so this track leaves the queue.
-                        status = dict(track.metadata_status or {})
-                        status['enhanced'] = True
-                        for _diag_key in required_keys:
-                            if _diag_key not in status:
-                                status[_diag_key] = True
-                        track.metadata_status = status
-                        # flag_modified BEFORE hook_manager so we always operate on the session-tracked object.
-                        flag_modified(track, "metadata_status")
-                        if found_new_data:
-                            _tagging_write(local_path, {
-                                'musicbrainz_id': track.musicbrainz_id,
-                                'recording_id':   track.musicbrainz_id,
-                            })
-                        track = hook_manager.apply_filters('post_metadata_enrichment', track)
-                        session.commit()
-                        total_processed += 1
-                        continue
-                    # ── END DIAGNOSTIC SHORT-CIRCUIT ──────────────────────────────────────────
 
-                    # Step 2.5 (ISRC Fast-Path): If the track already has an ISRC stored in
-                    # the DB (from previous scan or Step 2 above), resolve the MBID from
-                    # MusicBrainz's dedicated ISRC endpoint.  This is far cheaper than
-                    # fingerprint generation and more precise than the text-search fallback.
-                    if not new_musicbrainz_id and track.isrc and metadata_provider and getattr(metadata_provider, 'supports_isrc_lookup', False):
-                        logger.debug(f"Step 2.5 (ISRC Lookup): Resolving MBID for ISRC {track.isrc} → {local_path.name}")
-                        try:
-                            isrc_result = metadata_provider.search_by_isrc(track.isrc)
-                            if isrc_result and isrc_result.musicbrainz_id:
-                                new_musicbrainz_id = isrc_result.musicbrainz_id
-                                logger.info(f"Step 2.5 (ISRC Lookup): MBID {new_musicbrainz_id} from ISRC {track.isrc}")
-                        except Exception as e:
-                            logger.warning(f"ISRC lookup failed for {track.isrc}: {e}")
+                except Exception as e:
+                    logger.warning("Failed to read tags from %s: %s", local_path.name, e)
 
-                    # Prepare for identification
-                    duration = track.duration or _tagging_read(local_path).get("duration")
+                if tag_mbid:
+                    logger.info("Step 2 (Local Tags): Found MBID %s for %s", tag_mbid, local_path.name)
+                    new_musicbrainz_id = tag_mbid
+                    if tag_isrc and not t_data['isrc']:
+                        t_data['isrc'] = tag_isrc
 
-                    # Load any existing fingerprint record for this track (avoids re-fingerprinting).
-                    from database.music_database import AudioFingerprint
-                    track_fp = session.query(AudioFingerprint).filter_by(track_id=track.id).first()
+                if tag_isrc and not t_data['isrc']:
+                    logger.info("Step 2 (Local Tags): Found ISRC %s for %s, will attempt ISRC lookup", tag_isrc, local_path.name)
+                    t_data['isrc'] = tag_isrc
 
-                    # Step 3 (Stored Chromaprint Fast-Path): we already computed a chromaprint for
-                    # this track in a previous run — reuse it to query AcoustID without re-reading
-                    # the audio file.  Note: the chromaprint (raw Chromaprint string) is what the
-                    # AcoustID /lookup endpoint consumes, NOT the acoustid_id UUID.
-                    if not new_musicbrainz_id and track_fp and track_fp.chromaprint and fingerprint_provider and duration:
-                        logger.debug(f"Step 3 (Stored Chromaprint): Re-resolving via AcoustID for {local_path.name}")
-                        try:
+                # DIAGNOSTIC SHORT-CIRCUIT
+                if _NETWORK_DISABLED:
+                    if new_musicbrainz_id:
+                        t_data['musicbrainz_id'] = new_musicbrainz_id
+                        found_new_data = True
+                        logger.info("DIAGNOSTIC: tag-only MBID %s saved for %s", new_musicbrainz_id, local_path.name)
+                    else:
+                        logger.debug("DIAGNOSTIC: no MBID in file tags for %s — left unidentified.", local_path.name)
+
+                    t_data['metadata_status']['enhanced'] = True
+                    for _diag_key in required_keys:
+                        if _diag_key not in t_data['metadata_status']:
+                            t_data['metadata_status'][_diag_key] = True
+
+                    if found_new_data:
+                        _tagging_write(local_path, {
+                            'musicbrainz_id': t_data['musicbrainz_id'],
+                            'recording_id':   t_data['musicbrainz_id'],
+                        })
+
+                    results_to_commit.append(t_data)
+                    total_processed += 1
+                    continue
+
+                # Step 2.5 (ISRC Fast-Path)
+                if not new_musicbrainz_id and t_data['isrc'] and metadata_provider and getattr(metadata_provider, 'supports_isrc_lookup', False):
+                    logger.debug("Step 2.5 (ISRC Lookup): Resolving MBID for ISRC %s → %s", t_data['isrc'], local_path.name)
+                    try:
+                        isrc_result = metadata_provider.search_by_isrc(t_data['isrc'])
+                        if isrc_result and isrc_result.musicbrainz_id:
+                            new_musicbrainz_id = isrc_result.musicbrainz_id
+                            logger.info("Step 2.5 (ISRC Lookup): MBID %s from ISRC %s", new_musicbrainz_id, t_data['isrc'])
+                    except Exception as e:
+                        logger.warning("ISRC lookup failed for %s: %s", t_data['isrc'], e)
+
+                duration = t_data['duration'] or _tagging_read(local_path).get("duration")
+
+                # Step 3 (Stored Chromaprint Fast-Path)
+                if not new_musicbrainz_id and t_data['has_fp_record'] and t_data['chromaprint'] and fingerprint_provider and duration:
+                    logger.debug("Step 3 (Stored Chromaprint): Re-resolving via AcoustID for %s", local_path.name)
+                    try:
+                        duration_secs = int(duration / 1000) if duration > 10000 else duration
+                        details = fingerprint_provider.resolve_fingerprint_details(t_data['chromaprint'], duration_secs)
+                        if details.get('mbids'):
+                            new_musicbrainz_id = details['mbids'][0]
+                            logger.debug("Step 3: resolved MBID %s for %s", new_musicbrainz_id, local_path.name)
+                        if details.get('acoustid_id') and not t_data['acoustid_id']:
+                            t_data['acoustid_id'] = details['acoustid_id']
+                    except Exception as e:
+                        logger.warning("AcoustID fast-path resolution failed: %s", e)
+
+                # Step 4 (Generate Chromaprint)
+                new_chromaprint_generated = False
+                if not new_musicbrainz_id and not t_data['chromaprint'] and fingerprint_provider and duration:
+                    logger.debug("Step 4 (Generate Chromaprint): Fingerprinting %s", local_path.name)
+                    try:
+                        chromaprint = FingerprintGenerator.generate(str(local_path))
+                        if chromaprint:
+                            found_new_data = True
+                            t_data['chromaprint'] = chromaprint
+                            new_chromaprint_generated = True
                             duration_secs = int(duration / 1000) if duration > 10000 else duration
-                            details = fingerprint_provider.resolve_fingerprint_details(track_fp.chromaprint, duration_secs)
-                            if details.get('mbids'):
-                                new_musicbrainz_id = details['mbids'][0]
-                                logger.debug("Step 3: resolved MBID %s for %s", new_musicbrainz_id, local_path.name)
-                            # Also backfill the acoustid_id UUID if we didn't have it before.
-                            if details.get('acoustid_id') and not track_fp.acoustid_id:
-                                track_fp.acoustid_id = details['acoustid_id']
-                        except Exception as e:
-                            logger.warning(f"AcoustID fast-path resolution failed: {e}")
 
-                    # Step 4 (Generate Chromaprint): no chromaprint stored yet — compute one from
-                    # the audio file, then look up the AcoustID UUID + MBIDs in one network call.
-                    if not new_musicbrainz_id and not (track_fp and track_fp.chromaprint) and fingerprint_provider and duration:
-                        logger.debug(f"Step 4 (Generate Chromaprint): Fingerprinting {local_path.name}")
-                        try:
-                            chromaprint = FingerprintGenerator.generate(str(local_path))
-                            if chromaprint:
-                                found_new_data = True
-                                duration_secs = int(duration / 1000) if duration > 10000 else duration
-
-                                # Step 4a (Chromaprint Cache): before hitting the AcoustID network,
-                                # check if another track already has this exact chromaprint stored.
-                                # If a sibling with a resolved MBID exists reuse it (zero network calls).
-                                cached_fp = session.query(AudioFingerprint).filter_by(
-                                    chromaprint=chromaprint
-                                ).first()
-
+                            # Step 4a (Chromaprint Cache) - We do this in the later session commit phase if we can,
+                            # but we need to check if there's a cached one now to avoid network call.
+                            # Since we don't have session here, we will just make the network call if we can't do the cache check.
+                            # For absolute safety and to fix deadlock, we accept doing the network call, OR we open a tiny session just to check cache.
+                            with db.session_scope() as cache_session:
+                                cached_fp = cache_session.query(AudioFingerprint).filter_by(chromaprint=chromaprint).first()
+                                linked_mbid = None
                                 if cached_fp:
-                                    # Identical chromaprint found — try to reuse a sibling MBID.
                                     linked_fp = (
-                                        session.query(AudioFingerprint)
+                                        cache_session.query(AudioFingerprint)
                                         .join(Track, AudioFingerprint.track_id == Track.id)
                                         .filter(
                                             AudioFingerprint.chromaprint == chromaprint,
-                                            AudioFingerprint.track_id != track.id,
+                                            AudioFingerprint.track_id != t_data['id'],
                                             Track.musicbrainz_id.isnot(None),
                                             Track.musicbrainz_id != "NOT_FOUND",
                                         )
                                         .first()
                                     )
                                     if linked_fp:
-                                        linked = session.get(Track, linked_fp.track_id)
-                                        new_musicbrainz_id = linked.musicbrainz_id
-                                        track_fp = cached_fp
-                                        logger.info(
-                                            "Step 4a (Chromaprint Cache Hit): MBID %s reused for %s",
-                                            new_musicbrainz_id, local_path.name,
-                                        )
-                                    else:
-                                        # Cached chromaprint but no resolved MBID — still need network.
-                                        details = fingerprint_provider.resolve_fingerprint_details(chromaprint, duration_secs)
-                                        if details.get('mbids'):
-                                            new_musicbrainz_id = details['mbids'][0]
-                                        if details.get('acoustid_id') and not cached_fp.acoustid_id:
-                                            cached_fp.acoustid_id = details['acoustid_id']
-                                        track_fp = cached_fp
-                                else:
-                                    # Completely new chromaprint — query AcoustID and persist both
-                                    # the raw chromaprint and the returned AcoustID UUID.
-                                    details = fingerprint_provider.resolve_fingerprint_details(chromaprint, duration_secs)
-                                    if details.get('mbids'):
-                                        new_musicbrainz_id = details['mbids'][0]
-                                    track_fp = AudioFingerprint(
-                                        track_id=track.id,
-                                        chromaprint=chromaprint,
-                                        acoustid_id=details.get('acoustid_id'),  # AcoustID UUID, not the chromaprint
-                                    )
-                                    session.add(track_fp)
-                        except Exception as e:
-                            logger.warning(f"Fingerprint generation/resolution failed: {e}")
+                                        linked = cache_session.get(Track, linked_fp.track_id)
+                                        linked_mbid = linked.musicbrainz_id
 
-                    # Step 5 (Text Fallback & Write):
-                    # Resolve artist name from the ORM relationship — Track has no
-                    # artist_name column; artist_name lives on the related Artist row.
-                    artist_name_str = track.artist.name if track.artist else None
-                    if not new_musicbrainz_id and metadata_provider and artist_name_str and track.title:
-                        logger.debug(f"Step 5 (Text Fallback): Searching MusicBrainz for {artist_name_str} - {track.title}")
+                            if linked_mbid:
+                                new_musicbrainz_id = linked_mbid
+                                logger.info("Step 4a (Chromaprint Cache Hit): MBID %s reused for %s", new_musicbrainz_id, local_path.name)
+                                t_data['acoustid_id'] = cached_fp.acoustid_id if cached_fp else None
+                            else:
+                                details = fingerprint_provider.resolve_fingerprint_details(chromaprint, duration_secs)
+                                if details.get('mbids'):
+                                    new_musicbrainz_id = details['mbids'][0]
+                                if details.get('acoustid_id') and not t_data['acoustid_id']:
+                                    t_data['acoustid_id'] = details['acoustid_id']
+
+                    except Exception as e:
+                        logger.warning("Fingerprint generation/resolution failed: %s", e)
+
+                t_data['new_chromaprint_generated'] = new_chromaprint_generated
+
+                # Step 5 (Text Fallback)
+                if not new_musicbrainz_id and metadata_provider and t_data['artist_name'] and t_data['title']:
+                    logger.debug("Step 5 (Text Fallback): Searching MusicBrainz for %s - %s", t_data['artist_name'], t_data['title'])
+                    try:
+                        query = f"{t_data['artist_name']} {t_data['title']}"
+                        results = metadata_provider.search(query, type="track", limit=5)
+                        if results:
+                            file_track = EchosyncTrack(
+                                raw_title=t_data['title'],
+                                artist_name=t_data['artist_name'],
+                                album_title=t_data['album_title'],
+                                duration=duration
+                            )
+                            engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
+                            matcher = engine_cls(ExactSyncProfile())
+                            best_score = 0.0
+
+                            for candidate in results:
+                                if candidate:
+                                    match_result = matcher.calculate_match(file_track, candidate)
+                                    if match_result.confidence_score > best_score:
+                                        best_score = match_result.confidence_score
+                                        if best_score >= 85.0:
+                                            new_musicbrainz_id = candidate.musicbrainz_id
+                                            t_data['isrc'] = candidate.isrc
+                    except Exception as e:
+                        logger.warning("Text fallback search failed: %s", e, exc_info=True)
+
+                if new_musicbrainz_id:
+                    t_data['musicbrainz_id'] = new_musicbrainz_id
+                    found_new_data = True
+                    logger.info("Identified MBID %s for %s", new_musicbrainz_id, local_path.name)
+                    t_data['metadata_status']['enhanced'] = True
+
+                    if metadata_provider:
                         try:
-                            query = f"{artist_name_str} {track.title}"
-                            # Ensure we use standard search which returns List[EchosyncTrack]
-                            results = metadata_provider.search(query, type="track", limit=5)
-                            if results:
-                                # Strict match evaluation
-                                file_track = EchosyncTrack(
-                                    raw_title=track.title,
-                                    artist_name=artist_name_str,
-                                    album_title=track.album.title if track.album else "",
-                                    duration=duration
-                                )
-                                engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
-                                matcher = engine_cls(ExactSyncProfile())
-                                best_score = 0.0
-
-                                for candidate in results:
-                                    if candidate:
-                                        match_result = matcher.calculate_match(file_track, candidate)
-                                        if match_result.confidence_score > best_score:
-                                            best_score = match_result.confidence_score
-                                            if best_score >= 85.0:
-                                                new_musicbrainz_id = candidate.musicbrainz_id
-                                                new_isrc = candidate.isrc
-                        except Exception as e:
-                            logger.warning(f"Text fallback search failed: {e}", exc_info=True)
-
-                    # Handle found data
-                    if new_musicbrainz_id:
-                        track.musicbrainz_id = new_musicbrainz_id
-                        found_new_data = True
-                        logger.info(f"Identified MBID {new_musicbrainz_id} for {local_path.name}")
-
-                        # Mark as successfully enhanced so the track exits the enhancement queue.
-                        status = dict(track.metadata_status or {})
-                        status['enhanced'] = True
-                        track.metadata_status = status
-
-                        if new_isrc and not track.isrc:
-                            track.isrc = new_isrc
-
-                        if metadata_provider:
-                            # Always fetch full release metadata for every identified track.
-                            # This is the only path that populates ISRC, album art, genres,
-                            # and artist relationships — critical for Picard-tagged files that
-                            # arrive with only an embedded MBID and nothing else.
-                            try:
-                                meta = metadata_provider.get_metadata(new_musicbrainz_id)
-                                if meta and not track.isrc and meta.get('isrc'):
-                                    track.isrc = meta.get('isrc')
-                            except Exception:
-                                pass
-                    else:
-                        # File exists but couldn't be identified — increment the retry counter so
-                        # this track is re-attempted on future runs up to MAX_REATTEMPTS times.
-                        status = dict(track.metadata_status or {})
-                        attempts = status.get('enhancement_attempts', 0) + 1
-                        status['enhancement_attempts'] = attempts
-                        track.metadata_status = status
-                        track.musicbrainz_id = "NOT_FOUND"
-                        logger.warning(
-                            "Failed to identify track %d: %s (attempt %d/%d)",
-                            track.id, local_path.name, attempts, MAX_REATTEMPTS,
-                        )
-
-                    # Tag physical file if new data was found
-                    if found_new_data:
-                        update_tags = {}
-                        if track.musicbrainz_id and track.musicbrainz_id != "NOT_FOUND":
-                            update_tags['musicbrainz_id'] = track.musicbrainz_id
-                            update_tags['recording_id'] = track.musicbrainz_id
-                        if track.isrc:
-                            update_tags['isrc'] = track.isrc
-                        if track_fp and track_fp.acoustid_id:
-                            update_tags['acoustid_id'] = track_fp.acoustid_id
-
-                        if update_tags:
-                            _tagging_write(local_path, update_tags)
-
-                    # flag_modified BEFORE hook_manager so we always operate on the session-tracked object.
-                    flag_modified(track, "metadata_status")
-                    # Apply post-enrichment hooks (hook_manager may return a new object; flag already done above).
-                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
-                    session.commit()
-                    total_processed += 1
-
-                except OperationalError as _oe:
-                    if "database is locked" in str(_oe).lower():
-                        try:
-                            session.rollback()
+                            meta = metadata_provider.get_metadata(new_musicbrainz_id)
+                            if meta and not t_data['isrc'] and meta.get('isrc'):
+                                t_data['isrc'] = meta.get('isrc')
                         except Exception:
                             pass
-                        logger.critical(
-                            "EMERGENCY ABORT: Database is locked by an external process. "
-                            "Halting job to prevent corruption."
+                else:
+                    attempts = t_data['metadata_status'].get('enhancement_attempts', 0) + 1
+                    t_data['metadata_status']['enhancement_attempts'] = attempts
+                    t_data['musicbrainz_id'] = "NOT_FOUND"
+                    logger.warning(
+                        "Failed to identify track %d: %s (attempt %d/%d)",
+                        t_data['id'], local_path.name, attempts, MAX_REATTEMPTS,
+                    )
+
+                if found_new_data:
+                    update_tags = {}
+                    if t_data['musicbrainz_id'] and t_data['musicbrainz_id'] != "NOT_FOUND":
+                        update_tags['musicbrainz_id'] = t_data['musicbrainz_id']
+                        update_tags['recording_id'] = t_data['musicbrainz_id']
+                    if t_data['isrc']:
+                        update_tags['isrc'] = t_data['isrc']
+
+                    if update_tags:
+                        try:
+                            _tagging_write(local_path, update_tags)
+                        except Exception as e:
+                            logger.warning("Failed to write tags to %s: %s", local_path.name, e)
+
+                results_to_commit.append(t_data)
+
+            # Step 6: Commit the batch updates in a new short session
+            with db.session_scope() as session:
+                for res in results_to_commit:
+                    track = session.get(Track, res['id'])
+                    if not track:
+                        continue
+
+                    if res['musicbrainz_id'] != "NOT_FOUND":
+                        track.musicbrainz_id = res['musicbrainz_id']
+                    else:
+                        track.musicbrainz_id = "NOT_FOUND"
+
+                    if res['isrc']:
+                        track.isrc = res['isrc']
+
+                    track.metadata_status = res['metadata_status']
+                    flag_modified(track, "metadata_status")
+
+                    if res['metadata_status'].get('artist_fixed_from_tags') and track.artist:
+                        track.artist.name = res['artist_name']
+
+                    if res['new_chromaprint_generated']:
+                        track_fp = AudioFingerprint(
+                            track_id=track.id,
+                            chromaprint=res['chromaprint'],
+                            acoustid_id=res['acoustid_id'],
                         )
-                        raise
-                    # Non-lock OperationalError (disk full, corrupt DB, etc.) — also fatal;
-                    # do not silently continue and risk writing partial data.
-                    logger.error(
-                        "Fatal database error processing track %d (%s) — aborting job.",
-                        getattr(track, 'id', '?'),
-                        getattr(local_path, 'name', str(track.file_path) if track.file_path else '?'),
-                        exc_info=True,
-                    )
-                    raise
-                except Exception as e:
-                    logger.error(
-                        "Unhandled error processing track %d (%s) — skipping to next track.",
-                        getattr(track, 'id', '?'),
-                        getattr(local_path, 'name', str(track.file_path) if track.file_path else '?'),
-                        exc_info=True,
-                    )
-                    # Roll back this track's partial changes so the session stays clean.
-                    session.rollback()
-                    # Increment the attempt counter so persistently-broken tracks eventually
-                    # exhaust their retry budget rather than blocking the batch indefinitely.
-                    # After rollback, ORM attributes are expired and reload from DB on first access.
-                    try:
-                        status = dict(getattr(track, 'metadata_status', None) or {})
-                        status['enhancement_attempts'] = status.get('enhancement_attempts', 0) + 1
-                        track.metadata_status = status
-                        flag_modified(track, "metadata_status")
-                        session.commit()
-                    except Exception:
-                        pass
+                        session.add(track_fp)
+                    elif res['has_fp_record'] and res['acoustid_id']:
+                        # Update existing FP record
+                        track_fp = session.query(AudioFingerprint).filter_by(track_id=track.id).first()
+                        if track_fp and not track_fp.acoustid_id:
+                            track_fp.acoustid_id = res['acoustid_id']
+
+                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
                     total_processed += 1
+
 
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
         """

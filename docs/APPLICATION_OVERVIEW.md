@@ -523,6 +523,13 @@ Stored in `config.db` with encryption:
 
 ## Advanced Features
 
+### Total Freedom Plugin Architecture
+EchoSync is built to be extended. Instead of hardcoded integrations, the system relies on a central `core.hook_manager.HookManager`.
+
+Plugins can tap into **Event Hooks** (read-only monitoring), **Mutator Hooks** (altering data in transit like file paths), and **Skip Hooks** (completely bypassing core logic like authentication or file moving). This architecture ensures that any core feature is replicable or overridable as a plugin.
+
+For a complete reference of injection points, see `docs/HOOKS_REFERENCE.md`.
+
 ### Deduplication Strategy
 
 Echosync uses **fingerprint-based deduplication** to identify identical audio:

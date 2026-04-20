@@ -1410,6 +1410,12 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
                 "updated": bool(updated),
             })
 
+            try:
+                from core.hook_manager import hook_manager
+                hook_manager.apply_filters('ON_PLAYLIST_SAVED', None, playlist_name=playlist_name, target=target, synced_count=len(valid_keys))
+            except Exception as e:
+                logger.error(f"Error in ON_PLAYLIST_SAVED hook: {e}")
+
             logger.info(f"[{job_name}] Sync complete: {len(valid_keys)} synced, {total - len(valid_keys)} failed")
             event_bus.publish(job_name, "sync_complete", {
                 "playlist": playlist_name,

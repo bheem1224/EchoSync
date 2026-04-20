@@ -1,3 +1,4 @@
+from web.auth import require_auth
 from flask import Blueprint, jsonify, request
 from time_utils import utc_now
 from core.tiered_logger import get_logger
@@ -143,6 +144,7 @@ def _resolve_working_user_for_trends():
     return resolved_user, resolved_account_id, "active_account"
 
 @bp.route("/settings", methods=["GET", "POST"])
+@require_auth
 def manager_settings():
     """Get or update manager settings."""
     if request.method == "POST":
@@ -190,6 +192,7 @@ def manager_settings():
 
 
 @bp.route("/suggestion-candidates", methods=["GET"])
+@require_auth
 def get_suggestion_candidates():
     """Get consensus-threshold candidates from working DB using the 10-point lifecycle model."""
     work_db = get_working_database()
@@ -259,6 +262,7 @@ def get_suggestion_candidates():
 
 
 @bp.route("/suggestion-candidates/override", methods=["POST"])
+@require_auth
 def toggle_suggestion_candidate_override():
     """Toggle admin exemption flags used by the suggestion engine lifecycle gate."""
     payload = request.get_json() or {}
@@ -320,6 +324,7 @@ def toggle_suggestion_candidate_override():
         return jsonify({"error": str(e)}), 500
 
 @bp.route("/scan", methods=["POST"])
+@require_auth
 def run_manager_scan():
     """Scan for duplicates and stage lifecycle actions — no actions are executed.
 
@@ -379,6 +384,7 @@ def run_manager_scan():
 
 
 @bp.route("/prune/run", methods=["POST"])
+@require_auth
 def run_prune_job():
     """Immediately triggers the background 'Prune/Delete' job."""
     try:
@@ -391,6 +397,7 @@ def run_prune_job():
         return jsonify({"error": str(e)}), 500
 
 @bp.route("/duplicates", methods=["GET"])
+@require_auth
 def get_duplicates():
     """Get all duplicate groups (auto-resolve and manual-review) for the queue."""
     try:
@@ -405,6 +412,7 @@ def get_duplicates():
         return jsonify({"error": str(e)}), 500
 
 @bp.route("/queue/actions", methods=["GET"])
+@require_auth
 def get_action_queue():
     """Get currently staged lifecycle actions and their queue age."""
     now = utc_now()
@@ -467,6 +475,7 @@ def get_action_queue():
 
 
 @bp.route("/track/<int:track_id>/force_delete", methods=["POST"])
+@require_auth
 def force_delete_track(track_id: int):
     """Force immediate lifecycle delete execution for a track, bypassing timers."""
     sync_id = _sync_id_from_track_id(track_id)
@@ -483,6 +492,7 @@ def force_delete_track(track_id: int):
 
 
 @bp.route("/track/<int:track_id>/force_upgrade", methods=["POST"])
+@require_auth
 def force_upgrade_track(track_id: int):
     """Force immediate lifecycle upgrade execution for a track, bypassing timers."""
     sync_id = _sync_id_from_track_id(track_id)
@@ -501,6 +511,7 @@ def force_upgrade_track(track_id: int):
         return jsonify({"error": str(e)}), 500
 
 @bp.route("/track/<int:track_id>/fetch_metadata", methods=["POST"])
+@require_auth
 def fetch_metadata(track_id):
     """Manually triggers the MetadataEnhancer for a specific track ID."""
     db = get_database()
@@ -522,6 +533,7 @@ def fetch_metadata(track_id):
         return jsonify({"error": str(e)}), 500
 
 @bp.route("/track/<int:track_id>/override", methods=["POST"])
+@require_auth
 def override_track(track_id):
     """DEPRECATED: Manual overrides removed in Phase 3.
     
@@ -538,6 +550,7 @@ def override_track(track_id):
     }), 410
 
 @bp.route("/conflicts/resolve", methods=["POST"])
+@require_auth
 def resolve_conflict():
     """Manually resolve a conflict by keeping one track and deleting others."""
     payload = request.get_json() or {}
@@ -559,6 +572,7 @@ def resolve_conflict():
         return jsonify({"error": str(e)}), 500
 
 @bp.route("/trends", methods=["GET"])
+@require_auth
 def get_trends():
     """Returns library stats (filtered)."""
     work_db = get_working_database()
@@ -608,6 +622,7 @@ def get_trends():
         return jsonify({"error": str(e)}), 500
 
 @bp.route("/search", methods=["GET"])
+@require_auth
 def search_library():
     """Unified search endpoint."""
     query = request.args.get("q")

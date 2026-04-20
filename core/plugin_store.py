@@ -180,6 +180,8 @@ class PluginStore:
                                     break
 
                 extracted_count = 0
+                uncompressed_size = 0
+                import shutil
                 for zi in zip_infos:
                     if zi.filename.endswith('/'):
                         continue
@@ -187,8 +189,23 @@ class PluginStore:
                     if zi.filename.startswith(target_prefix):
                         rel_path = zi.filename[len(target_prefix):]
                         if rel_path:
-                            target_file = dest_dir / rel_path
+                            if '..' in rel_path or rel_path.startswith('/'):
+                                logger.error(f"Malicious path detected in zip: {rel_path}")
+                                shutil.rmtree(dest_dir, ignore_errors=True)
+                                return False
+                            target_file = (dest_dir / rel_path).resolve()
+                            if not target_file.is_relative_to(dest_dir.resolve()):
+                                logger.error(f"Zip Slip prevented for: {target_file}")
+                                shutil.rmtree(dest_dir, ignore_errors=True)
+                                raise ValueError("Path traversal attempt detected in zip")
                             target_file.parent.mkdir(parents=True, exist_ok=True)
+
+                            uncompressed_size += zi.file_size
+                            if uncompressed_size > 50 * 1024 * 1024:
+                                logger.error(f"Zip bomb detected: uncompressed size exceeds 50MB limit.")
+                                shutil.rmtree(dest_dir, ignore_errors=True)
+                                return False
+
                             with target_file.open('wb') as f:
                                 f.write(z.read(zi))
                             extracted_count += 1
@@ -212,5 +229,49 @@ class PluginStore:
         except Exception as e:
             logger.error(f"Failed to download and extract plugin: {e}")
             return False
+
+    def uninstall_plugin(self, plugin_id: str) -> bool:
+        import re
+        import shutil
+        dest_dir = self.plugins_dir / plugin_id
+        if not dest_dir.exists():
+            return False
+        
+        # Drop associated tables
+        try:
+            from database.working_database import get_working_database
+            from database.config_database import get_config_database
+            
+            safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', plugin_id).lower()
+            prefix = f"plugin_{safe_id}_%"
+            
+            for db_engine in [get_working_database().engine, get_config_database().engine]:
+                with db_engine.connect() as conn:
+                    try:
+                        from sqlalchemy import text
+                        tables = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :prefix"), {"prefix": prefix}).fetchall()
+                        for (table_name,) in tables:
+                            if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
+                                logger.warning(f"Skipping drop table due to invalid name: {table_name}")
+                                continue
+                            conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+                            try:
+                                conn.commit()
+                            except Exception:
+                                pass
+                    except ImportError:
+                        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?", (prefix,)).fetchall()
+                        for (table_name,) in tables:
+                            if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
+                                logger.warning(f"Skipping drop table due to invalid name: {table_name}")
+                                continue
+                            conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+        except Exception as e:
+            logger.error(f"Failed to drop tables for {plugin_id}: {e}")
+            
+        # Delete directory
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        return True
+
 
 plugin_store = PluginStore()

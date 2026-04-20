@@ -238,7 +238,9 @@ def get_provider_capabilities(provider: str) -> ProviderCapabilities:
     """
     provider_cls = ProviderRegistry.get_provider_class(provider)
     if not provider_cls:
-        raise KeyError(f"Provider '{provider}' not found in registry.")
+        import logging
+        logging.getLogger(__name__).warning(f"Provider '{provider}' not found in registry, defaulting to empty capabilities.")
+        return ProviderCapabilities()
 
     caps = getattr(provider_cls, 'capabilities', None)
     if not caps:

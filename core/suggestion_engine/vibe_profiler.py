@@ -15,12 +15,16 @@ logger = get_logger("vibe_profiler")
 def calculate_user_vibe(user_id: str, days: int = 30) -> Optional[Dict[str, float]]:
     """
     Calculate a user's 'Vibe Signature' based on recent playback history.
-
-    Uses a strict two-step cross-database pattern:
-      Step 1 — Query working.db directly with user_id filter to get provider_item_ids.
-      Step 2 — Batch-fetch ExternalIdentifiers and TrackAudioFeatures from music.db
-               using .in_() to avoid N+1 query loops.
     """
+    try:
+        from core.hook_manager import hook_manager
+        plugin_vibe = hook_manager.apply_filters('PROVIDE_VIBE_PROFILE', None, user_id=user_id, days=days)
+        if plugin_vibe is not None and isinstance(plugin_vibe, dict):
+            logger.info(f"Plugin intercepted vibe calculation for user_id={user_id}")
+            return plugin_vibe
+    except Exception as e:
+        logger.error(f"Error executing PROVIDE_VIBE_PROFILE hook: {e}")
+
     # Step 1: Fetch user-specific provider_item_ids from working.db.
     cutoff_date = utc_now() - timedelta(days=days)
     working_db = get_working_database()

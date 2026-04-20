@@ -1,17 +1,22 @@
+from web.auth import require_auth
 import json
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, abort, send_from_directory
 from core.settings import config_manager
+from werkzeug.utils import safe_join
+import os
 from core.plugin_loader import get_all_plugins
 from core.plugin_store import plugin_store
 
 bp = Blueprint('plugins', __name__, url_prefix='/api/system/plugins')
 
 @bp.route('', methods=['GET'])
+@require_auth
 def list_plugins():
     plugins = get_all_plugins()
     return jsonify({'plugins': plugins})
 
 @bp.route('/config', methods=['POST'])
+@require_auth
 def update_plugin_config():
     data = request.json or {}
 
@@ -38,11 +43,13 @@ def update_plugin_config():
 
 
 @bp.route('/repos', methods=['GET'])
+@require_auth
 def get_repos():
     repos = plugin_store.get_repositories()
     return jsonify({"repos": repos})
 
 @bp.route('/repos', methods=['POST'])
+@require_auth
 def add_repo():
     data = request.json or {}
     url = data.get('url')
@@ -54,6 +61,7 @@ def add_repo():
     return jsonify({"error": "Failed to add repository"}), 500
 
 @bp.route('/repos', methods=['DELETE'])
+@require_auth
 def remove_repo():
     data = request.json or {}
     url = data.get('url')
@@ -65,6 +73,7 @@ def remove_repo():
     return jsonify({"error": "Failed to remove repository"}), 500
 
 @bp.route('/store', methods=['GET'])
+@require_auth
 def get_plugin_store():
     try:
         plugins = plugin_store.get_all_store_plugins()
@@ -73,6 +82,7 @@ def get_plugin_store():
         return jsonify({"error": str(e)}), 500
 
 @bp.route('/install', methods=['POST'])
+@require_auth
 def install_plugin():
     data = request.json or {}
     plugin_info = data.get('plugin')
@@ -84,3 +94,15 @@ def install_plugin():
         return jsonify({"success": True})
     else:
         return jsonify({"error": "Failed to install plugin"}), 500
+
+
+@bp.route('/<plugin_id>/ui/<path:filename>', methods=['GET'])
+@require_auth
+def serve_plugin_ui(plugin_id, filename):
+    plugins_dir = str(config_manager.get_plugins_dir())
+    ui_dir = safe_join(plugins_dir, plugin_id, 'ui')
+
+    if ui_dir is None or not os.path.exists(ui_dir):
+        abort(404)
+
+    return send_from_directory(ui_dir, filename)

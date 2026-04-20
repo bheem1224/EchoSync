@@ -1,4 +1,6 @@
 """Metadata review queue endpoints."""
+from web.auth import require_auth
+
 
 from pathlib import Path
 import threading
@@ -54,12 +56,31 @@ def _normalize_detected_metadata(value: object) -> Optional[Dict[str, Any]]:
 
 
 def _resolve_task_file(task: ReviewTask) -> Optional[Path]:
+    from core.settings import config_manager
     try:
         resolved = Path(task.file_path).expanduser().resolve(strict=True)
     except Exception:
         return None
 
     if not resolved.exists() or not resolved.is_file():
+        return None
+
+    # Jail / LFI protection
+    allowed_dirs = [
+        config_manager.get_library_dir().resolve(),
+        config_manager.get_download_dir().resolve()
+    ]
+
+    is_safe = False
+    for allowed in allowed_dirs:
+        try:
+            if resolved.is_relative_to(allowed):
+                is_safe = True
+                break
+        except Exception:
+            pass
+
+    if not is_safe:
         return None
 
     return resolved
@@ -316,6 +337,7 @@ def get_review_queue():
 
 
 @bp.put("/review-queue/<int:task_id>")
+@require_auth
 def update_review_queue_item(task_id: int):
     """Update detected metadata JSON for a review task."""
     payload = request.get_json(silent=True)
@@ -364,7 +386,8 @@ def _process_approval_background(task_id: int, final_metadata: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Background approval task {task_id} failed: {e}", exc_info=True)
 
-@bp.post("/review-queue/<int:task_id>/approve")
+@bp.post("/review-queue/<int:task_id>/lookup/acoustid")
+@require_auth
 def approve_review_queue_item(task_id: int):
     """Approve a review task: write tags, import file, mark approved."""
     payload = request.get_json(silent=True)
@@ -460,6 +483,7 @@ def stream_review_queue_item(task_id: int):
     # Called outside the session_scope so the DB connection is released before
     # the (potentially long-running) streaming response begins.
     from flask import send_file
+
     return send_file(
         file_path,
         mimetype="audio/mpeg" if file_path.suffix.lower() == ".mp3" else "audio/flac",
@@ -470,6 +494,7 @@ def stream_review_queue_item(task_id: int):
 
 
 @bp.post("/review-queue/<int:task_id>/lookup/acoustid")
+@require_auth
 def lookup_review_queue_item_acoustid(task_id: int):
     """Run AcoustID fingerprint lookup and update detected metadata.
 
@@ -599,10 +624,12 @@ def lookup_review_queue_item_acoustid(task_id: int):
         return jsonify({"error": "AcoustID lookup failed"}), 500
 
 
-@bp.post("/review-queue/<int:task_id>/lookup/musicbrainz")
+@bp.post("/review-queue/<int:task_id>/lookup/acoustid")
+@require_auth
 def lookup_review_queue_item_musicbrainz(task_id: int):
     """Run text-based MusicBrainz lookup and update detected metadata."""
     from flask import request
+
     payload = request.get_json(silent=True) or {}
 
     db = get_working_database()
@@ -615,23 +642,30 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
             current = _normalize_detected_metadata(task.detected_metadata) or {}
             artist = str(payload.get("artist") or current.get("artist") or "").strip()
             title = str(payload.get("title") or current.get("title") or "").strip()
+            task_file_path = task.file_path
 
-            if (not artist or not title) and task.file_path:
-                guessed = _best_effort_path_parse(Path(task.file_path))
-                artist = artist or str((guessed or {}).get("artist") or "").strip()
-                title = title or str((guessed or {}).get("title") or "").strip()
+        if (not artist or not title) and task_file_path:
+            guessed = _best_effort_path_parse(Path(task_file_path))
+            artist = artist or str((guessed or {}).get("artist") or "").strip()
+            title = title or str((guessed or {}).get("title") or "").strip()
 
-            if not artist or not title:
-                return jsonify({"error": "artist and title are required"}), 400
+        if not artist or not title:
+            return jsonify({"error": "artist and title are required"}), 400
 
-            metadata_provider = get_provider(Capability.FETCH_METADATA)
-            if not metadata_provider:
-                return jsonify({"error": "No metadata provider configured"}), 503
+        metadata_provider = get_provider(Capability.FETCH_METADATA)
+        if not metadata_provider:
+            return jsonify({"error": "No metadata provider configured"}), 503
 
-            found = _musicbrainz_text_search(metadata_provider, artist=artist, title=title)
-            if not found:
-                return jsonify({"error": "No MusicBrainz match found"}), 404
+        found = _musicbrainz_text_search(metadata_provider, artist=artist, title=title)
+        if not found:
+            return jsonify({"error": "No MusicBrainz match found"}), 404
 
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task:
+                return jsonify({"error": "Task not found"}), 404
+
+            current = _normalize_detected_metadata(task.detected_metadata) or {}
             merged = _merge_metadata(current, found)
             merged["source"] = "musicbrainz_text_lookup"
             task.detected_metadata = merged
