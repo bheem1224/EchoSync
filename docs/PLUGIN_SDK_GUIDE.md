@@ -2,7 +2,7 @@
 
 Welcome to the EchoSync "Total Freedom" Plugin SDK. EchoSync v2.4.1+ transitions away from monolithic, hardcoded providers to a dynamic, event-driven plugin architecture.
 
-This guide is your bible for writing robust, secure, and performant community plugins.
+This is your guide for writing robust, secure, and performant community plugins.
 
 ## 1. The Zero-Trust AST Sandbox
 
@@ -78,7 +78,61 @@ If the core engine receives this payload, it will immediately abort its default 
 
 **Where to find it:** For a complete list of all currently available hooks (Event, Mutator, and Skip), you should check the event registry in `core/hook_manager.py`.
 
-## 6. Database Engine Swaps (PostgreSQL/MySQL)
+## 6. HTTP Client & Rate Limiting
+
+All plugins must use the centralized `RequestManager` for HTTP requests. This ensures consistent rate limiting across the entire EchoSync ecosystem and prevents thundering herd problems that could get your IP banned by API providers.
+
+### Using RequestManager in Your Plugin
+When your plugin needs to make HTTP requests, instantiate a `RequestManager` with your desired rate limit:
+
+```python
+from core.request_manager import RequestManager, RateLimitConfig
+
+class MyPlugin(ProviderBase):
+    def __init__(self, config):
+        super().__init__(config)
+        # Create RequestManager with custom rate limit (optional)
+        # Default is 1 RPS if not specified
+        self.http = RequestManager(
+            provider="my_plugin",
+            rate=RateLimitConfig(requests_per_second=2.0)
+        )
+    
+    def search(self, query: str):
+        # Use the RequestManager for all HTTP requests:
+        response = self.http.get('https://api.example.com/track')
+        response = self.http.post('https://api.example.com/search', json={'q': query})
+        return response.json()
+```
+
+### Default Rate Limit: 1 Request Per Second
+By default, all requests are rate-limited to **1 RPS** to protect against API abuse. When you instantiate `RequestManager`, you can override this by passing a `RateLimitConfig`:
+
+```python
+# Use default 1 RPS (no rate config needed)
+http = RequestManager("my_provider")
+
+# Or customize it:
+from core.request_manager import RateLimitConfig
+http = RequestManager(
+    "my_provider",
+    rate=RateLimitConfig(requests_per_second=2.5)
+)
+```
+
+### Automatic Retry & Backoff
+The RequestManager automatically retries failed requests with exponential backoff:
+* Retries on network errors (timeouts, connection refused)
+* Retries on 429 (Too Many Requests) and 5xx (Server Errors)
+* Maximum 3 attempts by default
+* Exponential backoff: 0.5s → 1s → 2s → 4s → 8s (capped at 8 seconds)
+* Random jitter (+/- 25%) prevents thundering herd
+
+You do not need to implement your own retry logic.
+
+**Where to find it:** See `core/request_manager.py` for the complete implementation and configuration options.
+
+## 7. Database Engine Swaps (PostgreSQL/MySQL)
 
 EchoSync v2.4.1+ officially supports swapping the core database engine from SQLite to PostgreSQL or MySQL for high-scale enterprise deployments.
 

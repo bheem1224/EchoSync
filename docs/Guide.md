@@ -8,9 +8,10 @@ EchoSync relies on strict separation of state, configuration, and media. When se
 
 * `/config`: Stores your `config.json` and the encrypted `config.db` (which holds your API keys, OAuth tokens, and server credentials). **Keep this backed up and secure.**
 * `/data`: Stores `working.db` (job queues, review tasks) and `music.db` (your library metadata, sync history, Chromaprint hashes). 
-* `/downloads`: The staging ground. This should point to the exact same location your `slskd` container downloads files to. 
-* `/library`: Your final, organized library. Your media server (Plex/Jellyfin/Navidrome) should have read access to this exact directory.
-* `/logs`: path whare all logs are sotred can be set by ECHOSYNC_LOG_DIR or defaults to /data/logs if not set
+* `/data/downloads`: The staging ground. This should point to the exact same location your `slskd` container downloads files to. 
+* `/data/library`: Your final, organized library. Your media server (Plex/Jellyfin/Navidrome) should have read access to this exact directory.
+* `/data/logs`: path whare all logs are sotred can be set by ECHOSYNC_LOG_DIR or defaults to /data/logs if not set
+* `/data/plugins`: this is whare all downloaded plugins files live 
 
 
 ## 2. The Auto-Importer & File Organization
@@ -36,21 +37,29 @@ You can dynamically format your directory structure using variables.
 3. **Thresholding:** If the match confidence is ≥ 85% (Default EXACT_SYNC profile), the file is tagged (ID3v2.4/Vorbis) and moved to `/library`.
 4. **Review Queue:** If confidence is below the threshold, it is parked in the database under `review_tasks`. You must manually approve or reject these via the Web UI.
 
-## 3. Quality Profiles (The Soulseek Engine)
-EchoSync treats Soulseek as a targeted acquisition engine, not a blind downloader. The `quality_profile` determines exactly what is accepted.
+## 🎛️ Quality Profiles: The Waterfall Engine
 
-```json
-"quality_profile": {
-  "preset": "balanced",
-  "allowed_file_types": ["flac", "mp3_320", "mp3_256"],
-  "min_file_size_mb": 0,
-  "max_file_size_mb": 150,
-  "min_bit_depth": 16,
-  "min_bitrate_kbps": 256
-}
-```
-* **Waterfall Logic:** EchoSync will search slskd prioritizing the top of your `allowed_file_types` array (e.g., FLAC). If a match isn't found within your timeout window, it cascades down to mp3_320, and so on.
-* **Fake FLAC Detection:** The engine verifies bit depth and bitrate. Upscaled MP3s labeled as FLAC are penalized in the scoring engine.
+In EchoSync, downloading music isn't a blind grab. The Quality Profile acts as a strict set of gatekeepers to ensure you get exactly the file type, bitrate, and size you want from the Slskd network. 
+
+Instead of a simple "Allowed File Types" list, EchoSync uses a **Cascading Waterfall** system based on Priorities. 
+
+### 1. The Priority Waterfall
+You can define multiple tiers for a single profile. The engine will relentlessly search the network for a file that matches your **Priority 1** rules. If the search times out without finding a match, it gracefully falls back to **Priority 2**, and so on.
+
+### 2. Defeating "Fake FLACs" with Granular Rules
+Because the Slskd network contains upscaled/fake FLAC files, EchoSync lets you create multiple rules for the same file type. 
+For example, you can set:
+* **Priority 1 (Strict FLAC):** Must be exactly 44.1kHz or 48kHz, minimum 35MB. (Files with strict attributes are rarely faked).
+* **Priority 2 (Loose FLAC):** Any FLAC, minimum 20MB. (Fallback if a highly verified FLAC isn't found).
+* **Priority 3 (MP3):** Any MP3.
+
+*(Note: You do not need to create multiple MP3 tiers like "320kbps" and "256kbps". EchoSync inherently prefers higher quality files within the same tier!)*
+
+### 3. Tie-Breakers: How it chooses
+If EchoSync finds two files on the network that *both* perfectly match your Priority 1 rules (e.g., one is 26MB and one is 30MB), it must decide which one to grab based on your Tie-Breaker Strategy:
+* **Max Quality (Largest File):** It will download the larger file, assuming the larger size equates to a slightly better compression ratio or embedded high-res art.
+* **Speed (First Match):** It will simply grab the very first file it found that meets the baseline rules, speeding up the overall download process.
+* **Save Storage (Smallest File) [Pending v2.5.0 WebUI Update]:** Designed for datahoarders and mobile syncers. If two files meet your strict quality rules, this strategy will actively prefer the *smaller* file to save disk space.
 
 ## 4. Multi-Database Architecture
 If you need to query EchoSync manually or perform backups, note the Alembic-managed database split:
@@ -69,7 +78,7 @@ EchoSync v2.4.1+ introduces the "Total Freedom" architecture, allowing the commu
 * **Safe Mode:** If a plugin crashes the app during boot, the "Circuit Breaker" activates. EchoSync will reboot in Safe Mode, temporarily disabling all community plugins so you can access the Web UI and fix the issue.
 
 ## 6. Centralized Rate Limiting
-To prevent API bans from MusicBrainz or AcoustID, EchoSync routes all outbound requests through a central RequestManager.
+To prevent API bans from MusicBrainz or AcoustID, EchoSync routes all outbound requests through a central RequestManager. The default rate limit is **1 request per second** and can be overridden per provider in `config.json`.
 * MusicBrainz is strictly locked to 1 request/second.
 * Spotify utilizes adaptive exponential backoff when it encounters 429 Too Many Requests.
 You do not need to configure this; the core handles it autonomously.

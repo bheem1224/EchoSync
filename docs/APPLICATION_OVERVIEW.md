@@ -90,16 +90,26 @@ The legacy monolithic structure is gone. EchoSync is now driven by a dynamic plu
 
 ## 10. Bundled Core Plugins
 
-To ensure out-of-the-box functionality, EchoSync ships with a suite of bundled plugins, grouped by capability:
+To ensure out-of-the-box functionality, EchoSync ships with a suite of bundled core plugins. Rather than hardcoding these fundamental features, they use the exact same hook architecture as community plugins, proving the viability of the "Total Freedom" SDK:
 
-* **Local Player:** Provides audio streaming capabilities directly from the server.
-* **Local Media Server:** Manages synchronization with your local library (Plex, Jellyfin, etc.).
-* **Local Metadata:** Handles file tagging and metadata fetching (AcoustID, ListenBrainz).
-* **Outbound Gateways:** Facilitates communication with external streaming services (Spotify, Tidal) and downloader networks (Slskd).
+* **Local Player:** Provides native audio streaming capabilities directly from the server.
+
+* **Local Media Server:** Acts as a lightweight, internal media server (essentially a "mini-Plex" inside EchoSync). It maps your local library via filesystem traversals (e.g., os.walk) and manages active, buffered streaming threads so your music playback never hiccups.
+
+* **Local Metadata:** Responsible for reading embedded file-level metadata (like ID3 and Artist tags). By sitting at Priority 1 in the plugin stack, it allows EchoSync to instantly ingest tagged files without wasting time or rate-limits querying external services like MusicBrainz or AcoustID.
+
+* **Outbound Gateway:** An integration layer allowing external applications to query EchoSync (an External -> EchoSync data flow). Destined to be locked behind an API key in future auth updates, this allows EchoSync to fit perfectly into larger homelab stacks (e.g., exposing endpoints for Prometheus metrics, or allowing applications like Overseerr to talk to it).
 
 These core plugins use the exact same hook architecture as community plugins.
 
 ## 11. Auto Importer & Healthcheck
 
-* **Auto Importer:** Continuously monitors the download directory (often utilizing Watchdog for immediate events). When new files arrive, it routes them to the Metadata Enhancer. Clean matches are automatically tagged and organized into the media library; uncertain matches are pushed to the database Review Queue for manual approval.
-* **Healthcheck:** A Safe Mode Circuit Breaker protects the application. It writes a `booting.lock` file on startup. If the app crashes and restarts while this lock exists, it reboots in Safe Mode, temporarily bypassing community plugins to ensure the web UI remains accessible.
+**Auto Importer**
+The Auto Importer monitors the download directory using a dual-strategy approach: it utilizes Watchdog for instantaneous filesystem event detection, backed by a Scheduled Polling routine via the Job Queue to ensure nothing is missed. When new files arrive, it routes them to the Metadata Enhancer. Clean matches are automatically tagged and organized into the media library; uncertain matches are pushed to the database Review Queue for manual approval.
+
+**Healthcheck & System Monitoring**
+The Healthcheck system is split into two distinct protective layers:
+
+Safe Mode Circuit Breaker: Protects the core application loop. It writes a booting.lock file on startup. If the app crashes and restarts while this lock exists, it reboots in "Safe Mode," temporarily disabling community plugins to ensure the web UI remains accessible for troubleshooting.
+
+Endpoint Monitoring: A simple, built-in registration system for service health. Services and plugins can register an endpoint with the core system; the internal Job Queue will then automatically ping that endpoint every 5 minutes and broadcast an alert if it ever goes offline.

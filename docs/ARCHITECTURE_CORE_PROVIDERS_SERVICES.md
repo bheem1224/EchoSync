@@ -17,7 +17,9 @@ The `core` directory is the engine room of EchoSync. It contains pure business l
 | `core/matching_engine/` | Logic for fuzzy string matching, scoring profiles, and metadata comparison. |
 | `core/plugin_loader.py` | AST Scanner and dynamic loading of community plugins. |
 | `core/hook_manager.py` | The central event bus and injection point registry for plugins. |
-| `core/plugin_store.py` | Manages sandboxed database access (`ProviderStorageBox`) for plugins. |
+| `core/plugin_loader.py` | Dynamic loading of community plugins and enforcement of the Zero-Trust AST Sandbox (`PluginSecurityScanner`). |
+| `core/plugin_store.py` | The Plugin Marketplace manager. Handles downloading, installing, zip extraction, and uninstalling community plugins. |
+| `core/plugin_orm.py` | Provides the `ProviderStorageBox` SDK, managing sandboxed database access for plugins. |
 | `core/request_manager.py` | HTTP client wrapper handling automatic retries, exponential backoff, and rate limiting. |
 | `core/job_queue.py` | Background task scheduling and concurrency locking. |
 | `core/event_bus.py` | Lightweight message passing (Claim Check Pattern) between system components. |

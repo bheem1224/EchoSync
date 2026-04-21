@@ -34,8 +34,8 @@ class RetryConfig:
 @dataclass
 class RateLimitConfig:
     """Configuration for rate limiting."""
-    # Requests per second allowed; None means unlimited (provider handles it)
-    requests_per_second: Optional[float] = None
+    # Requests per second allowed; defaults to 1 RPS to prevent API abuse
+    requests_per_second: float = 1.0
     # Token bucket capacity (burst size) - Not currently used but good for future
     burst: int = 1
 
@@ -81,13 +81,13 @@ class RequestManager:
 
     def _load_rate_limit_from_config(self) -> RateLimitConfig:
         """Load rate limit configuration from config_manager."""
-        # Try provider-specific rate config; keep it optional
+        # Try provider-specific rate config; fall back to default 1 RPS
         creds = config_manager.get_service_credentials(self.provider)
         rps = creds.get('rate_limit.requests_per_second') if creds else None
         try:
-            return RateLimitConfig(requests_per_second=float(rps)) if rps is not None else RateLimitConfig()
+            return RateLimitConfig(requests_per_second=float(rps)) if rps is not None else RateLimitConfig(requests_per_second=1.0)
         except (TypeError, ValueError):
-            return RateLimitConfig()
+            return RateLimitConfig(requests_per_second=1.0)
 
     def _apply_rate_limit(self):
         """Apply rate limiting before making a request.
