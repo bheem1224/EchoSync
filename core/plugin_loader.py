@@ -18,6 +18,7 @@ from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
 from core.tiered_logger import get_logger
 from core.settings import config_manager
+from core.binary_runner import CoreBinaryRunner
 
 logger = get_logger("plugin_loader")
 
@@ -61,7 +62,8 @@ class PluginSecurityScanner(ast.NodeVisitor):
                                                  open accessed as an attribute)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, privileged: bool = False) -> None:
+        self.privileged = privileged
         # Each entry is (line_number, human_readable_description)
         self.violations: list = []
     def visit_Attribute(self, node: ast.Attribute) -> None:
@@ -78,13 +80,19 @@ class PluginSecurityScanner(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            if alias.name.split('.')[0] in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc"):
+            base_module = alias.name.split('.')[0]
+            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc"):
+                if base_module == "subprocess" and self.privileged:
+                    continue
                 self.violations.append((node.lineno, f"forbidden import '{alias.name}'"))
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        if node.module and node.module.split('.')[0] in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc"):
-            self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
+        if node.module:
+            base_module = node.module.split('.')[0]
+            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc"):
+                if not (base_module == "subprocess" and self.privileged):
+                    self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
@@ -243,12 +251,9 @@ class PluginLoader:
 
 
                         if manifest_data.get("author") == "EchoSync" and manifest_data.get("verified_source") == "official":
-
-
                             bypass_security = True
-
-
                             logger.info(f"Bypassing security scan for official plugin: {provider_name}")
+                        privileged = manifest_data.get("privileged") is True
 
 
                     except Exception as e:
@@ -260,7 +265,8 @@ class PluginLoader:
 
 
 
-                if not bypass_security and not self._security_scan_package(item, provider_name):
+                privileged = manifest_data.get("privileged") is True if 'manifest_data' in locals() else False
+                if not bypass_security and not self._security_scan_package(item, provider_name, privileged=privileged):
 
 
                     logger.warning(
@@ -276,7 +282,7 @@ class PluginLoader:
 
             self._load_provider_package(provider_name, directory.name, source_type)
 
-    def _security_scan_package(self, package_dir: Path, plugin_name: str) -> bool:
+    def _security_scan_package(self, package_dir: Path, plugin_name: str, privileged: bool = False) -> bool:
         """
         Scan every .py file in *package_dir* with PluginSecurityScanner.
 
@@ -398,6 +404,7 @@ def get_all_plugins() -> list:
     import json
     from pathlib import Path
     from core.settings import config_manager
+    from core.binary_runner import CoreBinaryRunner
     from core.provider import ProviderRegistry
 
     plugins = []
