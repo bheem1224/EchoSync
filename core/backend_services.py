@@ -64,7 +64,7 @@ async def start_services() -> None:
         active_acc = config_manager.get_active_spotify_account()
         if (creds.get("client_id") and creds.get("client_secret")) or active_acc:
             try:
-                from providers.spotify.client import SpotifyClient
+                from plugins.spotify.client import SpotifyClient
                 spotify_client = SpotifyClient()
                 logger.info("Spotify client started")
             except Exception as e:
@@ -84,7 +84,7 @@ async def start_services() -> None:
 
         if plex_url and plex_token:
             try:
-                from providers.plex.client import PlexClient
+                from plugins.plex.client import PlexClient
                 plex_client = PlexClient()
                 logger.info("Plex client started")
             except Exception as e:
@@ -99,7 +99,7 @@ async def start_services() -> None:
         conf = config_manager.get_jellyfin_config()
         if conf.get("base_url") and conf.get("api_key"):
             try:
-                from providers.jellyfin.client import JellyfinClient
+                from plugins.jellyfin.client import JellyfinClient
                 jellyfin_client = JellyfinClient()
                 logger.info("Jellyfin client started")
             except Exception as e:
@@ -114,7 +114,7 @@ async def start_services() -> None:
         conf = config_manager.get_navidrome_config()
         if conf.get("base_url") and conf.get("username"):
             try:
-                from providers.navidrome.client import NavidromeClient
+                from plugins.navidrome.client import NavidromeClient
                 navidrome_client = NavidromeClient()
                 logger.info("Navidrome client started")
             except Exception as e:
@@ -134,7 +134,7 @@ async def start_services() -> None:
 
         if slskd_url and api_key:
             try:
-                from providers.slskd.client import SlskdProvider
+                from plugins.slskd.client import SlskdProvider
                 soulseek_client = SlskdProvider()
                 logger.info("Slskd client started")
             except Exception as e:

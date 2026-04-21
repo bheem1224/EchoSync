@@ -1,12 +1,12 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
-from providers.plex.client import PlexClient
+from plugins.plex.client import PlexClient
 from core.user_history import UserTrackInteraction
 
 @pytest.fixture
 def plex_client():
-    with patch('providers.plex.client.config_manager') as mock_cm:
+    with patch('plugins.plex.client.config_manager') as mock_cm:
         mock_cm.get_plex_config.return_value = {}
         client = PlexClient()
         return client

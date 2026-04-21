@@ -380,15 +380,6 @@ class ConfigManager:
                 "max_tracks": 5000,
                 "new_releases_only": False
             },
-            "quality_profile": {
-                "preset": "balanced",
-                "allowed_file_types": ["flac", "mp3_320", "mp3_256"],
-                "min_file_size_mb": 0,
-                "max_file_size_mb": 150,
-                "min_bit_depth": 16,
-                "min_bitrate_kbps": 256,
-                "min_length_seconds": 0
-            },
             "settings": {"audio_quality": "flac"},
             # Storage paths - Docker-first approach
             # Users can map /config and /data, or override individual paths

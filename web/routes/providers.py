@@ -222,10 +222,10 @@ def get_provider_playlists(provider_name):
                         account_name = account.get('display_name') or account.get('account_name') or f"Account {account_id}"
 
                         if provider_name == 'spotify':
-                            from providers.spotify.client import SpotifyClient
+                            from plugins.spotify.client import SpotifyClient
                             client = SpotifyClient(account_id=account_id)
                         elif provider_name == 'tidal':
-                            from providers.tidal.client import TidalClient
+                            from plugins.tidal.client import TidalClient
                             client = TidalClient(account_id=str(account_id))
                         else:
                             continue

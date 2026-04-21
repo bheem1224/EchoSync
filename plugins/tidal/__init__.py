@@ -1,5 +1,5 @@
-from providers.tidal.client import TidalClient
-from providers.tidal.routes import bp
+from plugins.tidal.client import TidalClient
+from plugins.tidal.routes import bp
 
 ProviderClass = TidalClient
 RouteBlueprint = bp

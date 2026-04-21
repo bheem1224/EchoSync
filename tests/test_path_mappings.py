@@ -5,9 +5,9 @@ from typing import Any, cast
 from flask import Flask
 import pytest
 
-from providers.plex import routes as plex_routes
-from providers.navidrome import routes as navidrome_routes
-from providers.jellyfin import routes as jellyfin_routes
+from plugins.plex import routes as plex_routes
+from plugins.navidrome import routes as navidrome_routes
+from plugins.jellyfin import routes as jellyfin_routes
 
 
 @pytest.mark.parametrize(
