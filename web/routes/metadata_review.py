@@ -386,7 +386,7 @@ def _process_approval_background(task_id: int, final_metadata: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Background approval task {task_id} failed: {e}", exc_info=True)
 
-@bp.post("/review-queue/<int:task_id>/lookup/acoustid")
+@bp.post("/review-queue/<int:task_id>/approve")
 @require_auth
 def approve_review_queue_item(task_id: int):
     """Approve a review task: write tags, import file, mark approved."""
@@ -624,7 +624,7 @@ def lookup_review_queue_item_acoustid(task_id: int):
         return jsonify({"error": "AcoustID lookup failed"}), 500
 
 
-@bp.post("/review-queue/<int:task_id>/lookup/acoustid")
+@bp.post("/review-queue/<int:task_id>/lookup/musicbrainz")
 @require_auth
 def lookup_review_queue_item_musicbrainz(task_id: int):
     """Run text-based MusicBrainz lookup and update detected metadata."""
