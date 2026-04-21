@@ -54,7 +54,7 @@ def begin_auth():
             return jsonify({'error': 'Account missing client_id or client_secret. Please edit the account to configure credentials.'}), 400
 
         # Generate PKCE values
-        from providers.tidal.client import TidalClient
+        from plugins.tidal.client import TidalClient
         temp_client = TidalClient(account_id=str(account_id))
         verifier, challenge = temp_client.generate_pkce()
 

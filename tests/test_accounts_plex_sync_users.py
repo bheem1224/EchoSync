@@ -22,7 +22,7 @@ def test_sync_plex_users_endpoint_returns_updated_accounts(client, monkeypatch):
 
     fake_client = MagicMock()
     fake_client.import_managed_users.return_value = fake_storage.list_accounts.return_value
-    monkeypatch.setattr('providers.plex.client.PlexClient', lambda *args, **kwargs: fake_client)
+    monkeypatch.setattr('plugins.plex.client.PlexClient', lambda *args, **kwargs: fake_client)
 
     response = client.post('/api/accounts/plex/sync_users')
 

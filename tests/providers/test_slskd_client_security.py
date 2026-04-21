@@ -1,4 +1,4 @@
-from providers.slskd.client import _sanitize_peer_filename
+from plugins.slskd.client import _sanitize_peer_filename
 
 
 def test_sanitize_peer_filename_strips_remote_path_components():

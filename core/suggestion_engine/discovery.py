@@ -376,7 +376,7 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
     """
     import logging
     from sqlalchemy.exc import IntegrityError
-    from providers.spotify.cache_manager import SpotifyCacheManager
+    from plugins.spotify.cache_manager import SpotifyCacheManager
     from database.working_database import get_working_database, SuggestionStagingQueue, Download
     from database.music_database import get_database as get_music_database, Track, Artist
 

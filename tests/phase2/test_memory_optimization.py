@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import MagicMock, patch, call
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from database.bulk_operations import LibraryManager
-from providers.spotify.client import SpotifyClient
+from plugins.spotify.client import SpotifyClient
 from services.sync_service import PlaylistSyncService, SpotifyPlaylist
 
 class TestBulkImportGenerator:

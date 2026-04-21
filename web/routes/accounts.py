@@ -10,7 +10,7 @@ bp = Blueprint("accounts", __name__, url_prefix="/api/accounts")
 def sync_plex_users():
     """Sync Plex admin and managed users into config.db and return the updated list."""
     try:
-        from providers.plex.client import PlexClient
+        from plugins.plex.client import PlexClient
 
         client = PlexClient()
         client.import_managed_users()

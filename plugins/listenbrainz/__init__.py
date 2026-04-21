@@ -1,2 +1,2 @@
-from providers.listenbrainz.client import *
+from plugins.listenbrainz.client import *
 

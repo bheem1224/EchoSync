@@ -44,7 +44,7 @@ class ListenBrainzMetadataProvider(ProviderBase):
     
     def __init__(self):
         """Initialize ListenBrainz provider"""
-        from providers.listenbrainz.client import ListenBrainzClient
+        from plugins.listenbrainz.client import ListenBrainzClient
         self.client = ListenBrainzClient()
         
         # Initialize HTTP client for cover art fetching
