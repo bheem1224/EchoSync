@@ -76,4 +76,4 @@ Security: AES-encrypted credential storage (No plaintext API keys).
 Because EchoSync utilizes strict database migrations and an AST-sandboxed plugin architecture, please refer to our CONTRIBUTING.md and ARCHITECTURE_CORE.md before submitting PRs involving database models or plugin hooks.
 
 📜 Origin & Acknowledgement
-EchoSync began as a fork of Nezreka's SoulSync. As we introduced Svelte, Alembic migrations, encrypted storage, and the Zero-Trust Sandbox, the codebase became a 100% structural rewrite. To respect the original author's namespace while reflecting the new architecture, the project was rebranded in v2.5.0. We thank Nezreka for the original inspiration!
+EchoSync began as a fork of Nezreka's SoulSync. As we introduced Svelte, Alembic migrations, encrypted storage, and the Zero-Trust Sandbox, the codebase became a 100% structural rewrite. To respect the original author's namespace while reflecting the new architecture, the project was rebranded in v2.4.0. We thank Nezreka for the original inspiration!

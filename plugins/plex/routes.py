@@ -101,7 +101,7 @@ def save_settings():
             token = data['token'].strip()
             from core.file_handling.storage import get_storage_service
             from core.security import encrypt_string
-            from providers.plex.client import PlexClient
+            from plugins.plex.client import PlexClient
             import time
             storage = get_storage_service()
 
@@ -313,7 +313,7 @@ def poll_oauth(session_id: str):
         if is_logged_in and auth_token:
             from core.file_handling.storage import get_storage_service
             from core.security import encrypt_string
-            from providers.plex.client import PlexClient
+            from plugins.plex.client import PlexClient
             storage = get_storage_service()
 
             # Plex follows a Singleton Account Pattern. Look for an existing account first.
@@ -388,4 +388,29 @@ def cancel_oauth(session_id: str):
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error cancelling Plex OAuth: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+from web.auth import require_auth
+
+@bp.post("/sync_users")
+@require_auth
+def sync_plex_users():
+    """Sync Plex admin and managed users into config.db and return the updated list."""
+    try:
+        from plugins.plex.client import PlexClient
+        from core.file_handling.storage import get_storage_service
+
+        client = PlexClient()
+        client.import_managed_users()
+
+        storage = get_storage_service()
+        accounts = storage.list_accounts('plex')
+        return jsonify({
+            'service': 'plex',
+            'accounts': accounts,
+            'total': len(accounts),
+            'success': True,
+        }), 200
+    except Exception as e:
+        logger.error(f"Error syncing Plex users: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500

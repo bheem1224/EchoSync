@@ -84,7 +84,7 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
             # return a list with a single dict
             return [{'id': f'pl{self.account_id}', 'name': f'Playlist {self.account_id}', 'track_count': 5}]
 
-    monkeypatch.setattr('providers.spotify.client.SpotifyClient', FakeSpotifyClient)
+    monkeypatch.setattr('plugins.spotify.client.SpotifyClient', FakeSpotifyClient)
 
     resp = client.get('/api/providers/spotify/playlists')
     assert resp.status_code == 200
@@ -137,7 +137,7 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
                     self.identifiers = {}
             return [Track(f"t_{playlist_id}", "A", "B", 1234)]
 
-    monkeypatch.setattr('providers.spotify.client.SpotifyClient', FakeSpotifyClient)
+    monkeypatch.setattr('plugins.spotify.client.SpotifyClient', FakeSpotifyClient)
 
     payload = {
         'source': 'spotify',

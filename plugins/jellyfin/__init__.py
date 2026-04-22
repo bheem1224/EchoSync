@@ -1,5 +1,5 @@
-from providers.jellyfin.client import JellyfinClient
-from providers.jellyfin.routes import bp
+from plugins.jellyfin.client import JellyfinClient
+from plugins.jellyfin.routes import bp
 
 ProviderClass = JellyfinClient
 RouteBlueprint = bp

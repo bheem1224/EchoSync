@@ -28,7 +28,7 @@ class SpotifyAdapter:
         super().__init__(db, ProviderType.SPOTIFY)
         
         # Initialize Spotify API client (authentication, etc.)
-        from providers.spotify.client import SpotifyClient
+        from plugins.spotify.client import SpotifyClient
         self._client = SpotifyClient()  # Existing client for API calls
     
     # ========================================================================

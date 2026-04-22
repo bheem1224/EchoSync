@@ -1,5 +1,5 @@
-from providers.navidrome.client import NavidromeClient
-from providers.navidrome.routes import bp
+from plugins.navidrome.client import NavidromeClient
+from plugins.navidrome.routes import bp
 
 ProviderClass = NavidromeClient
 RouteBlueprint = bp

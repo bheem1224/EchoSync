@@ -15,6 +15,33 @@ def list_plugins():
     plugins = get_all_plugins()
     return jsonify({'plugins': plugins})
 
+@bp.route('/ui-manifest', methods=['GET'])
+@require_auth
+def get_ui_manifest():
+    plugins = get_all_plugins()
+    ui_plugins = []
+
+    for plugin in plugins:
+        if not plugin.get('enabled', False):
+            continue
+
+        ui_manifest = plugin.get('ui_manifest')
+        if not ui_manifest:
+            continue
+
+        folder_name = plugin.get('folder_name')
+        if not folder_name:
+            folder_name = plugin.get('id', '').replace('plugin.', '').replace('core.', '')
+
+        ui_plugins.append({
+            'id': folder_name,
+            'api_base': f'/api/plugins/{folder_name}',
+            'components': ui_manifest.get('components', {}),
+            'assets': ui_manifest.get('assets', {})
+        })
+
+    return jsonify({'plugins': ui_plugins})
+
 @bp.route('/config', methods=['POST'])
 @require_auth
 def update_plugin_config():

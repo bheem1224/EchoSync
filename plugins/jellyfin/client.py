@@ -1882,7 +1882,7 @@ class JellyfinClient(MediaServerProvider):
             List of EchosyncTrack objects with ISRC/MBID extracted
         """
         from core.matching_engine.echo_sync_track import EchosyncTrack
-        from providers.jellyfin.adapter import convert_jellyfin_track_to_echosync
+        from plugins.jellyfin.adapter import convert_jellyfin_track_to_echosync
         
         echo_sync_tracks = []
         

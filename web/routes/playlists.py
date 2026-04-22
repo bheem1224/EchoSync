@@ -79,11 +79,11 @@ def _get_provider_for_account(provider_name, acc_id=None):
             acc_id_local = acc_id
 
         if provider_name == 'spotify':
-            from providers.spotify.client import SpotifyClient
+            from plugins.spotify.client import SpotifyClient
 
             return SpotifyClient(account_id=acc_id_local), acc_id_local
         if provider_name == 'tidal':
-            from providers.tidal.client import TidalClient
+            from plugins.tidal.client import TidalClient
 
             return TidalClient(account_id=str(acc_id_local)), acc_id_local
 
@@ -1337,7 +1337,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
     job_name = f"sync:plex:{playlist_name}:{int(time.time())}"
 
     def _run_sync():
-        from providers.plex.client import PlexClient
+        from plugins.plex.client import PlexClient
 
         marker = "⇄"
         total = len(rating_keys)

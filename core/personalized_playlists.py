@@ -402,7 +402,7 @@ class PersonalizedPlaylistsService:
     
     def _register_provider_algorithms(self):
         """
-        Auto-discover and register algorithms from providers.
+        Auto-discover and register algorithms from plugins.
         
         Scans provider capability registry for providers that declare
         playlist_algorithms support and loads them dynamically.

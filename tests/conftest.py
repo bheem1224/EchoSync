@@ -121,3 +121,13 @@ def mock_db(tmp_path):
     Base.metadata.create_all(db.engine)
     yield db
     db.dispose()
+
+def pytest_configure(config):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    try:
+        from core.plugin_loader import PluginLoader
+        loader = PluginLoader(Path(__file__).parent.parent)
+    except Exception as e:
+        print(f"Failed to load plugins in conftest: {e}")
