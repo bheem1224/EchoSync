@@ -3,6 +3,8 @@ name: Build and Publish Docker Image
 on:
   push:
     branches: [ "main" ]
+    workflow_dispatch: # 👈 THIS ADDS THE MANUAL "RUN" BUTTON IN GITHUB UI
+
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

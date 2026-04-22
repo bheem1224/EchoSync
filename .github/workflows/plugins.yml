@@ -3,8 +3,7 @@ name: Auto-Version & Build Plugins
 on:
   push:
     branches: [ "main" ]
-    paths:
-      - 'plugins/**'
+  workflow_dispatch: # 👈 THIS ADDS THE MANUAL "RUN" BUTTON IN GITHUB UI
 
 permissions:
   contents: write
@@ -17,7 +16,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # Required to diff the last commit
+          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -27,10 +26,25 @@ jobs:
       - name: Process, Version, and Build Changed Plugins
         env:
           COMMIT_MSG: ${{ github.event.head_commit.message }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          # 1. Find changed plugin directories
-          CHANGED_DIRS=$(git diff --name-only HEAD^ HEAD | grep '^plugins/' | cut -d/ -f1,2 | sort -u)
+          # 1. Determine which plugins to build (The Escape Hatch)
+          if [[ "$COMMIT_MSG" == *"[plugin-beta]"* ]] || [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "🚀 Manual trigger or [plugin-beta] override detected. Building ALL plugins."
+            # Grab every directory inside plugins/
+            CHANGED_DIRS=$(find plugins -mindepth 1 -maxdepth 1 -type d)
+          else
+            # Standard standard behavior: only build what changed
+            CHANGED_DIRS=$(git diff --name-only HEAD^ HEAD | grep '^plugins/' | cut -d/ -f1,2 | sort -u)
+          fi
 
+          # If nothing changed and no override was used, exit cleanly
+          if [ -z "$CHANGED_DIRS" ]; then
+            echo "ℹ️ No plugin changes detected and no override applied. Skipping build."
+            exit 0
+          fi
+
+          # Loop through the determined directories
           for DIR in $CHANGED_DIRS; do
             PLUGIN_NAME=$(basename $DIR)
             MANIFEST="$DIR/manifest.json"
@@ -47,79 +61,74 @@ jobs:
 
             # 2. Embedded Python script to handle Semantic Versioning math
             RESULT=$(python3 -c '
-            import sys, json, re
+          import sys, json, re
 
-            plugin_name = sys.argv[1]
-            manifest_path = sys.argv[2]
-            commit_msg = sys.argv[3]
+          plugin_name = sys.argv[1]
+          manifest_path = sys.argv[2]
+          commit_msg = sys.argv[3]
 
-            with open(manifest_path, "r") as f:
-                manifest = json.load(f)
+          with open(manifest_path, "r") as f:
+              manifest = json.load(f)
 
-            current_version = manifest.get("version", "0.0.0")
-            major, minor, patch = map(int, current_version.split("."))
+          current_version = manifest.get("version", "0.0.0")
+          major, minor, patch = map(int, current_version.split("."))
 
-            build_type = "beta"
-            is_stable_release = "[release-plugins]" in commit_msg
+          build_type = "beta"
+          is_stable_release = "[release-plugins]" in commit_msg
 
-            # Check for explicit override (e.g., spotify:v1.5.0)
-            override_match = re.search(rf"{plugin_name}:v(\d+\.\d+\.\d+)", commit_msg, re.IGNORECASE)
+          override_match = re.search(rf"{plugin_name}:v(\d+\.\d+\.\d+)", commit_msg, re.IGNORECASE)
 
-            if override_match:
-                new_version = override_match.group(1)
-                build_type = "stable"
-            elif is_stable_release:
-                # Only bump minor if beta updates occurred (patch > 0)
-                if patch > 0 or current_version == "0.0.0":
-                    if minor == 9:
-                        major += 1
-                        minor = 0
-                    else:
-                        minor += 1
-                    patch = 0
-                new_version = f"{major}.{minor}.{patch}"
-                build_type = "stable"
-            else:
-                # Standard Beta Increment
-                patch += 1
-                new_version = f"{major}.{minor}.{patch}"
-                build_type = "beta"
+          if override_match:
+              new_version = override_match.group(1)
+              build_type = "stable"
+          elif is_stable_release:
+              if patch > 0 or current_version == "0.0.0":
+                  if minor == 9:
+                      major += 1
+                      minor = 0
+                  else:
+                      minor += 1
+                  patch = 0
+              new_version = f"{major}.{minor}.{patch}"
+              build_type = "stable"
+          else:
+              patch += 1
+              new_version = f"{major}.{minor}.{patch}"
+              build_type = "beta"
 
-            # Save updated manifest
-            manifest["version"] = new_version
-            with open(manifest_path, "w") as f:
-                json.dump(manifest, f, indent=2)
+          manifest["version"] = new_version
+          with open(manifest_path, "w") as f:
+              json.dump(manifest, f, indent=2)
 
-            print(f"{build_type},{new_version}")
-                        ' "$PLUGIN_NAME" "$MANIFEST" "$COMMIT_MSG")
+          print(f"{build_type},{new_version}")
+            ' "$PLUGIN_NAME" "$MANIFEST" "$COMMIT_MSG")
 
-                        # Parse Python output
-                        BUILD_TYPE=$(echo "$RESULT" | cut -d',' -f1)
-                        NEW_VERSION=$(echo "$RESULT" | cut -d',' -f2)
+            BUILD_TYPE=$(echo "$RESULT" | cut -d',' -f1)
+            NEW_VERSION=$(echo "$RESULT" | cut -d',' -f2)
 
-                        echo "✅ Version updated to $NEW_VERSION ($BUILD_TYPE build)"
+            echo "✅ Version updated to $NEW_VERSION ($BUILD_TYPE build)"
 
-                        # 3. Build UI if it exists
-                        if [ -d "$UI_DIR" ]; then
-                        mkdir -p "$STATIC_DIR"
-                        cd "$UI_DIR"
-                        npm install
-                        npm run build
-                        cd ../../../
-                        
-                        if [ "$BUILD_TYPE" = "beta" ]; then
-                            mv "$STATIC_DIR/bundle.js" "$STATIC_DIR/bundle.beta.js"
-                            echo "📦 Saved as bundle.beta.js"
-                        else
-                            echo "📦 Saved as bundle.js (Stable)"
-                        fi
-                        else
-                        echo "ℹ️ No UI directory found. Backend-only version bump applied."
-                        fi
-                    done
+            # 3. Build UI if it exists
+            if [ -d "$UI_DIR" ]; then
+              mkdir -p "$STATIC_DIR"
+              cd "$UI_DIR"
+              npm install
+              npm run build
+              cd ../../../
+              
+              if [ "$BUILD_TYPE" = "beta" ]; then
+                mv "$STATIC_DIR/bundle.js" "$STATIC_DIR/bundle.beta.js"
+                echo "📦 Saved as bundle.beta.js"
+              else
+                echo "📦 Saved as bundle.js (Stable)"
+              fi
+            else
+              echo "ℹ️ No UI directory found. Backend-only version bump applied."
+            fi
+          done
 
-                - name: Commit Assets Back to Repo
-                    uses: stefanzweifel/git-auto-commit-action@v5
-                    with:
-                    commit_message: "chore(plugins): auto-versioning and component build"
-                    file_pattern: 'plugins/**/static/*.js plugins/**/manifest.json'
+      - name: Commit Assets Back to Repo
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(plugins): auto-versioning and component build"
+          file_pattern: 'plugins/**/static/*.js plugins/**/manifest.json'
