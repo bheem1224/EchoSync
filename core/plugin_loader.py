@@ -414,12 +414,22 @@ def get_all_plugins() -> list:
     if providers_dir.exists():
         for item in providers_dir.iterdir():
             if item.is_dir() and not item.name.startswith('_'):
-                plugins.append({
+                plugin_info = {
                     "id": f"core.{item.name}",
                     "name": item.name.capitalize(),
                     "description": f"Core provider for {item.name}",
-                    "type": "core"
-                })
+                    "type": "core",
+                    "folder_name": item.name
+                }
+
+                ui_manifest_file = item / "ui_manifest.json"
+                if ui_manifest_file.exists():
+                    try:
+                        plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        pass
+
+                plugins.append(plugin_info)
 
     # Get Community Plugins
     plugins_dir = config_manager.get_plugins_dir()
@@ -446,6 +456,15 @@ def get_all_plugins() -> list:
                         })
                     except Exception:
                         pass
+
+                plugin_info["folder_name"] = item.name
+                ui_manifest_file = item / "ui_manifest.json"
+                if ui_manifest_file.exists():
+                    try:
+                        plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        pass
+
                 plugins.append(plugin_info)
 
     # Determine enabled status based on config
