@@ -1,0 +1,9 @@
+{
+  "components": {
+    "dashboard_card": "spotify-dashboard-card",
+    "settings_panel": "spotify-settings-panel"
+  },
+  "assets": {
+    "js": "/api/plugins/spotify/static/bundle.js"
+  }
+}
