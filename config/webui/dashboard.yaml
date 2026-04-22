@@ -1,0 +1,8 @@
+# EchoSync Dashboard Configuration
+# You can manually edit this file or use the UI editor.
+views:
+  - title: Home
+    icon: mdi:home
+    cards:
+      - type: spotify-dashboard-card
+      - type: plex-dashboard-card

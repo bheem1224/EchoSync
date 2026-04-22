@@ -34,6 +34,7 @@ from web.routes.jobs import bp as jobs_bp
 from web.routes.tracks import bp as tracks_bp
 from web.routes.search import bp as search_bp
 from web.routes.system import bp as system_bp
+from web.routes.dashboard import dashboard_bp
 from web.routes.sync import bp as sync_bp
 from web.routes.playlists import bp as playlists_bp
 from web.routes.accounts import bp as accounts_bp
@@ -112,6 +113,7 @@ def create_app() -> Flask:
     app.register_blueprint(tracks_bp)
     app.register_blueprint(search_bp)
     app.register_blueprint(system_bp)
+    app.register_blueprint(dashboard_bp)
     app.register_blueprint(sync_bp)
     app.register_blueprint(playlists_bp)
     app.register_blueprint(accounts_bp)
