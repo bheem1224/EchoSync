@@ -5,7 +5,6 @@
   import { getConfig, setConfig } from '../../../stores/config';
   import apiClient from '../../../api/client';
   import { metadataQueue } from '../../../stores/metadataQueue';
-  import MusicBrainzServiceCard from '../../../components/MusicBrainzServiceCard.svelte';
 
   // Tabs
   let activeTab = 'providers'; // providers, settings, queue
@@ -389,13 +388,6 @@
                   </div>
                 </div>
               {/each}
-            </div>
-          {/if}
-
-          <!-- MusicBrainz OAuth card (always shown when MusicBrainz is in the provider list) -->
-          {#if metadataProviders.some(p => p.name === 'musicbrainz')}
-            <div style="margin-top: 24px;">
-              <MusicBrainzServiceCard />
             </div>
           {/if}
 

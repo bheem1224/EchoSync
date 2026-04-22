@@ -1,7 +1,7 @@
+<svelte:options customElement="musicbrainz-dashboard-card" />
 <script>
+  export let apiBase = '';
   import { onMount } from 'svelte';
-  import apiClient from '../api/client';
-  import { feedback } from '../stores/feedback';
 
   // ── State ─────────────────────────────────────────────────────────────────
   let loading = true;
@@ -32,7 +32,7 @@
   async function loadData() {
     try {
       // Status (accounts + redirect URI + credential flags)
-      const statusResp = await apiClient.get('/musicbrainz/accounts');
+      const statusResp = await fetch(`${apiBase}/musicbrainz/accounts`);
       if (statusResp.data) {
         accounts = statusResp.data.accounts || [];
         redirectUri = statusResp.data.redirect_uri || '';
@@ -42,7 +42,7 @@
       }
 
       // Load existing credentials for display
-      const credsResp = await apiClient.get('/providers/musicbrainz/credentials');
+      const credsResp = await fetch(`${apiBase}/providers/musicbrainz/credentials`);
       if (credsResp.data?.credentials) {
         clientId = credsResp.data.credentials.client_id || '';
         // Never pre-fill the secret; show a placeholder if one is stored
@@ -50,14 +50,14 @@
       }
     } catch (err) {
       console.error('Failed to load MusicBrainz data:', err);
-      feedback.addToast('Failed to load MusicBrainz settings', 'error');
+      console.error('Failed to load MusicBrainz settings');
     }
   }
 
   // ── Credentials ───────────────────────────────────────────────────────────
   async function saveCredentials() {
     if (!clientId.trim()) {
-      feedback.addToast('Client ID is required', 'error');
+      console.error('Client ID is required');
       return;
     }
 
@@ -65,18 +65,18 @@
     if (clientSecret.trim()) {
       creds.client_secret = clientSecret;
     } else if (!clientSecretConfigured) {
-      feedback.addToast('Client Secret is required', 'error');
+      console.error('Client Secret is required');
       return;
     }
 
     try {
       savingCreds = true;
-      await apiClient.post('/providers/musicbrainz/credentials', { credentials: creds });
-      feedback.addToast('MusicBrainz credentials saved', 'success');
+      await fetch(`${apiBase}/providers/musicbrainz/credentials`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credentials: creds }) });
+      console.log('MusicBrainz credentials saved');
       clientSecret = '';
       await loadData();
     } catch (err) {
-      feedback.addToast('Failed to save credentials', 'error');
+      console.error('Failed to save credentials');
       console.error(err);
     } finally {
       savingCreds = false;
@@ -97,17 +97,17 @@
   async function addAccount() {
     const name = newAccountName.trim();
     if (!name) {
-      feedback.addToast('Account name is required', 'error');
+      console.error('Account name is required');
       return;
     }
     try {
       savingAccount = true;
-      await apiClient.post('/musicbrainz/accounts', { account_name: name });
-      feedback.addToast('Account added', 'success');
+      await fetch(`${apiBase}/musicbrainz/accounts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_name: name }) });
+      console.log('Account added');
       closeAddModal();
       await loadData();
     } catch (err) {
-      feedback.addToast('Failed to add account', 'error');
+      console.error('Failed to add account');
       console.error(err);
     } finally {
       savingAccount = false;
@@ -117,36 +117,36 @@
   async function deleteAccount(accountId, displayName) {
     if (!confirm(`Delete account "${displayName}"? This will also remove its stored tokens.`)) return;
     try {
-      await apiClient.delete(`/musicbrainz/accounts/${accountId}`);
-      feedback.addToast('Account deleted', 'success');
+      await fetch(`${apiBase}/musicbrainz/accounts/${accountId}`, { method: 'DELETE' });
+      console.log('Account deleted');
       await loadData();
     } catch (err) {
-      feedback.addToast('Failed to delete account', 'error');
+      console.error('Failed to delete account');
     }
   }
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await apiClient.put(`/musicbrainz/accounts/${accountId}/activate`, {
+      await fetch(`${apiBase}/musicbrainz/accounts/${accountId}/activate`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         is_active: !currentlyActive,
-      });
-      feedback.addToast(currentlyActive ? 'Account deactivated' : 'Account activated', 'success');
+      }) });
+      console.log(currentlyActive ? 'Account deactivated' : 'Account activated');
       await loadData();
     } catch (err) {
-      feedback.addToast('Failed to update account status', 'error');
+      console.error('Failed to update account status');
     }
   }
 
   async function authenticate(accountId) {
     if (!clientIdConfigured || !clientSecretConfigured) {
-      feedback.addToast(
+      console.log(
         'Save your MusicBrainz Client ID and Client Secret before authenticating.',
         'error'
       );
       return;
     }
     try {
-      const resp = await apiClient.get('/musicbrainz/auth', {
+      const resp = await fetch(`${apiBase}/musicbrainz/auth`, {
         params: { account_id: accountId },
       });
       const url = resp.data?.auth_url;
@@ -157,11 +157,11 @@
           await loadData();
         }, 5000);
       } else {
-        feedback.addToast('Failed to get MusicBrainz auth URL', 'error');
+        console.error('Failed to get MusicBrainz auth URL');
       }
     } catch (err) {
       const msg = err?.response?.data?.error || 'Failed to start OAuth';
-      feedback.addToast(msg, 'error');
+      console.error(msg);
     }
   }
 </script>

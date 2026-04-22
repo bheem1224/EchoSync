@@ -1,6 +1,5 @@
 <script>
   import { onMount } from 'svelte';
-  import SlskdServiceCard from '../../../components/SlskdServiceCard.svelte';
 
   let loading = true;
   let error = '';
@@ -31,8 +30,6 @@
     <p>Loading download clients...</p>
   {:else if error}
     <p class="error">Error: {error}</p>
-  {:else if hasSlskd}
-    <SlskdServiceCard />
   {:else}
     <p>No download clients available.</p>
   {/if}

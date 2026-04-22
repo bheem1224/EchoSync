@@ -1,7 +1,7 @@
+<svelte:options customElement="slskd-dashboard-card" />
 <script>
+  export let apiBase = '';
   import { onMount } from 'svelte';
-  import apiClient from '../api/client';
-  import { feedback } from '../stores/feedback';
 
   let slskdUrl = '';
   let apiKey = '';
@@ -24,7 +24,7 @@
 
   async function checkActiveStatus() {
     try {
-      const response = await apiClient.get('/providers/download-clients/active');
+      const response = await fetch(`${apiBase}/providers/download-clients/active`);
       isActive = response.data.active_client === 'slskd';
     } catch (error) {
       console.error('Failed to check active status:', error);
@@ -33,18 +33,18 @@
 
   async function activateClient() {
     try {
-      await apiClient.post('/providers/download-clients/activate', { client: 'slskd' });
+      await fetch(`${apiBase}/providers/download-clients/activate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client: 'slskd' }) });
       isActive = true;
-      feedback.addToast('Slskd activated as download client', 'success');
+      console.log('Slskd activated as download client');
     } catch (error) {
       console.error('Failed to activate client:', error);
-      feedback.addToast('Failed to activate client', 'error');
+      console.error('Failed to activate client');
     }
   }
 
   async function loadSettings() {
     try {
-      const response = await apiClient.get('/providers/soulseek/settings');
+      const response = await fetch(`${apiBase}/providers/soulseek/settings`);
       if (response.data) {
         slskdUrl = response.data.slskd_url || '';
         serverName = response.data.server_name || '';
@@ -54,13 +54,13 @@
       }
     } catch (error) {
       console.error('Failed to load slskd settings:', error);
-      feedback.addToast('Failed to load slskd settings', 'error');
+      console.error('Failed to load slskd settings');
     }
   }
 
   async function saveSettings() {
     if (!slskdUrl.trim()) {
-      feedback.addToast('Server URL is required', 'error');
+      console.error('Server URL is required');
       return;
     }
 
@@ -76,12 +76,12 @@
         payload.api_key = apiKey;
       }
       
-      await apiClient.post('/providers/soulseek/settings', payload);
-      feedback.addToast('slskd settings saved', 'success');
+      await fetch(`${apiBase}/providers/soulseek/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      console.log('slskd settings saved');
       await loadSettings();
     } catch (error) {
       console.error('Failed to save slskd settings:', error);
-      feedback.addToast('Failed to save settings', 'error');
+      console.error('Failed to save settings');
     } finally {
       saving = false;
     }
@@ -89,29 +89,29 @@
 
   async function testConnection() {
     if (!slskdUrl.trim()) {
-      feedback.addToast('Server URL is required', 'error');
+      console.error('Server URL is required');
       return;
     }
 
     if (!hasApiKeyInDb && !apiKey.trim()) {
-      feedback.addToast('API Key is required', 'error');
+      console.error('API Key is required');
       return;
     }
 
     try {
       testing = true;
-      const response = await apiClient.post('/providers/soulseek/connection/test');
+      const response = await fetch(`${apiBase}/providers/soulseek/connection/test`, { method: 'POST' });
       
       if (response.data?.success) {
-        feedback.addToast('slskd connection successful!', 'success');
+        console.log('slskd connection successful!');
         connected = true;
       } else {
-        feedback.addToast(response.data?.error || 'Connection failed', 'error');
+        console.error(response.data?.error || 'Connection failed');
         connected = false;
       }
     } catch (error) {
       console.error('Failed to test slskd connection:', error);
-      feedback.addToast('Connection test failed', 'error');
+      console.error('Connection test failed');
       connected = false;
     } finally {
       testing = false;
@@ -126,18 +126,18 @@
     // If revealing and the key is stored (masked), fetch the real key
     if (willShow && hasApiKeyInDb && apiKey === '****' && !dbApiKeyRevealed) {
       try {
-        const resp = await apiClient.get('/providers/soulseek/settings/key');
+        const resp = await fetch(`${apiBase}/providers/soulseek/settings/key`);
         if (resp.data && resp.data.api_key) {
           apiKey = resp.data.api_key;
           dbApiKeyRevealed = true;
         } else {
-          feedback.addToast('Failed to reveal API key', 'error');
+          console.error('Failed to reveal API key');
           // revert UI
           showApiKey = false;
         }
       } catch (err) {
         console.error('Failed to fetch API key:', err);
-        feedback.addToast('Unable to reveal API key', 'error');
+        console.error('Unable to reveal API key');
         showApiKey = false;
       }
     }
