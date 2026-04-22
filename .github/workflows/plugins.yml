@@ -3,7 +3,7 @@ name: Auto-Version & Build Plugins
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch: # 👈 THIS ADDS THE MANUAL "RUN" BUTTON IN GITHUB UI
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -28,23 +28,18 @@ jobs:
           COMMIT_MSG: ${{ github.event.head_commit.message }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          # 1. Determine which plugins to build (The Escape Hatch)
           if [[ "$COMMIT_MSG" == *"[plugin-beta]"* ]] || [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             echo "🚀 Manual trigger or [plugin-beta] override detected. Building ALL plugins."
-            # Grab every directory inside plugins/
             CHANGED_DIRS=$(find plugins -mindepth 1 -maxdepth 1 -type d)
           else
-            # Standard standard behavior: only build what changed
             CHANGED_DIRS=$(git diff --name-only HEAD^ HEAD | grep '^plugins/' | cut -d/ -f1,2 | sort -u)
           fi
 
-          # If nothing changed and no override was used, exit cleanly
           if [ -z "$CHANGED_DIRS" ]; then
-            echo "ℹ️ No plugin changes detected and no override applied. Skipping build."
+            echo "ℹ️ No plugin changes detected. Skipping build."
             exit 0
           fi
 
-          # Loop through the determined directories
           for DIR in $CHANGED_DIRS; do
             PLUGIN_NAME=$(basename $DIR)
             MANIFEST="$DIR/manifest.json"
@@ -59,7 +54,6 @@ jobs:
             echo "⚙️ Processing Plugin: $PLUGIN_NAME"
             echo "========================================"
 
-            # 2. Embedded Python script to handle Semantic Versioning math
             RESULT=$(python3 -c '
           import sys, json, re
 
@@ -108,11 +102,20 @@ jobs:
 
             echo "✅ Version updated to $NEW_VERSION ($BUILD_TYPE build)"
 
-            # 3. Build UI if it exists
+            # --- UI BUILD PIPELINE ---
             if [ -d "$UI_DIR" ]; then
               mkdir -p "$STATIC_DIR"
               cd "$UI_DIR"
-              npm install
+              
+              # FIX: Create package.json dynamically if it is missing
+              if [ ! -f "package.json" ]; then
+                echo "📦 Initializing temporary Node environment..."
+                npm init -y > /dev/null
+                npm install svelte @sveltejs/vite-plugin-svelte vite --no-save
+              else
+                npm install
+              fi
+
               npm run build
               cd ../../../
               
@@ -125,10 +128,27 @@ jobs:
             else
               echo "ℹ️ No UI directory found. Backend-only version bump applied."
             fi
+
+            # --- STABLE RELEASE PACKAGER ---
+            if [ "$BUILD_TYPE" = "stable" ]; then
+              echo "🗜️ Packaging stable release v$NEW_VERSION..."
+              mkdir -p "$DIR/releases"
+              ZIP_NAME="${PLUGIN_NAME}-v${NEW_VERSION}.zip"
+              
+              # Move into the plugin directory to zip so paths inside the zip are clean
+              cd "$DIR"
+              # Zip everything EXCEPT the raw svelte UI source, previous releases, and pycache
+              zip -r "releases/$ZIP_NAME" . -x "ui/*" -x "releases/*" -x "*/__pycache__/*"
+              cd ../../
+              
+              echo "✅ Created release package: $DIR/releases/$ZIP_NAME"
+            fi
+
           done
 
       - name: Commit Assets Back to Repo
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore(plugins): auto-versioning and component build"
-          file_pattern: 'plugins/**/static/*.js plugins/**/manifest.json'
+          commit_message: "chore(plugins): auto-versioning and release packaging"
+          # Ensure it commits the static JS, manifest, and the newly created ZIP files
+          file_pattern: 'plugins/**/static/*.js plugins/**/manifest.json plugins/**/releases/*.zip'
