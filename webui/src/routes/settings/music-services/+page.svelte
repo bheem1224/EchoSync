@@ -1,8 +1,6 @@
 <script>
   import { onMount } from 'svelte';
   import { providers } from '../../../stores/providers';
-  import SpotifyServiceCard from '../../../components/SpotifyServiceCard.svelte';
-  import TidalServiceCard from '../../../components/TidalServiceCard.svelte';
 
   let loadError = '';
   let musicServiceProviders = [];
@@ -35,16 +33,6 @@
       console.error(err);
     }
   });
-
-  $: hasSpotify = musicServiceProviders.some(p => {
-    const id = (p.id || p.name || p.display_name || '').toString().toLowerCase();
-    return id.includes('spotify');
-  });
-
-  $: hasTidal = musicServiceProviders.some(p => {
-    const id = (p.id || p.name || p.display_name || '').toString().toLowerCase();
-    return id.includes('tidal');
-  });
 </script>
 
 <svelte:head>
@@ -63,17 +51,10 @@
     </div>
   {:else}
     <div class="services-container">
-      {#if hasSpotify}
-        <SpotifyServiceCard />
-      {/if}
-      {#if hasTidal}
-        <TidalServiceCard />
-      {/if}
-      {#if !hasSpotify && !hasTidal}
+
         <div class="empty-state">
           <p>No music service providers are enabled. Enable one in the provider list first.</p>
         </div>
-      {/if}
     </div>
   {/if}
 </section>

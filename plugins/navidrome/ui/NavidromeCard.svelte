@@ -1,21 +1,20 @@
+<svelte:options customElement="navidrome-dashboard-card" />
 <script>
+  export let apiBase = '';
   import { onMount } from 'svelte';
-  import apiClient from '../api/client';
-  import { feedback } from '../stores/feedback';
-  import PathMappingEditor from '../lib/components/PathMappingEditor.svelte';
+      import PathMappingEditor from '../../../../webui/src/lib/components/PathMappingEditor.svelte';
 
   let baseUrl = '';
-  let serverName = '';
+  let username = '';
+  let password = '';
   let pathMappings = [];
-  let hasToken = false;
+  let hasPassword = false;
   let connected = false;
   let loading = true;
   let saving = false;
   let testing = false;
-  let authenticating = false;
-  let oauthSession = null;
-  let pollInterval = null;
   let collapsed = false;
+  let showPassword = false;
   let isActive = false;
   let activating = false;
 
@@ -27,12 +26,12 @@
   async function activateServer() {
     try {
       activating = true;
-      await apiClient.post('/plex/activate');
-      feedback.addToast('Plex activated as media server', 'success');
+      await fetch(`${apiBase}/navidrome/activate`, { method: 'POST' });
+      console.log('Navidrome activated as media server');
       await loadSettings(); // Reload to get updated is_active
     } catch (error) {
       console.error('Failed to activate server:', error);
-      feedback.addToast('Failed to activate server', 'error');
+      console.error('Failed to activate server');
     } finally {
       activating = false;
     }
@@ -40,156 +39,83 @@
 
   async function loadSettings() {
     try {
-      const response = await apiClient.get('/plex/settings');
+      const response = await fetch(`${apiBase}/navidrome/settings`);
       if (response.data?.settings) {
         baseUrl = response.data.settings.base_url || '';
-        serverName = response.data.settings.server_name || '';
+        username = response.data.settings.username || '';
         pathMappings = response.data.settings.path_mappings || [];
-        hasToken = response.data.settings.has_token || false;
+        hasPassword = response.data.settings.has_password || false;
         connected = response.data.settings.connected || false;
         isActive = response.data.settings.is_active || false;
+        password = ''; // Don't load actual password for security
       }
     } catch (error) {
-      console.error('Failed to load Plex settings:', error);
-      feedback.addToast('Failed to load Plex settings', 'error');
+      console.error('Failed to load Navidrome settings:', error);
+      console.error('Failed to load Navidrome settings');
     }
   }
 
   async function saveSettings() {
     if (!baseUrl.trim()) {
-      feedback.addToast('Server URL is required', 'error');
+      console.error('Server URL is required');
+      return;
+    }
+
+    if (!username.trim() || !password.trim()) {
+      console.error('Username and password are required');
       return;
     }
 
     try {
       saving = true;
-      await apiClient.post('/plex/settings', {
+      await fetch(`${apiBase}/navidrome/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         base_url: baseUrl,
-        server_name: serverName,
+        username: username,
+        password: password,
         path_mappings: pathMappings
-      });
-      feedback.addToast('Plex settings saved', 'success');
+      }) });
+      console.log('Navidrome settings saved');
       await loadSettings();
     } catch (error) {
-      console.error('Failed to save Plex settings:', error);
-      feedback.addToast('Failed to save settings', 'error');
+      console.error('Failed to save Navidrome settings:', error);
+      console.error('Failed to save settings');
     } finally {
       saving = false;
-    }
-  }
-
-  async function startOAuth() {
-    try {
-      authenticating = true;
-      const response = await apiClient.post('/plex/auth/start');
-      
-      if (response.data?.oauth_url && response.data?.session_id) {
-        oauthSession = response.data.session_id;
-        
-        // Open Plex OAuth page in new window
-        window.open(response.data.oauth_url, 'PlexOAuth', 'width=600,height=700');
-        
-        // Start polling for completion
-        pollInterval = setInterval(async () => {
-          try {
-            const pollResp = await apiClient.get(`/plex/auth/poll/${oauthSession}`);
-            if (pollResp.data?.completed) {
-              // OAuth completed (backend already saved token to account_tokens)
-              clearInterval(pollInterval);
-              pollInterval = null;
-              
-              feedback.addToast('Plex authentication successful', 'success');
-              authenticating = false;
-              oauthSession = null;
-
-              // Remove old localStorage stale PIN (if it was used by a previous version)
-              localStorage.removeItem('plex_oauth_session');
-
-              await loadSettings();
-            }
-          } catch (pollError) {
-            console.error('OAuth poll error:', pollError);
-            // If the session is missing or server restarted (404 Not Found), stop zombie polling
-            if (pollError.response && pollError.response.status === 404) {
-              clearInterval(pollInterval);
-              pollInterval = null;
-              authenticating = false;
-              oauthSession = null;
-              localStorage.removeItem('plex_oauth_session');
-              feedback.addToast('Authentication session expired or server restarted', 'error');
-            }
-          }
-        }, 2000); // Poll every 2 seconds
-        
-        // Stop polling after 10 minutes
-        setTimeout(() => {
-          if (pollInterval) {
-            clearInterval(pollInterval);
-            pollInterval = null;
-            authenticating = false;
-            oauthSession = null;
-            feedback.addToast('OAuth timeout - please try again', 'error');
-          }
-        }, 600000);
-      }
-    } catch (error) {
-      console.error('Failed to start Plex OAuth:', error);
-      feedback.addToast('Failed to start authentication', 'error');
-      authenticating = false;
-    }
-  }
-
-  async function cancelOAuth() {
-    if (oauthSession && pollInterval) {
-      clearInterval(pollInterval);
-      pollInterval = null;
-      
-      try {
-        await apiClient.delete(`/plex/auth/cancel/${oauthSession}`);
-      } catch (error) {
-        console.error('Failed to cancel OAuth:', error);
-      }
-      
-      oauthSession = null;
-      authenticating = false;
-      feedback.addToast('Authentication cancelled', 'info');
     }
   }
 
   async function testConnection() {
     try {
       testing = true;
-      const response = await apiClient.post('/plex/test-connection', {
-        base_url: baseUrl
-      });
+      const response = await fetch(`${apiBase}/navidrome/test-connection`, { method: 'POST' });
       
       if (response.data?.connected) {
-        feedback.addToast(`Connected to ${response.data.server_name}`, 'success');
+        console.log(`Connected to Navidrome ${response.data.version}`);
         await loadSettings();
       }
     } catch (error) {
       console.error('Connection test failed:', error);
       const msg = error?.response?.data?.error || 'Connection failed';
-      feedback.addToast(msg, 'error');
+      console.error(msg);
     } finally {
       testing = false;
     }
   }
 </script>
 
-<section class="plex-card card">
+<section class="navidrome-card card">
   <div class="card-header">
     <div class="header-left">
-      <h2>Plex</h2>
+      <h2>Navidrome</h2>
       {#if isActive}
         <span class="status-badge active-server">● Active</span>
       {/if}
-      {#if hasToken}
+      {#if hasPassword}
         <span class="status-badge authenticated">✓ Authenticated</span>
       {/if}
       {#if connected}
         <span class="status-badge connected">● Connected</span>
-      {:else if hasToken}
+      {:else if hasPassword}
         <span class="status-badge disconnected">⚠ Disconnected</span>
       {/if}
     </div>
@@ -210,21 +136,40 @@
           <input
             type="text"
             bind:value={baseUrl}
-            placeholder="http://192.168.1.100:32400"
+            placeholder="http://192.168.1.100:4533"
             class="input"
           />
-          <span class="help-text">Enter your Plex server IP address or URL (include port, typically :32400)</span>
+          <span class="help-text">Enter your Navidrome server URL (include port, typically :4533)</span>
         </label>
 
         <label>
-          <span class="label-text">Server Name (Optional)</span>
+          <span class="label-text">Username</span>
           <input
             type="text"
-            bind:value={serverName}
-            placeholder="My Plex Server"
+            bind:value={username}
+            placeholder="Enter username"
             class="input"
           />
-          <span class="help-text">Preferred server if you have multiple</span>
+        </label>
+
+        <label>
+          <span class="label-text">Password</span>
+          <div class="password-field">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              bind:value={password}
+              placeholder={hasPassword ? 'Enter new password' : 'Enter password'}
+              class="input"
+            />
+            <button 
+              type="button" 
+              class="password-toggle" 
+              on:click={() => showPassword = !showPassword}
+              title={showPassword ? 'Hide' : 'Show'}
+            >
+              {showPassword ? '👁️' : '👁️‍🗨️'}
+            </button>
+          </div>
         </label>
 
         <div class="border-t border-gray-700 my-4 pt-4">
@@ -240,11 +185,11 @@
             {saving ? 'Saving...' : 'Save Settings'}
           </button>
           
-          {#if hasToken}
+          {#if hasPassword}
             <button
               class="btn-secondary"
               on:click={testConnection}
-              disabled={testing || !baseUrl.trim()}
+              disabled={testing}
             >
               {testing ? 'Testing...' : 'Test Connection'}
             </button>
@@ -259,18 +204,6 @@
               {activating ? 'Activating...' : 'Activate Server'}
             </button>
           {/if}
-
-          {#if authenticating}
-            <button class="btn-secondary" on:click={cancelOAuth} disabled>
-              Waiting for authorization...
-            </button>
-          {:else if hasToken}
-            <button class="btn-primary" on:click={startOAuth}>Reauthenticate</button>
-          {:else}
-            <button class="btn-primary" on:click={startOAuth}>
-              Login with Plex
-            </button>
-          {/if}
         </div>
       </div>
     </div>
@@ -278,7 +211,7 @@
 </section>
 
 <style>
-  .plex-card {
+  .navidrome-card {
     padding: 20px;
     margin-bottom: 16px;
   }
@@ -308,8 +241,8 @@
     font-size: 12px;
     padding: 4px 8px;
     border-radius: 4px;
-    background: rgba(229, 160, 13, 0.2);
-    color: #e5a00d;
+    background: rgba(33, 150, 243, 0.2);
+    color: #2196f3;
   }
 
   .status-badge {
@@ -386,13 +319,40 @@
     border-color: var(--primary, #00e676);
   }
 
+  .password-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .password-field .input {
+    flex: 1;
+    padding-right: 45px;
+  }
+
+  .password-toggle {
+    position: absolute;
+    right: 8px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px 8px;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+  }
+
+  .password-toggle:hover {
+    opacity: 1;
+  }
+
   .button-group {
     display: flex;
     gap: 12px;
     flex-wrap: wrap;
   }
 
-  .btn-primary, .btn-secondary, .btn-link {
+  .btn-primary, .btn-secondary {
     padding: 10px 20px;
     border-radius: 6px;
     border: none;
@@ -421,48 +381,14 @@
     background: rgba(255,255,255,0.05);
   }
 
-  .btn-link {
-    background: transparent;
-    color: var(--primary, #00e676);
-    padding: 8px 12px;
-  }
-
-  .btn-link:hover:not(:disabled) {
-    text-decoration: underline;
-  }
-
   .btn-primary:disabled, .btn-secondary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-  }
-
-  .auth-status {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  .auth-status p {
-    margin: 0;
   }
 
   .loading {
     padding: 20px;
     text-align: center;
     color: var(--muted);
-  }
-
-  .spinner {
-    width: 20px;
-    height: 20px;
-    border: 2px solid rgba(255,255,255,0.1);
-    border-top-color: var(--primary, #00e676);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
   }
 </style>

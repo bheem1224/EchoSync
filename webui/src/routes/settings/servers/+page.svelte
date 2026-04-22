@@ -1,9 +1,6 @@
 <script>
   import { onMount } from 'svelte';
   import { providers } from '../../../stores/providers';
-  import PlexServiceCard from '../../../components/PlexServiceCard.svelte';
-  import NavidromeServiceCard from '../../../components/NavidromeServiceCard.svelte';
-  import JellyfinServiceCard from '../../../components/JellyfinServiceCard.svelte';
 
   let enabledServers = [];
 
@@ -25,20 +22,11 @@
   </header>
 
   <div class="servers-container">
-    {#if enabledServers.some(p => p.id.toLowerCase() === 'plex')}
-      <PlexServiceCard />
-    {/if}
-    {#if enabledServers.some(p => p.id.toLowerCase() === 'navidrome')}
-      <NavidromeServiceCard />
-    {/if}
-    {#if enabledServers.some(p => p.id.toLowerCase() === 'jellyfin')}
-      <JellyfinServiceCard />
-    {/if}
-    {#if enabledServers.length === 0}
+
       <div class="empty-state">
         <p>No media servers are enabled. Enable one in the provider list first.</p>
       </div>
-    {/if}
+
   </div>
 </section>
 

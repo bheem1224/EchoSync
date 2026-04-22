@@ -1,7 +1,7 @@
+<svelte:options customElement="spotify-dashboard-card" />
 <script>
+  export let apiBase = '';
   import { onMount } from 'svelte';
-  import apiClient from '../api/client';
-  import { feedback } from '../stores/feedback';
 
   let clientId = '';
   let clientSecret = '';
@@ -31,7 +31,7 @@
 
   async function loadGlobalSettings() {
     try {
-      const response = await apiClient.get('/providers/spotify/settings');
+      const response = await fetch(`${apiBase}/providers/spotify/settings`);
       if (response.data?.settings) {
         clientId = response.data.settings.client_id || '';
         clientSecret = response.data.settings.client_secret || '';
@@ -44,21 +44,21 @@
 
   async function saveGlobalSettings() {
     if (!clientId || !clientSecret) {
-      feedback.addToast('Client ID and Secret are required', 'error');
+      console.error('Client ID and Secret are required');
       return;
     }
 
     try {
       savingGlobal = true;
-      await apiClient.post('/providers/spotify/settings', {
+      await fetch(`${apiBase}/providers/spotify/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         client_id: clientId,
         client_secret: clientSecret,
         redirect_uri: redirectUri
-      });
-      feedback.addToast('Spotify credentials saved', 'success');
+      }) });
+      console.log('Spotify credentials saved');
     } catch (error) {
       console.error('Failed to save Spotify settings:', error);
-      feedback.addToast('Failed to save credentials', 'error');
+      console.error('Failed to save credentials');
       throw error; // Re-throw to allow caller to handle failure
     } finally {
       savingGlobal = false;
@@ -67,7 +67,7 @@
 
   async function loadAccounts() {
     try {
-      const response = await apiClient.get('/accounts/spotify');
+      const response = await fetch(`${apiBase}/accounts/spotify`);
       accounts = response.data?.accounts || [];
     } catch (error) {
       console.error('Failed to load Spotify accounts:', error);
@@ -77,40 +77,40 @@
 
   async function addAccount() {
     if (!newAccountName.trim()) {
-      feedback.addToast('Account name is required', 'error');
+      console.error('Account name is required');
       return;
     }
 
     if (accounts.length >= MAX_ACCOUNTS) {
-      feedback.addToast(`Maximum ${MAX_ACCOUNTS} accounts allowed`, 'error');
+      console.error(`Maximum ${MAX_ACCOUNTS} accounts allowed`);
       return;
     }
 
     try {
-      await apiClient.post('/accounts/spotify', {
+      await fetch(`${apiBase}/accounts/spotify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         account_name: newAccountName,
         display_name: newAccountName
-      });
-      feedback.addToast('Account added', 'success');
+      }) });
+      console.log('Account added');
       newAccountName = '';
       showAddAccount = false;
       await loadAccounts();
     } catch (error) {
       console.error('Failed to add account:', error);
-      feedback.addToast('Failed to add account', 'error');
+      console.error('Failed to add account');
     }
   }
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await apiClient.put(`/accounts/spotify/${accountId}/activate`, {
+      await fetch(`${apiBase}/accounts/spotify/${accountId}/activate`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         is_active: !currentlyActive
-      });
-      feedback.addToast(currentlyActive ? 'Account deactivated' : 'Account activated', 'success');
+      }) });
+      console.log(currentlyActive ? 'Account deactivated' : 'Account activated');
       await loadAccounts();
     } catch (error) {
       console.error('Failed to toggle account:', error);
-      feedback.addToast('Failed to update account', 'error');
+      console.error('Failed to update account');
     }
   }
 
@@ -118,19 +118,19 @@
     if (!confirm(`Delete account "${accountName}"?`)) return;
 
     try {
-      await apiClient.delete(`/accounts/spotify/${accountId}`);
-      feedback.addToast('Account deleted', 'success');
+      await fetch(`${apiBase}/accounts/spotify/${accountId}`, { method: 'DELETE' });
+      console.log('Account deleted');
       await loadAccounts();
     } catch (error) {
       console.error('Failed to delete account:', error);
-      feedback.addToast('Failed to delete account', 'error');
+      console.error('Failed to delete account');
     }
   }
 
   async function authenticate(accountId) {
     // Ensure global credentials are saved before starting OAuth
     if (!clientId || !clientSecret) {
-      feedback.addToast('Please save Spotify Client ID and Client Secret before authenticating an account', 'error');
+      console.error('Please save Spotify Client ID and Client Secret before authenticating an account');
       return;
     }
 
@@ -145,18 +145,18 @@
 
     try {
       // Request auth URL for this account and redirect the browser
-      const resp = await apiClient.get('/spotify/auth', { params: { account_id: accountId } });
+      const resp = await fetch(`${apiBase}/spotify/auth`, { params: { account_id: accountId } });
       const url = resp.data?.auth_url;
       if (url) {
         window.location.href = url;
       } else {
-        feedback.addToast('Failed to get Spotify auth URL', 'error');
+        console.error('Failed to get Spotify auth URL');
       }
     } catch (err) {
       console.error('Failed to start OAuth:', err);
       // Surface backend error message if available
       const msg = err?.response?.data?.error || 'Failed to start OAuth';
-      feedback.addToast(msg, 'error');
+      console.error(msg);
     }
   }
 </script>

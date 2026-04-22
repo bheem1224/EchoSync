@@ -1,8 +1,8 @@
+<svelte:options customElement="jellyfin-dashboard-card" />
 <script>
+  export let apiBase = '';
   import { onMount } from 'svelte';
-  import apiClient from '../api/client';
-  import { feedback } from '../stores/feedback';
-  import PathMappingEditor from '../lib/components/PathMappingEditor.svelte';
+      import PathMappingEditor from '../../../../webui/src/lib/components/PathMappingEditor.svelte';
 
   let baseUrl = '';
   let username = '';
@@ -26,12 +26,12 @@
   async function activateServer() {
     try {
       activating = true;
-      await apiClient.post('/jellyfin/activate');
-      feedback.addToast('Jellyfin activated as media server', 'success');
+      await fetch(`${apiBase}/jellyfin/activate`, { method: 'POST' });
+      console.log('Jellyfin activated as media server');
       await loadSettings(); // Reload to get updated is_active
     } catch (error) {
       console.error('Failed to activate server:', error);
-      feedback.addToast('Failed to activate server', 'error');
+      console.error('Failed to activate server');
     } finally {
       activating = false;
     }
@@ -39,7 +39,7 @@
 
   async function loadSettings() {
     try {
-      const response = await apiClient.get('/jellyfin/settings');
+      const response = await fetch(`${apiBase}/jellyfin/settings`);
       if (response.data?.settings) {
         baseUrl = response.data.settings.base_url || '';
         username = response.data.settings.username || '';
@@ -51,34 +51,34 @@
       }
     } catch (error) {
       console.error('Failed to load Jellyfin settings:', error);
-      feedback.addToast('Failed to load Jellyfin settings', 'error');
+      console.error('Failed to load Jellyfin settings');
     }
   }
 
   async function saveSettings() {
     if (!baseUrl.trim()) {
-      feedback.addToast('Server URL is required', 'error');
+      console.error('Server URL is required');
       return;
     }
 
     if (!username.trim() || !password.trim()) {
-      feedback.addToast('Username and password are required', 'error');
+      console.error('Username and password are required');
       return;
     }
 
     try {
       saving = true;
-      await apiClient.post('/jellyfin/settings', {
+      await fetch(`${apiBase}/jellyfin/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         base_url: baseUrl,
         username: username,
         password: password,
         path_mappings: pathMappings
-      });
-      feedback.addToast('Jellyfin settings saved', 'success');
+      }) });
+      console.log('Jellyfin settings saved');
       await loadSettings();
     } catch (error) {
       console.error('Failed to save Jellyfin settings:', error);
-      feedback.addToast('Failed to save settings', 'error');
+      console.error('Failed to save settings');
     } finally {
       saving = false;
     }
@@ -87,18 +87,18 @@
   async function testConnection() {
     try {
       testing = true;
-      const response = await apiClient.post('/jellyfin/test-connection');
+      const response = await fetch(`${apiBase}/jellyfin/test-connection`, { method: 'POST' });
       
       if (response.data?.connected) {
         const serverName = response.data.server_name || 'Jellyfin';
         const version = response.data.version || 'unknown';
-        feedback.addToast(`Connected to ${serverName} ${version}`, 'success');
+        console.log(`Connected to ${serverName} ${version}`);
         await loadSettings();
       }
     } catch (error) {
       console.error('Connection test failed:', error);
       const msg = error?.response?.data?.error || 'Connection failed';
-      feedback.addToast(msg, 'error');
+      console.error(msg);
     } finally {
       testing = false;
     }

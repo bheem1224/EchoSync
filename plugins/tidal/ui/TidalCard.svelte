@@ -1,7 +1,7 @@
+<svelte:options customElement="tidal-dashboard-card" />
 <script>
+  export let apiBase = '';
   import { onMount } from 'svelte';
-  import apiClient from '../api/client';
-  import { feedback } from '../stores/feedback';
 
   let accounts = [];
   let redirectUri = '';
@@ -33,7 +33,7 @@
 
   async function loadAccounts() {
     try {
-      const response = await apiClient.get('/accounts/tidal');
+      const response = await fetch(`${apiBase}/accounts/tidal`);
       if (response.data) {
         accounts = response.data.accounts || [];
         redirectUri = response.data.redirect_uri || '';
@@ -41,25 +41,25 @@
       }
     } catch (error) {
       console.error('Failed to load Tidal accounts:', error);
-      feedback.addToast('Failed to load Tidal accounts', 'error');
+      console.error('Failed to load Tidal accounts');
     }
   }
 
   async function saveRedirectUri() {
     if (!redirectUri.trim()) {
-      feedback.addToast('Redirect URI is required', 'error');
+      console.error('Redirect URI is required');
       return;
     }
 
     try {
       savingRedirectUri = true;
-      await apiClient.post('/accounts/tidal/redirect-uri', {
+      await fetch(`${apiBase}/accounts/tidal/redirect-uri`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         redirect_uri: redirectUri
-      });
-      feedback.addToast('Redirect URI saved', 'success');
+      }) });
+      console.log('Redirect URI saved');
     } catch (error) {
       console.error('Failed to save redirect URI:', error);
-      feedback.addToast('Failed to save redirect URI', 'error');
+      console.error('Failed to save redirect URI');
     } finally {
       savingRedirectUri = false;
     }
@@ -82,7 +82,7 @@
     modalMode = 'edit';
     try {
       // Fetch account with credentials
-      const response = await apiClient.get(`/accounts/tidal/${account.id}`);
+      const response = await fetch(`${apiBase}/accounts/tidal/${account.id}`);
       if (response.data?.account) {
         modalAccount = {
           id: response.data.account.id,
@@ -96,7 +96,7 @@
       }
     } catch (error) {
       console.error('Failed to load account credentials:', error);
-      feedback.addToast('Failed to load account', 'error');
+      console.error('Failed to load account');
     }
   }
 
@@ -114,17 +114,17 @@
 
   async function saveAccount() {
     if (!modalAccount.account_name.trim() || !modalAccount.client_id.trim()) {
-      feedback.addToast('Account name and Client ID are required', 'error');
+      console.error('Account name and Client ID are required');
       return;
     }
 
     if (!modalAccount.client_secret.trim()) {
-      feedback.addToast('Client Secret is required', 'error');
+      console.error('Client Secret is required');
       return;
     }
 
     if (modalMode === 'add' && accounts.length >= MAX_ACCOUNTS) {
-      feedback.addToast(`Maximum ${MAX_ACCOUNTS} accounts allowed`, 'error');
+      console.error(`Maximum ${MAX_ACCOUNTS} accounts allowed`);
       return;
     }
 
@@ -136,30 +136,30 @@
       };
       
       if (modalMode === 'add') {
-        await apiClient.post('/accounts/tidal', accountData);
-        feedback.addToast('Account added', 'success');
+        await fetch(`${apiBase}/accounts/tidal`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(accountData) });
+        console.log('Account added');
       } else {
-        await apiClient.put(`/accounts/tidal/${modalAccount.id}`, accountData);
-        feedback.addToast('Account updated', 'success');
+        await fetch(`${apiBase}/accounts/tidal/${modalAccount.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(accountData) });
+        console.log('Account updated');
       }
       closeModal();
       await loadAccounts();
     } catch (error) {
       console.error('Failed to save account:', error);
-      feedback.addToast('Failed to save account', 'error');
+      console.error('Failed to save account');
     }
   }
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await apiClient.put(`/accounts/tidal/${accountId}/activate`, {
+      await fetch(`${apiBase}/accounts/tidal/${accountId}/activate`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         is_active: !currentlyActive
-      });
-      feedback.addToast(currentlyActive ? 'Account deactivated' : 'Account activated', 'success');
+      }) });
+      console.log(currentlyActive ? 'Account deactivated' : 'Account activated');
       await loadAccounts();
     } catch (error) {
       console.error('Failed to toggle account:', error);
-      feedback.addToast('Failed to update account', 'error');
+      console.error('Failed to update account');
     }
   }
 
@@ -167,28 +167,28 @@
     if (!confirm(`Delete account "${accountName}"? This will also delete its credentials.`)) return;
 
     try {
-      await apiClient.delete(`/accounts/tidal/${accountId}`);
-      feedback.addToast('Account deleted', 'success');
+      await fetch(`${apiBase}/accounts/tidal/${accountId}`, { method: 'DELETE' });
+      console.log('Account deleted');
       await loadAccounts();
     } catch (error) {
       console.error('Failed to delete account:', error);
-      feedback.addToast('Failed to delete account', 'error');
+      console.error('Failed to delete account');
     }
   }
 
   async function authenticate(accountId) {
     try {
-      const resp = await apiClient.get('/tidal/auth', { params: { account_id: accountId } });
+      const resp = await fetch(`${apiBase}/tidal/auth?account_id=${accountId}`);
       const url = resp.data?.auth_url;
       if (url) {
         window.location.href = url;
       } else {
-        feedback.addToast('Failed to get Tidal auth URL', 'error');
+        console.error('Failed to get Tidal auth URL');
       }
     } catch (err) {
       console.error('Failed to start OAuth:', err);
       const msg = err?.response?.data?.error || 'Failed to start OAuth';
-      feedback.addToast(msg, 'error');
+      console.error(msg);
     }
   }
 </script>
