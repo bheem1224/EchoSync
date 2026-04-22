@@ -52,21 +52,21 @@
   {#if isLoadingLayout}
     <!-- Main loading spinner while fetching layout -->
     <div class="flex items-center justify-center h-64">
-      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-accent"></div>
     </div>
   {:else if layoutError}
-    <div class="bg-red-50 border-l-4 border-red-400 p-4 mb-4">
-      <p class="text-red-700">Error loading dashboard: {layoutError}</p>
+    <div class="bg-error-bg border-l-4 border-error-border p-4 mb-4">
+      <p class="text-error-text">Error loading dashboard: {layoutError}</p>
     </div>
   {:else if layout && layout.views && layout.views.length > 0}
     <!-- Tab bar for multiple views -->
     {#if layout.views.length > 1}
-      <div class="border-b border-gray-200 mb-6">
+      <div class="border-b border-border mb-6">
         <nav class="-mb-px flex space-x-8" aria-label="Tabs">
           {#each layout.views as view, i}
             <button
               on:click={() => (activeViewIndex = i)}
-              class="{activeViewIndex === i ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              class="{activeViewIndex === i ? 'border-accent text-accent' : 'border-transparent text-secondary hover:text-primary hover:border-border'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
               {view.title}
             </button>
@@ -79,32 +79,32 @@
     {@const currentView = layout.views[activeViewIndex]}
 
     <div class="mb-6">
-      <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight mb-4">
+      <h2 class="text-2xl font-bold leading-7 text-primary sm:truncate sm:text-3xl sm:tracking-tight mb-4">
         {currentView.title}
       </h2>
 
       <!-- Responsive grid layout -->
       <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {#each currentView.cards as card}
-          <div class="col-span-1 rounded-lg bg-white shadow min-h-[150px] overflow-hidden flex flex-col">
+          <div class="col-span-1 rounded-global bg-surface shadow min-h-[150px] overflow-hidden flex flex-col">
             {#await waitForComponent(card.type)}
               <!-- Skeleton placeholder -->
               <div class="p-4 flex-1 flex flex-col animate-pulse">
-                <div class="h-4 bg-gray-200 rounded w-1/2 mb-4"></div>
-                <div class="h-10 bg-gray-200 rounded w-full mb-2"></div>
-                <div class="h-10 bg-gray-200 rounded w-3/4"></div>
+                <div class="h-4 bg-surface-hover rounded-global w-1/2 mb-4"></div>
+                <div class="h-10 bg-surface-hover rounded-global w-full mb-2"></div>
+                <div class="h-10 bg-surface-hover rounded-global w-3/4"></div>
               </div>
             {:then _}
               <!-- Loaded Web Component -->
               <svelte:element this={card.type} class="flex-1 w-full h-full block" />
             {:catch err}
               <!-- Error fallback -->
-              <div class="p-4 bg-red-50 flex-1 flex flex-col items-center justify-center text-center">
-                <svg class="h-8 w-8 text-red-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div class="p-4 bg-error-bg flex-1 flex flex-col items-center justify-center text-center">
+                <svg class="h-8 w-8 text-error-border mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <p class="text-sm font-medium text-red-800">Component Failed to Load</p>
-                <p class="text-xs text-red-600 mt-1">{card.type}</p>
+                <p class="text-sm font-medium text-error-text">Component Failed to Load</p>
+                <p class="text-xs text-error-text opacity-80 mt-1">{card.type}</p>
               </div>
             {/await}
           </div>
@@ -112,8 +112,8 @@
       </div>
     </div>
   {:else}
-    <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4">
-      <p class="text-yellow-700">No dashboard layout views configured.</p>
+    <div class="bg-warning-bg border-l-4 border-warning-border p-4">
+      <p class="text-warning-text">No dashboard layout views configured.</p>
     </div>
   {/if}
 </div>
