@@ -1,12 +1,12 @@
 {
-    "id": "core.musicbrainz",
-    "name": "Musicbrainz",
-    "description": "Official EchoSync provider for musicbrainz",
-    "version": "1.0.0",
-    "author": "EchoSync",
-    "type": "metadata",
-    "requirements": [],
-    "hooks": [],
-    "min_echosync_version": "2.4.0",
-    "verified_source": "official"
+  "id": "core.musicbrainz",
+  "name": "Musicbrainz",
+  "description": "Official EchoSync provider for musicbrainz",
+  "version": "1.0.1",
+  "author": "EchoSync",
+  "type": "metadata",
+  "requirements": [],
+  "hooks": [],
+  "min_echosync_version": "2.4.0",
+  "verified_source": "official"
 }

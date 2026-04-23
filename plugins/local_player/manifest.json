@@ -1,12 +1,12 @@
 {
-    "id": "core.local_player",
-    "name": "Local Player",
-    "description": "Official EchoSync provider for local_player",
-    "version": "1.0.0",
-    "author": "EchoSync",
-    "type": "media_player",
-    "requirements": [],
-    "hooks": [],
-    "min_echosync_version": "2.4.0",
-    "verified_source": "official"
+  "id": "core.local_player",
+  "name": "Local Player",
+  "description": "Official EchoSync provider for local_player",
+  "version": "1.0.1",
+  "author": "EchoSync",
+  "type": "media_player",
+  "requirements": [],
+  "hooks": [],
+  "min_echosync_version": "2.4.0",
+  "verified_source": "official"
 }

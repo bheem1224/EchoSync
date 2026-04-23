@@ -1,12 +1,12 @@
 {
-    "id": "core.outbound_gateway",
-    "name": "Outbound Gateway",
-    "description": "Official EchoSync provider for outbound_gateway",
-    "version": "1.0.0",
-    "author": "EchoSync",
-    "type": "gateway",
-    "requirements": [],
-    "hooks": [],
-    "min_echosync_version": "2.4.0",
-    "verified_source": "official"
+  "id": "core.outbound_gateway",
+  "name": "Outbound Gateway",
+  "description": "Official EchoSync provider for outbound_gateway",
+  "version": "1.0.1",
+  "author": "EchoSync",
+  "type": "gateway",
+  "requirements": [],
+  "hooks": [],
+  "min_echosync_version": "2.4.0",
+  "verified_source": "official"
 }
