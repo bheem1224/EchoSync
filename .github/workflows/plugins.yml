@@ -153,5 +153,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(plugins): auto-versioning and release packaging"
-          # Ensure it commits the static JS, manifest, and the newly created ZIP files
-          file_pattern: 'plugins/**/static/*.js plugins/**/manifest.json plugins/**/releases/*.zip'
+          file_pattern: 'plugins/'
