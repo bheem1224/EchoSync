@@ -4,12 +4,11 @@
   
   export let keyValue = '';
   
-  let copied = false;
+
 
   function copyToClipboard() {
     navigator.clipboard.writeText(keyValue).then(() => {
-      copied = true;
-      setTimeout(() => copied = false, 2000);
+      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: 'Encryption Key Copied!', type: 'success' } }));
     });
   }
 
@@ -36,7 +35,7 @@
         <div class="key-display">
           <textarea readonly>{keyValue}</textarea>
           <button class="copy-btn" on:click={copyToClipboard}>
-            {copied ? '✓ Copied' : 'Copy'}
+            Copy
           </button>
         </div>
       </div>

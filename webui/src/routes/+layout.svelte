@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import Sidebar from '../components/Sidebar.svelte';
   import BottomNav from '../components/BottomNav.svelte';
-  import Toast from '../components/Toast.svelte';
+  import ToastNotifications from '../lib/components/ToastNotifications.svelte';
   import BottomPlayer from '../components/BottomPlayer.svelte';
   import EncryptionKeyWarning from '../components/EncryptionKeyWarning.svelte';
   import MigrationModal from '../components/MigrationModal.svelte';
@@ -66,7 +66,7 @@
     <BottomNav />
   {/if}
   <BottomPlayer />
-  <Toast />
+  <ToastNotifications />
   
   {#if showEncryptionWarning}
     <EncryptionKeyWarning 
