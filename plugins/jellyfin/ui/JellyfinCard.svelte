@@ -2,7 +2,7 @@
 <script>
   export let apiBase = '';
   import { onMount } from 'svelte';
-      import PathMappingEditor from '../../../../webui/src/lib/components/PathMappingEditor.svelte';
+
 
   let baseUrl = '';
   let username = '';
@@ -175,7 +175,7 @@
         </label>
 
         <div class="border-t border-gray-700 my-4 pt-4">
-            <PathMappingEditor bind:mappings={pathMappings} />
+            <echosync-path-mapping-editor mappings={JSON.stringify(pathMappings)} on:es-path-update={(e) => pathMappings = e.detail} />
         </div>
 
         <div class="button-group">
