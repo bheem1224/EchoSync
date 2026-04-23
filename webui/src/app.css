@@ -6,7 +6,11 @@
   color-scheme: dark;
 
   /* Backgrounds */
-  --es-bg-base: #121212;
+  --es-bg-base: #0f172a;
+  --es-glass-bg: rgba(30, 41, 59, 0.65);
+  --es-glass-border: rgba(255, 255, 255, 0.1);
+  --es-glass-hover: rgba(30, 41, 59, 0.85);
+
   --es-bg-surface: #1e1e1e;
   --es-bg-surface-hover: #2a2a2a;
 

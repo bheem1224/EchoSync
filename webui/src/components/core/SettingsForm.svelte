@@ -1,4 +1,7 @@
-<svelte:options customElement="echosync-settings-form" />
+<svelte:options customElement={{
+  tag: 'echosync-settings-form',
+  shadow: 'none'
+}} />
 
 <script>
   export let schema = "{}";
@@ -46,7 +49,7 @@
   }
 </script>
 
-<form bind:this={formRef} on:submit={handleSave} class="flex flex-col gap-6 p-6 bg-surface rounded-global border border-border shadow-sm">
+<form bind:this={formRef} on:submit={handleSave} class="flex flex-col gap-6 p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global">
   {#each Object.entries(parsedSchema) as [key, field]}
     <div class="flex flex-col gap-2">
       <label for={key} class="text-sm font-medium text-primary">

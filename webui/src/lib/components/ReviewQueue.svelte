@@ -1,4 +1,7 @@
-<svelte:options customElement="echosync-review-queue" />
+<svelte:options customElement={{
+  tag: 'echosync-review-queue',
+  shadow: 'none'
+}} />
 
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -155,7 +158,7 @@
     </button>
   </div>
 
-  <div class="m-4 mt-0 flex-1 min-h-0 overflow-y-auto rounded-global border border-global bg-surface">
+  <div class="m-4 mt-0 flex-1 min-h-0 overflow-y-auto rounded-global bg-surface backdrop-blur-md border border-glass-border">
     {#if loading}
       <div class="p-8 text-center text-secondary">Loading review queue...</div>
     {:else if error}

@@ -1,3 +1,7 @@
+<svelte:options customElement={{
+  tag: 'echosync-quality-profiles',
+  shadow: 'none'
+}} />
 <script>
   import { onMount } from 'svelte';
   import { preferences } from '../stores/preferences';
@@ -98,30 +102,30 @@
   }
 </script>
 
-  <section class="quality-profiles card">
-    <div class="section-heading">
-      <h2>Quality Profiles</h2>
+  <section class="p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global mb-4">
+    <div class="flex justify-between items-center">
+      <h2 class="text-xl font-bold text-primary">Quality Profiles</h2>
       <div class="controls">
         <button class="btn-primary add-btn" on:click={addProfile} disabled={prefs?.profiles && prefs.profiles.length >= 6}>+ Add</button>
       </div>
     </div>
 
-      <div class="profiles-list">
+      <div class="flex flex-col gap-2 mt-3">
     {#each prefs?.profiles ?? [] as profile, idx}
       <div
-        class="profile-row"
+        class="flex justify-between items-center p-2 rounded-global bg-surface-hover"
         draggable="true"
         on:dragstart={(e) => handleDragStart(e, idx)}
         on:dragover={handleDragOver}
         on:drop={(e) => handleDrop(e, idx)}
       >
-        <div class="row-left">
-          <div class="drag-handle">≡</div>
+        <div class="flex gap-2 items-center">
+          <div class="cursor-grab">≡</div>
           <div class="profile-name">{profile.name}</div>
         </div>
         <div class="row-right">
-          <button class="settings-btn" on:click={() => openEditor(profile)}>⚙️</button>
-          <button class="delete" on:click={() => requestDeleteProfile(profile.id)}>✕</button>
+          <button class="ml-2" on:click={() => openEditor(profile)}>⚙️</button>
+          <button class="ml-2 text-error-text hover:bg-error-bg rounded-global p-1" on:click={() => requestDeleteProfile(profile.id)}>✕</button>
         </div>
       </div>
     {/each}
@@ -132,21 +136,11 @@
   {/if}
 
   {#if showEditor}
-    <div class="modal-backdrop" on:click={closeEditor}>
-      <div class="modal" on:click|stopPropagation>
+    <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-md" on:click={closeEditor}>
+      <div class="bg-surface p-4 rounded-global w-[90%] max-w-[760px] max-h-[85vh] overflow-y-auto shadow-2xl text-primary" on:click|stopPropagation>
         <QualityProfileEditor profile={editingProfile} on:save={saveProfileEdits} on:cancel={closeEditor} />
       </div>
     </div>
   {/if}
 </section>
 
-<style>
-  .quality-profiles { padding: 12px; }
-  .profiles-list { display:flex; flex-direction:column; gap:8px; margin-top:12px }
-  .profile-row { display:flex; justify-content:space-between; align-items:center; padding:8px; border-radius:8px; background:var(--card-bg); }
-  .row-left { display:flex; gap:8px; align-items:center }
-  .drag-handle { cursor:grab }
-  .settings-btn, .delete { margin-left:8px }
-  .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:2000; backdrop-filter: blur(6px); }
-  .modal { background:var(--bg-card); padding:16px; border-radius:12px; width:90%; max-width:760px; max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.6); color:var(--text-main) }
-</style>

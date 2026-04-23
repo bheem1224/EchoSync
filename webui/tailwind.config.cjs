@@ -9,7 +9,7 @@ module.exports = {
           DEFAULT: 'var(--es-bg-base)'
         },
         surface: {
-          DEFAULT: 'var(--es-bg-surface)',
+          DEFAULT: 'var(--es-glass-bg)',
           hover: 'var(--es-bg-surface-hover)'
         },
         primary: {
@@ -21,6 +21,8 @@ module.exports = {
         accent: {
           DEFAULT: 'var(--es-accent)'
         },
+
+        'glass-border': 'var(--es-glass-border)',
         border: {
           DEFAULT: 'var(--es-border-color)'
         },

@@ -1,3 +1,7 @@
+<svelte:options customElement={{
+  tag: 'echosync-quality-profile-editor',
+  shadow: 'none'
+}} />
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
 
@@ -147,16 +151,16 @@
   });
 </script>
 
-<div class="editor">
-  <div class="editor-header">
-    <input class="input" bind:value={p.name} placeholder="Profile name (e.g. Audiophile)" />
+<div class="flex flex-col gap-4">
+  <div class="flex">
+    <input class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary" bind:value={p.name} placeholder="Profile name (e.g. Audiophile)" />
   </div>
 
   <div class="editor-body">
     <section class="formats">
       <div class="formats-top">
         <label class="sr-only">Add format</label>
-        <select bind:value={selectedFormat} class="input select" on:change={() => addFormat(selectedFormat)}>
+        <select bind:value={selectedFormat} class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary" on:change={() => addFormat(selectedFormat)}>
           <option value="">Add format…</option>
           {#each AVAILABLE_FORMATS as f}
             <option value={f}>{f}</option>
@@ -165,10 +169,10 @@
       </div>
 
       {#if p.formats && p.formats.length}
-        <div class="formats-list">
+        <div class="flex flex-col gap-2 mt-4">
           {#each p.formats as fmt, idx}
-            <div class="format-card" draggable="true" on:dragstart={(e)=>handleDragStart(e, idx)} on:dragover={handleDragOver} on:drop={(e)=>handleDrop(e, idx)}>
-              <div class="card-head">
+            <div class="bg-background p-4 rounded-global border border-glass-border mb-2" draggable="true" on:dragstart={(e)=>handleDragStart(e, idx)} on:dragover={handleDragOver} on:drop={(e)=>handleDrop(e, idx)}>
+              <div class="flex justify-between items-center mb-2">
                 <strong>{fmt.type}</strong>
                 <div class="card-actions">
                   <button on:click={() => removeFormat(idx)}>Remove</button>
@@ -177,19 +181,19 @@
 
               <div class="card-body">
                 <label>File size (MB)
-                  <div class="size-row">
-                      <input type="number" min="0" bind:value={fmt.min_size_mb} class="input" />
+                  <div class="flex gap-2 items-center">
+                      <input type="number" min="0" bind:value={fmt.min_size_mb} class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary" />
                       <span>—</span>
-                      <input type="number" min="0" bind:value={fmt.max_size_mb} placeholder="0 = unlimited" class="input" />
+                      <input type="number" min="0" bind:value={fmt.max_size_mb} placeholder="0 = unlimited" class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary" />
                       <label style="margin-left:8px">Priority
-                        <input type="number" min="1" value={fmt.priority} on:change={(e) => applyPriority(fmt, e)} class="input" style="width:80px; margin-left:6px" />
+                        <input type="number" min="1" value={fmt.priority} on:change={(e) => applyPriority(fmt, e)} class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary" style="width:80px; margin-left:6px" />
                       </label>
                   </div>
                 </label>
 
                 {#if fmt.type === 'MP3' || fmt.type === 'AAC' || fmt.type === 'OGG'}
                   <label>Bitrates</label>
-                  <div class="chips">
+                  <div class="flex gap-2 flex-wrap mb-2">
                     {#each ['320','256','192','V0','V2'] as br}
                       <label><input type="checkbox" checked={fmt.bitrates?.includes(br)} on:change={() => toggleFormatField(fmt, 'bitrates', br)} /> {br}</label>
                     {/each}
@@ -198,14 +202,14 @@
 
                 {#if fmt.type === 'FLAC' || fmt.type === 'ALAC' || fmt.type === 'WAV' || fmt.type === 'APE' }
                   <label>Bit depths</label>
-                  <div class="chips">
+                  <div class="flex gap-2 flex-wrap mb-2">
                     {#each ['16','24'] as bd}
                       <label><input type="checkbox" checked={fmt.bit_depths?.includes(bd)} on:change={() => toggleFormatField(fmt, 'bit_depths', bd)} /> {bd}-bit</label>
                     {/each}
                   </div>
 
                   <label>Sample rates</label>
-                  <div class="chips">
+                  <div class="flex gap-2 flex-wrap mb-2">
                     {#each ['44.1','48','88.2','96','192'] as sr}
                       <label><input type="checkbox" checked={fmt.sample_rates?.includes(sr)} on:change={() => toggleFormatField(fmt, 'sample_rates', sr)} /> {sr}kHz</label>
                     {/each}
@@ -223,25 +227,25 @@
     <section class="advanced">
       <h3>Advanced Filters</h3>
       {#if hasMatchingProvider}
-        <div class="advanced-options">
-          <label class="checkbox-label">
+        <div class="flex flex-col gap-2">
+          <label class="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" bind:checked={p.enforce_duration_match} />
             Enforce Duration Match
           </label>
 
           {#if p.enforce_duration_match}
-            <label class="sub-label">Tolerance (seconds)
+            <label class="flex items-center gap-2 ml-7 text-sm">Tolerance (seconds)
               <input
                 type="number"
                 min="0"
                 value={(p.duration_tolerance_ms || 3000) / 1000}
                 on:input={(e) => p.duration_tolerance_ms = e.currentTarget.value * 1000}
-                class="input small-input"
+                class="w-20 px-3 py-2 bg-background border border-border rounded-global text-sm text-primary"
               />
             </label>
           {/if}
 
-          <label class="checkbox-label" style="margin-top:8px">
+          <label class="flex items-center gap-2 cursor-pointer" style="margin-top:8px">
             <input type="checkbox" bind:checked={p.prefer_max_quality} />
             Prefer Larger Files (Max Quality)
           </label>
@@ -249,7 +253,7 @@
       {/if}
 
       {#if hasMetadataProvider}
-        <label class="checkbox-label"><input type="checkbox" bind:checked={p.metadataRequired} /> Require MusicBrainz Release ID</label>
+        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" bind:checked={p.metadataRequired} /> Require MusicBrainz Release ID</label>
       {/if}
 
       {#if !hasMetadataProvider && !hasMatchingProvider}
@@ -258,23 +262,9 @@
     </section>
   </div>
 
-  <div class="editor-footer">
+  <div class="flex gap-2 justify-end mt-4">
     <button class="btn-primary" on:click={save}>Save</button>
     <button class="button-ghost" on:click={cancel}>Cancel</button>
   </div>
 </div>
 
-<style>
-  .editor { display:flex; flex-direction:column; gap:12px }
-  .editor-header { display:flex }
-  .formats-list { display:flex; flex-direction:column; gap:8px }
-  .format-card { background:var(--bg-input); padding:8px; border-radius:8px; border:1px solid var(--border-subtle) }
-  .card-head { display:flex; justify-content:space-between; align-items:center }
-  .size-row { display:flex; gap:8px; align-items:center }
-  .chips { display:flex; gap:8px; flex-wrap:wrap }
-  .editor-footer { display:flex; gap:8px; justify-content:flex-end }
-  .advanced-options { display:flex; flex-direction:column; gap:8px }
-  .checkbox-label { display:flex; align-items:center; gap:8px; cursor:pointer }
-  .sub-label { display:flex; align-items:center; gap:8px; margin-left: 28px; font-size: 0.9em }
-  .small-input { width: 80px }
-</style>

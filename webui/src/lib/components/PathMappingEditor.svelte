@@ -1,4 +1,7 @@
-<svelte:options customElement="echosync-path-mapping-editor" />
+<svelte:options customElement={{
+  tag: 'echosync-path-mapping-editor',
+  shadow: 'none'
+}} />
 
 <script>
     export let mappings = "[]";
@@ -40,13 +43,13 @@
     }
 </script>
 
-<div bind:this={formRef} class="flex flex-col gap-4">
+<div bind:this={formRef} class="flex flex-col gap-4 p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global">
     <div class="flex items-center gap-2 mb-2">
         <label class="text-sm font-medium text-primary">Path Mappings</label>
         <div class="group relative flex items-center">
             <!-- Info SVG -->
             <svg class="w-4 h-4 text-secondary hover:text-primary cursor-help transition-colors" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-64 p-2 bg-surface border border-border rounded-global shadow-xl z-50 invisible group-hover:visible text-xs text-primary pointer-events-none">
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-64 p-2 bg-surface backdrop-blur-md border border-glass-border rounded-global shadow-xl z-50 invisible group-hover:visible text-xs text-primary pointer-events-none">
                 Required for Web Player and Metadata Fingerprinting. Maps paths from the remote server (e.g. Docker) to the local filesystem.
             </div>
         </div>

@@ -86,7 +86,7 @@
       <!-- Responsive grid layout -->
       <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {#each currentView.cards as card}
-          <div class="col-span-1 rounded-global bg-surface shadow min-h-[150px] overflow-hidden flex flex-col">
+          <div class="col-span-1 rounded-global bg-surface backdrop-blur-md border border-glass-border min-h-[150px] overflow-hidden flex flex-col">
             {#await waitForComponent(card.type)}
               <!-- Skeleton placeholder -->
               <div class="p-4 flex-1 flex flex-col animate-pulse">
