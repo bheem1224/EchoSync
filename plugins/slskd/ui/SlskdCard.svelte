@@ -1,4 +1,7 @@
-<svelte:options customElement="slskd-dashboard-card" />
+<svelte:options customElement={{
+  tag: 'slskd-dashboard-card',
+  shadow: 'none'
+}} />
 <script>
   export let apiBase = '';
   import { onMount } from 'svelte';
@@ -150,15 +153,15 @@
   }
 </script>
 
-<section class="slskd-card card">
-  <div class="card-header">
-    <div class="header-left">
-      <h2>slskd</h2>
-      <span class="provider-badge">Download Client</span>
+<section class="p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global mb-4">
+  <div class="flex justify-between items-center mb-5 pb-3 border-b border-glass-border">
+    <div class="flex items-center gap-3">
+      <h2 class="m-0 text-xl font-semibold">slskd</h2>
+      <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ba6415]/20 text-[#ba6415]">Download Client</span>
       {#if connected}
-        <span class="status-badge connected">● Connected</span>
+        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#00e676]/20 text-[#00e676]">● Connected</span>
       {:else if slskdUrl}
-        <span class="status-badge disconnected">⚠ Disconnected</span>
+        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ff9800]/20 text-[#ff9800]">⚠ Disconnected</span>
       {/if}
       {#if isActive}
         <span class="status-badge active-client">● Active</span>
@@ -166,67 +169,67 @@
     </div>
     <div class="header-right">
       {#if !isActive && connected}
-        <button class="btn-sm btn-secondary" on:click={activateClient}>Activate</button>
+        <button class="btn-sm btn-secondary active:scale-95 transition-all duration-200" on:click={activateClient}>Activate</button>
       {/if}
-      <button class="btn-link" on:click={() => collapsed = !collapsed}>
+      <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => collapsed = !collapsed}>
         {collapsed ? 'Expand' : 'Collapse'}
       </button>
     </div>
   </div>
 
   {#if loading}
-    <div class="loading">Loading...</div>
+    <div class="p-5 text-center text-secondary">Loading...</div>
   {:else if !collapsed}
-    <div class="section">
-      <h3>Server Configuration</h3>
+    <div class="mb-6">
+      <h3 class="m-0 mb-4 text-base font-semibold">Server Configuration</h3>
       
-      <div class="form-group">
-        <label>
-          <span class="label-text">Server URL</span>
+      <div class="flex flex-col gap-4">
+        <label class="flex flex-col gap-[6px]">
+          <span class="text-[13px] font-medium text-primary">Server URL</span>
           <input
             type="text"
             bind:value={slskdUrl}
             placeholder="http://192.168.1.100:5030"
-            class="input"
+            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
           />
-          <span class="help-text">Enter your slskd server address (include port, default :5030)</span>
+          <span class="text-xs text-secondary mt-1">Enter your slskd server address (include port, default :5030)</span>
         </label>
 
-        <label>
-          <span class="label-text">Server Name (Optional)</span>
+        <label class="flex flex-col gap-[6px]">
+          <span class="text-[13px] font-medium text-primary">Server Name (Optional)</span>
           <input
             type="text"
             bind:value={serverName}
             placeholder="My slskd Server"
-            class="input"
+            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
           />
-          <span class="help-text">Friendly name for this server</span>
+          <span class="text-xs text-secondary mt-1">Friendly name for this server</span>
         </label>
 
-        <label>
-          <span class="label-text">API Key</span>
+        <label class="flex flex-col gap-[6px]">
+          <span class="text-[13px] font-medium text-primary">API Key</span>
           <div class="input-with-toggle">
             <input
               type={showApiKey ? 'text' : 'password'}
               bind:value={apiKey}
               placeholder="Enter API key"
-              class="input"
+              class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
             />
             <button 
               type="button" 
-              class="toggle-btn"
+              class="toggle-btn active:scale-95 transition-all duration-200"
               on:click={toggleApiKeyVisibility}
               title={showApiKey ? 'Hide' : 'Show'}
             >
               {showApiKey ? '👁️' : '👁️‍🗨️'}
             </button>
           </div>
-          <span class="help-text">API key from slskd settings (Options → Security → API Keys)</span>
+          <span class="text-xs text-secondary mt-1">API key from slskd settings (Options → Security → API Keys)</span>
         </label>
 
-        <div class="button-group">
+        <div class="flex gap-3 flex-wrap">
           <button
-            class="btn-primary"
+            class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
             on:click={saveSettings}
             disabled={saving}
           >
@@ -235,7 +238,7 @@
           
           {#if slskdUrl && (hasApiKeyInDb || apiKey)}
             <button
-              class="btn-secondary"
+              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
               on:click={testConnection}
               disabled={testing}
             >
@@ -248,206 +251,4 @@
   {/if}
 </section>
 
-<style>
-  .slskd-card {
-    background: var(--bg-card, #14181f);
-    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
-    border-radius: 12px;
-    padding: 24px;
-    margin-bottom: 20px;
-  }
 
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.1));
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .card-header h2 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--text-main, #ffffff);
-  }
-
-  .provider-badge {
-    font-size: 12px;
-    padding: 4px 8px;
-    border-radius: 4px;
-    background: rgba(229, 160, 13, 0.2);
-    color: #e5a00d;
-  }
-
-  .status-badge {
-    font-size: 12px;
-    padding: 4px 8px;
-    border-radius: 4px;
-  }
-
-  .status-badge.connected {
-    background: rgba(0, 230, 118, 0.2);
-    color: #00e676;
-  }
-
-  .status-badge.disconnected {
-    background: rgba(255, 82, 82, 0.2);
-    color: #ff5252;
-  }
-
-  .status-badge.active-client {
-    background: rgba(0, 230, 118, 0.2);
-    color: #00e676;
-    border: 1px solid rgba(0, 230, 118, 0.3);
-  }
-
-  .loading {
-    padding: 20px;
-    text-align: center;
-    color: var(--text-muted, #8b9bb4);
-  }
-
-  .section {
-    margin-bottom: 24px;
-  }
-
-  .section h3 {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0 0 16px 0;
-    color: var(--text-main, #ffffff);
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .label-text {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text-primary, #ffffff);
-  }
-
-  .help-text {
-    font-size: 12px;
-    color: var(--text-muted, #8b9bb4);
-  }
-
-  .input {
-    padding: 10px 12px;
-    border-radius: 6px;
-    border: 1px solid var(--border-color, rgba(255,255,255,0.1));
-    background: var(--bg-input, #0a0c10);
-    color: var(--text-primary, #ffffff);
-    font-size: 14px;
-  }
-
-  .input:focus {
-    outline: none;
-    border-color: var(--color-primary, #00fa9a);
-  }
-
-  .input-with-toggle {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
-  .input-with-toggle input {
-    flex: 1;
-    padding-right: 40px;
-  }
-
-  .toggle-btn {
-    position: absolute;
-    right: 8px;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    font-size: 18px;
-    padding: 4px 8px;
-    color: var(--text-muted, #8b9bb4);
-    transition: color 0.2s;
-  }
-
-  .toggle-btn:hover {
-    color: var(--text-primary, #ffffff);
-  }
-
-  .button-group {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  .btn-primary, .btn-secondary, .btn-link {
-    padding: 10px 20px;
-    border-radius: 6px;
-    border: none;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-primary {
-    background: var(--color-primary, #00fa9a);
-    color: #000;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: var(--color-primary-hover, #00e08a);
-  }
-
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-secondary {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary, #ffffff);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.15);
-  }
-
-  .btn-secondary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-link {
-    background: transparent;
-    color: var(--color-primary, #00fa9a);
-    padding: 6px 12px;
-  }
-
-  .btn-link:hover {
-    text-decoration: underline;
-  }
-</style>

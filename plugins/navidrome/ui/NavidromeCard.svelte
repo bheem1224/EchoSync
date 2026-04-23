@@ -1,4 +1,7 @@
-<svelte:options customElement="navidrome-dashboard-card" />
+<svelte:options customElement={{
+  tag: 'navidrome-dashboard-card',
+  shadow: 'none'
+}} />
 <script>
   export let apiBase = '';
   import { onMount } from 'svelte';
@@ -103,67 +106,67 @@
   }
 </script>
 
-<section class="navidrome-card card">
-  <div class="card-header">
-    <div class="header-left">
-      <h2>Navidrome</h2>
+<section class="p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global mb-4">
+  <div class="flex justify-between items-center mb-5 pb-3 border-b border-glass-border">
+    <div class="flex items-center gap-3">
+      <h2 class="m-0 text-xl font-semibold">Navidrome</h2>
       {#if isActive}
-        <span class="status-badge active-server">● Active</span>
+        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#3b82f6]/20 text-[#3b82f6] font-semibold">● Active</span>
       {/if}
       {#if hasPassword}
-        <span class="status-badge authenticated">✓ Authenticated</span>
+        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#00e676]/20 text-[#00e676]">✓ Authenticated</span>
       {/if}
       {#if connected}
-        <span class="status-badge connected">● Connected</span>
+        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#00e676]/20 text-[#00e676]">● Connected</span>
       {:else if hasPassword}
-        <span class="status-badge disconnected">⚠ Disconnected</span>
+        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ff9800]/20 text-[#ff9800]">⚠ Disconnected</span>
       {/if}
     </div>
-    <button class="btn-secondary" on:click={() => collapsed = !collapsed}>
+    <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => collapsed = !collapsed}>
       {collapsed ? 'Expand' : 'Collapse'}
     </button>
   </div>
 
   {#if loading}
-    <div class="loading">Loading...</div>
+    <div class="p-5 text-center text-secondary">Loading...</div>
   {:else if !collapsed}
-    <div class="section">
-      <h3>Server Configuration</h3>
+    <div class="mb-6">
+      <h3 class="m-0 mb-4 text-base font-semibold">Server Configuration</h3>
       
-      <div class="form-group">
-        <label>
-          <span class="label-text">Server URL</span>
+      <div class="flex flex-col gap-4">
+        <label class="flex flex-col gap-[6px]">
+          <span class="text-[13px] font-medium text-primary">Server URL</span>
           <input
             type="text"
             bind:value={baseUrl}
             placeholder="http://192.168.1.100:4533"
-            class="input"
+            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
           />
-          <span class="help-text">Enter your Navidrome server URL (include port, typically :4533)</span>
+          <span class="text-xs text-secondary mt-1">Enter your Navidrome server URL (include port, typically :4533)</span>
         </label>
 
-        <label>
-          <span class="label-text">Username</span>
+        <label class="flex flex-col gap-[6px]">
+          <span class="text-[13px] font-medium text-primary">Username</span>
           <input
             type="text"
             bind:value={username}
             placeholder="Enter username"
-            class="input"
+            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
           />
         </label>
 
-        <label>
-          <span class="label-text">Password</span>
-          <div class="password-field">
+        <label class="flex flex-col gap-[6px]">
+          <span class="text-[13px] font-medium text-primary">Password</span>
+          <div class="relative flex items-center">
             <input
               type={showPassword ? 'text' : 'password'}
               bind:value={password}
               placeholder={hasPassword ? 'Enter new password' : 'Enter password'}
-              class="input"
+              class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
             />
             <button 
               type="button" 
-              class="password-toggle" 
+              class="absolute right-2 bg-transparent border-none cursor-pointer text-lg p-1 opacity-60 hover:opacity-100 transition-opacity active:scale-95"
               on:click={() => showPassword = !showPassword}
               title={showPassword ? 'Hide' : 'Show'}
             >
@@ -176,9 +179,9 @@
             <echosync-path-mapping-editor mappings={JSON.stringify(pathMappings)} on:es-path-update={(e) => pathMappings = e.detail} />
         </div>
 
-        <div class="button-group">
+        <div class="flex gap-3 flex-wrap">
           <button
-            class="btn-primary"
+            class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
             on:click={saveSettings}
             disabled={saving}
           >
@@ -187,7 +190,7 @@
           
           {#if hasPassword}
             <button
-              class="btn-secondary"
+              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
               on:click={testConnection}
               disabled={testing}
             >
@@ -197,7 +200,7 @@
 
           {#if !isActive}
             <button
-              class="btn-secondary"
+              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
               on:click={activateServer}
               disabled={activating}
             >
@@ -210,185 +213,4 @@
   {/if}
 </section>
 
-<style>
-  .navidrome-card {
-    padding: 20px;
-    margin-bottom: 16px;
-  }
 
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.1));
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .card-header h2 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 600;
-  }
-
-  .provider-badge {
-    font-size: 12px;
-    padding: 4px 8px;
-    border-radius: 4px;
-    background: rgba(33, 150, 243, 0.2);
-    color: #2196f3;
-  }
-
-  .status-badge {
-    font-size: 12px;
-    padding: 4px 8px;
-    border-radius: 4px;
-  }
-
-  .status-badge.connected {
-    background: rgba(0, 230, 118, 0.2);
-    color: #00e676;
-  }
-
-  .status-badge.disconnected {
-    background: rgba(255, 152, 0, 0.2);
-    color: #ff9800;
-  }
-
-  .status-badge.authenticated {
-    background: rgba(0, 230, 118, 0.2);
-    color: #00e676;
-  }
-
-  .status-badge.active-server {
-    background: rgba(59, 130, 246, 0.2);
-    color: #3b82f6;
-    font-weight: 600;
-  }
-
-  .section {
-    margin-bottom: 24px;
-  }
-
-  .section h3 {
-    margin: 0 0 16px 0;
-    font-size: 16px;
-    font-weight: 600;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .label-text {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-primary);
-  }
-
-  .help-text {
-    font-size: 12px;
-    color: var(--muted);
-  }
-
-  .input {
-    padding: 10px 12px;
-    border-radius: 6px;
-    border: 1px solid var(--border-color, rgba(255,255,255,0.1));
-    background: var(--input-bg, rgba(0,0,0,0.2));
-    color: var(--text-primary);
-    font-size: 14px;
-  }
-
-  .input:focus {
-    outline: none;
-    border-color: var(--primary, #00e676);
-  }
-
-  .password-field {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
-  .password-field .input {
-    flex: 1;
-    padding-right: 45px;
-  }
-
-  .password-toggle {
-    position: absolute;
-    right: 8px;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    font-size: 18px;
-    padding: 4px 8px;
-    opacity: 0.6;
-    transition: opacity 0.2s;
-  }
-
-  .password-toggle:hover {
-    opacity: 1;
-  }
-
-  .button-group {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  .btn-primary, .btn-secondary {
-    padding: 10px 20px;
-    border-radius: 6px;
-    border: none;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-primary {
-    background: var(--primary, #00e676);
-    color: #000;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: var(--primary-hover, #00d368);
-  }
-
-  .btn-secondary {
-    background: transparent;
-    color: var(--text-primary);
-    border: 1px solid var(--border-color, rgba(255,255,255,0.2));
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: rgba(255,255,255,0.05);
-  }
-
-  .btn-primary:disabled, .btn-secondary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .loading {
-    padding: 20px;
-    text-align: center;
-    color: var(--muted);
-  }
-</style>

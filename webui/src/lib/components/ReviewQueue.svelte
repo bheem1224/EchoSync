@@ -1,4 +1,7 @@
-<svelte:options customElement="echosync-review-queue" />
+<svelte:options customElement={{
+  tag: 'echosync-review-queue',
+  shadow: 'none'
+}} />
 
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -147,7 +150,7 @@
       <h2 class="text-2xl font-bold text-primary m-0">Review Queue</h2>
     </div>
     <button
-      class="px-4 py-2 rounded-global text-sm font-medium bg-surface text-primary border border-global hover:bg-surface-hover transition-colors"
+      class="px-4 py-2 rounded-global text-sm font-medium bg-surface text-primary border border-global hover:bg-surface-hover transition-colors active:scale-95"
       on:click={loadQueue}
       disabled={loading}
     >
@@ -155,7 +158,7 @@
     </button>
   </div>
 
-  <div class="m-4 mt-0 flex-1 min-h-0 overflow-y-auto rounded-global border border-global bg-surface">
+  <div class="m-4 mt-0 flex-1 min-h-0 overflow-y-auto rounded-global bg-surface backdrop-blur-md border border-glass-border">
     {#if loading}
       <div class="p-8 text-center text-secondary">Loading review queue...</div>
     {:else if error}
@@ -207,7 +210,7 @@
                       </span>
                     {/if}
                     <button
-                      class="px-3 py-2 rounded-global text-sm font-medium bg-accent text-primary hover:opacity-90 transition-opacity"
+                      class="px-3 py-2 rounded-global text-sm font-medium bg-accent text-primary hover:opacity-90 transition-opacity active:scale-95"
                       on:click={() => openReviewModal(task)}
                     >
                       Review & Edit

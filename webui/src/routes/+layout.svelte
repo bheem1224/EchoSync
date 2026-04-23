@@ -1,8 +1,11 @@
 <script>
   import { onMount } from 'svelte';
+  import { fade } from 'svelte/transition';
+  import { page } from '$app/stores';
   import Sidebar from '../components/Sidebar.svelte';
   import BottomNav from '../components/BottomNav.svelte';
-  import Toast from '../components/Toast.svelte';
+  import ToastNotifications from '../lib/components/ToastNotifications.svelte';
+  import Omnibar from '../lib/components/Omnibar.svelte';
   import BottomPlayer from '../components/BottomPlayer.svelte';
   import EncryptionKeyWarning from '../components/EncryptionKeyWarning.svelte';
   import MigrationModal from '../components/MigrationModal.svelte';
@@ -57,16 +60,36 @@
   {#if innerWidth >= 768}
     <Sidebar />
     <main class="app-content">
-      <slot />
+      {#key $page.url}
+        <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
+          <slot />
+        </div>
+      {/key}
     </main>
   {:else}
+
+    <header class="flex justify-between items-center p-4 bg-surface border-b border-glass-border">
+      <div class="font-bold text-lg text-primary tracking-tight">EchoSync</div>
+      <button
+        class="p-2 bg-surface-hover rounded-global active:scale-95 transition-all text-primary"
+        on:click={() => window.dispatchEvent(new CustomEvent('es-omnibar-toggle'))}
+      >
+        🔍
+      </button>
+    </header>
     <main class="app-content">
-      <slot />
+
+      {#key $page.url}
+        <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
+          <slot />
+        </div>
+      {/key}
     </main>
     <BottomNav />
   {/if}
   <BottomPlayer />
-  <Toast />
+  <ToastNotifications />
+  <Omnibar />
   
   {#if showEncryptionWarning}
     <EncryptionKeyWarning 

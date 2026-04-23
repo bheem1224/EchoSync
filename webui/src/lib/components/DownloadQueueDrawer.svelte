@@ -257,7 +257,7 @@
   <div class="flex gap-2 px-4 py-3 bg-gray-850 border-b border-gray-700">
     <button
       on:click={startDownloadManager}
-      class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+      class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
       disabled={isLoading || downloadManagerRunning}
       title={downloadManagerRunning ? 'Download manager is already running' : 'Start download processing'}
     >
@@ -267,7 +267,7 @@
 
     <button
       on:click={searchSelected}
-      class="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+      class="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
       disabled={!hasSelection || isLoading}
       title="Search for selected items"
     >
@@ -277,7 +277,7 @@
 
     <button
       on:click={deleteSelected}
-      class="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+      class="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
       disabled={!hasSelection || isLoading}
     >
       <span>🗑️</span>
@@ -286,7 +286,7 @@
 
     <button
       on:click={clearQueue}
-      class="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-medium"
+      class="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-medium active:scale-95"
       disabled={totalTracks === 0 || isLoading}
     >
       <span>❌</span>

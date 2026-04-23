@@ -1,4 +1,7 @@
-<svelte:options customElement="tidal-dashboard-card" />
+<svelte:options customElement={{
+  tag: 'tidal-dashboard-card',
+  shadow: 'none'
+}} />
 <script>
   export let apiBase = '';
   import { onMount } from 'svelte';
@@ -193,22 +196,22 @@
   }
 </script>
 
-<section class="tidal-card card">
-  <div class="card-header">
-    <div class="header-left">
-      <h2>Tidal</h2>
-      <span class="provider-badge">Streaming Service</span>
+<section class="p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global mb-4">
+  <div class="flex justify-between items-center mb-5 pb-3 border-b border-glass-border">
+    <div class="flex items-center gap-3">
+      <h2 class="m-0 text-xl font-semibold">Tidal</h2>
+      <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ba6415]/20 text-[#ba6415]">Streaming Service</span>
     </div>
   </div>
 
   {#if loading}
-    <div class="loading">Loading...</div>
+    <div class="p-5 text-center text-secondary">Loading...</div>
   {:else}
     <!-- Global Redirect URI -->
-    <div class="section">
-      <div class="section-header">
-        <h3>Global Redirect URI (Auto-generated & Immutable)</h3>
-        <button class="btn-secondary" on:click={() => redirectCollapsed = !redirectCollapsed}>
+    <div class="mb-6">
+      <div class="mb-3">
+        <h3 class="m-0 mb-4 text-base font-semibold">Global Redirect URI (Auto-generated & Immutable)</h3>
+        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => redirectCollapsed = !redirectCollapsed}>
           {redirectCollapsed ? 'Expand' : 'Collapse'}
         </button>
       </div>
@@ -218,68 +221,68 @@
             type="text"
             bind:value={redirectUri}
             placeholder="Loading dynamic redirect URI..."
-            class="input readonly-input"
+            class="px-3 py-2 bg-background/50 border border-border rounded-global text-sm text-primary w-full box-border opacity-70 cursor-not-allowed select-all"
             readonly={true}
             disabled={true}
           />
         </div>
-        <p class="help-text" style="margin-top: 8px;">This auto-generated URI must be registered in all of your Tidal Developer Applications.</p>
+        <p class="text-xs text-secondary mt-1" style="margin-top: 8px;">This auto-generated URI must be registered in all of your Tidal Developer Applications.</p>
       {/if}
     </div>
 
     <!-- Accounts -->
-    <div class="section">
-      <div class="section-header">
-        <h3>Accounts ({accounts.length}/{MAX_ACCOUNTS})</h3>
-        <p class="help-text">Tidal requires per-account Client ID and Secret.</p>
+    <div class="mb-6">
+      <div class="mb-3">
+        <h3 class="m-0 mb-4 text-base font-semibold">Accounts ({accounts.length}/{MAX_ACCOUNTS})</h3>
+        <p class="text-xs text-secondary mt-1">Tidal requires per-account Client ID and Secret.</p>
         {#if accounts.length < MAX_ACCOUNTS}
-          <button class="btn-secondary" on:click={openAddModal}>
+          <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={openAddModal}>
             + Add Account
           </button>
         {/if}
       </div>
 
-      <div class="accounts-list">
+      <div class="flex flex-col gap-2">
         {#each accounts as account}
-          <div class="account-row">
-            <div class="account-info">
-              <div class="account-name">{account.display_name || account.account_name}</div>
-              <div class="account-status">
+          <div class="flex justify-between items-center p-3 bg-white/5 border border-white/10 rounded-global">
+            <div class="flex flex-col gap-1">
+              <div class="font-medium text-[14px]">{account.display_name || account.account_name}</div>
+              <div class="flex gap-[6px] flex-wrap">
                 {#if account.is_authenticated}
-                  <span class="status-badge authenticated">✓ Authenticated</span>
+                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#00e676]/20 text-[#00e676]">✓ Authenticated</span>
                 {:else}
-                  <span class="status-badge unauthenticated">⚠ Not Authenticated</span>
+                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-yellow-500/20 text-yellow-500">⚠ Not Authenticated</span>
                 {/if}
                 {#if account.is_active}
-                  <span class="status-badge active">● Active</span>
+                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ba6415]/20 text-[#ba6415]">● Active</span>
                 {/if}
                 {#if account.client_secret_configured}
                   <span class="status-badge configured">🔒 Configured</span>
                 {/if}
               </div>
             </div>
-            <div class="account-actions">
-              <button class="btn-link" on:click={() => openEditModal(account)} title="Edit credentials">
+            <div class="flex gap-2 items-center flex-wrap">
+              <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => openEditModal(account)} title="Edit credentials">
                 ⚙️ Edit
               </button>
-              <button class="btn-link" on:click={() => authenticate(account.id)}>
+              <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => authenticate(account.id)}>
                 {account.is_authenticated ? 'Reauthenticate' : 'Authenticate'}
               </button>
               <button 
-                class="btn-toggle" 
+                class="px-4 py-2 bg-white/10 text-primary border-none rounded-global transition-colors hover:bg-white/15 active:scale-95"
                 class:active={account.is_active}
                 on:click={() => toggleAccount(account.id, account.is_active)}
                 title={account.is_active ? 'Deactivate' : 'Activate'}
               >
                 {account.is_active ? 'Deactivate' : 'Activate'}
               </button>
-              <button class="btn-delete" on:click={() => deleteAccount(account.id, account.display_name || account.account_name)}>
+              <button class="px-4 py-2 bg-red-500/20 text-red-500 border-none rounded-global transition-colors hover:bg-red-500/30 active:scale-95" on:click={() => deleteAccount(account.id, account.display_name || account.account_name)}>
                 ✕
               </button>
             </div>
           </div>
         {:else}
-          <div class="empty-state">No accounts added yet. Click "Add Account" to get started.</div>
+          <div class="p-4 text-center text-secondary text-sm">No accounts added yet. Click "Add Account" to get started.</div>
         {/each}
       </div>
     </div>
@@ -288,44 +291,44 @@
 
 <!-- Credentials Modal -->
 {#if showCredentialsModal}
-  <div class="modal-overlay" on:click={closeModal}>
-    <div class="modal-content" on:click|stopPropagation>
-      <div class="modal-header">
-        <h3>{modalMode === 'add' ? 'Add Tidal Account' : 'Edit Tidal Account'}</h3>
-        <button class="modal-close" on:click={closeModal}>✕</button>
+  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]" on:click={closeModal}>
+    <div class="bg-[#1e1e2e] rounded-[10px] p-0 min-w-[420px] max-w-[90vw] border border-white/15" on:click|stopPropagation>
+      <div class="flex justify-between items-center px-5 py-4 border-b border-white/10">
+        <h3 class="m-0 mb-4 text-base font-semibold">{modalMode === 'add' ? 'Add Tidal Account' : 'Edit Tidal Account'}</h3>
+        <button class="bg-transparent border-none text-[18px] cursor-pointer text-secondary p-0 leading-none active:scale-95 transition-all duration-200" on:click={closeModal}>✕</button>
       </div>
-      <div class="modal-body">
-        <label>
-          <span class="label-text">Account Name</span>
+      <div class="p-5 flex flex-col gap-[14px]">
+        <label class="flex flex-col gap-[6px]">
+          <span class="text-[13px] font-medium text-primary">Account Name</span>
           <input
             type="text"
             bind:value={modalAccount.account_name}
             placeholder="My Tidal Account"
-            class="input"
+            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
           />
         </label>
-        <label>
-          <span class="label-text">Client ID</span>
+        <label class="flex flex-col gap-[6px]">
+          <span class="text-[13px] font-medium text-primary">Client ID</span>
           <input
             type="text"
             bind:value={modalAccount.client_id}
             placeholder="Enter Tidal Client ID"
-            class="input"
+            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
           />
         </label>
-        <label>
-          <span class="label-text">Client Secret</span>
-          <div class="password-field">
+        <label class="flex flex-col gap-[6px]">
+          <span class="text-[13px] font-medium text-primary">Client Secret</span>
+          <div class="relative flex items-center">
             <input
               type={showSecret ? 'text' : 'password'}
               bind:value={modalAccount.client_secret}
               on:input={() => secretChanged = true}
               placeholder="Enter Tidal Client Secret"
-              class="input"
+              class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
             />
             <button 
               type="button" 
-              class="password-toggle" 
+              class="absolute right-2 bg-transparent border-none cursor-pointer text-lg p-1 opacity-60 hover:opacity-100 transition-opacity active:scale-95"
               on:click={() => showSecret = !showSecret}
               title={showSecret ? 'Hide' : 'Show'}
             >
@@ -333,11 +336,11 @@
             </button>
           </div>
         </label>
-        <p class="modal-help">Each Tidal account requires its own Client ID and Client Secret from the Tidal Developer Portal.</p>
+        <p class="text-[12px] text-secondary m-0">Each Tidal account requires its own Client ID and Client Secret from the Tidal Developer Portal.</p>
       </div>
-      <div class="modal-footer">
-        <button class="btn-secondary" on:click={closeModal}>Cancel</button>
-        <button class="btn-primary" on:click={saveAccount}>
+      <div class="flex justify-end gap-[10px] px-5 py-4 border-t border-white/10">
+        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={closeModal}>Cancel</button>
+        <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={saveAccount}>
           {modalMode === 'add' ? 'Add Account' : 'Save Changes'}
         </button>
       </div>
@@ -345,350 +348,4 @@
   </div>
 {/if}
 
-<style>
-  .tidal-card {
-    padding: 20px;
-    margin-bottom: 16px;
-  }
 
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.1));
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .card-header h2 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 600;
-  }
-
-  .provider-badge {
-    font-size: 12px;
-    padding: 4px 8px;
-    border-radius: 4px;
-    background: rgba(0, 180, 255, 0.2);
-    color: #00b4ff;
-  }
-
-  .section {
-    margin-bottom: 24px;
-  }
-
-  .section h3 {
-    margin: 0 0 8px 0;
-    font-size: 16px;
-    font-weight: 600;
-  }
-
-  .help-text {
-    font-size: 13px;
-    color: var(--muted);
-    margin: 0 0 12px 0;
-  }
-
-  .section-header {
-    margin-bottom: 12px;
-  }
-
-  .section-header h3 {
-    margin-bottom: 4px;
-  }
-
-  .section-header button {
-    margin-top: 8px;
-  }
-
-  .redirect-uri-group {
-    display: flex;
-    gap: 8px;
-  }
-
-  .redirect-uri-group .input {
-    flex: 1;
-  }
-
-  .input {
-    padding: 8px 12px;
-    border-radius: 6px;
-    background: var(--input-bg, rgba(255,255,255,0.05));
-    border: 1px solid var(--border-color, rgba(255,255,255,0.1));
-    color: var(--text);
-    font-size: 14px;
-    width: 100%;
-  }
-
-  .input:focus {
-    outline: none;
-    border-color: #00b4ff;
-  }
-
-  .readonly-input {
-    opacity: 0.7;
-    cursor: not-allowed;
-    background: rgba(0, 0, 0, 0.2);
-    user-select: all;
-  }
-
-  .btn-primary, .btn-secondary, .btn-link, .btn-toggle, .btn-delete {
-    padding: 8px 16px;
-    border-radius: 6px;
-    border: none;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.2s;
-  }
-
-  .btn-primary {
-    background: #00b4ff;
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #0099dd;
-  }
-
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-secondary {
-    background: rgba(255,255,255,0.1);
-    color: var(--text);
-  }
-
-  .btn-secondary:hover {
-    background: rgba(255,255,255,0.15);
-  }
-
-  .btn-link {
-    background: transparent;
-    color: #00b4ff;
-    padding: 4px 8px;
-  }
-
-  .btn-link:hover {
-    text-decoration: underline;
-  }
-
-  .btn-toggle {
-    background: rgba(255,255,255,0.1);
-    color: var(--text);
-  }
-
-  .btn-toggle.active {
-    background: rgba(0, 180, 255, 0.2);
-    color: #00b4ff;
-  }
-
-  .btn-toggle:hover {
-    background: rgba(255,255,255,0.15);
-  }
-
-  .btn-delete {
-    background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
-    padding: 6px 10px;
-  }
-
-  .btn-delete:hover {
-    background: rgba(239, 68, 68, 0.3);
-  }
-
-  .accounts-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .account-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px;
-    background: rgba(255,255,255,0.05);
-    border-radius: 6px;
-    border: 1px solid var(--border-color, rgba(255,255,255,0.1));
-  }
-
-  .account-info {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .account-name {
-    font-weight: 500;
-    font-size: 14px;
-  }
-
-  .account-status {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .status-badge {
-    font-size: 12px;
-    padding: 2px 8px;
-    border-radius: 4px;
-  }
-
-  .status-badge.authenticated {
-    background: rgba(34, 197, 94, 0.2);
-    color: #22c55e;
-  }
-
-  .status-badge.unauthenticated {
-    background: rgba(251, 191, 36, 0.2);
-    color: #fbbf24;
-  }
-
-  .status-badge.active {
-    background: rgba(59, 130, 246, 0.2);
-    color: #3b82f6;
-  }
-
-  .status-badge.configured {
-    background: rgba(168, 85, 247, 0.2);
-    color: #a855f7;
-  }
-
-  .account-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .empty-state {
-    padding: 24px;
-    text-align: center;
-    color: var(--muted);
-  }
-
-  .loading {
-    padding: 24px;
-    text-align: center;
-    color: var(--muted);
-  }
-
-  /* Modal Styles */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal-content {
-    background: var(--card-bg, #1e1e1e);
-    border-radius: 8px;
-    width: 90%;
-    max-width: 500px;
-    max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px;
-    border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.1));
-  }
-
-  .modal-header h3 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-  }
-
-  .modal-close {
-    background: transparent;
-    border: none;
-    color: var(--text);
-    font-size: 20px;
-    cursor: pointer;
-    padding: 4px 8px;
-  }
-
-  .modal-close:hover {
-    color: #ef4444;
-  }
-
-  .modal-body {
-    padding: 20px;
-  }
-
-  .modal-body label {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-bottom: 16px;
-  }
-
-  .label-text {
-    font-size: 14px;
-    color: var(--text);
-    font-weight: 500;
-  }
-
-  .modal-help {
-    font-size: 13px;
-    color: var(--muted);
-    margin-top: 8px;
-  }
-
-  .password-field {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
-  .password-field .input {
-    flex: 1;
-    padding-right: 40px;
-  }
-
-  .password-toggle {
-    position: absolute;
-    right: 8px;
-    background: transparent;
-    border: none;
-    color: var(--text);
-    cursor: pointer;
-    font-size: 18px;
-    padding: 4px 8px;
-    opacity: 0.6;
-    transition: opacity 0.2s;
-  }
-
-  .password-toggle:hover {
-    opacity: 1;
-  }
-
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 16px 20px;
-    border-top: 1px solid var(--border-color, rgba(255,255,255,0.1));
-  }
-</style>

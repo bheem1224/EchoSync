@@ -11,7 +11,7 @@
 
 <nav class="bottom-nav card">
   {#each items as it}
-    <button class="nav-btn" on:click={() => nav(it.href)}>{it.label}</button>
+    <button class="nav-btn active:scale-95 transition-all duration-200" on:click={() => nav(it.href)}>{it.label}</button>
   {/each}
 </nav>
 

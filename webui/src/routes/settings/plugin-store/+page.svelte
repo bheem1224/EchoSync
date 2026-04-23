@@ -95,7 +95,7 @@
         Browse and install community and official plugins to extend Echosync's functionality.
       </p>
     </div>
-    <button class="btn-manage-repos" on:click={() => showReposModal = !showReposModal}>
+    <button class="btn-manage-repos active:scale-95 transition-all duration-200" on:click={() => showReposModal = !showReposModal}>
       {showReposModal ? 'Close Repositories' : 'Manage Repositories'}
     </button>
   </header>
@@ -108,7 +108,7 @@
           <li>
             <span class="repo-url">{repo}</span>
             {#if repo !== 'https://github.com/bheem1224/EchoSync/tree/main/plugins'}
-              <button class="btn-remove" on:click={() => removeRepo(repo)}>Remove</button>
+              <button class="btn-remove active:scale-95 transition-all duration-200" on:click={() => removeRepo(repo)}>Remove</button>
             {:else}
               <span class="default-badge">Official</span>
             {/if}
@@ -146,7 +146,7 @@
             </div>
 
             <button
-              class="btn-install"
+              class="btn-install active:scale-95 transition-all duration-200"
               class:installed={plugin._installed}
               disabled={downloading !== null || plugin._installed}
               on:click={() => installPlugin(plugin)}

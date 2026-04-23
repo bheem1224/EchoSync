@@ -38,7 +38,7 @@
   <aside class="settings-panel">
     <div class="panel-header">
       <strong>Settings</strong>
-      <button class="close" on:click={close}>✕</button>
+      <button class="close active:scale-95 transition-all duration-200" on:click={close}>✕</button>
     </div>
     <nav class="panel-links">
       {#each links as l}

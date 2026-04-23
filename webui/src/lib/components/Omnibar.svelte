@@ -1,166 +1,190 @@
 <script>
-    import { goto } from '$app/navigation';
+  import { onMount, tick } from 'svelte';
+  import { goto } from '$app/navigation';
 
-    let query = '';
-    let results = { artists: [], albums: [], tracks: [] };
-    let showDropdown = false;
-    let loading = false;
-    let debounceTimer;
+  let isOpen = false;
+  let searchQuery = '';
+  let selectedIndex = 0;
+  let inputRef;
 
-    const performSearch = async (q) => {
-        if (!q || q.length < 2) {
-            results = { artists: [], albums: [], tracks: [] };
-            showDropdown = false;
-            loading = false;
-            return;
-        }
+  const allActions = [
+    { title: 'Dashboard', path: '/dashboard', icon: '🏠' },
+    { title: 'Search', path: '/search', icon: '🔍' },
+    { title: 'Library Manager', path: '/library/manager', icon: '📚' },
+    { title: 'Review Queue', path: '/library/review-queue', icon: '📝' },
+    { title: 'Sync Queue', path: '/sync', icon: '🔄' },
+    { title: 'Settings: General', path: '/settings/system', icon: '⚙️' },
+    { title: 'Settings: Preferences', path: '/settings/preferences', icon: '🎨' },
+    { title: 'Settings: Metadata', path: '/settings/metadata', icon: '🏷️' },
+    { title: 'Settings: Downloads', path: '/settings/downloads', icon: '⬇️' },
+    { title: 'Settings: Music Services', path: '/settings/music-services', icon: '🎵' },
+    { title: 'Settings: Download Clients', path: '/settings/download-clients', icon: '📥' },
+    { title: 'Settings: Servers', path: '/settings/servers', icon: '🖥️' },
+    { title: 'Settings: Plugin Store', path: '/settings/plugin-store', icon: '🧩' },
+    { title: 'Settings: Background Jobs', path: '/settings/jobs', icon: '⏱️' },
+    { title: 'Settings: Misc', path: '/settings/misc', icon: '🛠️' }
+  ];
 
-        loading = true;
-        try {
-            // Using /api/manager/search which maps to MusicDatabase.search_library
-            const res = await fetch(`/api/manager/search?q=${encodeURIComponent(q)}`);
-            if (res.ok) {
-                const data = await res.json();
-                results = data;
-                showDropdown = true;
-            }
-        } catch (error) {
-            console.error('Search failed:', error);
-        } finally {
-            loading = false;
-        }
+  $: filteredActions = allActions.filter(action =>
+    action.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  $: {
+    if (searchQuery) {
+      selectedIndex = 0;
+    }
+  }
+
+
+  function handleToggleEvent() {
+    isOpen = !isOpen;
+    if (isOpen) {
+      searchQuery = '';
+      selectedIndex = 0;
+      tick().then(() => inputRef && inputRef.focus());
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener('es-omnibar-toggle', handleToggleEvent);
+    return () => {
+      window.removeEventListener('es-omnibar-toggle', handleToggleEvent);
     };
+  });
 
-    function handleInput() {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-            performSearch(query);
-        }, 300);
+  function handleKeydown(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      isOpen = !isOpen;
+      if (isOpen) {
+        searchQuery = '';
+        selectedIndex = 0;
+        tick().then(() => inputRef && inputRef.focus());
+      }
+    } else if (isOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        isOpen = false;
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex + 1) % filteredActions.length;
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex - 1 + filteredActions.length) % filteredActions.length;
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        executeAction();
+      }
     }
+  }
 
-    function handleClickOutside(event) {
-        if (typeof window !== 'undefined') {
-            const container = document.querySelector('.omnibar-container');
-            if (container && !container.contains(event.target)) {
-                showDropdown = false;
-            }
-        }
+  function executeAction() {
+    if (filteredActions.length > 0) {
+      const action = filteredActions[selectedIndex];
+      isOpen = false;
+      goto(action.path);
     }
+  }
 
-    function navigate(type, item) {
-        showDropdown = false;
-        query = '';
+  function handleClick(index) {
+    selectedIndex = index;
+    executeAction();
+  }
 
-        // Navigation Logic using correct fields from updated backend
-        if (type === 'artist') {
-            goto(`/library?artist_id=${item.id}`);
-        } else if (type === 'album') {
-             // Use artist_id if available (now guaranteed by backend fix)
-             if (item.artist_id) {
-                 goto(`/library?artist_id=${item.artist_id}&highlight_album=${item.id}`);
-             } else {
-                 console.warn("Artist ID missing for album navigation", item);
-             }
-        } else if (type === 'track') {
-             if (item.artist_id) {
-                 goto(`/library?artist_id=${item.artist_id}&highlight_track=${item.id}`);
-             } else {
-                 console.warn("Artist ID missing for track navigation", item);
-             }
-        }
+  function handleOverlayClick(e) {
+    if (e.target === e.currentTarget) {
+      isOpen = false;
     }
+  }
 </script>
 
-<svelte:window on:click={handleClickOutside} />
+<svelte:window on:keydown={handleKeydown} />
 
-<div class="omnibar-container relative w-full z-50">
-    <div class="relative">
+{#if isOpen}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div
+    class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex justify-center items-start pt-[15vh] px-4 animate-fade-in"
+    on:click={handleOverlayClick}
+  >
+    <div class="w-[90vw] max-w-2xl bg-surface border border-glass-border rounded-global shadow-2xl overflow-hidden flex flex-col transform transition-all animate-scale-in">
+      <div class="flex items-center px-4 border-b border-glass-border">
+        <span class="text-secondary text-xl mr-2">🔍</span>
         <input
-            type="text"
-            bind:value={query}
-            on:input={handleInput}
-            placeholder="Search library..."
-            class="w-full bg-gray-800 border border-gray-700 rounded-lg py-2 px-4 pl-10 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-colors shadow-sm"
-            on:focus={() => { if (query.length >= 2) showDropdown = true; }}
+          bind:this={inputRef}
+          bind:value={searchQuery}
+          type="text"
+          placeholder="Type a command or search..."
+          class="flex-1 py-4 bg-transparent outline-none text-primary text-lg placeholder-secondary"
         />
-        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <svg class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+        <div class="text-xs text-secondary bg-surface-hover px-2 py-1 rounded border border-glass-border flex items-center gap-1 font-mono">
+          <span>ESC</span>
         </div>
-        {#if loading}
-            <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-            </div>
-        {/if}
+      </div>
+
+      {#if filteredActions.length > 0}
+        <div class="max-h-[60vh] overflow-y-auto py-2">
+          {#each filteredActions as action, i}
+            <button
+              class="w-full text-left px-4 py-3 flex items-center gap-3 transition-colors focus:outline-none {i === selectedIndex ? 'bg-surface-hover text-accent border-l-2 border-accent' : 'text-primary hover:bg-surface-hover/50 border-l-2 border-transparent'} active:scale-95"
+              on:click={() => handleClick(i)}
+              on:mousemove={() => selectedIndex = i}
+            >
+              <span class="text-xl">{action.icon}</span>
+              <span class="font-medium flex-1">{action.title}</span>
+              {#if i === selectedIndex}
+                <span class="text-xs text-accent/70 font-mono">⏎</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <div class="py-12 px-4 text-center text-secondary">
+          No results found for "{searchQuery}"
+        </div>
+      {/if}
+      <div class="px-4 py-2 border-t border-glass-border bg-black/20 flex justify-between items-center text-xs text-secondary">
+        <div class="flex items-center gap-4">
+          <span class="flex items-center gap-1"><kbd class="bg-surface-hover border border-glass-border rounded px-1 font-mono">↑</kbd><kbd class="bg-surface-hover border border-glass-border rounded px-1 font-mono">↓</kbd> to navigate</span>
+          <span class="flex items-center gap-1"><kbd class="bg-surface-hover border border-glass-border rounded px-1 font-mono">↵</kbd> to select</span>
+        </div>
+        <span>EchoSync Omnibar</span>
+      </div>
     </div>
+  </div>
+{/if}
 
-    {#if showDropdown && (results.artists?.length > 0 || results.albums?.length > 0 || results.tracks?.length > 0)}
-        <div class="absolute top-full left-0 right-0 mt-2 bg-gray-900 border border-gray-700 rounded-lg shadow-xl max-h-[60vh] overflow-y-auto z-50">
-            {#if results.artists && results.artists.length > 0}
-                <div class="p-2">
-                    <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-2">Artists</h3>
-                    {#each results.artists as artist}
-                        <button
-                            class="w-full text-left flex items-center p-2 hover:bg-gray-800 rounded-md transition-colors group"
-                            on:click={() => navigate('artist', artist)}
-                        >
-                            {#if artist.image_url}
-                                <img src={artist.image_url} alt={artist.name} class="w-8 h-8 rounded-full object-cover mr-3 bg-black" />
-                            {:else}
-                                <div class="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center mr-3">
-                                    <span class="text-xs text-gray-400">?</span>
-                                </div>
-                            {/if}
-                            <span class="text-white font-medium group-hover:text-blue-400 transition-colors">{artist.name}</span>
-                        </button>
-                    {/each}
-                </div>
-            {/if}
+<style>
+  .animate-fade-in {
+    animation: fadeIn 0.15s ease-out forwards;
+  }
+  .animate-scale-in {
+    animation: scaleIn 0.1s ease-out forwards;
+    transform-origin: top center;
+  }
 
-            {#if results.albums && results.albums.length > 0}
-                <div class="p-2 border-t border-gray-800">
-                    <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-2">Albums</h3>
-                    {#each results.albums as album}
-                        <button
-                            class="w-full text-left flex items-center p-2 hover:bg-gray-800 rounded-md transition-colors group"
-                            on:click={() => navigate('album', album)}
-                        >
-                            {#if album.cover_image_url}
-                                <img src={album.cover_image_url} alt={album.title} class="w-8 h-8 rounded object-cover mr-3 bg-black" />
-                            {:else}
-                                <div class="w-8 h-8 rounded bg-gray-700 flex items-center justify-center mr-3">
-                                    <span class="text-xs text-gray-400">?</span>
-                                </div>
-                            {/if}
-                            <div class="flex flex-col">
-                                <span class="text-white font-medium group-hover:text-blue-400 transition-colors">{album.title}</span>
-                                <span class="text-xs text-gray-400">{album.artist_name} • {album.year || 'Unknown'}</span>
-                            </div>
-                        </button>
-                    {/each}
-                </div>
-            {/if}
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
 
-            {#if results.tracks && results.tracks.length > 0}
-                <div class="p-2 border-t border-gray-800">
-                    <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-2">Tracks</h3>
-                    {#each results.tracks as track}
-                        <button
-                            class="w-full text-left flex items-center p-2 hover:bg-gray-800 rounded-md transition-colors group"
-                            on:click={() => navigate('track', track)}
-                        >
-                            <div class="flex flex-col">
-                                <span class="text-white font-medium group-hover:text-blue-400 transition-colors">{track.title}</span>
-                                <span class="text-xs text-gray-400">{track.artist_name} • {track.album_title}</span>
-                            </div>
-                        </button>
-                    {/each}
-                </div>
-            {/if}
-        </div>
-    {/if}
-</div>
+  @keyframes scaleIn {
+    from { opacity: 0; transform: scale(0.98); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* Styling scrollbar for glass effect */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+</style>

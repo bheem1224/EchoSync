@@ -12,7 +12,7 @@
     <div class="page-container">
 
         <!-- Header: Tabs & Omnibar -->
-        <div class="page__header flex-row items-center gap-4">
+        <div class="page__header flex-col md:flex-row items-center gap-4">
             <div class="flex items-center gap-8">
                 <div>
                     <p class="eyebrow">Media Management</p>

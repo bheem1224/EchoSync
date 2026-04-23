@@ -281,7 +281,7 @@
         <div class="pointer-events-none absolute -right-16 top-4 h-44 w-44 rounded-full bg-cyan-400/20 blur-3xl"></div>
         <div class="pointer-events-none absolute -left-14 bottom-0 h-36 w-36 rounded-full bg-emerald-300/15 blur-3xl"></div>
 
-        <div class="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+        <div class="relative flex flex-col gap-6 flex-col md:flex-row md:items-center md:justify-between">
             <div class="space-y-2">
                 <p class="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-200/70">Library Intelligence</p>
                 <h1 class="text-3xl font-black leading-tight text-white md:text-4xl">Suggestion Engine Dashboard</h1>
@@ -315,7 +315,7 @@
         <div class="flex items-center justify-between">
             <h2 class="text-xl font-bold text-white md:text-2xl">Managed Accounts</h2>
             <button
-                class="rounded-xl border border-cyan-300/20 bg-slate-900/50 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200/40 hover:bg-slate-800/70"
+                class="rounded-xl border border-cyan-300/20 bg-slate-900/50 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200/40 hover:bg-slate-800/70 active:scale-95"
                 on:click={fetchAccounts}
             >
                 Refresh Accounts
@@ -336,7 +336,7 @@
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {#each accounts as account}
                     <button
-                        class="group rounded-2xl border border-slate-700 bg-slate-900/60 p-5 text-left transition hover:-translate-y-1 hover:border-cyan-300/45 hover:bg-slate-900"
+                        class="group rounded-2xl border border-slate-700 bg-slate-900/60 p-5 text-left transition hover:-translate-y-1 hover:border-cyan-300/45 hover:bg-slate-900 active:scale-95"
                         on:click={() => openAccount(account)}
                     >
                         <div class="mb-4 flex items-start justify-between">
@@ -373,7 +373,7 @@
                 <h3 class="text-xl font-bold text-white">Successfully Suggested Tracks</h3>
             </div>
             <button
-                class="rounded-xl border border-cyan-300/20 bg-slate-900/60 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200/40 hover:bg-slate-800/70"
+                class="rounded-xl border border-cyan-300/20 bg-slate-900/60 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200/40 hover:bg-slate-800/70 active:scale-95"
                 on:click={fetchAudit}
             >
                 Refresh Log
@@ -442,7 +442,7 @@
                     <h3 class="text-2xl font-black text-white">{selectedAccount.name}</h3>
                 </div>
                 <button
-                    class="rounded-full border border-slate-600 p-2 text-slate-200 transition hover:border-cyan-300 hover:text-cyan-200"
+                    class="rounded-full border border-slate-600 p-2 text-slate-200 transition hover:border-cyan-300 hover:text-cyan-200 active:scale-95"
                     on:click={closeModal}
                     aria-label="Close profile drawer"
                 >
@@ -485,7 +485,7 @@
                     <div class="mb-4 flex items-center justify-between">
                         <h4 class="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-100/80">Pending Queue</h4>
                         <button
-                            class="rounded-lg border border-cyan-300/20 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/40"
+                            class="rounded-lg border border-cyan-300/20 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/40 active:scale-95"
                             on:click={() => fetchPending(selectedAccount.id)}
                         >
                             Refresh Queue
@@ -502,7 +502,7 @@
                         <div class="space-y-3">
                             {#each pendingTracks as track}
                                 <article class="rounded-xl border border-slate-700 bg-slate-900/80 p-3">
-                                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div class="flex flex-col gap-3 sm:flex-col md:flex-row sm:items-center sm:justify-between">
                                         <div class="space-y-1">
                                             <p class="text-sm font-semibold text-white">{track.title}</p>
                                             <p class="text-xs text-slate-400">{track.artist}</p>
@@ -510,7 +510,7 @@
                                         </div>
 
                                         <button
-                                            class="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                            class="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60 active:scale-95"
                                             on:click={() => approveTrack(track)}
                                             disabled={approvingSyncIds.has(track.sync_id)}
                                         >

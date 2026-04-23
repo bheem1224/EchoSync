@@ -86,7 +86,7 @@
 
         <div class="tokens">
           {#each tokens as token}
-            <button class="token-btn" on:click={() => addToken(token)}>{token}</button>
+            <button class="token-btn active:scale-95 transition-all duration-200" on:click={() => addToken(token)}>{token}</button>
           {/each}
         </div>
 
