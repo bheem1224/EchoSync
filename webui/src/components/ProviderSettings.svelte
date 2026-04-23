@@ -95,7 +95,7 @@
         {#if success}
           <span class="success-msg">{success}</span>
         {/if}
-        <button type="submit" class="btn btn--primary" disabled={saving}>
+        <button type="submit" class="btn btn--primary active:scale-95 transition-all duration-200" disabled={saving}>
           {#if saving}Saving...{:else}Save Changes{/if}
         </button>
       </div>

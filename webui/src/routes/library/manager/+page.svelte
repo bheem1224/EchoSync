@@ -378,13 +378,13 @@
             </div>
 
             <div class="flex gap-4">
-                <button on:click={saveSettings} disabled={savingSettings} class="btn btn--primary">
+                <button on:click={saveSettings} disabled={savingSettings} class="btn btn--primary active:scale-95 transition-all duration-200">
                     {#if savingSettings}Saving...{:else}Save Settings{/if}
                 </button>
-                <button on:click={runManagerScan} disabled={scanLoading} class="btn btn--secondary">
+                <button on:click={runManagerScan} disabled={scanLoading} class="btn btn--secondary active:scale-95 transition-all duration-200">
                     {#if scanLoading}Scanning...{:else}Run Manager Scan{/if}
                 </button>
-                <button on:click={runPruneJob} disabled={pruneLoading} class="btn btn--danger">
+                <button on:click={runPruneJob} disabled={pruneLoading} class="btn btn--danger active:scale-95 transition-all duration-200">
                     {#if pruneLoading}Running...{:else}Run Prune Job{/if}
                 </button>
             </div>
@@ -396,7 +396,7 @@
             <h2 class="mb-0">Managed Accounts ({activeServer})</h2>
             <div class="actions">
                 {#if activeServer === 'plex'}
-                    <button on:click={syncManagedUsers} disabled={syncingManagedUsers} class="btn btn--primary btn--small">
+                    <button on:click={syncManagedUsers} disabled={syncingManagedUsers} class="btn btn--primary btn--small active:scale-95 transition-all duration-200">
                         {#if syncingManagedUsers}
                             <span class="spinner" aria-hidden="true"></span>
                             Syncing...
@@ -405,7 +405,7 @@
                         {/if}
                     </button>
                 {/if}
-                <button on:click={fetchManagedAccounts} disabled={syncingManagedUsers} class="btn btn--ghost btn--small">Refresh Accounts</button>
+                <button on:click={fetchManagedAccounts} disabled={syncingManagedUsers} class="btn btn--ghost btn--small active:scale-95 transition-all duration-200">Refresh Accounts</button>
             </div>
         </div>
 

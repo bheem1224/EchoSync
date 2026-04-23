@@ -53,7 +53,7 @@
     </div>
 
     <div class="migration-actions">
-      <button class="btn-acknowledge" on:click={handleAcknowledge}>OK</button>
+      <button class="btn-acknowledge active:scale-95 transition-all duration-200" on:click={handleAcknowledge}>OK</button>
     </div>
   </div>
 </div>

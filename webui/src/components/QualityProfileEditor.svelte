@@ -263,8 +263,8 @@
   </div>
 
   <div class="flex gap-2 justify-end mt-4">
-    <button class="btn-primary" on:click={save}>Save</button>
-    <button class="button-ghost" on:click={cancel}>Cancel</button>
+    <button class="btn-primary active:scale-95 transition-all duration-200" on:click={save}>Save</button>
+    <button class="button-ghost active:scale-95 transition-all duration-200" on:click={cancel}>Cancel</button>
   </div>
 </div>
 

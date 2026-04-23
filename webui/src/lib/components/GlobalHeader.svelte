@@ -17,7 +17,7 @@
     <div class="flex items-center gap-2 sm:gap-3">
       <button
         type="button"
-        class="relative inline-flex h-10 w-10 items-center justify-center rounded-full text-gray-200 transition hover:bg-gray-800 hover:text-white"
+        class="relative inline-flex h-10 w-10 items-center justify-center rounded-full text-gray-200 transition hover:bg-gray-800 hover:text-white active:scale-95"
         on:click={toggleNotificationDrawer}
         aria-label="Open notifications"
         title="Notifications"
@@ -34,7 +34,7 @@
 
       <button
         type="button"
-        class="relative inline-flex h-10 w-10 items-center justify-center rounded-full text-gray-200 transition hover:bg-gray-800 hover:text-white"
+        class="relative inline-flex h-10 w-10 items-center justify-center rounded-full text-gray-200 transition hover:bg-gray-800 hover:text-white active:scale-95"
         on:click={toggleQueueDrawer}
         aria-label="Open download queue"
         title="Download Queue"

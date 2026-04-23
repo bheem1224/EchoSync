@@ -120,7 +120,7 @@
   <div class="flex justify-end pt-4 mt-2 border-t border-border">
     <button
       type="submit"
-      class="px-6 py-2 bg-accent text-primary font-medium rounded-global hover:opacity-90 transition-opacity focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent"
+      class="px-6 py-2 bg-accent text-primary font-medium rounded-global hover:opacity-90 transition-opacity focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent active:scale-95"
     >
       Save Settings
     </button>

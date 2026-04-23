@@ -239,7 +239,7 @@
 
         <!-- Previous (stub — future queue integration) -->
         <button
-          class="text-gray-500 hover:text-white transition-colors"
+          class="text-gray-500 hover:text-white transition-colors active:scale-95"
           title="Previous"
           aria-label="Previous track"
         >
@@ -271,7 +271,7 @@
 
         <!-- Next (stub — future queue integration) -->
         <button
-          class="text-gray-500 hover:text-white transition-colors"
+          class="text-gray-500 hover:text-white transition-colors active:scale-95"
           title="Next"
           aria-label="Next track"
         >

@@ -169,9 +169,9 @@
     </div>
     <div class="header-right">
       {#if !isActive && connected}
-        <button class="btn-sm btn-secondary" on:click={activateClient}>Activate</button>
+        <button class="btn-sm btn-secondary active:scale-95 transition-all duration-200" on:click={activateClient}>Activate</button>
       {/if}
-      <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline" on:click={() => collapsed = !collapsed}>
+      <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => collapsed = !collapsed}>
         {collapsed ? 'Expand' : 'Collapse'}
       </button>
     </div>
@@ -217,7 +217,7 @@
             />
             <button 
               type="button" 
-              class="toggle-btn"
+              class="toggle-btn active:scale-95 transition-all duration-200"
               on:click={toggleApiKeyVisibility}
               title={showApiKey ? 'Hide' : 'Show'}
             >
@@ -229,7 +229,7 @@
 
         <div class="flex gap-3 flex-wrap">
           <button
-            class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
             on:click={saveSettings}
             disabled={saving}
           >
@@ -238,7 +238,7 @@
           
           {#if slskdUrl && (hasApiKeyInDb || apiKey)}
             <button
-              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
               on:click={testConnection}
               disabled={testing}
             >

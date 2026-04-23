@@ -175,7 +175,7 @@
       <h2>Scheduled Jobs</h2>
       <p class="subtitle">Manage recurring tasks and background operations</p>
     </div>
-    <button class="btn-refresh" on:click={loadJobs} disabled={loading}>
+    <button class="btn-refresh active:scale-95 transition-all duration-200" on:click={loadJobs} disabled={loading}>
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="23 4 23 10 17 10"></polyline>
         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
@@ -283,16 +283,16 @@
                           placeholder="Minutes"
                           class="interval-input"
                         />
-                        <button class="btn-icon success" on:click={() => saveInterval(job.name)} title="Save">
+                        <button class="btn-icon success active:scale-95 transition-all duration-200" on:click={() => saveInterval(job.name)} title="Save">
                           ✓
                         </button>
-                        <button class="btn-icon" on:click={cancelEditInterval} title="Cancel">
+                        <button class="btn-icon active:scale-95 transition-all duration-200" on:click={cancelEditInterval} title="Cancel">
                           ✕
                         </button>
                       </div>
                     {:else}
                       <button
-                        class="btn-action"
+                        class="btn-action active:scale-95 transition-all duration-200"
                         on:click={() => runJob(job.name)}
                         disabled={job.running}
                         title={job.running ? 'Job is already running' : 'Run now'}
@@ -305,7 +305,7 @@
                       
                       {#if job.interval_seconds}
                         <button
-                          class="btn-action"
+                          class="btn-action active:scale-95 transition-all duration-200"
                           on:click={() => startEditInterval(job)}
                           title="Edit interval"
                         >

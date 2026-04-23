@@ -45,25 +45,25 @@
       <label class="field">
           <span class="field-label">Download</span>
           <input class="dark-input input" type="text" bind:value={data.download_dir} placeholder="/app/downloads" />
-          <button class="dark-btn" aria-label="Browse download directory" on:click={() => { browserField='download_dir'; browserStart = data.download_dir || 'downloads'; showBrowser = true; }}>Browse</button>
+          <button class="dark-btn active:scale-95 transition-all duration-200" aria-label="Browse download directory" on:click={() => { browserField='download_dir'; browserStart = data.download_dir || 'downloads'; showBrowser = true; }}>Browse</button>
         </label>
 
     <label class="field">
       <span class="field-label">Library</span>
       <input class="dark-input input" type="text" bind:value={data.library_dir} placeholder="/app/library" />
-      <button class="dark-btn" aria-label="Browse library directory" on:click={() => { browserField='library_dir'; browserStart = data.library_dir || 'data'; showBrowser = true; }}>Browse</button>
+      <button class="dark-btn active:scale-95 transition-all duration-200" aria-label="Browse library directory" on:click={() => { browserField='library_dir'; browserStart = data.library_dir || 'data'; showBrowser = true; }}>Browse</button>
     </label>
 
     <label class="field">
       <span class="field-label">Log</span>
       <input class="dark-input input" type="text" bind:value={data.log_dir} placeholder="/app/logs" />
-      <button class="dark-btn" aria-label="Browse log directory" on:click={() => { browserField='log_dir'; browserStart = data.log_dir || 'logs'; showBrowser = true; }}>Browse</button>
+      <button class="dark-btn active:scale-95 transition-all duration-200" aria-label="Browse log directory" on:click={() => { browserField='log_dir'; browserStart = data.log_dir || 'logs'; showBrowser = true; }}>Browse</button>
     </label>
 
     <label class="field">
       <span class="field-label">Config</span>
       <input class="dark-input input" type="text" bind:value={data.config_dir} placeholder="/app/config" />
-      <button class="dark-btn" aria-label="Browse config directory" on:click={() => { browserField='config_dir'; browserStart = data.config_dir || 'config'; showBrowser = true; }}>Browse</button>
+      <button class="dark-btn active:scale-95 transition-all duration-200" aria-label="Browse config directory" on:click={() => { browserField='config_dir'; browserStart = data.config_dir || 'config'; showBrowser = true; }}>Browse</button>
     </label>
 
     <!-- Save moved to page header. Use exported `save()` from parent via component ref. -->

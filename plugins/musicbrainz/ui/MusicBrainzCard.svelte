@@ -216,7 +216,7 @@
             />
             <button
               type="button"
-              class="absolute right-2 bg-transparent border-none cursor-pointer text-lg p-1 opacity-60 hover:opacity-100 transition-opacity"
+              class="absolute right-2 bg-transparent border-none cursor-pointer text-lg p-1 opacity-60 hover:opacity-100 transition-opacity active:scale-95"
               on:click={() => (showSecret = !showSecret)}
               title={showSecret ? 'Hide' : 'Show'}
             >
@@ -225,7 +225,7 @@
           </div>
         </div>
 
-        <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed" on:click={saveCredentials} disabled={savingCreds}>
+        <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={saveCredentials} disabled={savingCreds}>
           {savingCreds ? 'Saving…' : 'Save Credentials'}
         </button>
       </div>
@@ -235,7 +235,7 @@
     <div class="mb-6">
       <div class="mb-3">
         <h3 class="m-0 mb-4 text-base font-semibold">OAuth Redirect URI (Auto-generated)</h3>
-        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => (redirectCollapsed = !redirectCollapsed)}>
+        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => (redirectCollapsed = !redirectCollapsed)}>
           {redirectCollapsed ? 'Expand' : 'Collapse'}
         </button>
       </div>
@@ -262,7 +262,7 @@
           Authenticated accounts can contribute ISRCs and metadata to MusicBrainz.
         </p>
         {#if accounts.length < MAX_ACCOUNTS}
-          <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed" on:click={openAddModal}>
+          <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={openAddModal}>
             + Add Account
           </button>
         {/if}
@@ -285,11 +285,11 @@
               </div>
             </div>
             <div class="flex gap-2 items-center flex-wrap">
-              <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline" on:click={() => authenticate(account.id)}>
+              <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => authenticate(account.id)}>
                 {account.is_authenticated ? 'Reauthenticate' : 'Authenticate'}
               </button>
               <button
-                class="px-4 py-2 bg-white/10 text-primary border-none rounded-global transition-colors hover:bg-white/15"
+                class="px-4 py-2 bg-white/10 text-primary border-none rounded-global transition-colors hover:bg-white/15 active:scale-95"
                 class:active={account.is_active}
                 on:click={() => toggleAccount(account.id, account.is_active)}
                 title={account.is_active ? 'Deactivate' : 'Activate'}
@@ -297,7 +297,7 @@
                 {account.is_active ? 'Deactivate' : 'Activate'}
               </button>
               <button
-                class="px-4 py-2 bg-red-500/20 text-red-500 border-none rounded-global transition-colors hover:bg-red-500/30"
+                class="px-4 py-2 bg-red-500/20 text-red-500 border-none rounded-global transition-colors hover:bg-red-500/30 active:scale-95"
                 on:click={() => deleteAccount(account.id, account.display_name || account.account_name)}
               >
                 ✕
@@ -321,7 +321,7 @@
     <div class="bg-[#1e1e2e] rounded-[10px] p-0 min-w-[420px] max-w-[90vw] border border-white/15" on:click|stopPropagation>
       <div class="flex justify-between items-center px-5 py-4 border-b border-white/10">
         <h3 class="m-0 mb-4 text-base font-semibold">Add MusicBrainz Account</h3>
-        <button class="bg-transparent border-none text-[18px] cursor-pointer text-secondary p-0 leading-none" on:click={closeAddModal}>✕</button>
+        <button class="bg-transparent border-none text-[18px] cursor-pointer text-secondary p-0 leading-none active:scale-95 transition-all duration-200" on:click={closeAddModal}>✕</button>
       </div>
       <div class="p-5 flex flex-col gap-[14px]">
         <label class="flex flex-col gap-[6px]">
@@ -339,8 +339,8 @@
         </p>
       </div>
       <div class="flex justify-end gap-[10px] px-5 py-4 border-t border-white/10">
-        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed" on:click={closeAddModal}>Cancel</button>
-        <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed" on:click={addAccount} disabled={savingAccount}>
+        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={closeAddModal}>Cancel</button>
+        <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={addAccount} disabled={savingAccount}>
           {savingAccount ? 'Adding…' : 'Add Account'}
         </button>
       </div>

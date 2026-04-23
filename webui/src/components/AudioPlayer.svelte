@@ -59,7 +59,7 @@
     <!-- Transport controls: Play/Pause + Stop -->
     <div class="controls">
       <button
-        class="ctrl-btn play-pause"
+        class="ctrl-btn play-pause active:scale-95 transition-all duration-200"
         on:click={() => player.toggle()}
         title={$player.isPlaying ? 'Pause' : 'Play'}
         aria-label={$player.isPlaying ? 'Pause' : 'Play'}
@@ -78,7 +78,7 @@
       </button>
 
       <button
-        class="ctrl-btn stop"
+        class="ctrl-btn stop active:scale-95 transition-all duration-200"
         on:click={() => player.stop()}
         title="Stop"
         aria-label="Stop"

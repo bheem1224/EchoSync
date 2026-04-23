@@ -125,7 +125,7 @@
                bind:value={query} 
                placeholder="Search for tracks, artists, or albums..." 
                on:keydown={(e) => e.key === 'Enter' && handleSearch()} />
-        <button class="btn btn--primary" on:click={handleSearch} disabled={searching}>
+        <button class="btn btn--primary active:scale-95 transition-all duration-200" on:click={handleSearch} disabled={searching}>
           {#if searching}
             <div class="spinner spinner--small"></div>
           {:else}
@@ -163,10 +163,10 @@
                   {/if}
                 </div>
                 <div class="result-actions">
-                  <button class="action-btn" title="Download" on:click={() => handleAction(item, 'download')}>
+                  <button class="action-btn active:scale-95 transition-all duration-200" title="Download" on:click={() => handleAction(item, 'download')}>
                     📥
                   </button>
-                  <button class="action-btn" title="Add to Library" on:click={() => handleAction(item, 'library')}>
+                  <button class="action-btn active:scale-95 transition-all duration-200" title="Add to Library" on:click={() => handleAction(item, 'library')}>
                     ➕
                   </button>
                 </div>

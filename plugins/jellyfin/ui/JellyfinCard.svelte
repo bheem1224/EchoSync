@@ -124,7 +124,7 @@
         <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ff9800]/20 text-[#ff9800]">⚠ Disconnected</span>
       {/if}
     </div>
-    <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => collapsed = !collapsed}>
+    <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => collapsed = !collapsed}>
       {collapsed ? 'Expand' : 'Collapse'}
     </button>
   </div>
@@ -168,7 +168,7 @@
             />
             <button 
               type="button" 
-              class="absolute right-2 bg-transparent border-none cursor-pointer text-lg p-1 opacity-60 hover:opacity-100 transition-opacity"
+              class="absolute right-2 bg-transparent border-none cursor-pointer text-lg p-1 opacity-60 hover:opacity-100 transition-opacity active:scale-95"
               on:click={() => showPassword = !showPassword}
               title={showPassword ? 'Hide' : 'Show'}
             >
@@ -183,7 +183,7 @@
 
         <div class="flex gap-3 flex-wrap">
           <button
-            class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
             on:click={saveSettings}
             disabled={saving}
           >
@@ -192,7 +192,7 @@
           
           {#if hasPassword}
             <button
-              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
               on:click={testConnection}
               disabled={testing}
             >
@@ -202,7 +202,7 @@
 
           {#if !isActive}
             <button
-              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
               on:click={activateServer}
               disabled={activating}
             >

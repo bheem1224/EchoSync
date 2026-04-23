@@ -401,7 +401,7 @@
           <p class="text-xs text-slate-400 mt-1">Task #{task?.id} - {getFilename(task?.file_path)}</p>
         </div>
         <button
-          class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm"
+          class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm active:scale-95 transition-all duration-200"
           on:click={closeModal}
           disabled={savingDraft || approving}
         >
@@ -557,7 +557,7 @@
 
       <div class="px-5 py-4 border-t border-slate-800 flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 bg-slate-900/80">
         <button
-          class="px-4 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-60"
+          class="px-4 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-60 active:scale-95 transition-all duration-200"
           on:click={closeModal}
           disabled={savingDraft || approving}
         >
@@ -565,7 +565,7 @@
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-60"
+          class="px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-60 active:scale-95 transition-all duration-200"
           on:click={() => saveDraft({ silent: false })}
           disabled={savingDraft || approving}
         >
@@ -573,7 +573,7 @@
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-slate-700 text-slate-100 hover:bg-slate-600 disabled:opacity-60"
+          class="px-4 py-2 rounded-lg bg-slate-700 text-slate-100 hover:bg-slate-600 disabled:opacity-60 active:scale-95 transition-all duration-200"
           on:click={undoLastChange}
           disabled={savingDraft || approving || metadataHistory.length < 2}
           title="Undo last metadata edit"
@@ -582,7 +582,7 @@
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-60"
+          class="px-4 py-2 rounded-lg bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-60 active:scale-95 transition-all duration-200"
           on:click={runMusicBrainzLookup}
           disabled={musicbrainzLookupLoading || acoustidLookupLoading || approving || savingDraft}
         >
@@ -590,7 +590,7 @@
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-60"
+          class="px-4 py-2 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-60 active:scale-95 transition-all duration-200"
           on:click={runAcoustIDLookup}
           disabled={acoustidLookupLoading || musicbrainzLookupLoading || approving || savingDraft}
         >
@@ -598,7 +598,7 @@
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60"
+          class="px-4 py-2 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60 active:scale-95 transition-all duration-200"
           on:click={runISRCLookup}
           disabled={isrcLookupLoading || musicbrainzLookupLoading || acoustidLookupLoading || approving || savingDraft}
         >
@@ -606,7 +606,7 @@
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-60 inline-flex items-center justify-center gap-2"
+          class="px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200"
           on:click={approveAndImport}
           disabled={approving || savingDraft}
         >

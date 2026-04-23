@@ -226,7 +226,7 @@
           <button
             on:click={handleRebuildDatabase}
             disabled={isRebuildingDatabase}
-            class="px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 flex items-center gap-2 whitespace-nowrap"
+            class="px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 flex items-center gap-2 whitespace-nowrap active:scale-95"
             class:bg-red-600={!isRebuildingDatabase}
             class:hover:bg-red-700={!isRebuildingDatabase}
             class:text-white={!isRebuildingDatabase}

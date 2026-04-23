@@ -179,7 +179,7 @@
     <div class="mb-6">
       <div class="mb-3">
         <h3 class="m-0 mb-4 text-base font-semibold">Global Credentials</h3>
-        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => credsCollapsed = !credsCollapsed}>
+        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => credsCollapsed = !credsCollapsed}>
           {credsCollapsed ? 'Expand' : 'Collapse'}
         </button>
       </div>
@@ -216,7 +216,7 @@
             />
           </label>
           <button 
-            class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
             on:click={saveGlobalSettings}
             disabled={savingGlobal}
           >
@@ -231,7 +231,7 @@
       <div class="mb-3">
         <h3 class="m-0 mb-4 text-base font-semibold">Accounts ({accounts.length}/{MAX_ACCOUNTS})</h3>
         {#if accounts.length < MAX_ACCOUNTS}
-          <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => showAddAccount = !showAddAccount}>
+          <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => showAddAccount = !showAddAccount}>
             + Add Account
           </button>
         {/if}
@@ -246,8 +246,8 @@
             class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
             on:keydown={(e) => e.key === 'Enter' && addAccount()}
           />
-          <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed" on:click={addAccount}>Add</button>
-          <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => showAddAccount = false}>Cancel</button>
+          <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={addAccount}>Add</button>
+          <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => showAddAccount = false}>Cancel</button>
         </div>
       {/if}
 
@@ -268,18 +268,18 @@
               </div>
             </div>
             <div class="flex gap-2 items-center flex-wrap">
-                <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline" on:click={() => authenticate(account.id)}>
+                <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => authenticate(account.id)}>
                   {account.is_authenticated ? 'Reauthenticate' : 'Authenticate'}
                 </button>
               <button 
-                class="px-4 py-2 bg-white/10 text-primary border-none rounded-global transition-colors hover:bg-white/15"
+                class="px-4 py-2 bg-white/10 text-primary border-none rounded-global transition-colors hover:bg-white/15 active:scale-95"
                 class:active={account.is_active}
                 on:click={() => toggleAccount(account.id, account.is_active)}
                 title={account.is_active ? 'Deactivate' : 'Activate'}
               >
                 {account.is_active ? 'Deactivate' : 'Activate'}
               </button>
-              <button class="px-4 py-2 bg-red-500/20 text-red-500 border-none rounded-global transition-colors hover:bg-red-500/30" on:click={() => deleteAccount(account.id, account.display_name || account.account_name)}>
+              <button class="px-4 py-2 bg-red-500/20 text-red-500 border-none rounded-global transition-colors hover:bg-red-500/30 active:scale-95" on:click={() => deleteAccount(account.id, account.display_name || account.account_name)}>
                 ✕
               </button>
             </div>

@@ -16,7 +16,7 @@
     <div class="cd-header">{title}</div>
     <div class="cd-body">{message}</div>
     <div class="cd-actions">
-      <button class="cd-cancel" on:click={cancel}>{cancelText}</button>
+      <button class="cd-cancel active:scale-95 transition-all duration-200" on:click={cancel}>{cancelText}</button>
       <button class:danger on:click={confirm}>{confirmText}</button>
     </div>
   </div>

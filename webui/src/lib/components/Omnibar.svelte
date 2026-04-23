@@ -35,6 +35,23 @@
     }
   }
 
+
+  function handleToggleEvent() {
+    isOpen = !isOpen;
+    if (isOpen) {
+      searchQuery = '';
+      selectedIndex = 0;
+      tick().then(() => inputRef && inputRef.focus());
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener('es-omnibar-toggle', handleToggleEvent);
+    return () => {
+      window.removeEventListener('es-omnibar-toggle', handleToggleEvent);
+    };
+  });
+
   function handleKeydown(e) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
@@ -90,7 +107,7 @@
     class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex justify-center items-start pt-[15vh] px-4 animate-fade-in"
     on:click={handleOverlayClick}
   >
-    <div class="w-full max-w-2xl bg-surface border border-glass-border rounded-global shadow-2xl overflow-hidden flex flex-col transform transition-all animate-scale-in">
+    <div class="w-[90vw] max-w-2xl bg-surface border border-glass-border rounded-global shadow-2xl overflow-hidden flex flex-col transform transition-all animate-scale-in">
       <div class="flex items-center px-4 border-b border-glass-border">
         <span class="text-secondary text-xl mr-2">🔍</span>
         <input
@@ -109,7 +126,7 @@
         <div class="max-h-[60vh] overflow-y-auto py-2">
           {#each filteredActions as action, i}
             <button
-              class="w-full text-left px-4 py-3 flex items-center gap-3 transition-colors focus:outline-none {i === selectedIndex ? 'bg-surface-hover text-accent border-l-2 border-accent' : 'text-primary hover:bg-surface-hover/50 border-l-2 border-transparent'}"
+              class="w-full text-left px-4 py-3 flex items-center gap-3 transition-colors focus:outline-none {i === selectedIndex ? 'bg-surface-hover text-accent border-l-2 border-accent' : 'text-primary hover:bg-surface-hover/50 border-l-2 border-transparent'} active:scale-95"
               on:click={() => handleClick(i)}
               on:mousemove={() => selectedIndex = i}
             >

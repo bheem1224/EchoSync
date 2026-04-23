@@ -34,7 +34,7 @@
         <label>Your Encryption Key:</label>
         <div class="key-display">
           <textarea readonly>{keyValue}</textarea>
-          <button class="copy-btn" on:click={copyToClipboard}>
+          <button class="copy-btn active:scale-95 transition-all duration-200" on:click={copyToClipboard}>
             Copy
           </button>
         </div>
@@ -56,7 +56,7 @@
     </div>
 
     <div class="warning-actions">
-      <button class="btn-acknowledge" on:click={dismiss}>I Understand</button>
+      <button class="btn-acknowledge active:scale-95 transition-all duration-200" on:click={dismiss}>I Understand</button>
     </div>
   </div>
 </div>

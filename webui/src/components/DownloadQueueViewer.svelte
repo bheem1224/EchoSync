@@ -324,7 +324,7 @@
       {/if}
     </div>
     <button
-      class="btn-search"
+      class="btn-search active:scale-95 transition-all duration-200"
       disabled={selectedIds.size === 0}
       on:click={searchSelected}
       title={selectedIds.size === 0 ? 'Select items to search' : 'Search for selected items'}
@@ -332,7 +332,7 @@
       Search Selected
     </button>
     <button
-      class="btn-delete"
+      class="btn-delete active:scale-95 transition-all duration-200"
       disabled={selectedIds.size === 0}
       on:click={deleteSelected}
       title={selectedIds.size === 0 ? 'Select items to delete' : 'Delete selected items'}

@@ -75,7 +75,7 @@
         for plugins to be fully loaded or unloaded — running hooks will not change until the
         process restarts.
       </p>
-      <button class="dialog-btn" on:click={() => (showRestartDialog = false)}>Got it</button>
+      <button class="dialog-btn active:scale-95 transition-all duration-200" on:click={() => (showRestartDialog = false)}>Got it</button>
     </div>
   </div>
 {/if}
@@ -97,8 +97,8 @@
     <div class="pending-bar">
       <span class="pending-label">⚠ Unsaved changes — a restart will be required to apply them.</span>
       <div class="pending-actions">
-        <button class="btn-reset" on:click={resetChanges} disabled={saving}>Reset</button>
-        <button class="btn-save" on:click={saveChanges} disabled={saving}>
+        <button class="btn-reset active:scale-95 transition-all duration-200" on:click={resetChanges} disabled={saving}>Reset</button>
+        <button class="btn-save active:scale-95 transition-all duration-200" on:click={saveChanges} disabled={saving}>
           {saving ? 'Saving…' : 'Save Changes'}
         </button>
       </div>

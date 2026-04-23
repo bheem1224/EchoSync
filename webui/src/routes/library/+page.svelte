@@ -195,7 +195,7 @@
         {#if visibleCount < libraryIndex.length}
             <div class="text-center mt-10">
                 <button
-                    class="btn"
+                    class="btn active:scale-95 transition-all duration-200"
                     on:click={loadMore}
                 >
                     Load More
@@ -212,7 +212,7 @@
     <!-- DETAIL VIEW -->
     {:else if viewMode === 'detail' && selectedArtist}
         <div class="animate-fade-in">
-            <button class="btn btn-link mb-6" on:click={backToGrid}>
+            <button class="btn btn-link mb-6 active:scale-95 transition-all duration-200" on:click={backToGrid}>
                 ← Back to Artists
             </button>
 

@@ -551,7 +551,7 @@
       {:else}
         <div class="playlists-grid">
           {#each playlists as playlist, index}
-            <button class="playlist-item" 
+            <button class="playlist-item active:scale-95 transition-all duration-200"
                     class:selected={selectedPlaylists.includes(index)}
                     on:click={() => togglePlaylist(index)}>
               <div class="playlist-info">
@@ -585,7 +585,7 @@
       {#if success}
         <p class="success-msg">{success}</p>
       {/if}
-      <button class="btn btn--primary" 
+      <button class="btn btn--primary active:scale-95 transition-all duration-200"
               disabled={syncing || !sourceProvider || !targetProvider || selectedPlaylists.length === 0}
               on:click={openAnalysisModal}>
         {#if syncing}
@@ -594,7 +594,7 @@
           Sync Playlist
         {/if}
       </button>
-      <button type="button" class="btn btn--secondary" on:click={openScheduleModal}>
+      <button type="button" class="btn btn--secondary active:scale-95 transition-all duration-200" on:click={openScheduleModal}>
         ⏰ Create Schedule
       </button>
     </div>
@@ -604,7 +604,7 @@
   <div class="scheduled-syncs-section">
     <div class="section-header">
       <h2>Scheduled Syncs</h2>
-      <button type="button" class="btn btn--accent" on:click={openScheduleModal}>
+      <button type="button" class="btn btn--accent active:scale-95 transition-all duration-200" on:click={openScheduleModal}>
         + Create Schedule
       </button>
     </div>
@@ -627,7 +627,7 @@
             </div>
             <div class="col-playlists">{sync.playlists.length}</div>
             <div class="col-actions">
-              <button type="button" class="btn btn--small" on:click={() => deleteScheduledSync(sync.id)}>
+              <button type="button" class="btn btn--small active:scale-95 transition-all duration-200" on:click={() => deleteScheduledSync(sync.id)}>
                 Delete
               </button>
             </div>
@@ -649,7 +649,7 @@
         <h2>{syncProgressEvent ? 'Sync' : 'Analysis'}</h2>
         <p class="sub">{syncProgressEvent ? `Syncing tracks to ${selectedTargetLabel || targetProvider}...` : `Source: ${sourceProvider} → Target: ${selectedTargetLabel || targetProvider}`}</p>
       </div>
-      <button class="close-btn" on:click={closeAnalysisModal}>×</button>
+      <button class="close-btn active:scale-95 transition-all duration-200" on:click={closeAnalysisModal}>×</button>
     </header>
 
     <div class="modal__body">
@@ -688,14 +688,14 @@
             </select>
           </div>
           <div class="control buttons">
-            <button class="btn" on:click={runAnalysis} disabled={analysisLoading}>
+            <button class="btn active:scale-95 transition-all duration-200" on:click={runAnalysis} disabled={analysisLoading}>
               {analysisLoading ? 'Analyzing…' : (analysisStarted ? 'Re-run Analysis' : 'Begin Analysis')}
             </button>
-            <button class="btn btn--accent" on:click={openSyncConfigModal}
+            <button class="btn btn--accent active:scale-95 transition-all duration-200" on:click={openSyncConfigModal}
               disabled={!analysisResult?.summary?.can_sync}>
               ⇄ Sync
             </button>
-            <button class="btn btn--primary" on:click={downloadMissingTracks}
+            <button class="btn btn--primary active:scale-95 transition-all duration-200" on:click={downloadMissingTracks}
               disabled={!analysisResult || downloadingMissing || (analysisResult?.summary?.missing_tracks ?? 0) === 0}>
               {downloadingMissing ? 'Starting…' : 'Download Missing Tracks'}
             </button>
@@ -782,7 +782,7 @@
   <div class="modal sync-config-modal">
     <div class="modal-header">
       <h2>Configure Sync</h2>
-      <button type="button" class="close-btn" on:click={closeSyncConfigModal}>✕</button>
+      <button type="button" class="close-btn active:scale-95 transition-all duration-200" on:click={closeSyncConfigModal}>✕</button>
     </div>
     
     <div class="modal-body">
@@ -818,8 +818,8 @@
     </div>
     
     <div class="modal-footer">
-      <button type="button" class="btn" on:click={closeSyncConfigModal}>Cancel</button>
-      <button type="button" class="btn btn--accent" on:click={confirmSync} disabled={syncInProgress}>
+      <button type="button" class="btn active:scale-95 transition-all duration-200" on:click={closeSyncConfigModal}>Cancel</button>
+      <button type="button" class="btn btn--accent active:scale-95 transition-all duration-200" on:click={confirmSync} disabled={syncInProgress}>
         {syncInProgress ? 'Starting Sync…' : 'Start Sync'}
       </button>
     </div>
@@ -834,7 +834,7 @@
   <div class="modal schedule-modal">
     <div class="modal-header">
       <h2>Create Scheduled Sync</h2>
-      <button type="button" class="close-btn" on:click={closeScheduleModal}>✕</button>
+      <button type="button" class="close-btn active:scale-95 transition-all duration-200" on:click={closeScheduleModal}>✕</button>
     </div>
     
     <div class="modal-body">
@@ -876,8 +876,8 @@
     </div>
     
     <div class="modal-footer">
-      <button type="button" class="btn" on:click={closeScheduleModal}>Cancel</button>
-      <button type="button" class="btn btn--accent" on:click={createScheduledSync}>Create Schedule</button>
+      <button type="button" class="btn active:scale-95 transition-all duration-200" on:click={closeScheduleModal}>Cancel</button>
+      <button type="button" class="btn btn--accent active:scale-95 transition-all duration-200" on:click={createScheduledSync}>Create Schedule</button>
     </div>
   </div>
 {/if}

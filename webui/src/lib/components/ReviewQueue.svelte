@@ -150,7 +150,7 @@
       <h2 class="text-2xl font-bold text-primary m-0">Review Queue</h2>
     </div>
     <button
-      class="px-4 py-2 rounded-global text-sm font-medium bg-surface text-primary border border-global hover:bg-surface-hover transition-colors"
+      class="px-4 py-2 rounded-global text-sm font-medium bg-surface text-primary border border-global hover:bg-surface-hover transition-colors active:scale-95"
       on:click={loadQueue}
       disabled={loading}
     >
@@ -210,7 +210,7 @@
                       </span>
                     {/if}
                     <button
-                      class="px-3 py-2 rounded-global text-sm font-medium bg-accent text-primary hover:opacity-90 transition-opacity"
+                      class="px-3 py-2 rounded-global text-sm font-medium bg-accent text-primary hover:opacity-90 transition-opacity active:scale-95"
                       on:click={() => openReviewModal(task)}
                     >
                       Review & Edit

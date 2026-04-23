@@ -106,7 +106,7 @@
     <div class="flex justify-between items-center">
       <h2 class="text-xl font-bold text-primary">Quality Profiles</h2>
       <div class="controls">
-        <button class="btn-primary add-btn" on:click={addProfile} disabled={prefs?.profiles && prefs.profiles.length >= 6}>+ Add</button>
+        <button class="btn-primary add-btn active:scale-95 transition-all duration-200" on:click={addProfile} disabled={prefs?.profiles && prefs.profiles.length >= 6}>+ Add</button>
       </div>
     </div>
 
@@ -124,8 +124,8 @@
           <div class="profile-name">{profile.name}</div>
         </div>
         <div class="row-right">
-          <button class="ml-2" on:click={() => openEditor(profile)}>⚙️</button>
-          <button class="ml-2 text-error-text hover:bg-error-bg rounded-global p-1" on:click={() => requestDeleteProfile(profile.id)}>✕</button>
+          <button class="ml-2 active:scale-95 transition-all duration-200" on:click={() => openEditor(profile)}>⚙️</button>
+          <button class="ml-2 text-error-text hover:bg-error-bg rounded-global p-1 active:scale-95 transition-all duration-200" on:click={() => requestDeleteProfile(profile.id)}>✕</button>
         </div>
       </div>
     {/each}

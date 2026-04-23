@@ -96,15 +96,15 @@
     <div class="fb-header">
       <div class="fb-title">Browse</div>
       <div class="fb-actions">
-        <button class="dark-btn" on:click={goUp} disabled={loading}>Up</button>
-        <button class="dark-btn" on:click={chooseCurrent} disabled={loading}>Select</button>
-        <button class="dark-btn" on:click={close}>Close</button>
+        <button class="dark-btn active:scale-95 transition-all duration-200" on:click={goUp} disabled={loading}>Up</button>
+        <button class="dark-btn active:scale-95 transition-all duration-200" on:click={chooseCurrent} disabled={loading}>Select</button>
+        <button class="dark-btn active:scale-95 transition-all duration-200" on:click={close}>Close</button>
       </div>
     </div>
 
     <div class="fb-path-row">
       <input class="fb-path-input" bind:value={editablePath} on:keydown={(e) => { if (e.key === 'Enter') fetchPath(editablePath); }} />
-      <button class="dark-btn fb-go" on:click={() => fetchPath(editablePath)} disabled={loading}>Go</button>
+      <button class="dark-btn fb-go active:scale-95 transition-all duration-200" on:click={() => fetchPath(editablePath)} disabled={loading}>Go</button>
     </div>
     {#if error}
       <div class="fb-error">{error}</div>

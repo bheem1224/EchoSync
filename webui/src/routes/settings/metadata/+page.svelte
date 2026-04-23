@@ -310,9 +310,9 @@
   </header>
 
   <div class="tabs">
-      <button class="tab-btn" class:active={activeTab === 'providers'} on:click={() => setActiveTab('providers')}>Providers</button>
-      <button class="tab-btn" class:active={activeTab === 'settings'} on:click={() => setActiveTab('settings')}>Settings</button>
-      <button class="tab-btn" class:active={activeTab === 'queue'} on:click={() => setActiveTab('queue')}>
+      <button class="tab-btn active:scale-95 transition-all duration-200" class:active={activeTab === 'providers'} on:click={() => setActiveTab('providers')}>Providers</button>
+      <button class="tab-btn active:scale-95 transition-all duration-200" class:active={activeTab === 'settings'} on:click={() => setActiveTab('settings')}>Settings</button>
+      <button class="tab-btn active:scale-95 transition-all duration-200" class:active={activeTab === 'queue'} on:click={() => setActiveTab('queue')}>
         Review Queue
         {#if $metadataQueue.count > 0}
             <span class="tab-badge">{$metadataQueue.count}</span>
@@ -370,7 +370,7 @@
                             />
                             {#if field.type === 'password'}
                               <button
-                                class="btn-toggle-visibility"
+                                class="btn-toggle-visibility active:scale-95 transition-all duration-200"
                                 on:click={() => visibleFields[`${provider.name}-${field.key}`] = !visibleFields[`${provider.name}-${field.key}`]}
                                 type="button"
                                 title={visibleFields[`${provider.name}-${field.key}`] ? 'Hide' : 'Show'}
@@ -378,7 +378,7 @@
                                 {visibleFields[`${provider.name}-${field.key}`] ? 'Hide' : 'Show'}
                               </button>
                             {/if}
-                            <button class="btn-save" on:click={() => saveProviderCredentials(provider.name, providerConfigs[provider.name])} disabled={savingProvider === provider.name}>
+                            <button class="btn-save active:scale-95 transition-all duration-200" on:click={() => saveProviderCredentials(provider.name, providerConfigs[provider.name])} disabled={savingProvider === provider.name}>
                               {savingProvider === provider.name ? 'Saving...' : 'Save'}
                             </button>
                           </div>
@@ -414,7 +414,7 @@
                   </label>
               </div>
 
-              <button class="btn-primary" on:click={saveSettings}>Save Settings</button>
+              <button class="btn-primary active:scale-95 transition-all duration-200" on:click={saveSettings}>Save Settings</button>
           </div>
 
       {:else if activeTab === 'queue'}
@@ -429,7 +429,7 @@
                 {#each queueItems as item}
                   <button
                     type="button"
-                    class="queue-item"
+                    class="queue-item active:scale-95 transition-all duration-200"
                     class:selected={selectedQueueTaskId === item.id}
                     on:click={() => selectQueueItem(item.id)}
                   >
@@ -495,7 +495,7 @@
                       <h4>Audio Preview</h4>
                       {#if queueAudioUrl}
                           <div class="audio-controls">
-                            <button class="btn-manual" on:click={playSelectedAudio}>Play Preview</button>
+                            <button class="btn-manual active:scale-95 transition-all duration-200" on:click={playSelectedAudio}>Play Preview</button>
                           </div>
                           <audio bind:this={audioPreviewEl} controls preload="none" src={queueAudioUrl} class="audio-player"></audio>
                       {:else}
@@ -506,10 +506,10 @@
 
                   <div class="queue-actions">
                     {#if selectedQueueItem.detected_metadata}
-                      <button class="btn-approve" on:click={() => approveTask(selectedQueueItem)}>Accept & Import</button>
+                      <button class="btn-approve active:scale-95 transition-all duration-200" on:click={() => approveTask(selectedQueueItem)}>Accept & Import</button>
                     {/if}
-                    <button class="btn-manual" on:click={() => openManualSearch(selectedQueueItem)}>Manual Search</button>
-                    <button class="btn-ignore" on:click={() => ignoreTask(selectedQueueItem)}>Ignore</button>
+                    <button class="btn-manual active:scale-95 transition-all duration-200" on:click={() => openManualSearch(selectedQueueItem)}>Manual Search</button>
+                    <button class="btn-ignore active:scale-95 transition-all duration-200" on:click={() => ignoreTask(selectedQueueItem)}>Ignore</button>
                   </div>
                 {/if}
               </div>
@@ -540,13 +540,13 @@
                                 <div><strong>{result.artist}</strong> - {result.title}</div>
                                 <div class="muted">{result.album} ({result.year})</div>
                             </div>
-                            <button class="btn-select" on:click={() => approveTask(selectedTask, result)}>Select</button>
+                            <button class="btn-select active:scale-95 transition-all duration-200" on:click={() => approveTask(selectedTask, result)}>Select</button>
                         </div>
                     {/each}
                 {/if}
             </div>
 
-            <button class="btn-close" on:click={closeManualSearch}>Close</button>
+            <button class="btn-close active:scale-95 transition-all duration-200" on:click={closeManualSearch}>Close</button>
         </div>
     </div>
 {/if}
