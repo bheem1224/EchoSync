@@ -1,48 +1,63 @@
+<svelte:options customElement="echosync-path-mapping-editor" />
+
 <script>
-    import { createEventDispatcher } from 'svelte';
-    import { Trash2, Plus, ArrowRight, Info } from 'lucide-svelte';
+    export let mappings = "[]";
 
-    export let mappings = [];
+    // Reactively parse the prop since it will come as a string attribute
+    $: parsedMappings = typeof mappings === 'string' ? JSON.parse(mappings || "[]") : mappings || [];
 
-    // Ensure mappings is initialized as an array
-    if (!mappings) {
-        mappings = [];
+    // Local state to bind to inputs
+    let localMappings = [];
+
+    $: {
+        localMappings = [...parsedMappings];
     }
 
-    const dispatch = createEventDispatcher();
+    let formRef;
+
+    function dispatchUpdate() {
+        if (formRef) {
+            formRef.dispatchEvent(new CustomEvent('es-path-update', {
+                detail: localMappings,
+                bubbles: true,
+                composed: true
+            }));
+        }
+    }
 
     function addMapping() {
-        mappings = [...mappings, { remote: '', local: '' }];
-        dispatch('change', mappings);
+        localMappings = [...localMappings, { remote: '', local: '' }];
+        dispatchUpdate();
     }
 
     function removeMapping(index) {
-        mappings = mappings.filter((_, i) => i !== index);
-        dispatch('change', mappings);
+        localMappings = localMappings.filter((_, i) => i !== index);
+        dispatchUpdate();
     }
 
     function updateMapping() {
-        dispatch('change', mappings);
+        dispatchUpdate();
     }
 </script>
 
-<div class="space-y-4">
+<div bind:this={formRef} class="flex flex-col gap-4">
     <div class="flex items-center gap-2 mb-2">
-        <label class="text-sm font-medium text-gray-300">Path Mappings</label>
+        <label class="text-sm font-medium text-primary">Path Mappings</label>
         <div class="group relative flex items-center">
-            <Info class="w-4 h-4 text-gray-500 hover:text-gray-300 cursor-help" />
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-64 p-2 bg-gray-800 border border-gray-700 rounded shadow-xl z-50 invisible group-hover:visible text-xs text-gray-300 pointer-events-none">
+            <!-- Info SVG -->
+            <svg class="w-4 h-4 text-secondary hover:text-primary cursor-help transition-colors" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-64 p-2 bg-surface border border-border rounded-global shadow-xl z-50 invisible group-hover:visible text-xs text-primary pointer-events-none">
                 Required for Web Player and Metadata Fingerprinting. Maps paths from the remote server (e.g. Docker) to the local filesystem.
             </div>
         </div>
     </div>
 
-    {#if mappings.length === 0}
-        <div class="text-sm text-gray-500 italic">No path mappings configured.</div>
+    {#if localMappings.length === 0}
+        <div class="text-sm text-secondary italic">No path mappings configured.</div>
     {/if}
 
-    <div class="space-y-3">
-        {#each mappings as mapping, i}
+    <div class="flex flex-col gap-3">
+        {#each localMappings as mapping, i}
             <div class="flex items-center gap-2">
                 <div class="flex-1">
                     <input
@@ -50,11 +65,12 @@
                         bind:value={mapping.remote}
                         on:input={updateMapping}
                         placeholder="Remote Path (e.g. /data/music)"
-                        class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        class="w-full px-3 py-2 bg-background border border-border rounded-global text-sm text-primary placeholder-secondary focus:outline-none focus:border-accent transition-colors"
                     />
                 </div>
 
-                <ArrowRight class="w-4 h-4 text-gray-500 flex-shrink-0" />
+                <!-- ArrowRight SVG -->
+                <svg class="w-4 h-4 text-secondary flex-shrink-0" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
 
                 <div class="flex-1">
                     <input
@@ -62,26 +78,39 @@
                         bind:value={mapping.local}
                         on:input={updateMapping}
                         placeholder="Local Path (e.g. /mnt/user/music)"
-                        class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        class="w-full px-3 py-2 bg-background border border-border rounded-global text-sm text-primary placeholder-secondary focus:outline-none focus:border-accent transition-colors"
                     />
                 </div>
 
                 <button
+                    type="button"
                     on:click={() => removeMapping(i)}
-                    class="p-2 text-gray-400 hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors"
+                    class="p-2 text-secondary hover:text-error-text hover:bg-error-bg rounded-global transition-colors"
                     title="Remove mapping"
                 >
-                    <Trash2 class="w-4 h-4" />
+                    <!-- Trash2 SVG -->
+                    <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
                 </button>
             </div>
         {/each}
     </div>
 
     <button
+        type="button"
         on:click={addMapping}
-        class="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors mt-2"
+        class="flex items-center gap-2 text-sm text-accent hover:opacity-80 transition-opacity mt-2 self-start focus:outline-none"
     >
-        <Plus class="w-4 h-4" />
+        <!-- Plus SVG -->
+        <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
         Add Path Mapping
     </button>
 </div>
+
+<style>
+  .bg-error-bg {
+    background-color: var(--es-error-bg);
+  }
+  .text-error-text {
+    color: var(--es-error-text);
+  }
+</style>
