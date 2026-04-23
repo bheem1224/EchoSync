@@ -136,9 +136,13 @@
   {/if}
 
   {#if showEditor}
-    <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-md" on:click={closeEditor}>
-      <div class="bg-surface p-4 rounded-global w-[90%] max-w-[760px] max-h-[85vh] overflow-y-auto shadow-2xl text-primary" on:click|stopPropagation>
-        <QualityProfileEditor profile={editingProfile} on:save={saveProfileEdits} on:cancel={closeEditor} />
+    <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-md" on:click={closeEditor}>  
+      <div class="bg-surface border border-glass-border p-6 rounded-global w-[90%] max-w-[760px] max-h-[85vh] overflow-y-auto shadow-2xl text-primary" on:click|stopPropagation>
+        <echosync-quality-profile-editor 
+            profile={JSON.stringify(editingProfile)} 
+            on:es-save={saveProfileEdits} 
+            on:es-close={closeEditor} 
+        ></echosync-quality-profile-editor>
       </div>
     </div>
   {/if}
