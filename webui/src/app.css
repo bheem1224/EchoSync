@@ -4,42 +4,194 @@
 
 :root {
   color-scheme: dark;
+  /* Brand / Palette from rulebook */
+  --color-primary: #14b8a6; /* Subtle Teal */
+  --color-primary-hover: #0d9488;
 
-  /* Backgrounds */
-  --es-bg-base: #0f172a;
-  --es-glass-bg: rgba(30, 41, 59, 0.65);
-  --es-glass-border: rgba(255, 255, 255, 0.1);
-  --es-glass-hover: rgba(30, 41, 59, 0.85);
+  --bg-main: #050508; /* very dark void */
+  --bg-sidebar: #0f1216;
+  --bg-card: #14181f;
+  --bg-input: #08080a;
 
-  --es-bg-surface: #1e1e1e;
-  --es-bg-surface-hover: #2a2a2a;
+  --text-main: #ffffff;
+  --text-muted: #64748b;
 
-  /* Typography */
-  --es-text-primary: #ffffff;
-  --es-text-secondary: #a0a0a0;
+  --border-subtle: rgba(255,255,255,0.08);
+  --error: #ff5252;
+  --success: var(--color-primary);
 
-  /* Brand/Accent */
-  --es-accent: #1DB954; /* Default green */
+  --shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  --radius: 12px;
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: radial-gradient(circle at 20% 20%, rgba(15, 239, 136, 0.04), transparent 32%),
+              radial-gradient(circle at 80% 0%, rgba(14, 165, 233, 0.06), transparent 28%),
+              var(--bg-main);
+  color: var(--text-main);
 
-  /* Borders */
-  --es-border-radius: 0.75rem;
-  --es-border-color: #333333;
+  /* Component Aliases - Mapping legacy/component vars to global theme */
+  --card-bg: var(--bg-card);
+  --input-bg: var(--bg-input);
+  --text: var(--text-main);
+  --muted: var(--text-muted);
+  --border-color: var(--border-subtle);
+  --accent: var(--color-primary);
+  --glass: rgba(20, 24, 31, 0.7);
+  --glass-border: var(--border-subtle);
+}
 
-  /* State - Error */
-  --es-error-bg: #450a0a;     /* Dark red background */
-  --es-error-text: #f87171;   /* Light red text */
-  --es-error-border: #ef4444; /* Added sensible default for borders */
-
-  /* State - Warning */
-  --es-warning-bg: #451a03;   /* Dark orange/yellow background */
-  --es-warning-text: #fbbf24; /* Light yellow text */
-  --es-warning-border: #f59e0b; /* Added sensible default for borders */
-
-  /* State - Success */
-  --es-success-bg: #052e16;   /* Dark green background */
-  --es-success-text: #4ade80; /* Light green text */
+* {
+  box-sizing: border-box;
 }
 
 body {
-  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  min-height: 100vh;
+  background: transparent;
+  color: var(--text);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent);
+}
+
+.app-shell {
+  backdrop-filter: blur(18px);
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.glass {
+  background: var(--glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.18);
+  color: var(--text-main);
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(100, 139, 180, 0.06);
+  border: 1px solid rgba(100, 139, 180, 0.12);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 6px;
+}
+
+.section-heading h2 {
+  margin: 0;
+}
+
+.prefs-title { font-size: 28px; margin: 0; font-weight: 700 }
+
+.add-btn { padding: 8px 12px; border-radius: 999px; font-weight:700 }
+.add-btn[disabled] { opacity: 0.5; cursor: not-allowed }
+
+.save-all { display:inline-flex; align-items:center }
+.save-all.btn-primary { background: var(--color-primary); color: #000 }
+
+.muted {
+  color: var(--muted);
+}
+
+.button-ghost {
+  padding: 10px 14px;
+  min-height:44px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.button-ghost:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.input {
+  width: 100%;
+  padding: 12px 14px;
+  height: 48px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-input);
+  color: var(--text-main);
+}
+
+.input:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(0,250,154,0.08);
+  border-color: var(--color-primary-hover);
+}
+
+/* Global Select/Option Dark Mode Fixes */
+select {
+  background-color: var(--bg-input);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+
+/* Force dark background on options for browsers that support it */
+select option {
+  background-color: #262626;
+  color: var(--text-main);
+}
+
+.grid-2 {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+/* Primary button style */
+.btn-primary { background: var(--color-primary); color: #000; font-weight:700; padding: 10px 14px; border-radius: 10px; border: none; min-height:44px }
+.btn-primary:hover { background: var(--color-primary-hover) }
+
+/* Toast container */
+.toast-container { position: fixed; right: 18px; bottom: 18px; display:flex; flex-direction:column; gap:8px; z-index:1000 }
+.toast { padding:12px 16px; border-radius:10px; color:#000; background:var(--color-primary); min-width:200px; box-shadow: 0 8px 30px rgba(0,0,0,0.4) }
+.toast.error { background: var(--error); color: #fff }
+.toast.success { background: var(--color-primary); color:#000 }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 16px 0;
 }

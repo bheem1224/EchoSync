@@ -1,3 +1,4 @@
+/** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
     './src/**/*.{html,js,svelte,ts}'
@@ -5,46 +6,29 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        background: {
-          DEFAULT: 'var(--es-bg-base)'
-        },
-        surface: {
-          DEFAULT: 'var(--es-glass-bg)',
-          hover: 'var(--es-bg-surface-hover)'
-        },
-        primary: {
-          DEFAULT: 'var(--es-text-primary)'
-        },
-        secondary: {
-          DEFAULT: 'var(--es-text-secondary)'
-        },
-        accent: {
-          DEFAULT: 'var(--es-accent)'
-        },
-
-        'glass-border': 'var(--es-glass-border)',
-        border: {
-          DEFAULT: 'var(--es-border-color)'
-        },
-        error: {
-          bg: 'var(--es-error-bg)',
-          text: 'var(--es-error-text)',
-          border: 'var(--es-error-border)'
-        },
-        warning: {
-          bg: 'var(--es-warning-bg)',
-          text: 'var(--es-warning-text)',
-          border: 'var(--es-warning-border)'
-        },
-        success: {
-          bg: 'var(--es-success-bg)',
-          text: 'var(--es-success-text)'
-        }
+        // This maps 'bg-background' to your very dark void color
+        background: 'var(--bg-main)', 
+        
+        // This maps 'bg-surface' to your card background color
+        surface: 'var(--bg-card)',    
+        
+        // This maps 'text-primary' or 'bg-primary' to your Teal brand color
+        primary: 'var(--color-primary)', 
+        'primary-hover': 'var(--color-primary-hover)',
+        
+        // This maps 'text-secondary' to your muted slate color
+        secondary: 'var(--text-muted)', 
+        
+        // This maps 'border-glass-border' to your subtle white borders
+        'glass-border': 'var(--border-subtle)',
+        
+        error: 'var(--error)'
       },
       borderRadius: {
-        global: 'var(--es-border-radius)'
+        // This maps 'rounded-global' to your 12px radius
+        global: 'var(--radius)'
       }
     }
   },
   plugins: []
-}
+};
