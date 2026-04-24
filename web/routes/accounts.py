@@ -103,3 +103,43 @@ def update_account_name(service_name, account_id):
     except Exception as e:
         logger.error(f"Error updating account name for {account_id}: {e}")
         return jsonify({'error': str(e)}), 500
+
+from web.auth import require_auth
+@bp.post("/overrides")
+@require_auth
+def set_account_overrides():
+    from core.settings import config_manager
+    try:
+        payload = request.get_json(silent=True) or {}
+        managed_user_id = payload.get('managed_user_id')
+        service_account_id = payload.get('service_account_id')
+        action = payload.get('action') # "unfuse" | "refuse"
+
+        if not managed_user_id or not service_account_id or action not in ("unfuse", "refuse"):
+            return jsonify({'error': 'Missing or invalid parameters: managed_user_id, service_account_id, action'}), 400
+
+        active_media_server = config_manager.get_active_media_server()
+        if not active_media_server:
+            return jsonify({'error': 'No active media server configured'}), 400
+
+        provider_config = config_manager.get(active_media_server, {})
+        account_map_override = provider_config.get("account_map_override", {})
+
+        overrides = account_map_override.get(managed_user_id, [])
+
+        if action == "unfuse":
+            if service_account_id in overrides:
+                overrides.remove(service_account_id)
+        elif action == "refuse":
+            if service_account_id not in overrides:
+                overrides.append(service_account_id)
+
+        account_map_override[managed_user_id] = overrides
+        provider_config["account_map_override"] = account_map_override
+        config_manager.set(active_media_server, provider_config)
+        config_manager.save_settings(config_manager.get_settings())
+
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        logger.error(f"Error setting account override: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
