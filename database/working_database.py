@@ -546,4 +546,29 @@ __all__ = [
     "WorkingDatabase",
     "get_working_database",
     "close_working_database",
+    "SuggestionIntent",
 ]
+
+class SuggestionIntent(WorkingBase):
+    """
+    Queue data for Suggestion Service intents and staged actions.
+    """
+    __tablename__ = "suggestion_intents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sync_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    originator: Mapped[str] = mapped_column(String, nullable=False)
+    track_name: Mapped[str] = mapped_column(String, nullable=False)
+    track_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    action_needed: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="PENDING_APPROVAL", index=True)
+    admin_exempt_deletion: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    admin_force_upgrade: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    execute_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+
+    @validates('sync_id')
+    def validate_sync_id(self, key, sync_id):
+        if sync_id:
+            return str(sync_id).split('?')[0]
+        return sync_id
