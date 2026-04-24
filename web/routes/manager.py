@@ -485,6 +485,16 @@ def force_delete_track(track_id: int):
     try:
         result = execute_delete_now(sync_id)
         status = 200 if result.get("success") else 400
+
+        # Drop it from the pending queue
+        if status == 200:
+            work_db = get_working_database()
+            from database.working_database import SuggestionIntent
+            with work_db.session_scope() as session:
+                intent = session.query(SuggestionIntent).filter_by(sync_id=sync_id).first()
+                if intent:
+                    session.delete(intent)
+
         return jsonify(result), status
     except Exception as e:
         logger.error(f"Error forcing delete for track {track_id}: {e}", exc_info=True)
@@ -495,6 +505,8 @@ def force_delete_track(track_id: int):
 @require_auth
 def force_upgrade_track(track_id: int):
     """Force immediate lifecycle upgrade execution for a track, bypassing timers."""
+    from core.event_bus import event_bus
+
     sync_id = _sync_id_from_track_id(track_id)
     if not sync_id:
         return jsonify({"error": "Track not found"}), 404
@@ -503,9 +515,46 @@ def force_upgrade_track(track_id: int):
     quality_profile_id = payload.get("quality_profile_id")
 
     try:
-        result = execute_upgrade_now(sync_id, quality_profile_id=quality_profile_id)
-        status = 200 if result.get("success") else 400
-        return jsonify(result), status
+        # Fetch EchosyncTrack dict
+        from database.music_database import get_database
+        db = get_database()
+        track_dict = {}
+        with db.session_scope() as session:
+            from database.music_database import Track, Artist, Album
+            track = session.query(Track).filter_by(id=track_id).first()
+            if track:
+                artist = session.query(Artist).filter_by(id=track.artist_id).first()
+                album = session.query(Album).filter_by(id=track.album_id).first()
+
+                track_dict = {
+                    "id": track.id,
+                    "title": track.title,
+                    "artist_name": artist.name if artist else None,
+                    "album_title": album.title if album else None,
+                    "duration": track.duration,
+                    "musicbrainz_id": track.musicbrainz_id,
+                    "isrc": track.isrc,
+                    "acoustid_id": track.acoustid_id,
+                    "sync_id": sync_id
+                }
+
+        event_bus.publish({
+            "event": "DOWNLOAD_INTENT",
+            "sync_id": sync_id,
+            "track": track_dict,
+            "target_quality_profile": quality_profile_id,
+            "priority": 1
+        })
+
+        # Drop it from the pending queue
+        work_db = get_working_database()
+        from database.working_database import SuggestionIntent
+        with work_db.session_scope() as session:
+            intent = session.query(SuggestionIntent).filter_by(sync_id=sync_id).first()
+            if intent:
+                session.delete(intent)
+
+        return jsonify({"success": True}), 200
     except Exception as e:
         logger.error(f"Error forcing upgrade for track {track_id}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -635,4 +684,63 @@ def search_library():
         return jsonify(results), 200
     except Exception as e:
         logger.error(f"Error searching library: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/settings", methods=["POST"])
+@require_auth
+def set_manager_settings():
+    from core.settings import config_manager
+    payload = request.get_json(silent=True) or {}
+    config_manager.set("media_manager", payload)
+    config_manager.save_settings(config_manager.get_settings())
+    return jsonify({"success": True}), 200
+
+@bp.route("/queue/suggestions", methods=["GET"])
+@require_auth
+def get_suggestion_queue():
+    work_db = get_working_database()
+    from database.working_database import SuggestionIntent
+    try:
+        with work_db.session_scope() as session:
+            intents = session.query(SuggestionIntent).filter(SuggestionIntent.status == "PENDING_APPROVAL").all()
+            return jsonify({
+                "success": True,
+                "suggestions": [
+                    {
+                        "sync_id": intent.sync_id,
+                        "type": intent.type,
+                        "originator": intent.originator,
+                        "title": intent.track_name,
+                        "track_id": intent.track_id,
+                        "action_needed": intent.action_needed
+                    } for intent in intents
+                ]
+            }), 200
+    except Exception as e:
+        logger.error(f"Error getting suggestion queue: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/suggestion-candidates/override", methods=["POST"])
+@require_auth
+def override_suggestion_candidate():
+    payload = request.get_json(silent=True) or {}
+    sync_id = payload.get("sync_id")
+    field = payload.get("field")
+    value = payload.get("value")
+
+    if not sync_id or field not in ("admin_exempt_deletion", "admin_force_upgrade") or value is None:
+        return jsonify({"error": "Invalid payload"}), 400
+
+    work_db = get_working_database()
+    from database.working_database import SuggestionIntent
+    try:
+        with work_db.session_scope() as session:
+            intent = session.query(SuggestionIntent).filter_by(sync_id=sync_id).first()
+            if not intent:
+                return jsonify({"error": "Suggestion intent not found"}), 404
+
+            setattr(intent, field, value)
+            return jsonify({"success": True}), 200
+    except Exception as e:
+        logger.error(f"Error overriding suggestion candidate: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
