@@ -1,27 +1,24 @@
-1. Visual Identity & Brand
-The Aesthetic: "Cyber-Audiophile" — A blend of high-contrast typography and deep, layered transparencies.
+# EchoSync Design & Architecture Blueprint
 
-The Palette:
+## 1. Visual Identity & Brand
+* **The Aesthetic:** "Cyber-Audiophile" — High-contrast typography and deep, layered transparencies.
+* **The Palette:**
+  * Background: Deep Space Void (`#050508`) with subtle radial gradients.
+  * Primary Accent: Modern Teal (`#14b8a6`) for success states and primary buttons.
+  * Surfaces: Glassmorphism using `backdrop-blur(18px)` and `rgba(20, 24, 31, 0.7)`.
+  * Borders: Subtle white opacity (`rgba(255, 255, 255, 0.08)`).
+* **Interaction Model:** `Cmd+K` Omnibar for navigation, `active:scale-95` on all buttons for physical feel, and a Global `window` Event Bus for Toast notifications.
 
-Background: Deep Space Void (#050508) with subtle radial gradients (Teal and Blue accents).
+## 2. Core Functional Architecture
+EchoSync strictly separates background analysis (Proposals) from active file operations (Execution).
 
-Primary Accent: Modern Teal (#14b8a6) used for success states, primary buttons, and progress indicators.
+### Suggestion Service (The Brain & Proposer)
+* **Role:** Background Analytics & User Requests.
+* **Logic:** Monitors listen counts, trends, and user request queues.
+* **Limitations:** It has **ZERO** power to delete or modify the active library. Its only independent capability is downloading tracks strictly for ephemeral daily playlists.
+* **Outputs:** It posts "Intents" (e.g., Upgrade Request, Delete Unpopular Track) to the Media Manager's queue.
 
-Surfaces: Glassmorphism using backdrop-blur(18px) and semi-transparent backgrounds (rgba(20, 24, 31, 0.7)).
-
-Borders: Subtle white opacity (rgba(255, 255, 255, 0.08)).
-
-Typography: Clean, geometric sans-serif (Inter) with heavy weights for headings to maintain readability through the glass effects.
-
-2. Component Architecture
-App Shell: Fixed glass sidebar and top header. Page content uses a cross-fading {#key $page.url} transition.
-
-Custom Elements (Web Components): All external plugin UI must be encapsulated as Custom Elements (echosync-plugin-id). They do not use Shadow DOM so they can inherit global Tailwind variables.
-
-Interaction Model:
-
-Omnibar (Cmd+K): The primary navigation method for power users.
-
-Physicality: Every button uses active:scale-95 to simulate a physical press.
-
-Event Bus: Communication between isolated Web Components and the App Shell happens via native window events (e.g., es-toast).
+### Media Manager (The Gatekeeper & Executor)
+* **Role:** The ultimate authority on the file system.
+* **Logic:** Executes destructive or transformative operations (Deletes, Moves, Upgrades).
+* **UI/Admin:** Hosts the Dual-Queue Dashboard. All Intents from the Suggestion Service land in "Suggestions & Requests" waiting for Admin approval. Once approved (or caught by an auto-approve timing toggle), they move to "Pending Actions" for execution.
