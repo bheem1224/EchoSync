@@ -18,12 +18,48 @@
     let activeServer = 'plex';
     let pendingActions = [];
 
+    // Mock Data for Fusion
+    let musicServiceAccounts = [
+        { id: 's1', name: 'Simi Spotify', service: 'spotify' },
+        { id: 's2', name: 'Dad Tidal', service: 'tidal' },
+        { id: 's3', name: 'Simi Apple Music', service: 'apple' }
+    ];
+    let manualOverrides = {};
+
     let loading = true;
     let pruneLoading = false;
     let scanLoading = false;
     let savingSettings = false;
     let actionLoadingSyncId = null;
     let syncingManagedUsers = false;
+
+    // Dual Queue System State
+    let activeQueueTab = 'suggestions'; // 'suggestions' or 'pending'
+    let queueFilterType = 'All';
+    let queueFilterOriginator = 'All';
+
+    // Mock Data for Suggestions & Requests
+    let mockSuggestions = [
+        { sync_id: 's1', type: 'Deletion', originator: 'User: Simi', title: 'Never Gonna Give You Up', track_id: 't1', action_needed: 'DELETE_MONTH_END' },
+        { sync_id: 's2', type: 'Upgrade', originator: 'System', title: 'Bohemian Rhapsody', track_id: 't2', action_needed: 'UPGRADE_WEEK_END' },
+        { sync_id: 's3', type: 'Duplicate Resolution', originator: 'System', title: 'Hotel California', track_id: 't3', action_needed: 'RESOLVE_DUPLICATE' }
+    ];
+
+    // Mock Data for Pending Actions (Autopilot)
+    let mockPendingActions = [
+        { sync_id: 'p1', type: 'Deletion', originator: 'User: Dad', title: 'Baby Shark', track_id: 't4', execute_in: '2 days', action_needed: 'DELETE_MONTH_END' },
+        { sync_id: 'p2', type: 'Upgrade', originator: 'System', title: 'Stairway to Heaven', track_id: 't5', execute_in: '1 day', action_needed: 'UPGRADE_WEEK_END' }
+    ];
+
+    $: filteredSuggestions = mockSuggestions.filter(item =>
+        (queueFilterType === 'All' || item.type === queueFilterType) &&
+        (queueFilterOriginator === 'All' || item.originator === queueFilterOriginator)
+    );
+
+    $: filteredPendingActions = mockPendingActions.filter(item =>
+        (queueFilterType === 'All' || item.type === queueFilterType) &&
+        (queueFilterOriginator === 'All' || item.originator === queueFilterOriginator)
+    );
 
     onMount(async () => {
         await refreshAll();
@@ -153,6 +189,19 @@
         }
     }
 
+    function toggleFusionOverride(serviceId, managedUserId) {
+        const key = `${managedUserId}-${serviceId}`;
+        manualOverrides[key] = !manualOverrides[key];
+        // In a real app, send to backend: /api/accounts/overrides
+        console.log('Emitting fusion override payload:', {
+            action: manualOverrides[key] ? 'unfuse' : 'refuse',
+            service_account_id: serviceId,
+            managed_user_id: managedUserId
+        });
+        // Trigger reactivity
+        manualOverrides = { ...manualOverrides };
+    }
+
     async function fetchPendingActions() {
         try {
             const res = await fetch('/api/manager/queue/actions');
@@ -280,6 +329,24 @@
         } finally {
             actionLoadingSyncId = null;
         }
+    }
+
+    function approveSuggestion(item) {
+        mockSuggestions = mockSuggestions.filter(s => s.sync_id !== item.sync_id);
+        mockPendingActions = [...mockPendingActions, { ...item, execute_in: '3 days', sync_id: 'p' + Date.now() }];
+    }
+
+    function rejectSuggestion(item) {
+        mockSuggestions = mockSuggestions.filter(s => s.sync_id !== item.sync_id);
+    }
+
+    function cancelPendingAction(item) {
+        mockPendingActions = mockPendingActions.filter(p => p.sync_id !== item.sync_id);
+    }
+
+    function executePendingNow(item) {
+        mockPendingActions = mockPendingActions.filter(p => p.sync_id !== item.sync_id);
+        alert(`Executed ${item.type} for ${item.title}`);
     }
 
     function getReadableTrackLabel(item) {
@@ -414,12 +481,63 @@
         {:else}
             <div class="accounts-grid">
                 {#each managedAccounts as account}
-                    <div class="account-card">
+                    {@const accountName = (account.display_name || account.account_name || '').toLowerCase()}
+                    {@const fusedServices = musicServiceAccounts.filter(s => {
+                        const isSimilar = s.name.toLowerCase().includes(accountName) || accountName.includes(s.name.toLowerCase().split(' ')[0]);
+                        const isOverridden = manualOverrides[`${account.id}-${s.id}`];
+                        return isSimilar && !isOverridden;
+                    })}
+                    {@const unFusedServices = musicServiceAccounts.filter(s => {
+                        const isSimilar = s.name.toLowerCase().includes(accountName) || accountName.includes(s.name.toLowerCase().split(' ')[0]);
+                        const isOverridden = manualOverrides[`${account.id}-${s.id}`];
+                        return isSimilar && isOverridden;
+                    })}
+
+                    <div class="account-card flex flex-col gap-3">
                         <div class="account-head">
                             <div class="account-name">{account.display_name || account.account_name || `Account ${account.id}`}</div>
                             <span class="badge {account.is_active ? 'active' : 'inactive'}">{account.is_active ? 'Active' : 'Inactive'}</span>
                         </div>
-                        <div class="account-meta">Account ID: {account.id}</div>
+                        <div class="account-meta mb-2">Account ID: {account.id}</div>
+
+                        {#if fusedServices.length > 0}
+                            <div class="fusion-section">
+                                <div class="text-xs text-muted mb-1 flex items-center gap-1">
+                                    Fused Services
+                                    <div class="fusion-tooltip-container relative inline-block">
+                                        <span class="info-icon" title="EchoSync fused this account based on name similarity. Click an icon to manually un-fuse.">i</span>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    {#each fusedServices as service}
+                                        <button
+                                            class="service-badge {service.service} cursor-pointer hover:opacity-80 active:scale-95 transition-all"
+                                            title="Click to un-fuse {service.name}"
+                                            on:click={() => toggleFusionOverride(service.id, account.id)}
+                                        >
+                                            {service.name}
+                                        </button>
+                                    {/each}
+                                </div>
+                            </div>
+                        {/if}
+
+                        {#if unFusedServices.length > 0}
+                            <div class="fusion-section mt-1">
+                                <div class="text-xs text-muted mb-1 opacity-70">Un-Fused Services</div>
+                                <div class="flex gap-2 opacity-60">
+                                    {#each unFusedServices as service}
+                                        <button
+                                            class="service-badge {service.service} cursor-pointer hover:opacity-80 active:scale-95 transition-all"
+                                            title="Click to re-fuse {service.name}"
+                                            on:click={() => toggleFusionOverride(service.id, account.id)}
+                                        >
+                                            <span class="line-through">{service.name}</span>
+                                        </button>
+                                    {/each}
+                                </div>
+                            </div>
+                        {/if}
                     </div>
                 {/each}
             </div>
@@ -633,7 +751,68 @@
 
     .account-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
     .account-name { font-size: 14px; font-weight: 700; color: var(--text); }
+    .queue-tab {
+        padding: 12px 24px;
+        color: var(--muted);
+        font-weight: 600;
+        font-size: 14px;
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: transparent;
+        border-top: none;
+        border-left: none;
+        border-right: none;
+    }
+    .queue-tab:hover { color: var(--text); }
+    .queue-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    .count-badge {
+        background: rgba(255,255,255,0.1);
+        color: var(--text);
+        font-size: 11px;
+        padding: 2px 6px;
+        border-radius: 12px;
+    }
+    .queue-tab.active .count-badge { background: rgba(20, 184, 166, 0.2); color: var(--accent); }
+
+    .filter-select {
+        background: rgba(0,0,0,0.3);
+        border: 1px solid var(--glass-border);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 4px 8px;
+        font-size: 12px;
+        outline: none;
+    }
+
+    .queue-items-container { display: flex; flex-direction: column; }
+    .queue-item {
+        padding: 16px;
+        border-bottom: 1px solid var(--glass-border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+    }
+    .queue-item:last-child { border-bottom: none; }
+    .queue-item:hover { background: rgba(255,255,255,0.02); }
     .account-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+    .service-badge {
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
+        color: var(--text);
+    }
+    .service-badge.spotify { background: rgba(30, 215, 96, 0.15); border-color: rgba(30, 215, 96, 0.3); color: #1ed760; }
+    .service-badge.tidal { background: rgba(0, 0, 0, 0.3); border-color: rgba(255, 255, 255, 0.2); }
+    .service-badge.apple { background: rgba(250, 36, 60, 0.15); border-color: rgba(250, 36, 60, 0.3); color: #fa243c; }
 
     /* Toggle Switch */
     .switch { position: relative; display: inline-block; width: 40px; height: 24px; }
