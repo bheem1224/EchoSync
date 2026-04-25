@@ -1,10 +1,10 @@
 <script>
   import { onMount } from "svelte";
   import ManagerSettings from "../../../components/ManagerSettings.svelte";
-  import ManagerQueues from "../../../components/ManagerQueues.svelte";
-  import ProviderSettings from "../../../components/ProviderSettings.svelte";
-  import DownloadQueueViewer from "../../../components/DownloadQueueViewer.svelte";
-  import SystemSettings from "../../../components/SystemSettings.svelte";
+  import ManagedAccounts from "../../../components/ManagedAccounts.svelte";
+  import DuplicateResolutionCard from "../../../components/DuplicateResolutionCard.svelte";
+  import PendingActionsCard from "../../../components/PendingActionsCard.svelte";
+  import AccountLinker from "../../../components/AccountLinker.svelte";
 
   let layout = null;
   let activeView = null;
@@ -12,10 +12,10 @@
 
   const componentMap = {
       'echosync-manager-settings': ManagerSettings,
-      'echosync-manager-queues': ManagerQueues,
-      'echosync-plex-card': ProviderSettings,
-      'echosync-download-queue': DownloadQueueViewer,
-      'echosync-system-metrics': SystemSettings
+      'echosync-managed-accounts': ManagedAccounts,
+      'echosync-duplicate-resolution': DuplicateResolutionCard,
+      'echosync-pending-actions': PendingActionsCard,
+      'echosync-account-linker': AccountLinker,
   };
 
   onMount(async () => {
@@ -43,32 +43,35 @@
       <h1 class="text-2xl font-bold">{activeView.title}</h1>
       {#if activeView.sidebar?.enabled}
         <button
-          class="btn-primary flex items-center gap-2 px-4 py-2 bg-primary text-black font-bold rounded-full hover:scale-95 transition-transform"
+          class="flex items-center justify-center w-10 h-10 bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.1)] text-white rounded-full hover:bg-[rgba(255,255,255,0.1)] transition-colors"
+          title="Account Linker"
           on:click={() => (sidebarOpen = true)}
         >
-          Sidebar Overlay
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
         </button>
       {/if}
     </header>
 
     <div
-      class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-start"
+      class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start"
     >
       {#if activeView.sections}
         {#each activeView.sections as section}
-          <div class="flex flex-col gap-4">
-            <h2 class="text-lg font-semibold text-muted">{section.title}</h2>
+          <div class="flex flex-col gap-4 {section.fullWidth ? 'md:col-span-2' : ''}">
+            {#if section.title}
+              <h2 class="text-lg font-semibold text-muted">{section.title}</h2>
+            {/if}
 
             {#if section.cards}
               {#each section.cards as card}
                 {#if componentMap[card.type]}
-                  <div class="bg-surface border border-glass-border rounded-global block w-full p-4 overflow-hidden shadow-2xl">
+                  <div class="card p-4 overflow-hidden">
                     <svelte:component this={componentMap[card.type]} />
                   </div>
                 {:else}
                   <svelte:element
                     this={card.type}
-                    class="bg-surface border border-glass-border rounded-global block w-full p-4 overflow-hidden shadow-2xl"
+                    class="card p-4 overflow-hidden block w-full"
                   ></svelte:element>
                 {/if}
               {/each}

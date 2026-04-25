@@ -5,11 +5,15 @@ dashboard:
       sidebar:
         enabled: true
         cards:
-          - type: echosync-manager-settings
+          - type: echosync-account-linker
       sections:
-        - title: Queues
+        - fullWidth: true
           cards:
-            - type: echosync-manager-queues
-        - title: Accounts
+            - type: echosync-manager-settings
+        - fullWidth: true
           cards:
-            - type: echosync-plex-card
+            - type: echosync-managed-accounts
+        - cards:
+            - type: echosync-duplicate-resolution
+        - cards:
+            - type: echosync-pending-actions
