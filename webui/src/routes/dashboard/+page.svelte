@@ -86,7 +86,7 @@
       <!-- Responsive grid layout -->
       <div class="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3 items-start">
         {#each currentView.cards as card}
-          <div class="col-span-1 rounded-global bg-surface backdrop-blur-md border border-glass-border min-h-[150px] overflow-hidden flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:shadow-green-500/10 active:translate-y-0 active:scale-95">
+          <div class="col-span-1 rounded-global bg-surface border border-glass-border text-white backdrop-blur-md min-h-[150px] overflow-hidden flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:shadow-green-500/10 active:translate-y-0 active:scale-95">
             {#await waitForComponent(card.type)}
               <!-- Skeleton placeholder -->
               <div class="p-4 flex-1 flex flex-col animate-pulse">

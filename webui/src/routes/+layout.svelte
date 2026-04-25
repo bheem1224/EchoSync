@@ -56,7 +56,7 @@
 
 <svelte:window bind:innerWidth />
 
-<div class="app-shell">
+<div class="app-shell bg-transparent text-[var(--text)]">
   {#if innerWidth >= 768}
     <Sidebar />
     <main class="app-content flex-1 overflow-y-auto min-h-0">
