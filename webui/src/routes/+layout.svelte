@@ -56,38 +56,45 @@
 
 <svelte:window bind:innerWidth />
 
-<div class="app-shell bg-transparent text-[var(--text)]">
-  {#if innerWidth >= 768}
-    <Sidebar />
-    <main class="app-content flex-1 overflow-y-auto min-h-0">
-      {#key $page.url}
-        <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
-          <slot />
-        </div>
-      {/key}
-    </main>
-  {:else}
+<div class="h-screen w-full flex flex-col overflow-hidden bg-transparent text-white">
+  <div class="flex-1 flex overflow-hidden min-h-0">
+    {#if innerWidth >= 768}
+      <Sidebar />
+      <main class="flex-1 overflow-y-auto p-6">
+        {#key $page.url}
+          <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
+            <slot />
+          </div>
+        {/key}
+      </main>
+    {:else}
+      <div class="flex-1 flex flex-col min-h-0">
+        <header class="flex justify-between items-center p-4 bg-surface border-b border-glass-border">
+          <div class="font-bold text-lg text-white tracking-tight">EchoSync</div>
+          <button
+            class="p-2 bg-surface-hover rounded-global active:scale-95 transition-all text-white"
+            on:click={() => window.dispatchEvent(new CustomEvent('es-omnibar-toggle'))}
+          >
+            🔍
+          </button>
+        </header>
+        <main class="flex-1 overflow-y-auto p-4">
+          {#key $page.url}
+            <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
+              <slot />
+            </div>
+          {/key}
+        </main>
+        <BottomNav />
+      </div>
+    {/if}
+  </div>
 
-    <header class="flex justify-between items-center p-4 bg-surface border-b border-glass-border">
-      <div class="font-bold text-lg text-primary tracking-tight">EchoSync</div>
-      <button
-        class="p-2 bg-surface-hover rounded-global active:scale-95 transition-all text-primary"
-        on:click={() => window.dispatchEvent(new CustomEvent('es-omnibar-toggle'))}
-      >
-        🔍
-      </button>
-    </header>
-    <main class="app-content flex-1 overflow-y-auto min-h-0">
+  <!-- Bottom Player Fixed outside main scroll area -->
+  <div class="flex-none">
+    <BottomPlayer />
+  </div>
 
-      {#key $page.url}
-        <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
-          <slot />
-        </div>
-      {/key}
-    </main>
-    <BottomNav />
-  {/if}
-  <BottomPlayer />
   <ToastNotifications />
   <Omnibar />
   
@@ -105,34 +112,3 @@
     />
   {/if}
 </div>
-
-<style>
-  .app-shell {
-    display: flex;
-    min-height: 100vh;
-    width: 100%;
-    position: relative;
-    overflow: hidden;
-    background: transparent;
-    color: var(--text);
-  }
-
-  .app-content {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 24px;
-    padding-bottom: 120px; /* Add padding for player */
-  }
-
-  @media (max-width: 900px) {
-    .app-shell {
-      flex-direction: column;
-    }
-
-    .app-content {
-      padding: 16px;
-      padding-bottom: 160px; /* Add padding for player + bottom nav */
-    }
-  }
-</style>
