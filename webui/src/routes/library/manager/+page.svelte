@@ -1,9 +1,22 @@
 <script>
   import { onMount } from "svelte";
+  import ManagerSettings from "../../../components/ManagerSettings.svelte";
+  import ManagerQueues from "../../../components/ManagerQueues.svelte";
+  import ProviderSettings from "../../../components/ProviderSettings.svelte";
+  import DownloadQueueViewer from "../../../components/DownloadQueueViewer.svelte";
+  import SystemSettings from "../../../components/SystemSettings.svelte";
 
   let layout = null;
   let activeView = null;
   let sidebarOpen = false;
+
+  const componentMap = {
+      'echosync-manager-settings': ManagerSettings,
+      'echosync-manager-queues': ManagerQueues,
+      'echosync-plex-card': ProviderSettings,
+      'echosync-download-queue': DownloadQueueViewer,
+      'echosync-system-metrics': SystemSettings
+  };
 
   onMount(async () => {
     try {
@@ -48,10 +61,16 @@
 
             {#if section.cards}
               {#each section.cards as card}
-                <svelte:element
-                  this={card.type}
-                  class="bg-surface border border-glass-border rounded-global block w-full p-4 overflow-hidden shadow-2xl"
-                ></svelte:element>
+                {#if componentMap[card.type]}
+                  <div class="bg-surface border border-glass-border rounded-global block w-full p-4 overflow-hidden shadow-2xl">
+                    <svelte:component this={componentMap[card.type]} />
+                  </div>
+                {:else}
+                  <svelte:element
+                    this={card.type}
+                    class="bg-surface border border-glass-border rounded-global block w-full p-4 overflow-hidden shadow-2xl"
+                  ></svelte:element>
+                {/if}
               {/each}
             {/if}
           </div>
@@ -82,10 +101,16 @@
         <div class="flex flex-col gap-4">
           {#if activeView.sidebar.cards}
             {#each activeView.sidebar.cards as card}
-              <svelte:element
-                this={card.type}
-                class="bg-card border border-glass-border rounded-global block w-full p-4"
-              ></svelte:element>
+              {#if componentMap[card.type]}
+                <div class="bg-card border border-glass-border rounded-global block w-full p-4">
+                  <svelte:component this={componentMap[card.type]} />
+                </div>
+              {:else}
+                <svelte:element
+                  this={card.type}
+                  class="bg-card border border-glass-border rounded-global block w-full p-4"
+                ></svelte:element>
+              {/if}
             {/each}
           {/if}
         </div>

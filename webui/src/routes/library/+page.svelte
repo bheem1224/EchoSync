@@ -13,6 +13,7 @@
   // UI State
   let viewMode = 'grid'; // 'grid' | 'detail'
   let selectedArtist = null;
+  let searchQuery = '';
 
   // Pagination / Virtualization for Artists Grid
   let visibleCount = 50;
@@ -69,7 +70,9 @@
       }
   }
 
-  $: visibleArtists = libraryIndex.slice(0, visibleCount);
+  $: visibleArtists = libraryIndex
+      .filter(a => !searchQuery || a.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      .slice(0, visibleCount);
 
   function loadMore() {
       if (visibleCount < libraryIndex.length) {
@@ -168,6 +171,18 @@
 
     <!-- GRID VIEW -->
     {#if viewMode === 'grid'}
+        <div class="mb-6 max-w-xl mx-auto">
+            <div class="relative">
+                <input 
+                    type="text" 
+                    bind:value={searchQuery} 
+                    placeholder="Search artists by name..." 
+                    class="w-full bg-black/20 border border-glass-border text-white px-4 py-3 pl-11 rounded-global focus:outline-none focus:border-accent transition-colors shadow-inner"
+                />
+                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-muted text-lg">🔍</span>
+            </div>
+        </div>
+
         <div class="artist-grid">
             {#each visibleArtists as artist (artist.id)}
                 <div

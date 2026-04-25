@@ -85,3 +85,54 @@ def update_dashboard():
     except Exception as e:
         logger.error(f"Error writing dashboard.yaml: {e}")
         return jsonify({"error": "Failed to write dashboard configuration"}), 500
+
+layout_bp = Blueprint("dashboard_layout", __name__, url_prefix="/api/dashboard")
+
+@layout_bp.get("/layout")
+@require_auth
+def get_dashboard_layout():
+    """Reads the Lovelace dashboard layout from config/dashboard.yaml."""
+    layout_file = os.path.join("config", "dashboard.yaml")
+    yaml = YAML()
+    
+    fallback = {
+        "dashboard": {
+            "views": [
+                {
+                    "id": "manager",
+                    "title": "Manager",
+                    "sidebar": {
+                        "enabled": True,
+                        "cards": [{"type": "echosync-download-queue"}]
+                    },
+                    "sections": [
+                        {
+                            "title": "Accounts",
+                            "cards": [{"type": "echosync-plex-card"}]
+                        },
+                        {
+                            "title": "System",
+                            "cards": [{"type": "echosync-system-metrics"}]
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    if not os.path.exists(layout_file):
+        return jsonify(fallback), 200
+
+    try:
+        with open(layout_file, "r", encoding="utf-8") as f:
+            data = yaml.load(f)
+        if data is None:
+            data = fallback
+    except YAMLError as e:
+        logger.error(f"YAML Syntax Error reading config/dashboard.yaml: {e}")
+        data = fallback
+    except Exception as e:
+        logger.error(f"Error reading config/dashboard.yaml: {e}")
+        data = fallback
+
+    return jsonify(data), 200

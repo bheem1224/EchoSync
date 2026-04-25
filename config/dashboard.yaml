@@ -1,0 +1,15 @@
+dashboard:
+  views:
+    - id: manager
+      title: Manager
+      sidebar:
+        enabled: true
+        cards:
+          - type: echosync-manager-settings
+      sections:
+        - title: Queues
+          cards:
+            - type: echosync-manager-queues
+        - title: Accounts
+          cards:
+            - type: echosync-plex-card
