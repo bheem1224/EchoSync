@@ -55,6 +55,12 @@ from core.job_queue import start_job_queue
 from core.backend_services import start_services
 import threading
 import asyncio
+import mimetypes
+
+# Fix for missing mime types in some Docker/Linux environments
+mimetypes.add_type('text/css', '.css')
+mimetypes.add_type('application/javascript', '.js')
+mimetypes.add_type('image/svg+xml', '.svg')
 
 _backend_started = False
 

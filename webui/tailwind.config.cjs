@@ -3,6 +3,7 @@ module.exports = {
   content: [
     './src/**/*.{html,js,svelte,ts}'
   ],
+  safelist: ['bg-transparent', 'text-white'],
   theme: {
     extend: {
       colors: {
