@@ -71,7 +71,15 @@
   }
 
   $: visibleArtists = libraryIndex
-      .filter(a => !searchQuery || a.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      .filter(a => {
+          if (!searchQuery) return true;
+          const q = searchQuery.toLowerCase();
+          if (a.name.toLowerCase().includes(q)) return true;
+          return a.albums && a.albums.some(album => 
+              (album.title && album.title.toLowerCase().includes(q)) || 
+              (album.tracks && album.tracks.some(track => track.title && track.title.toLowerCase().includes(q)))
+          );
+      })
       .slice(0, visibleCount);
 
   function loadMore() {
@@ -171,15 +179,15 @@
 
     <!-- GRID VIEW -->
     {#if viewMode === 'grid'}
-        <div class="mb-6 max-w-xl mx-auto">
-            <div class="relative">
+        <div class="mb-6 flex justify-end">
+            <div class="relative w-full max-w-md">
                 <input 
                     type="text" 
                     bind:value={searchQuery} 
-                    placeholder="Search artists by name..." 
-                    class="w-full bg-black/20 border border-glass-border text-white px-4 py-3 pl-11 rounded-global focus:outline-none focus:border-accent transition-colors shadow-inner"
+                    placeholder="Search library..." 
+                    class="w-full bg-black/20 border border-glass-border text-white px-4 py-2 pl-10 rounded-global focus:outline-none focus:border-accent transition-colors shadow-inner text-sm"
                 />
-                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-muted text-lg">🔍</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-base">🔍</span>
             </div>
         </div>
 

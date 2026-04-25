@@ -3,8 +3,12 @@ name: Build and Publish Docker Image
 on:
   push:
     branches: [ "main" ]
-    workflow_dispatch: # 👈 THIS ADDS THE MANUAL "RUN" BUTTON IN GITHUB UI
-
+  workflow_dispatch: # 👈 THIS ADDS THE MANUAL "RUN" BUTTON IN GITHUB UI
+    inputs:
+          no_cache:
+            description: 'Force build without cache'
+            required: false
+            type: boolean
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -51,6 +55,16 @@ jobs:
           fi
           
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          
+          # --- NO-CACHE DETECTION ---
+          # Check if commit message contains [no-cache] OR if the manual UI checkbox was ticked
+          if echo "$COMMIT_MSG" | grep -qi '\[no-cache\]' || [ "${{ github.event.inputs.no_cache }}" == "true" ]; then
+            echo "no_cache=true" >> $GITHUB_OUTPUT
+            echo "🚨 No-cache flag detected! Forcing a clean Docker build."
+          else
+            echo "no_cache=false" >> $GITHUB_OUTPUT
+            echo "Using standard Docker caching."
+          fi
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -58,6 +72,7 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.extract_tags.outputs.tags }}
+          no-cache: ${{ steps.extract_tags.outputs.no_cache == 'true' }}
 
       - name: Create GitHub Release
         # Only run this step if a version was successfully extracted

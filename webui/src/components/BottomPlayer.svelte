@@ -207,161 +207,149 @@
 
   <!-- ── Fixed bottom bar ───────────────────────────────────────────────── -->
   <div
-    class="fixed bottom-0 left-0 right-0 h-20 bg-gray-900 border-t border-gray-800
-           flex items-center px-4 gap-4 z-50"
+    class="fixed bottom-0 left-0 right-0 h-auto min-h-[5rem] py-2 md:py-0 md:h-20 bg-gray-900 border-t border-gray-800
+           flex flex-col md:flex-row items-center px-2 md:px-4 gap-2 md:gap-4 z-50"
   >
 
-    <!-- ── LEFT: Track identity (fixed 224 px) ──────────────────────────── -->
-    <div class="flex items-center gap-3 w-56 min-w-0 shrink-0">
-      <div
-        class="w-12 h-12 rounded bg-gray-800 flex items-center justify-center
-               text-xl shrink-0 select-none"
-        aria-hidden="true"
-      >
-        🎵
-      </div>
-
-      <div class="min-w-0">
-        <p class="text-sm font-semibold text-white truncate leading-tight">
-          {$player.currentTrack.title ?? 'Unknown Title'}
-        </p>
-        <p class="text-xs text-gray-400 truncate mt-0.5">
-          {$player.currentTrack.artist ?? 'Unknown Artist'}
-        </p>
-      </div>
-    </div>
-
-    <!-- ── CENTER: Transport controls + progress bar (flex-1) ────────────── -->
-    <div class="flex flex-col items-center flex-1 min-w-0 gap-1.5">
-
-      <!-- Transport row -->
-      <div class="flex items-center gap-5">
-
-        <!-- Previous (stub — future queue integration) -->
-        <button
-          class="text-gray-500 hover:text-white transition-colors active:scale-95"
-          title="Previous"
-          aria-label="Previous track"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
-          </svg>
-        </button>
-
-        <!-- Play / Pause -->
-        <button
-          class="w-9 h-9 rounded-full bg-white text-gray-900 flex items-center justify-center
-                 hover:scale-105 active:scale-95 transition-transform"
-          on:click={onToggle}
-          aria-label={paused ? 'Play' : 'Pause'}
-          title={paused ? 'Play' : 'Pause'}
-        >
-          {#if paused}
-            <!-- Play icon -->
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M8 5v14l11-7z"/>
-            </svg>
-          {:else}
-            <!-- Pause icon -->
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-            </svg>
-          {/if}
-        </button>
-
-        <!-- Next (stub — future queue integration) -->
-        <button
-          class="text-gray-500 hover:text-white transition-colors active:scale-95"
-          title="Next"
-          aria-label="Next track"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M6 18l8.5-6L6 6v12zM16 6h2v12h-2z"/>
-          </svg>
-        </button>
-
-      </div>
-
-      <!-- Progress row -->
-      <div class="flex items-center gap-2 w-full max-w-lg">
-
-        <!-- Elapsed time -->
-        <span class="text-xs text-gray-400 tabular-nums w-10 text-right shrink-0">
-          {formatTime(displayTime)}
-        </span>
-
-        <!--
-          Seek slider.
-          Disabled (greyed, non-interactive) for live-transcode streams because
-          the browser has no total-duration information to seek against.
-          The `value` attribute (not bind:value) is used intentionally: we drive
-          the thumb position ourselves (scrub-aware), which prevents the browser
-          from snapping the thumb back during timeupdate while dragging.
-        -->
-        <input
-          type="range"
-          min="0"
-          max={isLiveStream ? 100 : duration}
-          step="0.1"
-          value={displayTime}
-          disabled={isLiveStream}
-          class="flex-1 h-1 accent-white cursor-pointer
-                 disabled:cursor-not-allowed disabled:opacity-40"
-          on:mousedown={onScrubStart}
-          on:touchstart|passive={onScrubStart}
-          on:input={onScrubMove}
-          on:change={onScrubEnd}
-          aria-label="Seek"
-        />
-
-        <!--
-          Show a 'LIVE' badge when duration is unknown (live transcode).
-          Show elapsed/total times for normal seekable files.
-        -->
-        {#if isLiveStream}
-          <span
-            class="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded
-                   bg-orange-600 text-white tracking-wide"
-            title="Live transcode — seeking unavailable"
-          >
-            LIVE
-          </span>
-        {:else}
-          <span class="text-xs text-gray-400 tabular-nums w-10 shrink-0">
-            {formatTime(duration)}
-          </span>
-        {/if}
-
-      </div>
-    </div>
-
-    <!-- ── RIGHT: Volume control (fixed 128 px) ─────────────────────────── -->
-    <div class="flex items-center gap-2 w-32 shrink-0">
-      <svg
-        class="w-4 h-4 text-gray-400 shrink-0"
-        viewBox="0 0 24 24"
-        fill="currentColor"
-        aria-hidden="true"
-      >
-        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
-      </svg>
-
-      <!--
-        bind:value keeps the slider thumb in sync with `localVolume`.
-        on:input calls player.setVolume() to persist the preference in the store
-        so external volume-change callers (e.g. keyboard shortcuts) stay in sync.
-      -->
+    <!-- ── Mobile Top: Progress Bar (visible only on small screens) ─────────── -->
+    <div class="flex md:hidden w-full items-center gap-2 px-2">
+      <span class="text-[10px] text-gray-400 tabular-nums shrink-0">{formatTime(displayTime)}</span>
       <input
         type="range"
         min="0"
-        max="1"
-        step="0.01"
-        bind:value={localVolume}
-        on:input={e => player.setVolume(+e.target.value)}
-        class="flex-1 h-1 accent-white cursor-pointer"
-        aria-label="Volume"
+        max={isLiveStream ? 100 : duration}
+        step="0.1"
+        value={displayTime}
+        disabled={isLiveStream}
+        class="flex-1 h-1 accent-white cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+        on:mousedown={onScrubStart}
+        on:touchstart|passive={onScrubStart}
+        on:input={onScrubMove}
+        on:change={onScrubEnd}
+        aria-label="Seek"
       />
+      {#if isLiveStream}
+        <span class="shrink-0 text-[8px] font-semibold px-1 rounded bg-orange-600 text-white">LIVE</span>
+      {:else}
+        <span class="text-[10px] text-gray-400 tabular-nums shrink-0">{formatTime(duration)}</span>
+      {/if}
     </div>
 
+    <div class="flex w-full items-center justify-between md:justify-start gap-2 md:gap-4 flex-1">
+      <!-- ── LEFT: Track identity ──────────────────────────── -->
+      <div class="flex items-center gap-3 md:w-56 min-w-0 shrink-0 flex-1 md:flex-none">
+        <div
+          class="w-10 h-10 md:w-12 md:h-12 rounded bg-gray-800 flex items-center justify-center
+                 text-lg md:text-xl shrink-0 select-none"
+          aria-hidden="true"
+        >
+          🎵
+        </div>
+
+        <div class="min-w-0">
+          <p class="text-sm font-semibold text-white truncate leading-tight">
+            {$player.currentTrack.title ?? 'Unknown Title'}
+          </p>
+          <p class="text-xs text-gray-400 truncate mt-0.5">
+            {$player.currentTrack.artist ?? 'Unknown Artist'}
+          </p>
+        </div>
+      </div>
+
+      <!-- ── CENTER: Transport controls + Desktop progress bar ────────────── -->
+      <div class="flex flex-col items-center md:flex-1 min-w-0 gap-1.5 shrink-0">
+
+        <!-- Transport row -->
+        <div class="flex items-center gap-3 md:gap-5">
+
+          <!-- Previous -->
+          <button
+            class="text-gray-500 hover:text-white transition-colors active:scale-95"
+            title="Previous"
+            aria-label="Previous track"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
+            </svg>
+          </button>
+
+          <!-- Play / Pause -->
+          <button
+            class="w-9 h-9 md:w-10 md:h-10 rounded-full bg-white text-gray-900 flex items-center justify-center
+                   hover:scale-105 active:scale-95 transition-transform shadow-md"
+            on:click={onToggle}
+            aria-label={paused ? 'Play' : 'Pause'}
+            title={paused ? 'Play' : 'Pause'}
+          >
+            {#if paused}
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8 5v14l11-7z"/>
+              </svg>
+            {:else}
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+              </svg>
+            {/if}
+          </button>
+
+          <!-- Next -->
+          <button
+            class="text-gray-500 hover:text-white transition-colors active:scale-95"
+            title="Next"
+            aria-label="Next track"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M6 18l8.5-6L6 6v12zM16 6h2v12h-2z"/>
+            </svg>
+          </button>
+
+        </div>
+
+        <!-- Desktop Progress row (hidden on small screens) -->
+        <div class="hidden md:flex items-center gap-2 w-full max-w-lg">
+          <span class="text-xs text-gray-400 tabular-nums w-10 text-right shrink-0">
+            {formatTime(displayTime)}
+          </span>
+          <input
+            type="range"
+            min="0"
+            max={isLiveStream ? 100 : duration}
+            step="0.1"
+            value={displayTime}
+            disabled={isLiveStream}
+            class="flex-1 h-1 accent-white cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+            on:mousedown={onScrubStart}
+            on:touchstart|passive={onScrubStart}
+            on:input={onScrubMove}
+            on:change={onScrubEnd}
+            aria-label="Seek"
+          />
+          {#if isLiveStream}
+            <span class="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-600 text-white tracking-wide">LIVE</span>
+          {:else}
+            <span class="text-xs text-gray-400 tabular-nums w-10 shrink-0">
+              {formatTime(duration)}
+            </span>
+          {/if}
+        </div>
+      </div>
+
+      <!-- ── RIGHT: Volume control (hidden on mobile, shifted left on desktop) ── -->
+      <div class="hidden md:flex items-center gap-2 w-28 lg:w-32 shrink-0 mr-4 lg:mr-8">
+        <svg class="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
+        </svg>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          bind:value={localVolume}
+          on:input={e => player.setVolume(+e.target.value)}
+          class="flex-1 h-1 accent-white cursor-pointer"
+          aria-label="Volume"
+        />
+      </div>
+    </div>
   </div>
 {/if}
