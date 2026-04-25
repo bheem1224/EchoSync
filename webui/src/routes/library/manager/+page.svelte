@@ -159,17 +159,20 @@
 <section class="manager-page">
   <main class="main-column">
     <div class="card p-6">
-      <div class="flex-row">
-        <div class="title-group">
-          <h2>Manager Settings</h2>
+        <div class="header-row">
+          <div class="title-group">
+            <h2>Manager Settings</h2>
+            <div class="subtitle">Control automatic hygiene, upgrades, and staged actions</div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" on:click={() => settingsCollapsed = !settingsCollapsed} aria-pressed={settingsCollapsed}>
+              {settingsCollapsed ? 'Expand' : 'Collapse'}
+            </button>
+            <button class="btn btn-primary" on:click={saveSettings}>Save</button>
+            <button class="btn btn-ghost" on:click={runManagerScan}>Scan</button>
+            <button class="btn btn-destructive" on:click={runPruneJob}>Prune</button>
+          </div>
         </div>
-        <div class="actions">
-          <button class="btn" on:click={() => settingsCollapsed = !settingsCollapsed}>{settingsCollapsed ? 'Expand' : 'Collapse'}</button>
-          <button class="btn btn--primary" on:click={saveSettings}>Save</button>
-          <button class="btn btn--secondary" on:click={runManagerScan}>Scan</button>
-          <button class="btn btn--danger" on:click={runPruneJob}>Prune</button>
-        </div>
-      </div>
 
       {#if !settingsCollapsed}
       <div class="settings-grid">
@@ -181,15 +184,21 @@
 
       <div class="queues-card mt-4">
         <div class="filter-bar">
-          <input placeholder="Search..." bind:value={searchQuery} class="input-search" />
-          <select bind:value={queueFilterType} class="filter-select"><option>All</option><option>Upgrade</option><option>Deletion</option><option>Duplicate Resolution</option></select>
-          <select bind:value={queueFilterOriginator} class="filter-select"><option>All</option><option>System</option><option>User</option></select>
-        </div>
+            <input placeholder="Search by title, artist, or sync id" bind:value={searchQuery} class="input-search" />
+            <div class="filter-group">
+              <label class="filter-label">Type</label>
+              <select bind:value={queueFilterType} class="filter-select"><option>All</option><option>Upgrade</option><option>Deletion</option><option>Duplicate Resolution</option></select>
+            </div>
+            <div class="filter-group">
+              <label class="filter-label">Originator</label>
+              <select bind:value={queueFilterOriginator} class="filter-select"><option>All</option><option>System</option><option>User</option></select>
+            </div>
+          </div>
 
-        <div class="tabs-row">
-          <button class:active={activeTab==='suggestions'} on:click={() => activeTab='suggestions'}>Suggestions & Requests</button>
-          <button class:active={activeTab==='pending'} on:click={() => activeTab='pending'}>Pending Actions</button>
-        </div>
+          <div class="tabs-row" role="tablist" aria-label="Manager Tabs">
+            <button role="tab" aria-selected={activeTab==='suggestions'} class="tab-btn" class:active={activeTab==='suggestions'} on:click={() => activeTab='suggestions'}>Suggestions & Requests</button>
+            <button role="tab" aria-selected={activeTab==='pending'} class="tab-btn" class:active={activeTab==='pending'} on:click={() => activeTab='pending'}>Pending Actions</button>
+          </div>
 
         <div class="mt-3">
           {#if activeTab === 'suggestions'}
@@ -198,12 +207,15 @@
                 <div class="empty">No suggestions.</div>
               {:else}
                 {#each filteredSuggestions as item}
-                  <div class="queue-item">
-                    <div>
-                      <div class="header-row"><span class="badge">{item.type}</span><span class="title">{decodeLabel(item)}</span></div>
-                      <div class="sub">{item.originator || 'System'}</div>
+                  <div class="queue-item card-row">
+                    <div class="queue-left">
+                      <div class="title-row"><span class="badge muted">{item.type}</span><div class="title">{decodeLabel(item)}</div></div>
+                      <div class="sub muted">{item.originator || 'System'}</div>
                     </div>
-                    <div class="actions"><button on:click={() => {/* implement approve */}}>Approve</button><button on:click={() => {/* reject */}}>Reject</button></div>
+                    <div class="queue-actions">
+                      <button class="btn btn-primary small" on:click={() => {/* approve */}}>Approve</button>
+                      <button class="btn btn-ghost small" on:click={() => {/* reject */}}>Reject</button>
+                    </div>
                   </div>
                 {/each}
               {/if}
@@ -214,12 +226,15 @@
                 <div class="empty">No pending actions.</div>
               {:else}
                 {#each filteredPendingActions as item}
-                  <div class="queue-item">
-                    <div>
-                      <div class="header-row"><span class="badge">{item.action_needed}</span><span class="title">{decodeLabel(item)}</span></div>
-                      <div class="sub">{item.artist || item.originator || 'Unknown'}</div>
+                  <div class="queue-item card-row">
+                    <div class="queue-left">
+                      <div class="title-row"><span class="badge muted">{item.action_needed}</span><div class="title">{decodeLabel(item)}</div></div>
+                      <div class="sub muted">{item.artist || item.originator || 'Unknown'}</div>
                     </div>
-                    <div class="actions"><button on:click={() => vetoPendingAction(item)}>Veto</button><button on:click={() => executeNow(item)}>Execute</button></div>
+                    <div class="queue-actions">
+                      <button class="btn btn-ghost small" on:click={() => vetoPendingAction(item)}>Veto</button>
+                      <button class="btn btn-primary small" on:click={() => executeNow(item)}>Execute</button>
+                    </div>
                   </div>
                 {/each}
               {/if}
@@ -273,18 +288,41 @@
 .main-column { display: flex; flex-direction: column; gap: 16px; }
 .settings-grid { display:flex; gap:12px; flex-wrap:wrap; }
 .row { display:flex; align-items:center; gap:8px; }
-.filter-bar { display:flex; gap:8px; align-items:center; margin-top:12px; }
-.input-search { flex:1; padding:8px 10px; border-radius:8px; background: rgba(255,255,255,0.03); border:1px solid var(--glass-border); }
-.filter-select { padding:6px 8px; border-radius:6px; background: rgba(255,255,255,0.02); border:1px solid var(--glass-border); }
-.tabs-row { display:flex; gap:8px; margin-top:10px; }
-.tabs-row button { padding:8px 14px; border-radius:8px; background:transparent; border:1px solid transparent; cursor:pointer; }
-.tabs-row button.active { background: rgba(255,255,255,0.02); border-color:var(--glass-border); }
-.list-block { margin-top:12px; border:1px solid var(--glass-border); border-radius:10px; padding:8px; min-height:160px; max-height:520px; overflow:auto; }
-.queue-item { display:flex; justify-content:space-between; gap:12px; padding:10px; border-bottom:1px solid var(--glass-border); align-items:center; }
+.filter-bar { display:flex; gap:12px; align-items:center; margin-top:12px; }
+.input-search { flex:1; padding:10px 12px; border-radius:10px; background: rgba(255,255,255,0.02); border:1px solid var(--glass-border); color:var(--text); }
+.filter-group { display:flex; flex-direction:column; gap:6px; }
+.filter-label { font-size:12px; color:var(--muted); }
+.filter-select { padding:8px 10px; border-radius:8px; background: rgba(255,255,255,0.02); border:1px solid var(--glass-border); min-width:160px; }
+.tabs-row { display:flex; gap:8px; margin-top:12px; }
+.tab-btn { padding:10px 14px; border-radius:8px; background:transparent; border: none; cursor:pointer; color:var(--text); position:relative; }
+.tab-btn.active::after { content: ''; position:absolute; left:8px; right:8px; bottom:-12px; height:3px; background:var(--color-primary); border-radius:3px; transform-origin:center; }
+.list-block { margin-top:12px; border:1px solid var(--glass-border); border-radius:10px; padding:12px; min-height:160px; max-height:540px; overflow:auto; background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(0,0,0,0.02)); }
+.queue-item { display:flex; justify-content:space-between; gap:12px; padding:12px; border-bottom:1px solid rgba(255,255,255,0.02); align-items:center; background:transparent; }
 .queue-item:last-child { border-bottom:none; }
+.card-row { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.queue-left { display:flex; flex-direction:column; gap:6px; }
+.title-row { display:flex; gap:8px; align-items:center; }
+.badge { font-size:12px; padding:6px 8px; border-radius:999px; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); }
+.badge.muted { opacity:0.8; }
+.title { font-weight:600; font-size:14px; }
+.sub { font-size:13px; color:var(--muted); }
+.muted { color:var(--muted); }
+.queue-actions { display:flex; gap:8px; }
+.btn { padding:8px 10px; border-radius:8px; border:1px solid transparent; background:transparent; cursor:pointer; }
+.btn.small { padding:6px 8px; font-size:13px; }
+.btn-ghost { background:transparent; border:1px solid rgba(255,255,255,0.03); }
+.btn-primary { background:var(--color-primary); color:white; }
+.btn-destructive { background:#b04242; color:white; }
+.btn-ghost.small { padding:6px 8px; }
 .manager-sidebar { display:flex; flex-direction:column; gap:12px; }
 .sidebar-panel { position: sticky; top: 20px; }
 .accounts-collapsed { position: fixed; right: 12px; top: 140px; display:flex; flex-direction:column; gap:8px; z-index:60; }
 .mini-account { width:44px; height:44px; border-radius:999px; background: rgba(255,255,255,0.03); border:1px solid var(--glass-border); display:flex; align-items:center; justify-content:center; }
 .mini-account img { width:100%; height:100%; border-radius:999px; object-fit:cover; }
+
+/* Responsive tweaks */
+@media (max-width: 1100px) {
+  .manager-page { grid-template-columns: 1fr; }
+  .accounts-collapsed { right: 8px; top: 120px; }
+}
 </style>
