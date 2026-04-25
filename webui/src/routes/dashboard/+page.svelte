@@ -9,16 +9,55 @@
   onMount(async () => {
     try {
       // 1. Fetch manifest and inject scripts
-      const manifestRes = await fetch('/api/system/plugins/ui-manifest', { credentials: 'include' });
+      // Fetch UI manifest and manager ui-beta opt state
+      const [manifestRes, uiBetaRes] = await Promise.all([
+        fetch('/api/system/plugins/ui-manifest', { credentials: 'include' }),
+        fetch('/api/manager/ui-beta', { credentials: 'include' }).catch(() => null)
+      ]);
+
       if (!manifestRes.ok) throw new Error('Failed to fetch UI manifest');
       const manifestData = await manifestRes.json();
 
+      let betaOpt = false;
+      let devMode = false;
+      if (uiBetaRes && uiBetaRes.ok) {
+        try {
+          const uiData = await uiBetaRes.json();
+          betaOpt = !!uiData.beta_opt_in;
+          devMode = !!uiData.dev_mode;
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      function chooseAsset(assets, preferBeta) {
+        if (!assets) return null;
+
+        // Normalize assets if it's a string
+        if (typeof assets === 'string') return assets;
+
+        const betaKeys = ['beta_js', 'bundle.beta.js', 'bundle.beta', 'bundle.beta_js', 'beta'];
+        const normalKeys = ['js', 'bundle.js', 'bundle', 'main', 'index.js'];
+
+        const prefer = preferBeta ? [...betaKeys, ...normalKeys] : [...normalKeys, ...betaKeys];
+        for (const k of prefer) {
+          if (assets[k]) return assets[k];
+        }
+        // fallback: first string value found
+        for (const v of Object.values(assets)) {
+          if (typeof v === 'string') return v;
+        }
+        return null;
+      }
+
       if (manifestData && Array.isArray(manifestData.plugins)) {
         for (const plugin of manifestData.plugins) {
-          if (plugin.assets && plugin.assets.js) {
+          const preferBeta = betaOpt || devMode;
+          const src = chooseAsset(plugin.assets, preferBeta);
+          if (src) {
             const script = document.createElement('script');
             script.type = 'module';
-            script.src = plugin.assets.js;
+            script.src = src;
             document.head.appendChild(script);
           }
         }

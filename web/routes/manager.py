@@ -191,6 +191,40 @@ def manager_settings():
             return jsonify({"error": str(e)}), 500
 
 
+    @bp.route('/ui-beta', methods=['GET', 'POST'])
+    @require_auth
+    def ui_beta_opt():
+        """Get or set the UI plugin beta opt-in flag stored in config.json.
+
+        GET: returns { beta_opt_in: bool, dev_mode: bool }
+        POST: accepts JSON { beta_opt_in: true|false } and persists to config.json
+        """
+        import os
+        try:
+            if request.method == 'POST':
+                payload = request.get_json() or {}
+                val = payload.get('beta_opt_in')
+                if val is None or not isinstance(val, bool):
+                    return jsonify({'error': 'beta_opt_in (boolean) required'}), 400
+                # Persist to config under ui.beta_plugin_ui
+                config_manager.set('ui.beta_plugin_ui', bool(val))
+                return jsonify({'success': True, 'beta_opt_in': bool(val)}), 200
+
+            # GET: return current saved value and dev_mode env flag
+            saved = bool(config_manager.get('ui.beta_plugin_ui', False))
+            dev_mode = False
+            # Support two common env names for dev mode
+            if os.environ.get('ECHOSYNC_DEV_MODE', '').lower() in ('1', 'true', 'yes'):
+                dev_mode = True
+            if os.environ.get('DEV_MODE', '').lower() in ('1', 'true', 'yes'):
+                dev_mode = True
+
+            return jsonify({'beta_opt_in': saved, 'dev_mode': dev_mode}), 200
+        except Exception as e:
+            logger.error(f"Error handling ui-beta opt: {e}")
+            return jsonify({'error': str(e)}), 500
+
+
 @bp.route("/suggestion-candidates", methods=["GET"])
 @require_auth
 def get_suggestion_candidates():

@@ -381,6 +381,7 @@ class ConfigManager:
                 "new_releases_only": False
             },
             "settings": {"audio_quality": "flac"},
+            "ui": {"beta_plugin_ui": False},
             # Storage paths - Docker-first approach
             # Users can map /config and /data, or override individual paths
             "storage": {

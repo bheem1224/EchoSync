@@ -6,6 +6,7 @@
   let error = '';
   let downloadClients = [];
   let enabledMap = {};
+  let activeClient = 'slskd';
 
   onMount(async () => {
     loading = true;
@@ -36,6 +37,16 @@
   function clientKey(c) {
     return c?.name || c?.id || c?.service || '';
   }
+
+  // note: keep small helper in-module to avoid polluting markup
+  async function toggleClient(key, value) {
+    enabledMap = { ...enabledMap, [key]: !!value };
+    try {
+      await settings.save({ download_clients: { [key]: !!value } });
+    } catch (err) {
+      console.error('Failed to save download client setting:', err);
+    }
+  }
 </script>
 
 <section>
@@ -63,17 +74,7 @@
     {/if}
   {/if}
 
-  <script>
-    // note: keep small helper in-module to avoid polluting markup
-    async function toggleClient(key, value) {
-      enabledMap = { ...enabledMap, [key]: !!value };
-      try {
-        await settings.save({ download_clients: { [key]: !!value } });
-      } catch (err) {
-        console.error('Failed to save download client setting:', err);
-      }
-    }
-  </script>
+  
 </section>
 
 <style>

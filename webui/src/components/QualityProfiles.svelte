@@ -136,8 +136,8 @@
   {/if}
 
   {#if showEditor}
-    <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-md" on:click={closeEditor}>  
-      <div class="bg-surface border border-glass-border p-6 rounded-global w-[90%] max-w-[760px] max-h-[85vh] overflow-y-auto shadow-2xl text-primary" on:click|stopPropagation>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-auto bg-black/60 backdrop-blur-md" on:click={closeEditor} aria-hidden>
+      <div role="dialog" aria-modal="true" class="bg-surface border border-glass-border p-6 rounded-global w-full max-w-[760px] max-h-[calc(100vh-48px)] overflow-auto shadow-2xl text-white" on:click|stopPropagation>
         <QualityProfileEditor
             profile={editingProfile}
             on:save={saveProfileEdits}
