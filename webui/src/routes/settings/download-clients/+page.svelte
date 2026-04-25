@@ -32,6 +32,10 @@
       loading = false;
     }
   });
+
+  function clientKey(c) {
+    return c?.name || c?.id || c?.service || '';
+  }
 </script>
 
 <section>
@@ -47,12 +51,11 @@
       <p>No download clients available.</p>
     {:else}
       <div class="clients-list">
-        {#each downloadClients as client}
-          {#const key = client.name || client.id || client.service}
+        {#each downloadClients as client (client.name || client.id || client.service)}
           <div class="client-row">
             <label class="form-group">
-              <span class="label-text">{client.display_name || client.name || key}</span>
-              <input type="checkbox" checked={!!enabledMap[key]} on:change={(e) => toggleClient(key, e.target.checked)} />
+              <span class="label-text">{client.display_name || client.name || clientKey(client)}</span>
+              <input type="checkbox" checked={!!enabledMap[clientKey(client)]} on:change={(e) => toggleClient(clientKey(client), e.target.checked)} />
             </label>
           </div>
         {/each}
