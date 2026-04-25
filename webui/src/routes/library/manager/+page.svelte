@@ -43,121 +43,83 @@
         );
 
         if (isPlexAdmin && service.service === 'spotify') {
-            return true;
-        }
+            </div>
 
-        return serviceName.includes(accountName) || accountName.includes(serviceName.split(' ')[0] || '');
-    }
+            <!-- Queues: full-width container with filter bar + tabs -->
+            <div class="card p-6 queues-container">
+                <div class="filter-bar bg-surface border border-glass-border rounded-global p-3 flex gap-3 items-center">
+                    <input placeholder="Search tracks or sync id..." bind:value={searchQuery} class="input-search p-2 rounded-global bg-surface-hover flex-1" />
+                    <select bind:value={queueFilterType} class="filter-select">
+                        <option>All</option>
+                        <option>Upgrade</option>
+                        <option>Deletion</option>
+                        <option>Duplicate Resolution</option>
+                    </select>
+                    <select bind:value={queueFilterOriginator} class="filter-select">
+                        <option>All</option>
+                        <option>System</option>
+                        <option>User</option>
+                    </select>
+                </div>
 
-    function accountFusionState(account, service) {
-        const isOverridden = manualOverrides[`${account.id}-${service.id}`];
-        const shouldFuse = shouldAutoFuseService(account, service);
-        return { isOverridden, shouldFuse };
-    }
+                <div class="tabs-row mt-3 flex items-center gap-2">
+                    <button class="queue-tab {activeTab === 'suggestions' ? 'active' : ''} active:scale-95" on:click={() => activeTab = 'suggestions'}>
+                        Suggestions & Requests
+                    </button>
+                    <button class="queue-tab {activeTab === 'pending' ? 'active' : ''} active:scale-95" on:click={() => activeTab = 'pending'}>
+                        Pending Actions
+                    </button>
+                </div>
 
-    let loading = true;
-    let pruneLoading = false;
-    let scanLoading = false;
-    let savingSettings = false;
-    let actionLoadingSyncId = null;
-    let syncingManagedUsers = false;
-
-    // Dual Queue System State
-    let activeQueueTab = 'suggestions'; // 'suggestions' or 'pending'
-    let queueFilterType = 'All';
-    let queueFilterOriginator = 'All';
-
-    // Mock Data for Suggestions & Requests
-    let mockSuggestions = [
-        { sync_id: 's1', type: 'Deletion', originator: 'User: Simi', title: 'Never Gonna Give You Up', track_id: 't1', action_needed: 'DELETE_MONTH_END' },
-        { sync_id: 's2', type: 'Upgrade', originator: 'System', title: 'Bohemian Rhapsody', track_id: 't2', action_needed: 'UPGRADE_WEEK_END' },
-        { sync_id: 's3', type: 'Duplicate Resolution', originator: 'System', title: 'Hotel California', track_id: 't3', action_needed: 'RESOLVE_DUPLICATE' }
-    ];
-
-    // Mock Data for Pending Actions (Autopilot)
-    let mockPendingActions = [
-        { sync_id: 'p1', type: 'Deletion', originator: 'User: Dad', title: 'Baby Shark', track_id: 't4', execute_in: '2 days', action_needed: 'DELETE_MONTH_END' },
-        { sync_id: 'p2', type: 'Upgrade', originator: 'System', title: 'Stairway to Heaven', track_id: 't5', execute_in: '1 day', action_needed: 'UPGRADE_WEEK_END' }
-    ];
-
-    $: filteredSuggestions = mockSuggestions.filter(item =>
-        (queueFilterType === 'All' || item.type === queueFilterType) &&
-        (queueFilterOriginator === 'All' || item.originator === queueFilterOriginator)
-    );
-
-    $: filteredPendingActions = mockPendingActions.filter(item =>
-        (queueFilterType === 'All' || item.type === queueFilterType) &&
-        (queueFilterOriginator === 'All' || item.originator === queueFilterOriginator)
-    );
-
-    onMount(async () => {
-        await refreshAll();
-    });
-
-    async function refreshAll() {
-        loading = true;
-        try {
-            await Promise.all([
-                fetchSettings(),
-                fetchQualityProfiles(),
-                fetchDuplicates(),
-                fetchManagedAccounts(),
-                fetchPendingActions()
-            ]);
-        } finally {
-            loading = false;
-        }
-    }
-
-    async function fetchSettings() {
-        try {
-            const res = await fetch('/api/manager/settings');
-            if (res.ok) {
-                const data = await res.json();
-                settings = {
-                    ...settings,
-                    ...(data.settings || {})
-                };
-            }
-        } catch (e) { console.error(e); }
-    }
-
-    async function fetchQualityProfiles() {
-        const profileEndpoints = ['/api/quality-profiles'];
-
-        for (const url of profileEndpoints) {
-            try {
-                const res = await fetch(url);
-                if (!res.ok) continue;
-                const data = await res.json();
-                const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
-                if (profiles.length > 0) {
-                    qualityProfiles = profiles;
-                    return;
-                }
-            } catch (e) {
-                console.error(e);
-            }
-        }
-
-        qualityProfiles = [];
-    }
-
-    async function saveSettings() {
-        savingSettings = true;
-        try {
-            const res = await fetch('/api/manager/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(settings)
-            });
-            if (res.ok) {
-                alert('Settings Saved');
-                await fetchSettings();
-            } else {
-                alert('Failed to save settings');
-            }
-        } catch (e) { console.error(e); }
+                <div class="mt-4">
+                    {#if activeTab === 'suggestions'}
+                        <div class="list-block bg-surface border border-glass-border rounded-global">
+                            {#if filteredSuggestions.length === 0}
+                                <div class="empty">No suggestions matching filters.</div>
+                            {:else}
+                                {#each filteredSuggestions as item}
+                                    <div class="queue-item">
+                                        <div class="info">
+                                            <div class="header-row">
+                                                <span class="badge {item.type === 'Deletion' ? 'delete' : 'upgrade'}">{item.type}</span>
+                                                <span class="title">{getReadableTrackLabel(item)}</span>
+                                            </div>
+                                            <div class="artist">{item.originator}</div>
+                                        </div>
+                                        <div class="actions">
+                                            <button class="btn btn--small btn--success" on:click={() => approveSuggestion(item)}>Approve</button>
+                                            <button class="btn btn--small btn--ghost" on:click={() => rejectSuggestion(item)}>Reject</button>
+                                        </div>
+                                    </div>
+                                {/each}
+                            {/if}
+                        </div>
+                    {:else}
+                        <div class="list-block bg-surface border border-glass-border rounded-global">
+                            {#if filteredPendingActions.length === 0}
+                                <div class="empty">No pending actions matching filters.</div>
+                            {:else}
+                                {#each filteredPendingActions as item}
+                                    <div class="queue-item">
+                                        <div class="info">
+                                            <div class="header-row">
+                                                <span class="badge {item.action_needed === 'DELETE_MONTH_END' ? 'delete' : 'upgrade'}">{item.action_needed === 'DELETE_MONTH_END' ? 'Pending Delete' : 'Pending Upgrade'}</span>
+                                                <span class="title">{getReadableTrackLabel(item)}</span>
+                                            </div>
+                                            <div class="artist">{item.originator}</div>
+                                        </div>
+                                        <div class="actions">
+                                            <button class="btn btn--small btn--success" on:click={() => vetoPendingAction(item)}>Veto</button>
+                                            <button class="btn btn--small btn--primary" on:click={() => executeNow(item)}>Execute</button>
+                                        </div>
+                                    </div>
+                                {/each}
+                            {/if}
+                        </div>
+                    {/if}
+                </div>
+            </div>
+        </div>
         finally { savingSettings = false; }
     }
 
@@ -731,6 +693,20 @@
     {/if}
   </aside>
 
+    {#if !accountsSidebarOpen}
+        <div class="accounts-collapsed" aria-hidden>
+            {#each managedAccounts as acc}
+                <button class="mini-account" title={acc.display_name || acc.account_name} on:click={() => { accountsSidebarOpen = true; }}>
+                    {#if acc.avatar_url}
+                        <img src={acc.avatar_url} alt="{acc.display_name}" />
+                    {:else}
+                        { (acc.display_name || acc.account_name || String(acc.id)).charAt(0).toUpperCase() }
+                    {/if}
+                </button>
+            {/each}
+        </div>
+    {/if}
+
     {#if loading}
         <div class="loading-note">Loading manager data...</div>
     {/if}
@@ -974,4 +950,15 @@
         font-size: 12px;
         text-align: right;
     }
+
+    /* New styles for queues container and filter bar */
+    .queues-container { width: 100%; }
+    .filter-bar .input-search { border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(255,255,255,0.02); color:var(--text); }
+    .tabs-row { border-bottom: 1px solid transparent; }
+    .list-block { min-height: 220px; }
+
+    /* Collapsed accounts floating */
+    .accounts-collapsed { position: fixed; right: 12px; top: 140px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
+    .mini-account { width: 44px; height: 44px; border-radius: 999px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); color: var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+    .mini-account img { width:100%; height:100%; border-radius:999px; object-fit:cover; }
 </style>

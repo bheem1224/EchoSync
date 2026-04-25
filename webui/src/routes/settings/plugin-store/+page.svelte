@@ -11,6 +11,9 @@
 
   let showReposModal = false;
   let newRepoUrl = '';
+  let showOverflowMenu = false;
+  let betaOpt = false;
+  let devMode = false;
 
   async function loadStore() {
     isLoading = true;
@@ -36,8 +39,34 @@
 
   onMount(async () => {
     await loadRepos();
+    await loadUiBeta();
     await loadStore();
   });
+
+  async function loadUiBeta() {
+    try {
+      const resp = await apiClient.get('/manager/ui-beta');
+      if (resp && resp.data) {
+        betaOpt = !!resp.data.beta_opt_in;
+        devMode = !!resp.data.dev_mode;
+      }
+    } catch (err) {
+      console.debug('Failed to load ui-beta opt state:', err);
+    }
+  }
+
+  async function setUiBetaOpt(val) {
+    try {
+      const resp = await apiClient.post('/manager/ui-beta', { beta_opt_in: !!val });
+      if (resp && resp.data) {
+        betaOpt = !!resp.data.beta_opt_in;
+        feedback.addToast(`Beta UI opt ${betaOpt ? 'enabled' : 'disabled'}`, 'success');
+      }
+    } catch (err) {
+      feedback.addToast('Failed to update beta opt state', 'error');
+      console.error('Failed to set ui-beta:', err);
+    }
+  }
 
   async function installPlugin(plugin) {
     if (downloading) return;
@@ -95,9 +124,37 @@
         Browse and install community and official plugins to extend Echosync's functionality.
       </p>
     </div>
-    <button class="btn-manage-repos active:scale-95 transition-all duration-200" on:click={() => showReposModal = !showReposModal}>
-      {showReposModal ? 'Close Repositories' : 'Manage Repositories'}
-    </button>
+    <div class="header-actions">
+      <button class="btn-manage-repos active:scale-95 transition-all duration-200" on:click={() => showReposModal = !showReposModal}>
+        {showReposModal ? 'Close Repositories' : 'Manage Repositories'}
+      </button>
+
+      <div class="overflow-menu relative inline-block">
+        <button class="btn-ellipsis p-2 rounded-global" aria-haspopup="true" aria-expanded={showOverflowMenu} on:click={() => showOverflowMenu = !showOverflowMenu} title="More">
+          ⋯
+        </button>
+
+        {#if showOverflowMenu}
+          <div class="menu absolute right-0 mt-2 w-56 bg-surface border border-glass-border rounded-global shadow-lg z-40">
+            <button class="menu-item" on:click={() => { showReposModal = true; showOverflowMenu = false; }}>Manage Repositories</button>
+            <div class="menu-divider"></div>
+            <button class="menu-item" on:click={async () => {
+                // Toggle with confirmation when enabling
+                if (!betaOpt) {
+                  const ok = confirm(`Warning: You are opting into Beta Plugin UI builds. There is a 95% chance of this being broken and completely ruining your UI. Would not recommend. I am not a very good coder. Continue anyway?`);
+                  if (!ok) return;
+                } else {
+                  alert('see i told you so');
+                }
+                await setUiBetaOpt(!betaOpt);
+                showOverflowMenu = false;
+              }}>
+              {betaOpt ? 'Opt-out Beta UI' : 'Opt-in Beta UI'} {#if devMode}<span class="badge">dev</span>{/if}
+            </button>
+          </div>
+        {/if}
+      </div>
+    </div>
   </header>
 
   {#if showReposModal}
@@ -259,6 +316,14 @@
     color: var(--text);
     word-break: break-all;
   }
+
+  .header-actions { display:flex; gap:8px; align-items:flex-start; }
+  .btn-ellipsis { background: transparent; border: 1px solid transparent; color: var(--text); cursor: pointer; font-size: 20px; }
+  .menu { padding: 6px; }
+  .menu-item { display:block; width:100%; text-align:left; padding:8px 10px; background:transparent; border:none; color:var(--text); cursor:pointer; }
+  .menu-item:hover { background: rgba(255,255,255,0.03); }
+  .menu-divider { height:1px; background: rgba(255,255,255,0.03); margin:4px 0; }
+  .badge { margin-left:8px; padding:2px 6px; border-radius:6px; background:var(--accent); color:#000; font-size:12px; }
 
   .btn-remove {
     background: rgba(239, 68, 68, 0.2);
