@@ -228,10 +228,13 @@
       <h3>Advanced Filters</h3>
       {#if hasMatchingProvider}
         <div class="flex flex-col gap-2">
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" bind:checked={p.enforce_duration_match} />
-            Enforce Duration Match
-          </label>
+          <div class="flex items-center justify-between gap-2">
+            <span>Enforce Duration Match</span>
+            <label class="switch">
+              <input type="checkbox" bind:checked={p.enforce_duration_match} />
+              <span class="slider"></span>
+            </label>
+          </div>
 
           {#if p.enforce_duration_match}
             <label class="flex items-center gap-2 ml-7 text-sm">Tolerance (seconds)
@@ -245,15 +248,24 @@
             </label>
           {/if}
 
-          <label class="flex items-center gap-2 cursor-pointer" style="margin-top:8px">
-            <input type="checkbox" bind:checked={p.prefer_max_quality} />
-            Prefer Larger Files (Max Quality)
-          </label>
+          <div class="flex items-center justify-between gap-2 mt-2">
+            <span>Prefer Larger Files (Max Quality)</span>
+            <label class="switch">
+              <input type="checkbox" bind:checked={p.prefer_max_quality} />
+              <span class="slider"></span>
+            </label>
+          </div>
         </div>
       {/if}
 
       {#if hasMetadataProvider}
-        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" bind:checked={p.metadataRequired} /> Require MusicBrainz Release ID</label>
+        <div class="flex items-center justify-between gap-2">
+          <span>Require MusicBrainz Release ID</span>
+          <label class="switch">
+            <input type="checkbox" bind:checked={p.metadataRequired} />
+            <span class="slider"></span>
+          </label>
+        </div>
       {/if}
 
       {#if !hasMetadataProvider && !hasMatchingProvider}

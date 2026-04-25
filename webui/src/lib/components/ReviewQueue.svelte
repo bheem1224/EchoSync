@@ -6,6 +6,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import apiClient from '../../api/client';
+  import MetadataReviewModal from './MetadataReviewModal.svelte';
 
   let loading = true;
   let error = '';
@@ -228,12 +229,12 @@
 
 {#if showReviewModal && selectedTask}
   <!-- We use the native web component we built earlier -->
-  <echosync-metadata-review-modal
-      itemData={JSON.stringify(selectedTask)}
-      on:es-close={closeReviewModal}
-      on:es-save-draft={handleModalSaveDraft}
-      on:es-approve={handleModalApprove}
-  ></echosync-metadata-review-modal>
+    <MetadataReviewModal
+      task={selectedTask}
+      on:close={() => closeReviewModal()}
+      on:saved={(e) => handleModalSaveDraft({ detail: { proposedMetadata: e.detail?.metadata || e.detail?.proposedMetadata, item: selectedTask } })}
+      on:approved={(e) => handleModalApprove({ detail: { proposedMetadata: e.detail?.metadata || e.detail?.proposedMetadata, item: selectedTask } })}
+    />
 {/if}
 
 <style>

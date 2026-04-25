@@ -21,10 +21,39 @@
     // Mock Data for Fusion
     let musicServiceAccounts = [
         { id: 's1', name: 'Simi Spotify', service: 'spotify' },
-        { id: 's2', name: 'Dad Tidal', service: 'tidal' },
-        { id: 's3', name: 'Simi Apple Music', service: 'apple' }
+        { id: 's2', name: 'Dad Tidal', service: 'tidal' }
     ];
     let manualOverrides = {};
+    let accountsSidebarOpen = true;
+    let fusionBuilderOpen = false;
+
+    function normalizeLabel(label) {
+        return (label || '').toString().trim().toLowerCase();
+    }
+
+    function shouldAutoFuseService(account, service) {
+        const accountName = normalizeLabel(account.display_name || account.account_name || '');
+        const serviceName = normalizeLabel(service.name);
+
+        const isPlexAdmin = activeServer === 'plex' && (
+            account.is_admin ||
+            account.role === 'admin' ||
+            accountName.includes('admin') ||
+            accountName.includes('plex')
+        );
+
+        if (isPlexAdmin && service.service === 'spotify') {
+            return true;
+        }
+
+        return serviceName.includes(accountName) || accountName.includes(serviceName.split(' ')[0] || '');
+    }
+
+    function accountFusionState(account, service) {
+        const isOverridden = manualOverrides[`${account.id}-${service.id}`];
+        const shouldFuse = shouldAutoFuseService(account, service);
+        return { isOverridden, shouldFuse };
+    }
 
     let loading = true;
     let pruneLoading = false;
@@ -354,7 +383,7 @@
     }
 </script>
 
-<div class="animate-fade-in grid-layout h-full min-h-0 overflow-y-auto">
+<div class="animate-fade-in manager-page h-full min-h-0 overflow-y-auto"><div class="main-column">
 
     <!-- Settings Panel -->
     <div class="card p-6">
@@ -458,93 +487,6 @@
         </div>
     </div>
 
-    <div class="card p-6">
-        <div class="section-header-row">
-            <h2 class="mb-0">Managed Accounts ({activeServer})</h2>
-            <div class="actions">
-                {#if activeServer === 'plex'}
-                    <button on:click={syncManagedUsers} disabled={syncingManagedUsers} class="btn btn--primary btn--small active:scale-95 transition-all duration-200">
-                        {#if syncingManagedUsers}
-                            <span class="spinner" aria-hidden="true"></span>
-                            Syncing...
-                        {:else}
-                            Sync Managed Users
-                        {/if}
-                    </button>
-                {/if}
-                <button on:click={fetchManagedAccounts} disabled={syncingManagedUsers} class="btn btn--ghost btn--small active:scale-95 transition-all duration-200">Refresh Accounts</button>
-            </div>
-        </div>
-
-        {#if managedAccounts.length === 0}
-            <div class="empty compact">No managed accounts found for {activeServer}.</div>
-        {:else}
-            <div class="accounts-grid">
-                {#each managedAccounts as account}
-                    {@const accountName = (account.display_name || account.account_name || '').toLowerCase()}
-                    {@const fusedServices = musicServiceAccounts.filter(s => {
-                        const isSimilar = s.name.toLowerCase().includes(accountName) || accountName.includes(s.name.toLowerCase().split(' ')[0]);
-                        const isOverridden = manualOverrides[`${account.id}-${s.id}`];
-                        return isSimilar && !isOverridden;
-                    })}
-                    {@const unFusedServices = musicServiceAccounts.filter(s => {
-                        const isSimilar = s.name.toLowerCase().includes(accountName) || accountName.includes(s.name.toLowerCase().split(' ')[0]);
-                        const isOverridden = manualOverrides[`${account.id}-${s.id}`];
-                        return isSimilar && isOverridden;
-                    })}
-
-                    <div class="account-card flex flex-col gap-3">
-                        <div class="account-head">
-                            <div class="account-name">{account.display_name || account.account_name || `Account ${account.id}`}</div>
-                            <span class="badge {account.is_active ? 'active' : 'inactive'}">{account.is_active ? 'Active' : 'Inactive'}</span>
-                        </div>
-                        <div class="account-meta mb-2">Account ID: {account.id}</div>
-
-                        {#if fusedServices.length > 0}
-                            <div class="fusion-section">
-                                <div class="text-xs text-muted mb-1 flex items-center gap-1">
-                                    Fused Services
-                                    <div class="fusion-tooltip-container relative inline-block">
-                                        <span class="info-icon" title="EchoSync fused this account based on name similarity. Click an icon to manually un-fuse.">i</span>
-                                    </div>
-                                </div>
-                                <div class="flex gap-2">
-                                    {#each fusedServices as service}
-                                        <button
-                                            class="service-badge {service.service} cursor-pointer hover:opacity-80 active:scale-95 transition-all"
-                                            title="Click to un-fuse {service.name}"
-                                            on:click={() => toggleFusionOverride(service.id, account.id)}
-                                        >
-                                            {service.name}
-                                        </button>
-                                    {/each}
-                                </div>
-                            </div>
-                        {/if}
-
-                        {#if unFusedServices.length > 0}
-                            <div class="fusion-section mt-1">
-                                <div class="text-xs text-muted mb-1 opacity-70">Un-Fused Services</div>
-                                <div class="flex gap-2 opacity-60">
-                                    {#each unFusedServices as service}
-                                        <button
-                                            class="service-badge {service.service} cursor-pointer hover:opacity-80 active:scale-95 transition-all"
-                                            title="Click to re-fuse {service.name}"
-                                            on:click={() => toggleFusionOverride(service.id, account.id)}
-                                        >
-                                            <span class="line-through">{service.name}</span>
-                                        </button>
-                                    {/each}
-                                </div>
-                            </div>
-                        {/if}
-                    </div>
-                {/each}
-            </div>
-        {/if}
-    </div>
-
-    <div class="queues-grid">
 
         <!-- Duplicate Resolution -->
         <div class="queue-col">
@@ -668,14 +610,142 @@
         </div>
 
     </div>
+  </div>
+  <aside class="manager-sidebar">
+    <div class="sidebar-panel card p-6">
+      <div class="section-header-row">
+        <h2 class="mb-0">Managed Accounts</h2>
+        <div class="actions">
+          <button on:click={() => accountsSidebarOpen = !accountsSidebarOpen} class="btn btn--ghost btn--small active:scale-95 transition-all duration-200">
+            {accountsSidebarOpen ? 'Hide' : 'Show'} Accounts
+          </button>
+          <button on:click={() => fusionBuilderOpen = !fusionBuilderOpen} class="btn btn--primary btn--small active:scale-95 transition-all duration-200">
+            {fusionBuilderOpen ? 'Close Builder' : 'Open Builder'}
+          </button>
+        </div>
+      </div>
+
+      {#if accountsSidebarOpen}
+        <div class="sidebar-note text-sm text-muted mb-4">Active server: {activeServer}</div>
+        <div class="section-header-row gap-2 flex-wrap">
+          {#if activeServer === 'plex'}
+            <button on:click={syncManagedUsers} disabled={syncingManagedUsers} class="btn btn--primary btn--small active:scale-95 transition-all duration-200">
+              {#if syncingManagedUsers}
+                <span class="spinner" aria-hidden="true"></span>
+                Syncing...
+              {:else}
+                Sync Managed Users
+              {/if}
+            </button>
+          {/if}
+          <button on:click={fetchManagedAccounts} disabled={syncingManagedUsers} class="btn btn--ghost btn--small active:scale-95 transition-all duration-200">
+            Refresh Accounts
+          </button>
+        </div>
+
+        {#if managedAccounts.length === 0}
+          <div class="empty compact">No managed accounts found for {activeServer}.</div>
+        {:else}
+          <div class="accounts-grid">
+            {#each managedAccounts as account}
+              {@const fusedServices = musicServiceAccounts.filter(s => {
+                  const { isOverridden, shouldFuse } = accountFusionState(account, s);
+                  return shouldFuse && !isOverridden;
+              })}
+              {@const unFusedServices = musicServiceAccounts.filter(s => {
+                  const { isOverridden, shouldFuse } = accountFusionState(account, s);
+                  return shouldFuse && isOverridden;
+              })}
+
+              <div class="account-card flex flex-col gap-3">
+                <div class="account-head">
+                  <div class="account-name">{account.display_name || account.account_name || `Account ${account.id}`}</div>
+                  <span class="badge {account.is_active ? 'active' : 'inactive'}">{account.is_active ? 'Active' : 'Inactive'}</span>
+                </div>
+                <div class="account-meta mb-2">Account ID: {account.id}</div>
+
+                {#if fusedServices.length > 0}
+                  <div class="fusion-section">
+                    <div class="text-xs text-muted mb-1 flex items-center gap-1">
+                      Fused Services
+                      <div class="fusion-tooltip-container relative inline-block">
+                        <span class="info-icon" title="EchoSync fused this account based on matching heuristics. Click an icon to manually un-fuse.">i</span>
+                      </div>
+                    </div>
+                    <div class="flex gap-2">
+                      {#each fusedServices as service}
+                        <button
+                          class="service-badge {service.service} cursor-pointer hover:opacity-80 active:scale-95 transition-all"
+                          title="Click to un-fuse {service.name}"
+                          on:click={() => toggleFusionOverride(service.id, account.id)}
+                        >
+                          {service.name}
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+
+                {#if unFusedServices.length > 0}
+                  <div class="fusion-section mt-1">
+                    <div class="text-xs text-muted mb-1 opacity-70">Un-Fused Services</div>
+                    <div class="flex gap-2 opacity-60">
+                      {#each unFusedServices as service}
+                        <button
+                          class="service-badge {service.service} cursor-pointer hover:opacity-80 active:scale-95 transition-all"
+                          title="Click to re-fuse {service.name}"
+                          on:click={() => toggleFusionOverride(service.id, account.id)}
+                        >
+                          <span class="line-through">{service.name}</span>
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      {/if}
+    </div>
+
+    {#if fusionBuilderOpen}
+      <div class="card p-6 fusion-builder-panel">
+        <div class="section-header-row">
+          <h2 class="mb-0">Fusion Builder</h2>
+        </div>
+        <p class="text-sm text-muted mb-4">
+          Manually connect Plex users to external music accounts. Select a Plex account and draw a fusion line to a matching service.
+        </p>
+        <div class="fusion-builder-canvas">
+          <div class="builder-placeholder">
+            <span class="builder-placeholder-label">Fusion builder canvas</span>
+          </div>
+        </div>
+        <div class="builder-actions mt-4">
+          <button class="btn btn--ghost btn--small active:scale-95 transition-all duration-200" on:click={() => fusionBuilderOpen = false}>
+            Close Builder
+          </button>
+        </div>
+      </div>
+    {/if}
+  </aside>
 
     {#if loading}
         <div class="loading-note">Loading manager data...</div>
     {/if}
-</div>
 
 <style>
-    .grid-layout { display: flex; flex-direction: column; gap: 24px; }
+    .manager-page { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; }
+    @media (max-width: 1200px) { .manager-page { grid-template-columns: 1fr; } }
+    .main-column { display: flex; flex-direction: column; gap: 24px; }
+    .manager-sidebar { display: flex; flex-direction: column; gap: 24px; }
+    .sidebar-panel { position: sticky; top: 20px; align-self: start; }
+    .fusion-builder-panel { background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); }
+    .sidebar-note { color: var(--muted); }
+    .builder-placeholder { min-height: 220px; border: 1px dashed rgba(255,255,255,0.16); border-radius: 16px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.03); }
+    .builder-placeholder-label { color: var(--muted); font-size: 0.95rem; }
+
     .card { background: var(--glass); border: 1px solid var(--glass-border); border-radius: 12px; overflow: hidden; }
     .p-6 { padding: 24px; }
 

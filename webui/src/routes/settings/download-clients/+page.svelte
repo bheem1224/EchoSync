@@ -1,22 +1,34 @@
 <script>
   import { onMount } from 'svelte';
+  import { settings } from '../../../stores/settings';
 
   let loading = true;
   let error = '';
-  let hasSlskd = false;
+  let downloadClients = [];
+  let enabledMap = {};
 
   onMount(async () => {
+    loading = true;
     try {
-      const response = await fetch('/api/providers/download-clients');
-      if (!response.ok) {
-        throw new Error(`Failed to fetch download clients: ${response.statusText}`);
+      await settings.load();
+      const resp = await fetch('/api/providers/download-clients');
+      if (resp.ok) {
+        downloadClients = await resp.json();
+      } else {
+        downloadClients = [];
       }
-      const downloadClients = await response.json();
-      hasSlskd = downloadClients.some(c => c.name === 'slskd' || c.name === 'soulseek');
-      loading = false;
+
+      // Initialize enabled map from settings store data if present
+      const current = $settings?.data?.download_clients || {};
+      enabledMap = {};
+      (downloadClients || []).forEach((c) => {
+        const key = c.name || c.id || c.service || '';
+        enabledMap[key] = (current[key] === true) || !!c.enabled;
+      });
     } catch (err) {
       console.error('Failed to fetch download clients:', err);
-      error = err.message;
+      error = err.message || String(err);
+    } finally {
       loading = false;
     }
   });
@@ -31,8 +43,34 @@
   {:else if error}
     <p class="error">Error: {error}</p>
   {:else}
-    <p>No download clients available.</p>
+    {#if downloadClients.length === 0}
+      <p>No download clients available.</p>
+    {:else}
+      <div class="clients-list">
+        {#each downloadClients as client}
+          {#const key = client.name || client.id || client.service}
+          <div class="client-row">
+            <label class="form-group">
+              <span class="label-text">{client.display_name || client.name || key}</span>
+              <input type="checkbox" checked={!!enabledMap[key]} on:change={(e) => toggleClient(key, e.target.checked)} />
+            </label>
+          </div>
+        {/each}
+      </div>
+    {/if}
   {/if}
+
+  <script>
+    // note: keep small helper in-module to avoid polluting markup
+    async function toggleClient(key, value) {
+      enabledMap = { ...enabledMap, [key]: !!value };
+      try {
+        await settings.save({ download_clients: { [key]: !!value } });
+      } catch (err) {
+        console.error('Failed to save download client setting:', err);
+      }
+    }
+  </script>
 </section>
 
 <style>

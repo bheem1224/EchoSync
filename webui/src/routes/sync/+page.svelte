@@ -142,30 +142,65 @@
     analysisStarted = true;
 
     try {
-      const selectedDetails = playlists
-        .map((p, index) => ({ ...p, index }))
-        .filter(p => selectedPlaylists.includes(p.index))
-        .map(p => {
-          const detail = { id: p.id, name: p.name, track_count: p.track_count };
-          if (p.account_id !== undefined) {
-            detail.account_id = p.account_id;
-          }
-          return detail;
-        });
+        const selectedDetails = playlists
+          .map((p, index) => ({ ...p, index }))
+          .filter(p => selectedPlaylists.includes(p.index))
+          .map(p => {
+            const detail = { id: p.id, name: p.name, track_count: p.track_count };
+            if (p.account_id !== undefined) {
+              detail.account_id = p.account_id;
+            }
+            return detail;
+          });
 
-      // Increase timeout proportional to number of selected playlists
-      const analysisTimeoutMs = Math.max(10000, selectedPlaylists.length * 10000);
-      const response = await apiClient.post(
-        '/playlists/analyze',
-        {
+        // Start analysis as a background job
+        const startResp = await apiClient.post('/playlists/analyze/start', {
           source: sourceProvider,
           target: targetProvider,
           quality_profile: selectedQuality,
           playlists: selectedDetails,
-        },
-        { timeout: analysisTimeoutMs }
-      );
-      analysisResult = response.data;
+        });
+
+        if (!startResp.data || !startResp.data.job_id) {
+          throw new Error('Failed to start analysis job');
+        }
+
+        const jobId = startResp.data.job_id;
+        analysisResult = null;
+
+        // Poll the job status until finished/failed
+        const pollInterval = 3000;
+        analysisLoading = true;
+
+        async function pollOnce() {
+          try {
+            const statusResp = await apiClient.get(`/playlists/analyze/${jobId}`);
+            const d = statusResp.data;
+            if (!d) return false;
+            if (d.status === 'finished') {
+              analysisResult = d.result || null;
+              return true;
+            }
+            if (d.status === 'failed') {
+              analysisError = d.error || 'Analysis job failed';
+              return true;
+            }
+          } catch (e) {
+            console.error('Polling error:', e);
+          }
+          return false;
+        }
+
+        // Poll loop
+        let finished = false;
+        while (!finished) {
+          // eslint-disable-next-line no-await-in-loop
+          finished = await pollOnce();
+          if (!finished) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise(r => setTimeout(r, pollInterval));
+          }
+        }
     } catch (err) {
       console.error('[Sync] Analysis error:', err);
       analysisError = err.response?.data?.error || err.message || 'Analysis failed';
@@ -676,7 +711,7 @@
 
         <div class="controls-row">
           <div class="control">
-            <label>Quality Profile</label>
+            <label>Target Quality for Missing Tracks</label>
             <select bind:value={selectedQuality}>
               {#if qualityProfiles.length === 0}
                 <option value="">No profiles configured</option>
@@ -686,6 +721,7 @@
                 {/each}
               {/if}
             </select>
+            <p class="muted text-xs mt-1">Applies only to newly downloaded missing tracks — does not change existing files in your library.</p>
           </div>
           <div class="control buttons">
             <button class="btn active:scale-95 transition-all duration-200" on:click={runAnalysis} disabled={analysisLoading}>
@@ -809,11 +845,12 @@
         </div>
       </div>
       
-      <div class="config-options">
-        <label>
+      <div class="config-options flex items-center gap-3">
+        <label class="switch">
           <input type="checkbox" bind:checked={syncDownloadMissing} />
-          Download missing tracks after sync
+          <span class="slider"></span>
         </label>
+        <span>Download missing tracks after sync</span>
       </div>
     </div>
     
@@ -865,11 +902,12 @@
         </select>
       </div>
       
-      <div class="form-group">
-        <label>
+      <div class="form-group flex items-center gap-3">
+        <label class="switch">
           <input type="checkbox" bind:checked={scheduleForm.download_missing} />
-          Download missing tracks after sync
+          <span class="slider"></span>
         </label>
+        <span>Download missing tracks after sync</span>
       </div>
       
       <p class="info-text">Note: This will sync {scheduleForm.playlists.length} selected playlist(s) to {formatTargetWithContext(scheduleForm.target, scheduleForm.playlists)} every {scheduleIntervalOptions.find(o => o.value === scheduleForm.interval)?.label || scheduleForm.interval + 's'}.</p>

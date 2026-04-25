@@ -12,6 +12,12 @@ module.exports = {
         // This maps 'bg-surface' to your card background color
         surface: 'var(--bg-card)',    
         
+        // This maps 'bg-surface-hover' to the hover surface tone
+        'surface-hover': 'var(--surface-hover)',
+        
+        // This maps 'bg-input' to input/field backgrounds
+        input: 'var(--bg-input)',
+        
         // This maps 'text-primary' or 'bg-primary' to your Teal brand color
         primary: 'var(--color-primary)', 
         'primary-hover': 'var(--color-primary-hover)',
@@ -21,6 +27,9 @@ module.exports = {
         
         // This maps 'border-glass-border' to your subtle white borders
         'glass-border': 'var(--border-subtle)',
+        
+        // Supports glass-style surfaces where needed
+        glass: 'var(--glass)',
         
         error: 'var(--error)'
       },

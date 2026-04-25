@@ -59,7 +59,7 @@
 <div class="app-shell">
   {#if innerWidth >= 768}
     <Sidebar />
-    <main class="app-content">
+    <main class="app-content flex-1 overflow-y-auto min-h-0">
       {#key $page.url}
         <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
           <slot />
@@ -77,7 +77,7 @@
         🔍
       </button>
     </header>
-    <main class="app-content">
+    <main class="app-content flex-1 overflow-y-auto min-h-0">
 
       {#key $page.url}
         <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
@@ -110,14 +110,19 @@
   .app-shell {
     display: flex;
     min-height: 100vh;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
     background: transparent;
     color: var(--text);
   }
 
   .app-content {
     flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     padding: 24px;
-    padding-bottom: 100px; /* Add padding for player */
+    padding-bottom: 120px; /* Add padding for player */
   }
 
   @media (max-width: 900px) {
@@ -127,7 +132,7 @@
 
     .app-content {
       padding: 16px;
-      padding-bottom: 140px; /* Add padding for player + bottom nav */
+      padding-bottom: 160px; /* Add padding for player + bottom nav */
     }
   }
 </style>

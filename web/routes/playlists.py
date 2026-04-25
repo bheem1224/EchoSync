@@ -16,6 +16,10 @@ from core.event_bus import event_bus
 from core.sync_history import sync_history
 from core.hook_manager import hook_manager
 import time
+import uuid
+
+# In-memory store for ad-hoc analysis jobs started via API
+ANALYSIS_JOBS = {}
 
 logger = get_logger("playlists_api")
 bp = Blueprint("playlists", __name__, url_prefix="/api/playlists")
@@ -1260,6 +1264,75 @@ def analyze_playlists():
     except Exception as e:
         logger.error(f"Error analyzing playlists: {e}", exc_info=True)
         return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
+
+
+@bp.post('/analyze/start')
+def start_analyze_job():
+    """Start playlist analysis as a background job and return a job_id to poll."""
+    payload = request.get_json(silent=True) or {}
+    source = payload.get('source')
+    target = payload.get('target')
+    target_source = payload.get('target_source') or target
+    playlists = payload.get('playlists') or []
+    quality_profile = payload.get('quality_profile', 'Auto')
+
+    if not source:
+        return jsonify({"error": "source provider required"}), 400
+    if not playlists:
+        return jsonify({"error": "playlists list required"}), 400
+
+    job_id = str(uuid.uuid4())
+    job_name = f"playlist_analyze:{job_id}"
+
+    # Initialize job record
+    ANALYSIS_JOBS[job_id] = {
+        'status': 'queued',
+        'started_at': None,
+        'finished_at': None,
+        'result': None,
+        'error': None,
+    }
+
+    def _job_func():
+        ANALYSIS_JOBS[job_id]['status'] = 'running'
+        ANALYSIS_JOBS[job_id]['started_at'] = time.time()
+        try:
+            res = _analyze_playlists_internal(source, target_source, playlists, quality_profile)
+            ANALYSIS_JOBS[job_id]['result'] = res
+            ANALYSIS_JOBS[job_id]['status'] = 'finished'
+        except Exception as e:
+            logger.error(f"Background analysis job {job_id} failed: {e}", exc_info=True)
+            ANALYSIS_JOBS[job_id]['error'] = str(e)
+            ANALYSIS_JOBS[job_id]['status'] = 'failed'
+        finally:
+            ANALYSIS_JOBS[job_id]['finished_at'] = time.time()
+
+    # Register a one-off job and execute it immediately
+    try:
+        job_queue.register_job(job_name, _job_func, interval_seconds=None, start_after=0, enabled=True)
+        job_queue.execute_job_now(job_name)
+    except Exception as e:
+        logger.error(f"Failed to start background analysis job: {e}")
+        return jsonify({"error": "failed to start background job"}), 500
+
+    return jsonify({"accepted": True, "job_id": job_id, "job_name": job_name}), 202
+
+
+@bp.get('/analyze/<job_id>')
+def get_analyze_job(job_id):
+    rec = ANALYSIS_JOBS.get(job_id)
+    if not rec:
+        return jsonify({"error": "job not found"}), 404
+    # Do not leak large results unnecessarily; include result when finished
+    payload = {
+        'status': rec.get('status'),
+        'started_at': rec.get('started_at'),
+        'finished_at': rec.get('finished_at'),
+        'error': rec.get('error'),
+    }
+    if rec.get('status') == 'finished':
+        payload['result'] = rec.get('result')
+    return jsonify(payload), 200
 
 
 @bp.post("/sync")

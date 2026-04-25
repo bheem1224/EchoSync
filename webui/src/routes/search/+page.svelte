@@ -90,12 +90,15 @@
         <h3>Search Types</h3>
         <div class="filter-group">
           {#each ['tracks', 'albums', 'artists', 'playlists'] as type}
-            <label class="filter-item">
-              <input type="checkbox" 
-                     checked={searchTypes.includes(type)} 
-                     on:change={() => toggleType(type)} />
+            <div class="filter-item flex items-center justify-between gap-3">
               <span class="capitalize">{type}</span>
-            </label>
+              <label class="switch">
+                <input type="checkbox"
+                       checked={searchTypes.includes(type)}
+                       on:change={() => toggleType(type)} />
+                <span class="slider"></span>
+              </label>
+            </div>
           {/each}
         </div>
 
@@ -104,12 +107,15 @@
         <h3>Providers</h3>
         <div class="filter-group">
           {#each $searchProviders as p}
-            <label class="filter-item">
-              <input type="checkbox" 
-                     checked={selectedProviders.includes(p.id)} 
-                     on:change={() => toggleProvider(p.id)} />
+            <div class="filter-item flex items-center justify-between gap-3">
               <span>{p.name}</span>
-            </label>
+              <label class="switch">
+                <input type="checkbox"
+                       checked={selectedProviders.includes(p.id)}
+                       on:change={() => toggleProvider(p.id)} />
+                <span class="slider"></span>
+              </label>
+            </div>
           {/each}
           {#if $searchProviders.length === 0}
             <p class="muted small">No search providers available.</p>

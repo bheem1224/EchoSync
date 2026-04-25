@@ -400,17 +400,19 @@
                   <p class="help-text">Minimum confidence score required for auto-import.</p>
               </div>
 
-              <div class="field-row">
-                  <label class="switch-label">
+              <div class="field-row flex items-center gap-3">
+                  <span>Overwrite Existing Tags</span>
+                  <label class="switch">
                       <input type="checkbox" bind:checked={overwriteTags} />
-                      <span class="label-text">Overwrite Existing Tags</span>
+                      <span class="slider"></span>
                   </label>
               </div>
 
-              <div class="field-row">
-                  <label class="switch-label">
+              <div class="field-row flex items-center gap-3">
+                  <span>Embed Cover Art</span>
+                  <label class="switch">
                       <input type="checkbox" bind:checked={embedCoverArt} />
-                      <span class="label-text">Embed Cover Art</span>
+                      <span class="slider"></span>
                   </label>
               </div>
 

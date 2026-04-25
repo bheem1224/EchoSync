@@ -230,17 +230,22 @@
     display: flex;
     align-items: center;
     padding: 1rem;
-    border-bottom: 1px solid #e5e7eb;
     gap: 1rem;
-    transition: background-color 0.2s;
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    transition: transform 0.2s, border-color 0.2s, background-color 0.2s;
   }
 
   .queue-item:hover {
-    background-color: #f9fafb;
+    transform: translateY(-1px);
+    border-color: rgba(113, 216, 255, 0.24);
+    background: rgba(15, 23, 42, 1);
   }
 
   .queue-item:last-child {
-    border-bottom: none;
+    margin-bottom: 0;
   }
 
   .checkbox {
