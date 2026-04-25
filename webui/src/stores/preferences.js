@@ -4,6 +4,38 @@ import apiClient from '../api/client';
 function createPreferencesStore() {
   const { subscribe, set, update } = writable({ loaded: false, profiles: [] });
 
+  // Local UI preferences persisted to localStorage
+  const LOCAL_KEY = 'soulsync.ui.prefs';
+  function _loadLocalUi() {
+    try {
+      const raw = localStorage.getItem(LOCAL_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      console.warn('Failed to load local UI prefs', e);
+      return {};
+    }
+  }
+
+  function _saveLocalUi(obj) {
+    try {
+      localStorage.setItem(LOCAL_KEY, JSON.stringify(obj || {}));
+    } catch (e) {
+      console.warn('Failed to save local UI prefs', e);
+    }
+  }
+
+  function getUiPreference(key, defaultValue = undefined) {
+    const obj = _loadLocalUi();
+    if (Object.prototype.hasOwnProperty.call(obj, key)) return obj[key];
+    return defaultValue;
+  }
+
+  function setUiPreference(key, value) {
+    const obj = _loadLocalUi();
+    obj[key] = value;
+    _saveLocalUi(obj);
+  }
+
   async function load() {
     try {
       const resp = await apiClient.get('/quality-profiles');

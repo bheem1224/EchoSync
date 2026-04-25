@@ -20,6 +20,7 @@ from database.working_database import get_working_database, User, UserRating
 from core.personalized_playlists import get_personalized_playlists_service
 from services.library_hygiene import DuplicateHygieneService
 from core.suggestion_engine.deletion import process_lifecycle_actions
+from core.suggestion_engine.consensus import calculate_consensus
 
 logger = get_logger("system_jobs")
 
@@ -341,6 +342,30 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
                 )
             else:
                 logger.info("Duplicate scan complete: no duplicates found.")
+            # Additionally, re-evaluate rated tracks to stage lifecycle actions
+            try:
+                work_db = get_working_database()
+                staged_deletes = 0
+                staged_upgrades = 0
+                with work_db.session_scope() as session:
+                    rated_sync_ids = [row[0] for row in session.query(UserRating.sync_id).distinct().all()]
+
+                for sync_id in rated_sync_ids:
+                    consensus = calculate_consensus(sync_id)
+                    action = consensus.get("action", "KEEP")
+                    if action in ("DELETE_MONTH_END", "UPGRADE_WEEK_END"):
+                        # apply_lifecycle_action is intentionally imported in manager routes; call through process_lifecycle_actions wrapper
+                        from core.suggestion_engine.deletion import apply_lifecycle_action
+                        apply_lifecycle_action(sync_id, consensus)
+                        if action == "DELETE_MONTH_END":
+                            staged_deletes += 1
+                        else:
+                            staged_upgrades += 1
+
+                if staged_deletes or staged_upgrades:
+                    logger.info(f"Duplicate scan staging: {staged_deletes} staged deletes, {staged_upgrades} staged upgrades")
+            except Exception as e:
+                logger.warning(f"Failed to stage lifecycle actions during duplicate scan: {e}")
         except Exception as e:
             logger.error(f"Duplicate scan job failed: {e}", exc_info=True)
 

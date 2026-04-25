@@ -3,23 +3,28 @@
   import { feedback } from '../stores/feedback';
   import apiClient from '../api/client';
 
-  const cpuUsage = 14;
-  const memoryUsedGb = 2.4;
-  const memoryTotalGb = 8;
-  const memoryUsage = Math.round((memoryUsedGb / memoryTotalGb) * 100);
+  let cpuUsage = 0;
+  let memoryUsedGb = 0;
+  let memoryTotalGb = 0;
+  let memoryUsage = 0;
 
-  const libraryStats = {
-    totalTracks: '14,230',
-    totalAlbums: '1,104',
-    storageUsed: '412 GB'
-  };
+  let libraryStats = { totalTracks: '—', totalAlbums: '—', storageUsed: '—' };
 
   let providerStates = [];
   let loadingProviders = true;
   let isRebuildingDatabase = false;
 
+  let statsPoll = null;
+
   onMount(async () => {
     await loadProviders();
+    // initial fetch
+    await refreshStats();
+    statsPoll = setInterval(refreshStats, 8000);
+  });
+
+  onDestroy(() => {
+    if (statsPoll) clearInterval(statsPoll);
   });
 
   async function loadProviders() {
@@ -40,6 +45,30 @@
       feedback.addToast('Failed to load provider list', 'error');
     } finally {
       loadingProviders = false;
+    }
+  }
+
+  async function refreshStats() {
+    try {
+      const s = await apiClient.get('/stats');
+      if (s && s.data) {
+        cpuUsage = Math.round(s.data.cpu_percent || 0);
+        memoryTotalGb = Math.round(((s.data.memory?.total || 0) / (1024 ** 3)) * 10) / 10;
+        memoryUsedGb = Math.round(((s.data.memory?.total || 0) - (s.data.memory?.available || 0)) / (1024 ** 3) * 10) / 10;
+        memoryUsage = Math.round(s.data.memory?.percent || 0);
+      }
+
+      const health = await apiClient.get('/health');
+      if (health && health.data) {
+        // Optional: extract library stats if provided by /health
+        if (health.data.library) {
+          libraryStats.totalTracks = String(health.data.library.total_tracks || libraryStats.totalTracks);
+          libraryStats.totalAlbums = String(health.data.library.total_albums || libraryStats.totalAlbums);
+          libraryStats.storageUsed = String(health.data.library.storage_used || libraryStats.storageUsed);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to refresh stats', e);
     }
   }
 
