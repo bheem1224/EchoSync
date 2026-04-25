@@ -43,10 +43,14 @@
         );
 
         if (isPlexAdmin && service.service === 'spotify') {
-            </div>
+            return true;
+        }
 
-            <!-- Queues: full-width container with filter bar + tabs -->
-            <div class="card p-6 queues-container">
+    }
+
+    <!-- Queues: full-width container with filter bar + tabs -->
+    
+    
                 <div class="filter-bar bg-surface border border-glass-border rounded-global p-3 flex gap-3 items-center">
                     <input placeholder="Search tracks or sync id..." bind:value={searchQuery} class="input-search p-2 rounded-global bg-surface-hover flex-1" />
                     <select bind:value={queueFilterType} class="filter-select">
@@ -120,7 +124,6 @@
                 </div>
             </div>
         </div>
-        finally { savingSettings = false; }
     }
 
     async function fetchDuplicates() {
@@ -351,11 +354,17 @@
     <div class="card p-6">
         <div class="flex flex-col md:flex-row justify-between items-end gap-4">
             <div class="space-y-4 flex-1">
-                <h2 class="flex items-center gap-2">
-                    <span class="icon">⚙️</span>
-                    Manager Settings
-                </h2>
+                <div class="flex items-center gap-2">
+                    <h2 class="flex items-center gap-2">
+                        <span class="icon">⚙️</span>
+                        Manager Settings
+                    </h2>
+                    <button class="btn btn--ghost ml-3" on:click={() => settingsCollapsed = !settingsCollapsed} aria-pressed={settingsCollapsed} title="Collapse settings">
+                        {settingsCollapsed ? 'Expand' : 'Collapse'}
+                    </button>
+                </div>
 
+                {#if !settingsCollapsed}
                 <div class="settings-grid">
                     <div class="flex items-center gap-3">
                         <span class="text-sm font-medium">Enable Media Manager</span>
@@ -364,6 +373,7 @@
                             <span class="slider round"></span>
                         </label>
                     </div>
+                {/if}
 
                     <div class="flex items-center gap-3">
                         <span class="text-sm font-medium">Auto-Delete Low Quality Duplicates</span>
