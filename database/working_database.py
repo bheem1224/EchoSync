@@ -341,6 +341,8 @@ class RestrictedConnection:
         if getattr(_override_local, 'override_active', False):
             return self.conn.execute(statement, *args, **kwargs)
 
+        return self.conn.execute(statement, *args, **kwargs)
+
         # Extremely basic DDL block for non-prefixed tables
         import re
         stmt_str = str(statement).upper()
@@ -376,8 +378,24 @@ class ProviderStorageBox:
 
     @contextmanager
     def connect(self):
+        import sqlite3
         with self._engine.connect() as conn:
-            yield RestrictedConnection(conn, self.provider_name)
+            # Add authorizer to the underlying sqlite3 connection
+            raw_conn = conn.connection.driver_connection
+            if getattr(raw_conn, 'set_authorizer', None):
+                def authorizer_callback(action, table, column, sql_location, ignore):
+                    if action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE, sqlite3.SQLITE_DROP, sqlite3.SQLITE_ALTER_TABLE):
+                        if table and not table.upper().startswith(f"PRV_{self.provider_name.upper()}_"):
+                            if not getattr(_override_local, 'override_active', False):
+                                return sqlite3.SQLITE_DENY
+                    return sqlite3.SQLITE_OK
+                raw_conn.set_authorizer(authorizer_callback)
+
+            try:
+                yield RestrictedConnection(conn, self.provider_name)
+            finally:
+                if getattr(raw_conn, 'set_authorizer', None):
+                    raw_conn.set_authorizer(None)
 
     @contextmanager
     def core_write_override(self):

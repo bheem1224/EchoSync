@@ -254,7 +254,7 @@ class PluginStore:
                             if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
                                 logger.warning(f"Skipping drop table due to invalid name: {table_name}")
                                 continue
-                            conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+                            conn.execute(text(f"DROP TABLE IF EXISTS \"{table_name}\""))
                             try:
                                 conn.commit()
                             except Exception:
@@ -265,7 +265,7 @@ class PluginStore:
                             if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
                                 logger.warning(f"Skipping drop table due to invalid name: {table_name}")
                                 continue
-                            conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+                            conn.execute(f"DROP TABLE IF EXISTS \"{table_name}\"")
         except Exception as e:
             logger.error(f"Failed to drop tables for {plugin_id}: {e}")
             
