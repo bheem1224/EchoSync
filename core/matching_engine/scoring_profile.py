@@ -25,6 +25,7 @@ class ProfileType(Enum):
     EXACT_SYNC = "exact_sync"
     DOWNLOAD_SEARCH = "download_search"
     LIBRARY_IMPORT = "library_import"
+    AUTO_IMPORT_STRICT = "auto_import_strict"
 
 
 @dataclass
@@ -59,7 +60,7 @@ class ScoringWeights:
     text_match_fallback: float = 0.80  # Fallback text fuzzy match if no fingerprints available
 
     # Advanced Scoring Flags
-    prefer_max_quality: bool = False  # If True, prefer larger file size. If False, prefer smaller (but valid) size.
+    tie_breaker: str = "MAX_QUALITY"  # Options: MAX_QUALITY, SAVE_STORAGE, SPEED
     enforce_duration_match: bool = False  # If True, reject files outside duration tolerance before scoring.
 
     # Weights validation
@@ -94,7 +95,7 @@ class ScoringWeights:
             'fuzzy_match_threshold': self.fuzzy_match_threshold,
             'min_confidence_to_accept': self.min_confidence_to_accept,
             'text_match_fallback': self.text_match_fallback,
-            'prefer_max_quality': self.prefer_max_quality,
+            'tie_breaker': self.tie_breaker,
             'enforce_duration_match': self.enforce_duration_match,
         }
 
@@ -275,6 +276,49 @@ class LibraryImportProfile(ScoringProfile):
         )
 
 
+
+class AutoImportStrictProfile(ScoringProfile):
+    """
+    AUTO_IMPORT_STRICT Profile - For strict automated import decisions without fingerprint
+
+    Use when: Trying to identify a track based solely on text and duration
+    Priority: Title (50%) > Artist (40%) > Album (10%) + strict Duration match (20%)
+    Philosophy: Extremely strict text and duration validation to prevent false positives in auto-imports.
+    """
+
+    profile_type = ProfileType.AUTO_IMPORT_STRICT
+    SUBMIT_THRESHOLD = 95.0
+    IMPORT_THRESHOLD = 80.0
+
+    def __init__(self):
+        self.description = "Strict text and duration matching for auto-import decisions"
+        self.weights = ScoringWeights(
+            text_weight=0.80,  # 80% total text weight
+            title_weight=0.50,  # 50/100 of text
+            artist_weight=0.40, # 40/100 of text
+            album_weight=0.10,  # 10/100 of text
+            duration_weight=0.20,  # 20% duration weight
+            fingerprint_weight=0.0,  # No fingerprint used for this profile
+            quality_bonus=0.0,  # No quality bonus
+            version_mismatch_penalty=70.0,
+            edition_mismatch_penalty=15.0,
+            duration_tolerance_ms=3000,
+            fuzzy_match_threshold=0.90,
+            min_confidence_to_accept=self.IMPORT_THRESHOLD,
+            text_match_fallback=0.92,
+        )
+
+    def get_weights(self) -> ScoringWeights:
+        return self.weights
+
+    def describe(self) -> str:
+        return (
+            "AUTO_IMPORT_STRICT - High precision matching for auto-importing. "
+            "Text (80%) + Duration (20%). "
+            f"Min confidence: {self.weights.min_confidence_to_accept}%"
+        )
+
+
 class ConfigurableProfile(ScoringProfile):
     """Custom profile loaded from config.json"""
 
@@ -311,6 +355,7 @@ class ProfileFactory:
         ProfileType.EXACT_SYNC: ExactSyncProfile,
         ProfileType.DOWNLOAD_SEARCH: DownloadSearchProfile,
         ProfileType.LIBRARY_IMPORT: LibraryImportProfile,
+        ProfileType.AUTO_IMPORT_STRICT: AutoImportStrictProfile,
     }
     
     _config_profiles: Optional[Dict] = None  # Cached config profiles
@@ -384,3 +429,4 @@ class ProfileFactory:
 PROFILE_EXACT_SYNC = ExactSyncProfile()
 PROFILE_DOWNLOAD_SEARCH = DownloadSearchProfile()
 PROFILE_LIBRARY_IMPORT = LibraryImportProfile()
+PROFILE_AUTO_IMPORT_STRICT = AutoImportStrictProfile()

@@ -1157,7 +1157,7 @@ class DownloadManager:
         
         # Read prefer larger files if specified
         if 'prefer_larger_files' in quality_profile:
-            custom_weights['prefer_max_quality'] = quality_profile['prefer_larger_files']
+            custom_weights['tie_breaker'] = quality_profile.get('tie_breaker', 'MAX_QUALITY')
             has_custom_settings = True
         
         if has_custom_settings:
@@ -1165,7 +1165,7 @@ class DownloadManager:
             from core.matching_engine.scoring_profile import ScoringProfile, ScoringWeights
             custom_profile = ScoringProfile()
             custom_profile.weights = ScoringWeights(**custom_weights)
-            logger.info(f"Using custom matching profile: duration_tolerance={custom_weights.get('duration_tolerance_ms')}ms, prefer_max_quality={custom_weights.get('prefer_max_quality')}")
+            logger.info(f"Using custom matching profile: duration_tolerance={custom_weights.get('duration_tolerance_ms')}ms, tie_breaker={custom_weights.get('tie_breaker')}")
             return WeightedMatchingEngine(custom_profile)
         
         return WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)

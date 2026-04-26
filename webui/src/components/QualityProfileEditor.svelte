@@ -14,11 +14,9 @@
     id: '',
     name: '',
     formats: [],
-    // Legacy support for durationMatch object structure if present, otherwise flat fields
-    durationMatch: { enabled: false, tolerance_seconds: 3 },
-    enforce_duration_match: false,
-    duration_tolerance_ms: 3000,
-    prefer_max_quality: false,
+
+
+    tie_breaker: 'MAX_QUALITY',
     metadataRequired: false
   };
   let selectedFormat: string = '';
@@ -51,9 +49,8 @@
       p = JSON.parse(JSON.stringify(profile));
 
       // Initialize new fields if missing
-      if (p.enforce_duration_match === undefined) p.enforce_duration_match = false;
-      if (p.prefer_max_quality === undefined) p.prefer_max_quality = false;
-      if (p.duration_tolerance_ms === undefined) p.duration_tolerance_ms = 3000;
+
+      if (p.tie_breaker === undefined) p.tie_breaker = 'MAX_QUALITY';
     }
   });
 
@@ -231,30 +228,24 @@
           <div class="flex items-center justify-between gap-2">
             <span>Enforce Duration Match</span>
             <label class="switch">
-              <input type="checkbox" bind:checked={p.enforce_duration_match} />
+
               <span class="slider"></span>
             </label>
           </div>
 
-          {#if p.enforce_duration_match}
-            <label class="flex items-center gap-2 ml-7 text-sm">Tolerance (seconds)
-              <input
-                type="number"
-                min="0"
-                value={(p.duration_tolerance_ms || 3000) / 1000}
-                on:input={(e) => p.duration_tolerance_ms = e.currentTarget.value * 1000}
-                class="w-20 px-3 py-2 bg-background border border-border rounded-global text-sm text-primary"
-              />
+          {#if hasDownloaderWithSearch}
+            <label class="flex flex-col gap-1 mt-4">
+              <span class="text-xs text-secondary font-medium">Tie-Breaker Strategy</span>
+              <select
+                bind:value={p.tie_breaker}
+                class="w-full px-3 py-2 bg-surface border border-glass-border rounded-global text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+              >
+                <option value="MAX_QUALITY" class="bg-black/50 text-white">Max Quality (Largest File)</option>
+                <option value="SAVE_STORAGE" class="bg-black/50 text-white">Save Storage (Smallest File)</option>
+                <option value="SPEED" class="bg-black/50 text-white">Speed (First Available)</option>
+              </select>
             </label>
           {/if}
-
-          <div class="flex items-center justify-between gap-2 mt-2">
-            <span>Prefer Larger Files (Max Quality)</span>
-            <label class="switch">
-              <input type="checkbox" bind:checked={p.prefer_max_quality} />
-              <span class="slider"></span>
-            </label>
-          </div>
         </div>
       {/if}
 

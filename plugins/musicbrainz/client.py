@@ -248,6 +248,103 @@ class MusicBrainzClient(ProviderBase):
             logger.warning(f"MusicBrainz search_metadata exception for '{query}': {exc}")
             return []
 
+
+    def _escape_lucene(self, text: str) -> str:
+        """Escape special characters for strict Lucene queries."""
+        if not text:
+            return ""
+        # The characters to escape in Lucene: + - & || ! ( ) { } [ ] ^ " ~ * ? : \ /
+        import re
+        escaped = re.sub(r'([+\-&|!(){}\[\]^"~*?:\\/])', r'\\\1', text)
+        return escaped
+
+    def search_recording_strict(self, artist: str, title: str) -> List[EchosyncTrack]:
+        """Strict Lucene search for recording by artist and title.
+
+        Returns up to 3 results mapped to EchosyncTrack.
+        Gracefully handles 503/timeouts.
+        """
+        if not artist or not title:
+            return []
+
+        safe_artist = self._escape_lucene(artist)
+        safe_title = self._escape_lucene(title)
+
+        query = f'artist:"{safe_artist}" AND recording:"{safe_title}"'
+
+        try:
+            response = self.http.get(
+                f"{self.api_base}/recording",
+                params={
+                    "fmt": "json",
+                    "query": query,
+                    "inc": "releases+artists",
+                    "limit": 3,
+                },
+            )
+
+            if response.status_code != 200:
+                logger.warning(
+                    "MusicBrainz search_recording_strict failed (status=%s, query=%s)",
+                    response.status_code,
+                    query,
+                )
+                return []
+
+            payload = response.json() or {}
+            recordings = payload.get("recordings", []) or []
+            results: List[EchosyncTrack] = []
+
+            for recording in recordings:
+                rec_title = str(recording.get("title") or "").strip()
+                if not rec_title:
+                    continue
+
+                mbid = str(recording.get("id") or "")
+
+                # Extract artist name
+                artist_credit = recording.get("artist-credit") or []
+                artist_parts: List[str] = []
+                for entry in artist_credit:
+                    if isinstance(entry, dict) and "artist" in entry:
+                        artist_parts.append(str(entry.get("name") or ""))
+                        artist_parts.append(str(entry.get("joinphrase") or ""))
+                artist_str = "".join(artist_parts).strip() or "Unknown Artist"
+
+                # Extract release details for album and duration
+                releases = recording.get("releases") or []
+                first_release = releases[0] if releases else {}
+                album = str(first_release.get("title") or "Unknown Album")
+
+                # Duration
+                duration_ms = None
+                dur = recording.get("length")
+                if dur and str(dur).isdigit():
+                    duration_ms = int(dur)
+
+                track = self.create_echo_sync_track(
+                    title=rec_title,
+                    artist=artist_str,
+                    album=album,
+                    musicbrainz_id=mbid,
+                    duration_ms=duration_ms,
+                    provider_id=mbid,
+                    source=self.name,
+                )
+
+                # Grab ISRC if present in recording
+                isrcs = recording.get("isrcs") or []
+                if isrcs:
+                    track.isrc = str(isrcs[0])
+
+                results.append(track)
+
+            return results
+
+        except Exception as e:
+            logger.warning(f"MusicBrainz strict search API error: {e}", exc_info=True)
+            return []
+
     def search_by_isrc(self, isrc: str) -> Optional[EchosyncTrack]:
         """Implement ProviderBase.search_by_isrc via the MusicBrainz ISRC endpoint."""
         isrc = str(isrc or "").strip().upper()

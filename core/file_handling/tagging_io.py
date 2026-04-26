@@ -128,13 +128,19 @@ def _read_tags_impl(file_path: Path) -> Dict[str, Any]:
     # tag is completely absent — never the other way around.  This prevents
     # compilation / OST albums that use 'Various Artists' as the album artist
     # from incorrectly overwriting the specific performer stored in TPE1.
+
+    # We EXPLICITLY grab TPE1/ARTIST as our track artist, and TPE2/ALBUMARTIST
+    # as our album artist. If track_artist is a generic compilation artist
+    # (e.g. "Various Artists") but album_artist is the specific performer
+    # (some taggers swap them), we should NOT swap them back. TPE1 ALWAYS wins.
     track_artist = metadata.get("artist")
     album_artist = metadata.get("album_artist")
+
+    # If TPE1 is completely missing, and TPE2 is available, fallback to TPE2.
     if not track_artist and album_artist:
         # TPE1 absent but TPE2 present — use album artist as last-resort fallback
         metadata["artist"] = album_artist
-    # Keep album_artist in the dict so callers (e.g. library importers) can
-    # distinguish the two fields if they need to.
+    # Keep album_artist in the dict so callers can distinguish the two fields if they need to.
 
     # Canonical field aliases
     # artist_name is the primary semantic name; keep 'artist' for back-compat

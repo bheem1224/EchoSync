@@ -1187,26 +1187,39 @@ class WeightedMatchingEngine:
             )
             return None
 
-        # --- Size Sorting ---
+        # --- Tie-Breaker Sorting ---
         # Logic:
-        # 1. Primary Sort: Final Score (Descending) - Metadata correctness & Quality score is king.
-        # 2. Secondary Sort: File Size
-        #    - If prefer_max_quality=True: Larger size is better (Desc)
-        #    - If prefer_max_quality=False: Smaller (but valid) size is better (Asc)
+        # 1. Primary Sort: Final Score (Descending) - Metadata correctness is king.
+        # 2. Secondary Sort (Tie-Breaker): Evaluated if scores are exactly identical.
+        #    - MAX_QUALITY: Bitrate Descending -> Size Descending
+        #    - SAVE_STORAGE: Size Ascending (lowest sizes first)
+        #    - SPEED: Queue Length Ascending (lowest first) -> Upload Speed Descending
 
         def sort_key(item):
             score, cand = item
-            size = cand.file_size_bytes or cand.identifiers.get('size', 0) or 0
 
-            if self.weights.prefer_max_quality:
-                # Descending score, Descending size
-                return (score, size)
-            else:
-                # Descending score, Ascending size (negate size to sort Ascending in a Descending sort?)
-                # No, Python sort is stable and we can use a key.
-                # If we sort by key descending: (High Score, High Size) works.
-                # If we want (High Score, Low Size): We return (score, -size).
+            # Extract attributes safely with defaults
+            size = cand.file_size_bytes or cand.identifiers.get('size', 0) or 0
+            bitrate = cand.identifiers.get('bitrate', 0) or 0
+            queue_length = cand.identifiers.get('queue_length', 0) or 0
+            upload_speed = cand.identifiers.get('upload_speed', 0) or 0
+
+            tie_breaker = getattr(self.weights, 'tie_breaker', 'MAX_QUALITY')
+
+            # Since reverse=True is used globally for the sort:
+            # - We return values so that higher is better.
+            # - For values where lower is better (size in SAVE_STORAGE, queue_length in SPEED), we negate them.
+
+            if tie_breaker == 'SAVE_STORAGE':
+                # We want lowest size to win the tie-breaker
                 return (score, -size)
+            elif tie_breaker == 'SPEED':
+                # We want lowest queue length, then highest upload speed
+                return (score, -queue_length, upload_speed)
+            else:
+                # Default: MAX_QUALITY
+                # Highest bitrate, then highest size
+                return (score, bitrate, size)
 
         ranked_candidates.sort(key=sort_key, reverse=True)
 
