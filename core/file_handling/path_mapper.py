@@ -1,3 +1,4 @@
+import os
 from typing import List, Dict, Union
 
 class PathMapper:
@@ -54,8 +55,8 @@ class PathMapper:
 
         normalized_remote = self._normalize(remote_path)
 
+        # OPTIMIZATION: Use os.path or pathlib for filesystem operations
         for mapping in self.mappings:
-            # Ensure mapping is a dict
             if not isinstance(mapping, dict):
                 continue
 
@@ -65,31 +66,22 @@ class PathMapper:
             if not remote_prefix:
                 continue
 
-            # Remove trailing slash from remote_prefix for consistent matching, unless it's root
             search_prefix = remote_prefix.rstrip('/') if len(remote_prefix) > 1 else remote_prefix
 
-            # Check if the path starts with the remote prefix
             is_match = False
             if search_prefix == '/':
-                # Special case for root mapping: matches everything
                 is_match = True
             elif normalized_remote == search_prefix or normalized_remote.startswith(search_prefix + '/'):
                 is_match = True
 
             if is_match:
-                # Replace the prefix
-                # We simply use the length of the matched prefix to slice the path
-                suffix = normalized_remote[len(search_prefix):]
-
-                # Ensure local_prefix doesn't have a double slash when joining
-                # If local_prefix is /mnt/user/media and suffix is /movie.mkv, result is /mnt/user/media/movie.mkv
-
-                if local_prefix.endswith('/') and suffix.startswith('/'):
-                    return local_prefix + suffix[1:]
-                elif not local_prefix.endswith('/') and not suffix.startswith('/') and suffix:
-                     return local_prefix + '/' + suffix
-                else:
-                    return local_prefix + suffix
+                # OPTIMIZATION: Use standard lib path joining instead of slow string concatenation
+                suffix = normalized_remote[len(search_prefix):].lstrip('/')
+                if not suffix:
+                    # if suffix is empty, just return the local prefix without appending a trailing slash
+                    # unless the local_prefix inherently had one we want to keep
+                    return local_prefix.rstrip('/') if local_prefix != '/' else '/'
+                return os.path.join(local_prefix, suffix).replace('\\', '/')
 
         return normalized_remote
 

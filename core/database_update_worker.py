@@ -52,26 +52,17 @@ class DatabaseUpdateWorker:
         """Main execution loop for the worker thread."""
         logger.info(f"Starting database update worker for {self.server_type}")
         try:
-            # Initialize database with SQLAlchemy
-            # Schema is managed exclusively by Alembic (run_auto_migrations);
-            # create_all() is intentionally removed to prevent schema drift.
             db = MusicDatabase(self.database_path)
             library_manager = LibraryManager(db.session_factory)
             logger.debug("Database path resolved to %s", db.database_path)
             
-            # Fetch all tracks from media client (now returns EchosyncTrack objects)
             logger.debug(f"Fetching library from {self.server_type}...")
-            all_tracks = self.media_client.get_all_tracks()
             
-            if not all_tracks:
-                logger.warning(f"No tracks found in {self.server_type} library")
-                return
+            # OPTIMIZATION: Use a generator to stream tracks instead of dumping all to a list
+            all_tracks_generator = self.media_client.get_all_tracks()
             
-            self.total_tracks = len(all_tracks)
-            logger.info(f"Found {self.total_tracks} tracks in {self.server_type} library")
-            logger.debug("Beginning bulk import via LibraryManager")
+            logger.debug("Beginning streaming bulk import via LibraryManager")
             
-            # Use LibraryManager to bulk import tracks
             def _on_progress(progress: Dict[str, int]):
                 try:
                     # Update worker stats live
@@ -87,25 +78,18 @@ class DatabaseUpdateWorker:
                 except Exception:
                     pass
 
-            imported_count = library_manager.bulk_import(all_tracks, progress_callback=_on_progress)
+            imported_count = library_manager.bulk_import(all_tracks_generator, progress_callback=_on_progress)
             
             logger.info(f"Successfully imported {imported_count} tracks from {self.server_type}")
             logger.debug(
-                "Bulk import finished for %s: requested=%s imported=%s", 
+                "Bulk import finished for %s: imported=%s",
                 self.server_type,
-                len(all_tracks),
                 imported_count,
             )
             self.processed_tracks = imported_count
             self.successful_operations = imported_count
 
             # --- Backfill missing provider identifiers ---
-            # Repair any tracks that were imported from a different source (e.g.
-            # local_server / auto_importer) and therefore lack an identifier for
-            # the media-server provider (e.g. 'plex' ratingKey).  The bulk import
-            # above may have just written the identifier onto a new/updated row for
-            # the same file; this pass propagates it to any older row at the same
-            # file_path so playlist sync can use them immediately.
             try:
                 backfill_count = library_manager.backfill_provider_identifiers(self.server_type)
                 if backfill_count:

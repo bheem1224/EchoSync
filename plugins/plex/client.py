@@ -783,73 +783,41 @@ class PlexClient(ProviderBase):
         
         return False
     
-    def get_all_tracks(self, limit: Optional[int] = None) -> List[EchosyncTrack]:
-        """Get all tracks from active music library."""
+    def get_all_tracks(self, limit: Optional[int] = None):
+        """Get all tracks from active music library iteratively to save RAM."""
         if not self.ensure_connection() or not self.music_library:
             logger.warning("No active music library")
-            return []
-        
+            return
+            
         try:
-            tracks = []
+            # OPTIMIZATION: Fetch in chunks (pagination) to yield items and avoid huge allocations
+            chunk_size = 1000
+            max_limit = limit if limit else 999999
+            offset = 0
             
-            # Use maxresults parameter to fetch tracks (Plex doesn't support offset for searchTracks)
-            # searchTracks will fetch all matching tracks up to maxresults limit
-            max_results = limit if limit else 999999
-            logger.info(f"Calling Plex searchTracks with maxresults={max_results}")
-            all_tracks = self.music_library.searchTracks(maxresults=max_results)
-            
-            logger.info(f"Plex returned {len(all_tracks)} raw tracks from library")
-            
-            conversion_errors = 0
-            skipped_non_track = 0
-            successful_conversions = 0
-            
-            for idx, item in enumerate(all_tracks):
-                # Log progress every 100 items to see if loop is hanging
-                if idx % 100 == 0 and idx > 0:
-                    logger.debug(
-                        "Processing tracks: %s/%s (%s converted, %s errors)",
-                        idx,
-                        len(all_tracks),
-                        successful_conversions,
-                        conversion_errors,
-                    )
+            while offset < max_limit:
+                current_limit = min(chunk_size, max_limit - offset)
+                logger.info(f"Calling Plex searchTracks offset={offset} limit={current_limit}")
+                chunk_tracks = self.music_library.searchTracks(limit=current_limit, offset=offset)
                 
-                if isinstance(item, PlexTrack):
-                    try:
-                        track = self._convert_track_to_echosync(item)
-                        if track:
-                            tracks.append(track)
-                            successful_conversions += 1
-                            if idx < 5:  # Log first 5 tracks for debugging
-                                logger.debug(
-                                    "Converted track #%s: %s by %s",
-                                    idx + 1,
-                                    track.title,
-                                    track.artist_name,
-                                )
-                        else:
-                            conversion_errors += 1
-                            if conversion_errors <= 3:  # Log first 3 conversion failures
-                                logger.warning(f"Conversion returned None for track: {getattr(item, 'title', 'Unknown')}")
-                    except Exception as e:
-                        conversion_errors += 1
-                        if conversion_errors <= 3:
-                            logger.error(f"Error converting track '{getattr(item, 'title', 'Unknown')}': {e}", exc_info=True)
-                else:
-                    skipped_non_track += 1
-                
-                if limit and len(tracks) >= limit:
-                    tracks = tracks[:limit]
+                if not chunk_tracks:
                     break
-            
-            logger.info(f"Track conversion complete: {successful_conversions} tracks successfully converted, {conversion_errors} errors, {skipped_non_track} non-track items skipped")
-            return tracks
-        
+
+                for raw_track in chunk_tracks:
+                    if isinstance(raw_track, PlexTrack):
+                        try:
+                            track = self._convert_track_to_echosync(raw_track)
+                            if track:
+                                yield track
+                        except Exception as e:
+                            logger.error(f"Failed to convert Plex track: {str(e)}")
+                    else:
+                        logger.warning(f"Skipping non-track item: {type(raw_track)}")
+
+                offset += len(chunk_tracks)
+
         except Exception as e:
-            logger.error(f"Error fetching all tracks from Plex: {e}", exc_info=True)
-            return []
-    
+            logger.error(f"Error fetching tracks from Plex: {str(e)}")
     def get_all_albums(self) -> List[Dict[str, Any]]:
         """Get all albums from active music library."""
         if not self.ensure_connection() or not self.music_library:

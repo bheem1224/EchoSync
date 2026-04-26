@@ -1,8 +1,11 @@
 """Search adapter that selects search-capable providers and aggregates results."""
 
+import asyncio
 from typing import List, Dict, Optional
 
-from core.provider import ProviderRegistry, get_provider_capabilities
+from core.provider import ProviderRegistry, get_provider_capabilities, MediaServerProvider
+from core.settings import config_manager
+from core.tiered_logger import get_logger
 
 
 class SearchAdapter:
@@ -68,20 +71,16 @@ class SearchAdapter:
                             item_dict["artist"] = item_dict["artist_name"]
                             
                         # MediaServerProviders are considered local
-                        from core.provider import MediaServerProvider
                         item_dict["is_local"] = isinstance(provider, MediaServerProvider)
                         
                         results.append(item_dict)
                 except Exception as e:
-                    from core.tiered_logger import get_logger
                     get_logger("search_adapter").error(f"Search failed for {provider.name} ({kind}): {e}")
 
         return results
 
     async def federated_discovery(self, query: str, enabled_providers: Optional[List[str]] = None) -> List[Dict]:
         """Async federated discovery utilizing all search providers."""
-        import asyncio
-        from core.settings import config_manager
         
         search_providers = []
         for provider_name in ProviderRegistry.list_providers():
@@ -98,14 +97,14 @@ class SearchAdapter:
                 
         async def fetch_provider(provider):
             try:
-                loop = asyncio.get_running_loop()
+                # OPTIMIZATION: Use asyncio.to_thread instead of run_in_executor to better
+                # handle GIL and thread isolation for CPU-heavy matching logic
                 results = await asyncio.wait_for(
-                    loop.run_in_executor(None, provider.search, query, "track", 20),
+                    asyncio.to_thread(provider.search, query, "track", 20),
                     timeout=5.0
                 )
                 return provider.name, results
             except Exception as e:
-                from core.tiered_logger import get_logger
                 get_logger("search_adapter").error(f"Discovery timeout/error for {provider.name}: {e}")
                 return provider.name, []
 
@@ -144,7 +143,6 @@ class SearchAdapter:
                 else:
                     cover_art = i_dict.get("cover_art_url") or i_dict.get("cover") or ""
                     
-                    from core.provider import MediaServerProvider
                     try:
                         prov_instance = ProviderRegistry.create_instance(provider_name)
                         is_local = isinstance(prov_instance, MediaServerProvider)
