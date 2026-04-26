@@ -90,3 +90,66 @@ If a plugin (e.g. MusicBrainz) takes 15 seconds to respond, the `asyncio.wait_fo
 
 **Recommendation:**
 The timeout is correctly implemented. However, 5 seconds might be too long for an interactive "Omnibar" search experience. Consider reducing the timeout to `2.5` seconds for search-as-you-type UX.
+
+---
+
+## 5. The Tie-Breaker Data Pipeline (Slskd)
+**File:** `plugins/slskd/client.py`
+
+**Finding:**
+We investigated whether the Slskd plugin properly hydrates the `identifiers` dictionary required for the `SPEED` tie-breaker.
+The code at `plugins/slskd/client.py:463` correctly parses the raw API payload: `upload_speed=response_data.get('uploadSpeed', 0)` and `queue_length=response_data.get('queueLength', 0)`.
+Furthermore, inside `_process_and_queue_download` (line 364), the values are successfully injected into the `EchoSyncTrack` instance:
+`echo_track.identifiers['upload_speed'] = result.upload_speed`
+`echo_track.identifiers['queue_length'] = result.queue_length`
+
+**Conclusion:**
+The Slskd data pipeline successfully supports the `SPEED` tie-breaker. The `SPEED` logic relies on these injected identifiers, which are verifiably present.
+
+---
+
+## 6. Web Component State Desync (UI Theme/Profile)
+**Files:** `webui/src/routes/settings/preferences/+page.svelte`, plugin UI `.svelte` files.
+
+**Finding:**
+EchoSync utilizes an isolated Svelte custom elements (Web Components) architecture.
+When the user changes global UI state (like the Light/Dark theme dropdown in preferences), the core SvelteKit application updates its local state and CSS variables.
+However, Web Components (`plugins/*/ui/`) do not automatically inherit or observe Svelte's internal state stores unless explicitly passed as reactive attributes. Because the `manifestData.plugins` script injection (`dashboard/+page.svelte`) mounts these components without binding to a global state context, the plugin UI cards do not react to global theme changes.
+
+**Recommendation:**
+Standardize on the global App Shell Tailwind CSS variables (`--es-*`) for all Web Components to ensure they inherit the visual state from the DOM tree organically. If explicit JS state is needed, the core dashboard loader must pass state via attributes (e.g., `<svelte:element this={card.type} theme={$currentTheme} />`) and the Web Component must reactively parse it.
+
+---
+
+## 7. The "Chaotic User" Fuzzer (Media Manager Queue System)
+**File:** `services/download_manager.py` (triggered via `services/media_manager.py`)
+
+**Finding:**
+If a chaotic user rapid-fires the "Approve" button 5 times on the same suggestion, what happens to the database?
+The `approve_suggestion` endpoint delegates to `dm.queue_download(track)`.
+Inside `queue_download`, before inserting into the database, it calls `_find_existing_download(track_json)`. This function calculates a normalized track signature and queries the `working_db` for any downloads in an active state (`"queued"`, `"searching"`, `"downloading"`).
+
+**Conclusion:**
+If an active download matches the signature, it immediately aborts and returns the existing download ID.
+The backend strictly enforces idempotency against rapid-fire requests. No duplicate jobs will be queued.
+
+---
+
+## 8. Plugin Router Collisions (Micro-API Mounting)
+**Files:** `core/plugin_router.py`, `web/api_app.py`
+
+**Finding:**
+If two different plugins accidentally attempt to register identical API routes (e.g., via `PluginRouterRegistry.mount_router`), the behavior depends on the exact `Blueprint` instantiation:
+1. **Name Collision (Fatal):** If two plugins instantiate a Flask Blueprint with the exact same name (e.g., `Blueprint('myplugin', ...)`), Flask will raise an Exception during `app.register_blueprint(bp)` inside `api_app.py`. This exception is wrapped in a `try/except` block (`web/api_app.py:108`), which prints an error but **prevents the app from crashing**. The second plugin's routes fail to mount.
+2. **URL Route Collision (Silent Failure):** If they use different blueprint names but mount to the exact same URL namespace (e.g., both use `url_prefix='/api/plugins/shared_name'`), Flask will register both without crashing. However, during routing, the first registered plugin will silently hijack all matching requests, and the second plugin's endpoints will be completely unreachable.
+
+**Recommendation:**
+Enforce dynamic blueprint naming based on the strict `plugin_id` folder name, rather than letting plugins define their own Blueprint identifiers or URL prefixes.
+
+```python
+# In core/plugin_router.py
+        # Force the blueprint name to avoid Flask registry collisions
+        router.name = f"plugin_router_{plugin_id}"
+        prefix = f"/api/plugins/{plugin_id}"
+        router.url_prefix = prefix
+```
