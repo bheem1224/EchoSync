@@ -320,6 +320,95 @@ class AutoImportService:
             for file_path, (metadata, confidence) in zip(dir_files, batch_results):
                 file_key = str(file_path)
                 try:
+                    if (metadata is None or confidence < confidence_threshold) and auto_import:
+                        # Fallback for Auto-Import: Strict Lucene Match when AcoustID/Metadata failed
+                        logger.info(f"Initial identification failed or low confidence ({confidence:.2f}) for {file_path.name}. Executing strict fallback.")
+
+                        # 1. Parse local file
+                        from core.matching_engine.track_parser import parse_file
+                        local_track = parse_file(str(file_path), generate_fingerprint=True)
+
+                        if local_track and local_track.artist_name and local_track.raw_title:
+                            # 2. Fetch top MusicBrainz result
+                            from core.provider import ProviderRegistry
+                            mb_client = ProviderRegistry.get_provider("musicbrainz")
+
+                            mb_results = mb_client.search_recording_strict(
+                                artist=local_track.artist_name,
+                                title=local_track.raw_title
+                            ) if mb_client else []
+
+                            if mb_results:
+                                top_mb_track = mb_results[0]
+
+                                # 3. Instantiate Engine with AUTO_IMPORT_STRICT
+                                from core.matching_engine.matching_engine import WeightedMatchingEngine
+                                from core.matching_engine.scoring_profile import PROFILE_AUTO_IMPORT_STRICT
+
+                                engine = WeightedMatchingEngine(PROFILE_AUTO_IMPORT_STRICT)
+                                match_result = engine.calculate_match(local_track, top_mb_track)
+                                score = match_result.confidence_score if match_result else 0.0
+
+                                logger.info(f"Strict fallback score for {file_path.name}: {score:.2f}")
+
+                                if score >= PROFILE_AUTO_IMPORT_STRICT.SUBMIT_THRESHOLD:
+                                    logger.info(f"High confidence strict match ({score:.2f}). Auto-importing and queueing fingerprint submission.")
+                                    # Form metadata from track
+                                    metadata = {
+                                        "title": top_mb_track.raw_title or top_mb_track.title,
+                                        "artist": top_mb_track.artist_name,
+                                        "album": top_mb_track.album_title,
+                                        "recording_id": top_mb_track.musicbrainz_id,
+                                        "musicbrainz_id": top_mb_track.musicbrainz_id,
+                                        "duration": top_mb_track.duration_ms,
+                                    }
+                                    if top_mb_track.isrc:
+                                        metadata["isrc"] = top_mb_track.isrc
+
+                                    if file_path.exists():
+                                        self.finalize_import(file_path, metadata)
+
+                                        # Submit fingerprint in background if we generated one
+                                        if local_track.fingerprint and top_mb_track.musicbrainz_id:
+                                            from core.system_jobs import register_acoustid_submission_job
+                                            register_acoustid_submission_job(
+                                                fingerprint=local_track.fingerprint,
+                                                duration=local_track.duration_ms or 0,
+                                                mbid=top_mb_track.musicbrainz_id
+                                            )
+                                    else:
+                                        self.enhancer.create_or_update_review_task(file_path, metadata, score, status='pending')
+                                    continue
+
+                                elif score >= PROFILE_AUTO_IMPORT_STRICT.IMPORT_THRESHOLD:
+                                    logger.info(f"Acceptable strict match ({score:.2f}). Auto-importing safely.")
+                                    metadata = {
+                                        "title": top_mb_track.raw_title or top_mb_track.title,
+                                        "artist": top_mb_track.artist_name,
+                                        "album": top_mb_track.album_title,
+                                        "recording_id": top_mb_track.musicbrainz_id,
+                                        "musicbrainz_id": top_mb_track.musicbrainz_id,
+                                        "duration": top_mb_track.duration_ms,
+                                    }
+                                    if top_mb_track.isrc:
+                                        metadata["isrc"] = top_mb_track.isrc
+
+                                    if file_path.exists():
+                                        self.finalize_import(file_path, metadata)
+                                    else:
+                                        self.enhancer.create_or_update_review_task(file_path, metadata, score, status='pending')
+                                    continue
+
+                                else:
+                                    logger.info(f"Strict fallback score ({score:.2f}) below import threshold. Sending to review.")
+                                    # Fall through to review task
+                                    metadata = None
+                                    confidence = score
+                            else:
+                                logger.info(f"Strict fallback returned no results for {file_path.name}.")
+                                metadata = None
+                                confidence = 0.0
+
                     if metadata is None:
                         logger.warning(
                             "Metadata identification FAILED for %s. Marking for manual review.",
