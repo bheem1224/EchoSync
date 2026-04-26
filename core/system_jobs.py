@@ -541,3 +541,32 @@ def register_all_system_jobs():
         logger.info("All system jobs registered successfully")
     except Exception as e:
         logger.error(f"Failed to register system jobs: {e}", exc_info=True)
+
+
+def register_acoustid_submission_job(fingerprint: str, duration: int, mbid: str):
+    """
+    One-off job to submit an AcoustID fingerprint in the background.
+    """
+    def submit_fingerprint():
+        try:
+            from core.provider import ProviderRegistry
+            client = ProviderRegistry.get_provider("acoustid")
+            if client and hasattr(client, "submit_fingerprint"):
+                logger.info(f"Submitting AcoustID fingerprint for MBID: {mbid}")
+                client.submit_fingerprint(fingerprint, duration, mbid)
+            else:
+                logger.debug("AcoustID provider not available for submission.")
+        except Exception as e:
+            logger.warning(f"Failed to submit AcoustID fingerprint: {e}", exc_info=True)
+
+    from core.job_queue import job_queue
+    import time
+    job_name = f"acoustid_submit_{mbid}_{int(time.time()*1000)}"
+
+    job_queue.register_job(
+        name=job_name,
+        func=submit_fingerprint,
+        enabled=True,
+        max_retries=3,
+        backoff_base=10.0
+    )
