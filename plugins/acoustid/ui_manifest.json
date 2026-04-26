@@ -1,0 +1,4 @@
+{
+  "settings_element": "acoustid-settings-card",
+  "settings_src": "ui/AcoustIDCard.svelte"
+}

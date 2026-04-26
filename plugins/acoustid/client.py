@@ -198,6 +198,17 @@ class AcoustIDProvider(ProviderBase):
             logger.debug("Skipping AcoustID submit: missing client or user API key")
             return False
 
+        # Opt-in check: only submit if auto_contribute is enabled in settings
+        try:
+            storage = get_storage_service()
+            auto_contribute = storage.get_service_config(self.name, 'auto_contribute')
+            if not (auto_contribute == 'true' or auto_contribute is True):
+                logger.debug("Skipping AcoustID submission: auto_contribute is disabled")
+                return False
+        except Exception as e:
+            logger.debug(f"Could not verify AcoustID auto_contribute flag: {e}")
+            return False
+
         if not fingerprint or not str(fingerprint).strip() or not mbid or not str(mbid).strip():
             logger.debug("Skipping AcoustID submit: missing fingerprint or MBID")
             return False

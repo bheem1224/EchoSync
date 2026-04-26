@@ -114,19 +114,7 @@
   }
 
   function getConfigFields(providerName) {
-    const fields = {
-      acoustid: [
-        {
-          key: 'api_key',
-          label: 'API Key',
-          type: 'password',
-          placeholder: 'Enter your AcoustID API key',
-          help: 'Get your free API key from https://acoustid.org/new-application',
-          required: true,
-          sensitive: true
-        }
-      ]
-    };
+    const fields = {};
     return fields[providerName] || [];
   }
 

@@ -554,6 +554,18 @@ class MusicBrainzClient(ProviderBase):
             logger.warning("submit_isrc called with empty mbid or isrc")
             return False
 
+        # Opt-in check: only submit if auto_contribute is enabled in settings
+        try:
+            from core.file_handling.storage import get_storage_service
+            storage = get_storage_service()
+            auto_contribute = storage.get_service_config("musicbrainz", "auto_contribute")
+            if not (auto_contribute == "true" or auto_contribute is True):
+                logger.debug("Skipping MusicBrainz ISRC submission: auto_contribute is disabled")
+                return False
+        except Exception as e:
+            logger.debug(f"Could not verify MusicBrainz auto_contribute flag: {e}")
+            return False
+
         access_token = self.get_active_access_token(account_id)
         if not access_token:
             logger.warning("MusicBrainz submit_isrc: no authenticated account available")

@@ -62,7 +62,12 @@ def save_config():
             storage.set_service_config("musicbrainz", "auto_contribute", str(bool(payload["auto_contribute"])).lower())
 
         token = storage.get_service_config("musicbrainz", "user_token")
-        return jsonify({"success": True, "token_configured": bool(token)}), 200
+        auto_contribute = storage.get_service_config("musicbrainz", "auto_contribute")
+        return jsonify({
+            "success": True, 
+            "token_configured": bool(token),
+            "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute)
+        }), 200
     except Exception as e:
         logger.error(f"Error saving MusicBrainz config: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
