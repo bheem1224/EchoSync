@@ -35,6 +35,7 @@ _FORBIDDEN_MODULE_CALLS: dict = {
     # M1: removed the dead "__import__" entry — importlib has no such attribute.
     # The bare __import__('os') vector is already blocked by _FORBIDDEN_BARE_CALLS.
     "importlib": frozenset({"import_module", "reload"}),
+    "builtins": frozenset({"eval", "exec", "getattr", "setattr"}),
 }
 
 # Forbidden method names on *any* receiver.
@@ -81,7 +82,7 @@ class PluginSecurityScanner(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             base_module = alias.name.split('.')[0]
-            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc"):
+            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
                 if base_module == "subprocess" and self.privileged:
                     continue
                 self.violations.append((node.lineno, f"forbidden import '{alias.name}'"))
@@ -90,7 +91,7 @@ class PluginSecurityScanner(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.module:
             base_module = node.module.split('.')[0]
-            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc"):
+            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
                 if not (base_module == "subprocess" and self.privileged):
                     self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
         self.generic_visit(node)
