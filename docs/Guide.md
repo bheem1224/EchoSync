@@ -70,7 +70,7 @@ If you need to query EchoSync manually or perform backups, note the Alembic-mana
 
 ## 5. Security & Plugins (The Zero-Trust Sandbox)
 
-EchoSync v2.4.1+ introduces the "Total Freedom" architecture, allowing the community to build powerful plugins. To keep your home lab secure, EchoSync runs a strict security model:
+EchoSync v2.4.1+ introduces the "Nexus Framework" architecture, allowing the community to build powerful plugins. To keep your home lab secure, EchoSync runs a strict security model:
 
 * **The AST Sandbox:** When you install a community plugin, it doesn't just run blindly. EchoSync uses an Abstract Syntax Tree (AST) Scanner to read the plugin's code before it loads. If a plugin attempts to use dangerous Python modules (like `os` to delete files or `subprocess` to run terminal commands), EchoSync instantly blocks the plugin from loading.
 * **Safe File Management:** Because raw file access is blocked, plugins must use EchoSync's internal handlers. This guarantees that a community plugin can only modify media within your defined `/library` and `/downloads` folders, preventing it from touching the rest of your server.

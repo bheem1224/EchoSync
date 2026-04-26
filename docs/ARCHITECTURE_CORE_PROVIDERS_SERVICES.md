@@ -27,9 +27,9 @@ The `core` directory is the engine room of EchoSync. It contains pure business l
 
 ---
 
-## 2. Total Freedom Plugin Architecture (Formerly "Providers")
+## 2. Nexus Framework Plugin Architecture (Formerly "Providers")
 
-The legacy concept of hardcoded "Providers" has been deprecated. EchoSync now utilizes the **Total Freedom Plugin Architecture**.
+The legacy concept of hardcoded "Providers" has been deprecated. EchoSync now utilizes the **Nexus Framework Plugin Architecture**.
 
 Instead of writing rigid adapter classes, developers now write **Plugins** that interact with the core application via a comprehensive **Hook System**. This allows plugins to not just provide data, but to alter, intercept, or completely hijack almost any application state or lifecycle event.
 

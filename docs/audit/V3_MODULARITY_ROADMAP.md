@@ -1,9 +1,9 @@
-# V3.0 Modularity Roadmap: The Path to "Total Freedom"
+# V3.0 Modularity Roadmap: The Path to "Nexus Framework"
 
 **Date:** 2026-03-24
 **Scope:** Architectural Limit Audit for Extreme Modularity Edge Cases
 
-This document evaluates the limits of the v2.5.0 plugin sandbox and outlines the required hooks, SDK abstractions, and architecture changes needed to achieve the v3.0 "Total Freedom" ecosystem.
+This document evaluates the limits of the v2.5.0 plugin sandbox and outlines the required hooks, SDK abstractions, and architecture changes needed to achieve the v3.0 "Nexus Framework" ecosystem.
 
 ---
 

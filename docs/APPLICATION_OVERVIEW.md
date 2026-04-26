@@ -1,6 +1,6 @@
 # EchoSync: Application Overview
 
-Welcome to the EchoSync Master Document. This guide provides a high-level conceptual overview of the entire application architecture and data flow, updated for the v2.4.1 "Total Freedom" modular architecture.
+Welcome to the EchoSync Master Document. This guide provides a comprehensive overview of the application's architecture and data flow, fully updated for the v2.5.0 Nexus Framework—our decentralized, zero-trust backend and Web Component-driven frontend ecosystem
 
 ## Index
 1. [The EchoSyncTrack & SyncID Lifecycle](#1-the-echosynctrack--syncid-lifecycle)
@@ -11,7 +11,7 @@ Welcome to the EchoSync Master Document. This guide provides a high-level concep
 6. [Quality Profiles](#6-quality-profiles)
 7. [API Management: Rate Limiter & Request Manager](#7-api-management-rate-limiter--request-manager)
 8. [Event Bus & Sync Service](#8-event-bus--sync-service)
-9. [The Plugin Architecture (Total Freedom)](#9-the-plugin-architecture-total-freedom)
+9. [The Plugin Architecture (Nexus Framework)](#9-the-plugin-architecture-total-freedom)
 10. [Bundled Core Plugins](#10-bundled-core-plugins)
 11. [Auto Importer & Healthcheck](#11-auto-importer--healthcheck)
 
@@ -78,7 +78,7 @@ To prevent API bans and ensure stable operations, all external network requests 
 * **The Event Bus:** The nervous system of EchoSync. Uses lightweight dictionary payloads (the "Claim Check Pattern") to broadcast state changes across the application without passing massive Python objects.
 * **Sync Service:** The core engine that orchestrates the workflow. It reads source playlists, consults the Matching Engine, dispatches `DOWNLOAD_INTENT` events to the Event Bus, and monitors the Job Queue until tracks are imported.
 
-## 9. The Plugin Architecture (Total Freedom)
+## 9. The Plugin Architecture (Nexus Framework)
 
 The legacy monolithic structure is gone. EchoSync is now driven by a dynamic plugin architecture.
 
@@ -90,7 +90,7 @@ The legacy monolithic structure is gone. EchoSync is now driven by a dynamic plu
 
 ## 10. Bundled Core Plugins
 
-To ensure out-of-the-box functionality, EchoSync ships with a suite of bundled core plugins. Rather than hardcoding these fundamental features, they use the exact same hook architecture as community plugins, proving the viability of the "Total Freedom" SDK:
+To ensure out-of-the-box functionality, EchoSync ships with a suite of bundled core plugins. Rather than hardcoding these fundamental features, they use the exact same hook architecture as community plugins, proving the viability of the "Nexus Framework" SDK:
 
 * **Local Player:** Provides native audio streaming capabilities directly from the server.
 

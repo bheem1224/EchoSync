@@ -1,6 +1,6 @@
 # EchoSync Developer SDK Guide
 
-Welcome to the EchoSync "Total Freedom" Plugin SDK. EchoSync v2.4.1+ transitions away from monolithic, hardcoded providers to a dynamic, event-driven plugin architecture.
+Welcome to the EchoSync "Nexus Framework" Plugin SDK. EchoSync v2.4.1+ transitions away from monolithic, hardcoded providers to a dynamic, event-driven plugin architecture.
 
 This is your guide for writing robust, secure, and performant community plugins.
 

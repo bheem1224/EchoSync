@@ -1,4 +1,4 @@
-# Feature & Limit Audit: v2.5.0 "Total Freedom" Architecture
+# Feature & Limit Audit: v2.5.0 "Nexus Framework" Architecture
 
 **Date:** 2026-03-24
 **Scope:** v2.5.0 Release Candidate (`main` + Security Hardening Patches)
