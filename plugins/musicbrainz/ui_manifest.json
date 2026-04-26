@@ -1,0 +1,6 @@
+{
+  "settings_element": "musicbrainz-settings-card",
+  "settings_src": "ui/MusicBrainzSettingsCard.svelte",
+  "dashboard_element": "musicbrainz-dashboard-card",
+  "dashboard_src": "ui/MusicBrainzCard.svelte"
+}

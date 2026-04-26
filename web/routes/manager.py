@@ -208,6 +208,7 @@ def manager_settings():
                     return jsonify({'error': 'beta_opt_in (boolean) required'}), 400
                 # Persist to config under ui.beta_plugin_ui
                 config_manager.set('ui.beta_plugin_ui', bool(val))
+                config_manager.save_settings(config_manager.get_settings())
                 return jsonify({'success': True, 'beta_opt_in': bool(val)}), 200
 
             # GET: return current saved value and dev_mode env flag

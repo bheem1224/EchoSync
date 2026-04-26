@@ -125,14 +125,6 @@
           required: true,
           sensitive: true
         }
-      ],
-      musicbrainz: [
-        {
-          key: 'info',
-          label: 'Information',
-          type: 'info',
-          value: 'MusicBrainz OAuth is configured in the section below. Read-only metadata lookups need no credentials; OAuth login is required for ISRC submissions and community contributions.'
-        }
       ]
     };
     return fields[providerName] || [];
@@ -394,29 +386,7 @@
       {:else if activeTab === 'settings'}
           <!-- Settings Tab -->
           <div class="settings-card">
-              <div class="field">
-                  <label>Confidence Threshold: {confidenceThreshold}%</label>
-                  <input type="range" min="50" max="100" bind:value={confidenceThreshold} />
-                  <p class="help-text">Minimum confidence score required for auto-import.</p>
-              </div>
-
-              <div class="field-row flex items-center gap-3">
-                  <span>Overwrite Existing Tags</span>
-                  <label class="switch">
-                      <input type="checkbox" bind:checked={overwriteTags} />
-                      <span class="slider"></span>
-                  </label>
-              </div>
-
-              <div class="field-row flex items-center gap-3">
-                  <span>Embed Cover Art</span>
-                  <label class="switch">
-                      <input type="checkbox" bind:checked={embedCoverArt} />
-                      <span class="slider"></span>
-                  </label>
-              </div>
-
-              <button class="btn-primary active:scale-95 transition-all duration-200" on:click={saveSettings}>Save Settings</button>
+              <p class="text-sm text-slate-400">Settings are now automatically managed by the backend auto_importer engine.</p>
           </div>
 
       {:else if activeTab === 'queue'}

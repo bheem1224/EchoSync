@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { feedback } from '../stores/feedback';
   import apiClient from '../api/client';
 

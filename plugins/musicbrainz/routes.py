@@ -26,6 +26,47 @@ logger = get_logger("musicbrainz_routes")
 
 bp = Blueprint("musicbrainz_routes", __name__, url_prefix="/api/musicbrainz")
 
+# Second blueprint for the settings-card config API
+config_bp = Blueprint("musicbrainz_config", __name__, url_prefix="/api/plugins/musicbrainz")
+
+
+@config_bp.get("/config")
+def get_config():
+    """Return the current MusicBrainz settings-card configuration."""
+    try:
+        storage = get_storage_service()
+        token = storage.get_service_config("musicbrainz", "user_token")
+        auto_contribute = storage.get_service_config("musicbrainz", "auto_contribute")
+        return jsonify({
+            "token_configured": bool(token),
+            "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute),
+        }), 200
+    except Exception as e:
+        logger.error(f"Error reading MusicBrainz config: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@config_bp.post("/config")
+def save_config():
+    """Persist MusicBrainz settings-card values (user token + auto-contribute flag)."""
+    try:
+        payload = request.get_json(force=True) or {}
+        storage = get_storage_service()
+        storage.ensure_service("musicbrainz", display_name="MusicBrainz", service_type="metadata")
+
+        if "user_token" in payload and payload["user_token"].strip():
+            from core.security import encrypt_string
+            storage.set_service_config("musicbrainz", "user_token", encrypt_string(payload["user_token"].strip()))
+
+        if "auto_contribute" in payload:
+            storage.set_service_config("musicbrainz", "auto_contribute", str(bool(payload["auto_contribute"])).lower())
+
+        token = storage.get_service_config("musicbrainz", "user_token")
+        return jsonify({"success": True, "token_configured": bool(token)}), 200
+    except Exception as e:
+        logger.error(f"Error saving MusicBrainz config: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 _AUTH_URL = "https://musicbrainz.org/oauth2/authorize"
 _TOKEN_URL = "https://musicbrainz.org/oauth2/token"
 _USERINFO_URL = "https://musicbrainz.org/oauth2/userinfo"

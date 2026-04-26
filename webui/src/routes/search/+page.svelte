@@ -2,13 +2,22 @@
   import { onMount } from 'svelte';
   import { providers, searchProviders } from '../../stores/providers';
   import apiClient from '../../api/client';
+  import Omnibar from '../../lib/components/Omnibar.svelte';
 
   let query = '';
+  let lastSearchedQuery = '';
   let selectedProviders = [];
   let searchTypes = ['tracks'];
   let results = [];
   let searching = false;
   let error = '';
+
+  $: groupedResults = results.reduce((acc, item) => {
+    const t = item.type || 'unknown';
+    if (!acc[t]) acc[t] = [];
+    acc[t].push(item);
+    return acc;
+  }, {});
 
   async function handleSearch() {
     if (!query.trim()) return;
@@ -16,6 +25,7 @@
     searching = true;
     error = '';
     results = [];
+    lastSearchedQuery = query.trim();
 
     try {
       const params = new URLSearchParams();
@@ -126,18 +136,11 @@
 
     <!-- Main Search Area -->
     <main class="search-main">
-      <div class="search-bar card">
-        <input type="text" 
-               bind:value={query} 
-               placeholder="Search for tracks, artists, or albums..." 
-               on:keydown={(e) => e.key === 'Enter' && handleSearch()} />
-        <button class="btn btn--primary active:scale-95 transition-all duration-200" on:click={handleSearch} disabled={searching}>
-          {#if searching}
-            <div class="spinner spinner--small"></div>
-          {:else}
-            Search
-          {/if}
-        </button>
+      <div class="mb-6 relative z-50">
+        <Omnibar 
+            forcedPrefix="?" 
+            placeholder="Search MusicBrainz to download..." 
+        />
       </div>
 
       {#if error}
@@ -154,34 +157,43 @@
           </div>
         {:else if results.length > 0}
           <div class="results-list">
-            {#each results as item}
-              <div class="result-card card">
-                <div class="result-info">
-                  <div class="result-main">
-                    <span class="result-type-tag">{item.type}</span>
-                    <strong>{item.title}</strong>
-                  </div>
-                  <p class="muted">{item.artist} • {item.provider}</p>
-                  {#if item.confidence}
-                    <div class="confidence-bar">
-                      <div class="confidence-fill" style="width: {item.confidence * 100}%"></div>
+            {#each Object.entries(groupedResults) as [type, items]}
+              <div class="result-section">
+                <h3 class="section-title capitalize">{type}</h3>
+                <div class="section-items">
+                  {#each items as item}
+                    <div class="result-card card">
+                      <div class="result-info">
+                        <div class="result-main">
+                          <strong>{item.title || 'Unknown Title'}</strong>
+                        </div>
+                        <p class="muted">{item.artist ? item.artist + ' • ' : ''}{item.provider}</p>
+                        {#if item.confidence}
+                          <div class="confidence-bar">
+                            <div class="confidence-fill" style="width: {item.confidence * 100}%"></div>
+                          </div>
+                        {/if}
+                      </div>
+                      <div class="result-actions">
+                        {#if item.is_local}
+                          <button class="action-btn active:scale-95 transition-all duration-200" title="Play" on:click={() => handleAction(item, 'play')}>
+                            ▶️
+                          </button>
+                        {:else}
+                          <button class="action-btn active:scale-95 transition-all duration-200" title="Download" on:click={() => handleAction(item, 'download')}>
+                            📥
+                          </button>
+                        {/if}
+                      </div>
                     </div>
-                  {/if}
-                </div>
-                <div class="result-actions">
-                  <button class="action-btn active:scale-95 transition-all duration-200" title="Download" on:click={() => handleAction(item, 'download')}>
-                    📥
-                  </button>
-                  <button class="action-btn active:scale-95 transition-all duration-200" title="Add to Library" on:click={() => handleAction(item, 'library')}>
-                    ➕
-                  </button>
+                  {/each}
                 </div>
               </div>
             {/each}
           </div>
-        {:else if query && !searching}
+        {:else if lastSearchedQuery && !searching}
           <div class="empty-state">
-            <p>No results found for "{query}"</p>
+            <p>No results found for "{lastSearchedQuery}"</p>
           </div>
         {:else}
           <div class="empty-state">
@@ -289,6 +301,27 @@
   }
 
   .results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  .result-section {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .section-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #e2e8f0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 8px;
+    margin: 0;
+  }
+
+  .section-items {
     display: flex;
     flex-direction: column;
     gap: 12px;

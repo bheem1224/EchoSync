@@ -20,6 +20,20 @@ def aggregate_search():
     return jsonify({"query": q, "results": results}), 200
 
 
+@bp.get("/discovery")
+async def federated_discovery():
+    q = request.args.get("q")
+    if not q:
+        return jsonify({"error": "missing query"}), 400
+
+    providers_param = request.args.get("providers") or ""
+    provider_names = [p for p in providers_param.split(",") if p] or None
+
+    adapter = SearchAdapter()
+    results = await adapter.federated_discovery(q, enabled_providers=provider_names)
+    return jsonify({"query": q, "results": results}), 200
+
+
 @bp.post("/route")
 def route_search_result():
     payload = request.get_json(silent=True) or {}

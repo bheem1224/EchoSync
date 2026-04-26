@@ -355,13 +355,16 @@ class PluginLoader:
                 if not found:
                     logger.debug(f"No ProviderClass found in {module_path}")
 
-            # 2. Collect Route Blueprint
-            blueprint = getattr(module, 'RouteBlueprint', None)
-            if isinstance(blueprint, Blueprint):
-                self.loaded_blueprints.append(blueprint)
-                logger.debug(f"Collected blueprint for {name}")
-            elif blueprint is not None:
-                logger.warning(f"Invalid RouteBlueprint in {name}: expected flask.Blueprint, got {type(blueprint)}")
+            # 2. Collect Route Blueprints (primary + optional extras: RouteBlueprint2, RouteBlueprint3 …)
+            for bp_attr in ('RouteBlueprint', 'RouteBlueprint2', 'RouteBlueprint3'):
+                blueprint = getattr(module, bp_attr, None)
+                if blueprint is None:
+                    continue
+                if isinstance(blueprint, Blueprint):
+                    self.loaded_blueprints.append(blueprint)
+                    logger.debug(f"Collected {bp_attr} for {name}")
+                else:
+                    logger.warning(f"Invalid {bp_attr} in {name}: expected flask.Blueprint, got {type(blueprint)}")
 
         except Exception as e:
             logger.error(f"Error loading plugin {module_path}: {e}", exc_info=True)

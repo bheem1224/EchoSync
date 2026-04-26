@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import apiClient from '../../../api/client';
   import { feedback } from '../../../stores/feedback';
+  import ConfirmDialog from '../../../components/ConfirmDialog.svelte';
 
   let plugins = [];
   let repos = [];
@@ -14,6 +15,22 @@
   let showOverflowMenu = false;
   let betaOpt = false;
   let devMode = false;
+  let showBetaWarning = false;
+
+  async function handleBetaToggle() {
+    if (!betaOpt) {
+      showBetaWarning = true;
+    } else {
+      await proceedWithBetaToggle();
+    }
+  }
+
+  async function proceedWithBetaToggle() {
+    showBetaWarning = false;
+    showOverflowMenu = false;
+    await setUiBetaOpt(!betaOpt);
+    setTimeout(() => window.location.reload(), 500);
+  }
 
   async function loadStore() {
     isLoading = true;
@@ -68,22 +85,52 @@
     }
   }
 
-  async function installPlugin(plugin) {
+  async function installPlugin(plugin, isUpdate = false) {
     if (downloading) return;
     downloading = plugin.id || plugin.name;
 
     try {
       await apiClient.post('/system/plugins/install', { plugin });
-      feedback.addToast(`Successfully installed ${plugin.name}. Restart required.`, 'success');
+      feedback.addToast(`Successfully ${isUpdate ? 'updated' : 'installed'} ${plugin.name}. Restart required.`, 'success');
       // Mark as installed locally so UI updates
       plugins = plugins.map(p =>
-        (p.id === plugin.id || p.name === plugin.name) ? { ...p, _installed: true } : p
+        (p.id === plugin.id || p.name === plugin.name) ? { ...p, _installed: true, is_installed: true, update_available: false, installed_version: p.version } : p
       );
     } catch (err) {
-      feedback.addToast(`Failed to install ${plugin.name}.`, 'error');
+      feedback.addToast(`Failed to ${isUpdate ? 'update' : 'install'} ${plugin.name}.`, 'error');
       console.error(err);
     } finally {
       downloading = null;
+    }
+  }
+
+  let openMenuId = null;
+  let showUninstallConfirm = false;
+  let pluginToUninstall = null;
+  let uninstalling = false;
+
+  function requestUninstall(plugin) {
+    pluginToUninstall = plugin;
+    showUninstallConfirm = true;
+    openMenuId = null;
+  }
+
+  async function executeUninstall() {
+    if (!pluginToUninstall || uninstalling) return;
+    uninstalling = true;
+    try {
+      await apiClient.post('/system/plugins/uninstall', { id: pluginToUninstall.id || pluginToUninstall.name });
+      feedback.addToast(`Successfully uninstalled ${pluginToUninstall.name}. Restart required.`, 'success');
+      plugins = plugins.map(p =>
+        (p.id === pluginToUninstall.id || p.name === pluginToUninstall.name) ? { ...p, _installed: false, is_installed: false, update_available: false } : p
+      );
+    } catch (err) {
+      feedback.addToast(`Failed to uninstall ${pluginToUninstall.name}.`, 'error');
+      console.error(err);
+    } finally {
+      uninstalling = false;
+      showUninstallConfirm = false;
+      pluginToUninstall = null;
     }
   }
 
@@ -138,18 +185,8 @@
           <div class="menu absolute right-0 mt-2 w-56 bg-surface border border-glass-border rounded-global shadow-lg z-40">
             <button class="menu-item" on:click={() => { showReposModal = true; showOverflowMenu = false; }}>Manage Repositories</button>
             <div class="menu-divider"></div>
-            <button class="menu-item" on:click={async () => {
-                // Toggle with confirmation when enabling
-                if (!betaOpt) {
-                  const ok = confirm(`Warning: You are opting into Beta Plugin UI builds. There is a 95% chance of this being broken and completely ruining your UI. Would not recommend. I am not a very good coder. Continue anyway?`);
-                  if (!ok) return;
-                } else {
-                  alert('see i told you so');
-                }
-                await setUiBetaOpt(!betaOpt);
-                showOverflowMenu = false;
-              }}>
-              {betaOpt ? 'Opt-out Beta UI' : 'Opt-in Beta UI'} {#if devMode}<span class="badge">dev</span>{/if}
+            <button class="menu-item" on:click={handleBetaToggle}>
+              {betaOpt ? 'Opt-out Beta Plugins' : 'Opt-in Beta Plugins'} {#if devMode}<span class="badge">dev</span>{/if}
             </button>
           </div>
         {/if}
@@ -195,52 +232,112 @@
     <div class="plugin-grid">
       {#each plugins as plugin (plugin.id || plugin.name)}
         <div class="plugin-card">
-          <div class="plugin-header">
+          <div class="plugin-header relative pr-6">
             <span class="plugin-icon">📦</span>
             <div>
               <h3 class="plugin-name">{plugin.name}</h3>
               <span class="plugin-id">{plugin.id || 'unknown'}</span>
             </div>
 
-            <button
-              class="btn-install active:scale-95 transition-all duration-200"
-              class:installed={plugin._installed}
-              disabled={downloading !== null || plugin._installed}
-              on:click={() => installPlugin(plugin)}
-            >
-              {#if plugin._installed}
-                Installed
-              {:else if downloading === (plugin.id || plugin.name)}
-                Installing...
-              {:else}
-                Install
-              {/if}
-            </button>
+            {#if plugin._installed || plugin.is_installed}
+              <div class="kebab-menu absolute top-0 right-0">
+                <button class="text-white opacity-50 hover:opacity-100 p-1 px-2 rounded-global bg-transparent border-none cursor-pointer" on:click={() => openMenuId = (openMenuId === (plugin.id || plugin.name) ? null : (plugin.id || plugin.name))}>⋮</button>
+                {#if openMenuId === (plugin.id || plugin.name)}
+                  <div class="absolute right-0 top-8 w-32 bg-surface border border-glass-border shadow-lg rounded-global z-50 overflow-hidden">
+                    <button class="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-black/20 border-none bg-transparent cursor-pointer" on:click={() => requestUninstall(plugin)}>Uninstall</button>
+                  </div>
+                {/if}
+              </div>
+            {/if}
           </div>
 
           {#if plugin.description}
             <p class="plugin-description">{plugin.description}</p>
           {/if}
 
-          <div class="plugin-meta">
-            {#if plugin.version}
-              <span class="meta-chip">v{plugin.version}</span>
-            {/if}
-            {#if plugin.author}
-              <span class="meta-chip">by {plugin.author}</span>
-            {/if}
-            {#if plugin.type}
-              <span class="meta-chip type-chip">{plugin.type}</span>
-            {/if}
-            {#if plugin.verified_source === 'official'}
-              <span class="meta-chip official-chip" title="Verified Official Source">✓ Official</span>
-            {/if}
+          <div class="plugin-meta flex items-center justify-between mt-auto">
+            <div class="flex flex-wrap gap-1.5">
+              {#if plugin.version}
+                <span class="meta-chip">
+                  {#if (plugin._installed || plugin.is_installed) && plugin.update_available && plugin.installed_version}
+                    v{plugin.installed_version} ➔ v{plugin.version}
+                  {:else}
+                    v{plugin.version}
+                  {/if}
+                </span>
+              {/if}
+              {#if plugin.author}
+                <span class="meta-chip">by {plugin.author}</span>
+              {/if}
+              {#if plugin.type}
+                <span class="meta-chip type-chip">{plugin.type}</span>
+              {/if}
+              {#if plugin.verified_source === 'official'}
+                <span class="meta-chip official-chip" title="Verified Official Source">✓ Official</span>
+              {/if}
+            </div>
+
+            <div class="action-zone flex-shrink-0 ml-2">
+              {#if plugin.update_available}
+                <button
+                  class="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-global text-xs font-bold border-none cursor-pointer active:scale-95 transition-all whitespace-nowrap"
+                  disabled={downloading !== null}
+                  on:click={() => installPlugin(plugin, true)}
+                >
+                  {downloading === (plugin.id || plugin.name) ? 'Updating...' : 'Update'}
+                </button>
+              {:else if plugin._installed || plugin.is_installed}
+                <span class="inline-block bg-black/20 text-slate-400 border border-glass-border px-3 py-1.5 rounded-global text-xs font-bold whitespace-nowrap select-none">
+                  Installed ✓
+                </span>
+              {:else}
+                <button
+                  class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-global text-xs font-bold border-none cursor-pointer active:scale-95 transition-all whitespace-nowrap"
+                  disabled={downloading !== null}
+                  on:click={() => installPlugin(plugin)}
+                >
+                  {downloading === (plugin.id || plugin.name) ? 'Installing...' : 'Install'}
+                </button>
+              {/if}
+            </div>
           </div>
         </div>
       {/each}
     </div>
   {/if}
 </section>
+
+{#if showBetaWarning}
+  <ConfirmDialog 
+      title="⚠️ Warning: Beta Plugins"
+      confirmText="OK"
+      cancelText="Cancel"
+      danger={true}
+      on:confirm={proceedWithBetaToggle}
+      on:cancel={() => showBetaWarning = false}
+  >
+      <div class="text-sm mt-2">
+          Warning: You are opting into Beta Plugin builds. There is a 95% chance of this being broken and completely ruining your UI. Would not recommend. I am not a very good coder. Continue anyway?
+      </div>
+  </ConfirmDialog>
+{/if}
+
+{#if showUninstallConfirm}
+  <ConfirmDialog 
+      title="🗑️ Uninstall Plugin"
+      confirmText={uninstalling ? 'Uninstalling...' : 'Uninstall'}
+      cancelText="Cancel"
+      danger={true}
+      on:confirm={executeUninstall}
+      on:cancel={() => showUninstallConfirm = false}
+  >
+      <div class="text-sm mt-2">
+          Are you sure you want to uninstall <strong>{pluginToUninstall?.name}</strong>? This will remove its files and may disable any functionality that relies on it.
+          <br/><br/>
+          <span class="text-red-400 font-bold">A restart of EchoSync will be required to complete the removal.</span>
+      </div>
+  </ConfirmDialog>
+{/if}
 
 <style>
   .page {
@@ -465,15 +562,10 @@
     cursor: not-allowed;
   }
 
-  .btn-install.installed {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--muted);
-  }
-
   .plugin-description {
     font-size: 13px;
     color: var(--muted);
-    margin: 0;
+    margin: 0 0 12px 0;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;

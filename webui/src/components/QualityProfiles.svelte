@@ -79,12 +79,22 @@
     dragIndex = null;
   }
 
+  let dialogElement;
+
   function openEditor(profile) {
     editingProfile = JSON.parse(JSON.stringify(profile));
     showEditor = true;
+    setTimeout(() => {
+      if (dialogElement && typeof dialogElement.showModal === 'function') {
+        dialogElement.showModal();
+      }
+    }, 10);
   }
 
   function closeEditor() {
+    if (dialogElement && typeof dialogElement.close === 'function') {
+      dialogElement.close();
+    }
     editingProfile = null;
     showEditor = false;
   }
@@ -136,15 +146,15 @@
   {/if}
 
   {#if showEditor}
-    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-auto bg-black/60 backdrop-blur-md" on:click={closeEditor} aria-hidden>
-      <div role="dialog" aria-modal="true" class="bg-surface border border-glass-border p-6 rounded-global w-full max-w-[760px] max-h-[calc(100vh-48px)] overflow-auto shadow-2xl text-white" on:click|stopPropagation>
+    <dialog bind:this={dialogElement} class="bg-transparent m-auto p-0 border-none backdrop:bg-black/60 backdrop:backdrop-blur-md overflow-visible" on:close={closeEditor}>
+      <div class="bg-surface border border-glass-border p-6 rounded-global w-[90vw] max-w-[760px] max-h-[90vh] overflow-auto shadow-2xl text-white">
         <QualityProfileEditor
             profile={editingProfile}
             on:save={saveProfileEdits}
             on:cancel={closeEditor}
         />
       </div>
-    </div>
+    </dialog>
   {/if}
 </section>
 

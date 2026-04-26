@@ -145,13 +145,13 @@
 </script>
 
 <div class="flex flex-col h-full min-h-0 bg-background">
-  <div class="flex items-center justify-between p-4">
+  <div class="flex items-center justify-between p-4 bg-transparent">
     <div>
       <p class="text-xs uppercase tracking-wide text-secondary font-semibold">Metadata Workflow</p>
       <h2 class="text-2xl font-bold text-primary m-0">Review Queue</h2>
     </div>
     <button
-      class="px-4 py-2 rounded-global text-sm font-medium bg-surface text-primary border border-global hover:bg-surface-hover transition-colors active:scale-95"
+      class="px-4 py-2 rounded-global text-sm font-medium bg-black/20 text-white border border-glass-border hover:bg-black/40 transition-colors active:scale-95"
       on:click={loadQueue}
       disabled={loading}
     >
@@ -159,7 +159,7 @@
     </button>
   </div>
 
-  <div class="m-4 mt-0 flex-1 min-h-0 overflow-y-auto rounded-global bg-surface backdrop-blur-md border border-glass-border">
+  <div class="m-4 mt-0 flex-1 min-h-0 overflow-y-auto rounded-global bg-black/20 backdrop-blur-md border border-glass-border">
     {#if loading}
       <div class="p-8 text-center text-secondary">Loading review queue...</div>
     {:else if error}
@@ -177,7 +177,7 @@
               <th class="px-4 py-3 font-semibold text-right">Action</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-global bg-background">
+          <tbody class="divide-y divide-[rgba(255,255,255,0.05)] bg-transparent">
             {#each tasks as task (task.id)}
               <tr class="hover:bg-surface-hover transition-colors">
                 <td class="px-4 py-3">

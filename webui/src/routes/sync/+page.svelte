@@ -621,7 +621,7 @@
         <p class="success-msg">{success}</p>
       {/if}
       <button class="btn btn--primary active:scale-95 transition-all duration-200"
-              disabled={syncing || !sourceProvider || !targetProvider || selectedPlaylists.length === 0}
+              disabled={syncing}
               on:click={openAnalysisModal}>
         {#if syncing}
           Preparing...
@@ -910,7 +910,18 @@
         <span>Download missing tracks after sync</span>
       </div>
       
-      <p class="info-text">Note: This will sync {scheduleForm.playlists.length} selected playlist(s) to {formatTargetWithContext(scheduleForm.target, scheduleForm.playlists)} every {scheduleIntervalOptions.find(o => o.value === scheduleForm.interval)?.label || scheduleForm.interval + 's'}.</p>
+      <div class="bg-[rgba(59,130,246,0.1)] rounded-md p-3">
+        <p class="text-xs text-muted m-0">Note: This will sync {scheduleForm.playlists.length} selected playlist(s) to {formatTargetWithContext(scheduleForm.target, scheduleForm.playlists)} every {scheduleIntervalOptions.find(o => o.value === scheduleForm.interval)?.label || scheduleForm.interval + 's'}.</p>
+        {#if scheduleForm.playlists.length > 0}
+          <div class="mt-2 max-h-[120px] overflow-y-auto custom-scrollbar bg-black/20 border border-[rgba(255,255,255,0.05)] rounded p-2">
+            <ul class="m-0 pl-4 text-xs text-muted list-disc">
+              {#each scheduleForm.playlists as pl}
+                <li class="py-0.5">{pl.name}</li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
+      </div>
     </div>
     
     <div class="modal-footer">

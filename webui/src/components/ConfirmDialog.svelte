@@ -14,7 +14,10 @@
 <div class="cd-overlay">
   <div class="cd-modal">
     <div class="cd-header">{title}</div>
-    <div class="cd-body">{message}</div>
+    <div class="cd-body">
+      {#if message}{message}{/if}
+      <slot></slot>
+    </div>
     <div class="cd-actions">
       <button class="cd-cancel active:scale-95 transition-all duration-200" on:click={cancel}>{cancelText}</button>
       <button class:danger on:click={confirm}>{confirmText}</button>

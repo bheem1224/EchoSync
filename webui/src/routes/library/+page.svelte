@@ -4,6 +4,7 @@
   import apiClient from '../../api/client';
   import { player } from '../../stores/player';
   import TrackRow from '$lib/components/TrackRow.svelte';
+  import Omnibar from '$lib/components/Omnibar.svelte';
 
   // Collection Data
   let libraryIndex = [];
@@ -179,15 +180,13 @@
 
     <!-- GRID VIEW -->
     {#if viewMode === 'grid'}
-        <div class="mb-6 flex justify-end">
+        <div class="mb-6 flex justify-end relative z-50">
             <div class="relative w-full max-w-md">
-                <input 
-                    type="text" 
-                    bind:value={searchQuery} 
-                    placeholder="Search library..." 
-                    class="w-full bg-black/20 border border-glass-border text-white px-4 py-2 pl-10 rounded-global focus:outline-none focus:border-accent transition-colors shadow-inner text-sm"
+                <Omnibar 
+                    forcedPrefix="#" 
+                    placeholder="Search your downloaded library..." 
+                    bind:query={searchQuery}
                 />
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-base">🔍</span>
             </div>
         </div>
 

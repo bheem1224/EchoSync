@@ -1,12 +1,25 @@
 <script>
   import { onMount } from 'svelte';
   import FileBrowser from './FileBrowser.svelte';
+  import ConfirmDialog from './ConfirmDialog.svelte';
   import { settings } from '../stores/settings';
 
   let data = {};
   let showBrowser = false;
   let browserStart = '';
   let browserField = null; // which field opened the browser
+  let showConfigWarning = false;
+
+  function proceedToConfigPicker() {
+    showConfigWarning = false;
+    browserField = 'config_dir';
+    browserStart = data.config_dir || 'config';
+    showBrowser = true;
+  }
+
+  function cancelConfigEdit() {
+    showConfigWarning = false;
+  }
 
   // subscribe to settings store to read current values
   let current;
@@ -63,7 +76,7 @@
     <label class="field">
       <span class="field-label">Config</span>
       <input class="dark-input input" type="text" bind:value={data.config_dir} placeholder="/app/config" />
-      <button class="dark-btn active:scale-95 transition-all duration-200" aria-label="Browse config directory" on:click={() => { browserField='config_dir'; browserStart = data.config_dir || 'config'; showBrowser = true; }}>Browse</button>
+      <button class="dark-btn active:scale-95 transition-all duration-200" aria-label="Browse config directory" on:click={() => { showConfigWarning = true; }}>Browse</button>
     </label>
 
     <!-- Save moved to page header. Use exported `save()` from parent via component ref. -->
@@ -77,6 +90,23 @@
     showBrowser = false;
     browserField = null;
   }} on:close={() => { showBrowser = false; browserField = null; }} />
+{/if}
+
+{#if showConfigWarning}
+    <ConfirmDialog 
+        title="⚠️ Severe Warning: Configuration Path"
+        confirmText="I understand, let me pick a folder"
+        cancelText="Cancel"
+        danger={true}
+        on:confirm={proceedToConfigPicker}
+        on:cancel={cancelConfigEdit}
+    >
+        <div class="flex flex-col gap-3 text-sm mt-2">
+            <p>Changing this path will <strong>NOT</strong> move your existing database or encryption keys.</p>
+            <p>If you change this path, you must ensure it is permanently mapped in your <code>docker-compose.yml</code> file, or your configuration will be permanently lost on the next restart.</p>
+            <p class="text-red-400 font-bold">EchoSync will require a full restart to bind to the new database location.</p>
+        </div>
+    </ConfirmDialog>
 {/if}
 
 <style>

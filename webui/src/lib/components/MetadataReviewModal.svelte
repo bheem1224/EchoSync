@@ -22,6 +22,18 @@
   let acoustidLookupLoading = false;
   let isrcLookupLoading = false;
 
+  let showIsrcPrompt = false;
+  let isrcInputValue = '';
+
+  function openIsrcPrompt() {
+    isrcInputValue = '';
+    showIsrcPrompt = true;
+  }
+
+  function closeIsrcPrompt() {
+    showIsrcPrompt = false;
+  }
+
   let proposedMetadata = {
     title: '',
     artist: '',
@@ -342,11 +354,10 @@
   }
 
   async function runISRCLookup() {
-    // Prompt the user to supply an ISRC before firing the network request.
-    const raw = window.prompt('Enter ISRC code (e.g. USRC12345678 or US-RC1-23-45678):');
-    if (!raw || !raw.trim()) return;
-    const isrc = raw.trim();
+    openIsrcPrompt();
+  }
 
+  async function doRunISRCLookup(isrc) {
     if (isrcLookupLoading || musicbrainzLookupLoading || acoustidLookupLoading || approving) {
       return;
     }
@@ -624,3 +635,28 @@
     </div>
   </div>
 </div>
+
+{#if showIsrcPrompt}
+  <div class="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div class="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-6 text-slate-100">
+      <h3 class="text-lg font-bold mb-2">Enter ISRC Code</h3>
+      <p class="text-xs text-slate-400 mb-4">e.g. USRC12345678 or US-RC1-23-45678</p>
+      <input
+        type="text"
+        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100 focus:outline-none focus:border-cyan-500 transition-colors mb-5"
+        bind:value={isrcInputValue}
+        on:keydown={(e) => e.key === 'Enter' && submitIsrcPrompt()}
+        placeholder="ISRC Code"
+        autofocus
+      />
+      <div class="flex justify-end gap-3">
+        <button class="px-4 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 active:scale-95 transition-all" on:click={closeIsrcPrompt}>
+          Cancel
+        </button>
+        <button class="px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95 transition-all" on:click={submitIsrcPrompt}>
+          Search
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
