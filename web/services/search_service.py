@@ -101,7 +101,7 @@ class SearchAdapter:
                 loop = asyncio.get_running_loop()
                 results = await asyncio.wait_for(
                     loop.run_in_executor(None, provider.search, query, "track", 20),
-                    timeout=5.0
+                    timeout=2.5
                 )
                 return provider.name, results
             except Exception as e:

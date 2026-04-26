@@ -941,7 +941,11 @@ class WeightedMatchingEngine:
 
         # Artist match with subset rescue
         if source.artist_name and candidate.artist_name:
-            artist_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
+            # Prevent "Various Artists" from partially matching real names
+            if source.artist_name.lower() != "various artists" and candidate.artist_name.lower() == "various artists":
+                 artist_score = 0.0
+            else:
+                 artist_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
             
             # If fuzzy match is low, check for artist subset match
             # Rescue mechanism: if one artist list is subset of other AND duration is tight (within 2s)
@@ -1201,7 +1205,10 @@ class WeightedMatchingEngine:
             # Extract attributes safely with defaults
             size = cand.file_size_bytes or cand.identifiers.get('size', 0) or 0
             bitrate = cand.identifiers.get('bitrate', 0) or 0
-            queue_length = cand.identifiers.get('queue_length', 0) or 0
+            # Safe extraction: missing queue_length means we don't know, so penalize it heavily.
+            raw_queue = cand.identifiers.get('queue_length')
+            queue_length = int(raw_queue) if raw_queue is not None and str(raw_queue).strip() else 999999
+            
             upload_speed = cand.identifiers.get('upload_speed', 0) or 0
 
             tie_breaker = getattr(self.weights, 'tie_breaker', 'MAX_QUALITY')
