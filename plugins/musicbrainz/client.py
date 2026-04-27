@@ -11,7 +11,13 @@ from core.provider import (
     ProviderRegistry,
 )
 from core.request_manager import RateLimitConfig
+import asyncio
+import hashlib
+from rapidfuzz import fuzz
+
 from core.matching_engine.echo_sync_track import EchosyncTrack
+from plugins.musicbrainz.models import PluginMusicbrainzCache
+from database.working_database import get_working_database
 from core.tiered_logger import get_logger
 
 logger = get_logger("provider.musicbrainz")
@@ -46,7 +52,10 @@ class MusicBrainzClient(ProviderBase):
                 "Accept": "application/json",
             }
         )
-        self.api_base = "https://musicbrainz.org/ws/2"
+        self.api_base = (self.get_config("api_base_url") if hasattr(self, "get_config") else None) or "https://musicbrainz.org/ws/2"
+        self._search_queue = []
+        self._batch_task = None
+        self._lock = asyncio.Lock()
 
     @provider_cache(ttl_seconds=2592000)
     def _fetch_artist_track_dicts(self, artist_name: str) -> List[Dict[str, Any]]:
@@ -258,92 +267,259 @@ class MusicBrainzClient(ProviderBase):
         escaped = re.sub(r'([+\-&|!(){}\[\]^"~*?:\\/])', r'\\\1', text)
         return escaped
 
-    def search_recording_strict(self, artist: str, title: str) -> List[EchosyncTrack]:
-        """Strict Lucene search for recording by artist and title.
-
-        Returns up to 3 results mapped to EchosyncTrack.
-        Gracefully handles 503/timeouts.
-        """
+    async def search_recording_strict(self, artist: str, title: str, immediate: bool = False) -> List[EchosyncTrack]:
         if not artist or not title:
             return []
 
-        safe_artist = self._escape_lucene(artist)
-        safe_title = self._escape_lucene(title)
+        # 1. Check Cache
+        lookup_str = f"{artist}||{title}".lower()
+        lookup_hash = hashlib.sha256(lookup_str.encode('utf-8')).hexdigest()
 
-        query = f'artist:"{safe_artist}" AND recording:"{safe_title}"'
+        working_db = get_working_database()
+        with working_db.session_scope() as session:
+            cached = session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first()
+            if cached:
+                # Convert back to EchosyncTrack objects
+                try:
+                    metadata_list = cached.metadata_json
+                    return [EchosyncTrack(**m) for m in metadata_list]
+                except Exception as e:
+                    logger.warning(f"Failed to parse cached MusicBrainz data: {e}")
 
+        # 2. Immediate Bypass
+        if immediate:
+            safe_artist = self._escape_lucene(artist)
+            safe_title = self._escape_lucene(title)
+            query = f'artist:"{safe_artist}" AND recording:"{safe_title}"'
+            try:
+                loop = asyncio.get_running_loop()
+                import functools
+                get_func = functools.partial(
+                    self.http.get,
+                    f"{self.api_base}/recording",
+                    params={
+                        "fmt": "json",
+                        "query": query,
+                        "inc": "releases+artists",
+                        "limit": 3,
+                    }
+                )
+                response = await loop.run_in_executor(None, get_func)
+
+                if response.status_code != 200:
+                    logger.warning(
+                        "MusicBrainz immediate search failed (status=%s, query=%s)",
+                        response.status_code,
+                        query,
+                    )
+                    return []
+
+                payload = response.json() or {}
+                recordings = payload.get("recordings", []) or []
+                results = []
+
+                for recording in recordings:
+                    rec_title = str(recording.get("title") or "").strip()
+                    if not rec_title:
+                        continue
+
+                    # Extract artist
+                    artist_credit = recording.get("artist-credit") or []
+                    artist_parts = []
+                    for entry in artist_credit:
+                        if isinstance(entry, dict) and "artist" in entry:
+                            artist_parts.append(str(entry.get("name") or ""))
+                            artist_parts.append(str(entry.get("joinphrase") or ""))
+                    rec_artist = "".join(artist_parts).strip()
+
+                    mbid = str(recording.get("id"))
+                    releases = recording.get("releases") or []
+                    first_release = releases[0] if releases else {}
+                    album = str(first_release.get("title") or "Unknown Album")
+
+                    duration_ms = None
+                    dur = recording.get("length")
+                    if dur and str(dur).isdigit():
+                        duration_ms = int(dur)
+
+                    track = self.create_echo_sync_track(
+                        title=rec_title,
+                        artist=rec_artist or "Unknown Artist",
+                        album=album,
+                        musicbrainz_id=mbid,
+                        duration_ms=duration_ms,
+                        provider_id=mbid,
+                        source=self.name,
+                    )
+
+                    isrcs = recording.get("isrcs") or []
+                    if isrcs:
+                        track.isrc = str(isrcs[0])
+
+                    results.append(track)
+                    if len(results) >= 3:
+                        break
+
+                # Cache successful results
+                if results:
+                    try:
+                        with working_db.session_scope() as session:
+                            if not session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first():
+                                metadata_json = [t.model_dump() for t in results]
+                                cached_entry = PluginMusicbrainzCache(
+                                    id=lookup_hash,
+                                    lookup_hash=lookup_hash,
+                                    mbid=results[0].musicbrainz_id,
+                                    metadata_json=metadata_json
+                                )
+                                session.add(cached_entry)
+                    except Exception as e:
+                        logger.error(f"Failed to cache immediate MusicBrainz result: {e}")
+
+                return results
+
+            except Exception as e:
+                logger.error(f"Exception during immediate MusicBrainz search: {e}")
+                return []
+
+        # 3. Queue for Micro-batching
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+
+        async with self._lock:
+            self._search_queue.append((artist, title, lookup_hash, future))
+            if self._batch_task is None or self._batch_task.done():
+                self._batch_task = asyncio.create_task(self._process_batch())
+
+        # 4. Await batched result
         try:
-            response = self.http.get(
+            return await future
+        except Exception as e:
+            logger.error(f"Error awaiting batched result: {e}")
+            return []
+
+    async def _process_batch(self):
+        await asyncio.sleep(0.1)  # 100ms debounce
+
+        async with self._lock:
+            if not self._search_queue:
+                return
+            batch = self._search_queue[:]
+            self._search_queue.clear()
+
+        # Construct Lucene OR query
+        query_parts = []
+        for artist, title, _, _ in batch:
+            safe_artist = self._escape_lucene(artist)
+            safe_title = self._escape_lucene(title)
+            query_parts.append(f'(artist:"{safe_artist}" AND recording:"{safe_title}")')
+
+        full_query = " OR ".join(query_parts)
+
+        # Max items per page is 100
+        try:
+            # We run the synchronous http.get in an executor to avoid blocking the event loop
+            loop = asyncio.get_running_loop()
+            import functools
+            get_func = functools.partial(
+                self.http.get,
                 f"{self.api_base}/recording",
                 params={
                     "fmt": "json",
-                    "query": query,
+                    "query": full_query,
                     "inc": "releases+artists",
-                    "limit": 3,
-                },
+                    "limit": len(batch) * 3, # up to 3 per request
+                }
             )
+            response = await loop.run_in_executor(None, get_func)
 
             if response.status_code != 200:
-                logger.warning(
-                    "MusicBrainz search_recording_strict failed (status=%s, query=%s)",
-                    response.status_code,
-                    query,
-                )
-                return []
+                logger.warning(f"MusicBrainz batch search failed (status={response.status_code})")
+                for _, _, _, future in batch:
+                    if not future.done():
+                        future.set_result([])
+                return
 
             payload = response.json() or {}
             recordings = payload.get("recordings", []) or []
-            results: List[EchosyncTrack] = []
 
-            for recording in recordings:
-                rec_title = str(recording.get("title") or "").strip()
-                if not rec_title:
-                    continue
+            # Map results to original queries
+            for artist, title, lookup_hash, future in batch:
+                best_matches = []
+                for recording in recordings:
+                    rec_title = str(recording.get("title") or "").strip()
+                    if not rec_title:
+                        continue
 
-                mbid = str(recording.get("id") or "")
+                    # Extract artist
+                    artist_credit = recording.get("artist-credit") or []
+                    artist_parts = []
+                    for entry in artist_credit:
+                        if isinstance(entry, dict) and "artist" in entry:
+                            artist_parts.append(str(entry.get("name") or ""))
+                            artist_parts.append(str(entry.get("joinphrase") or ""))
+                    rec_artist = "".join(artist_parts).strip()
 
-                # Extract artist name
-                artist_credit = recording.get("artist-credit") or []
-                artist_parts: List[str] = []
-                for entry in artist_credit:
-                    if isinstance(entry, dict) and "artist" in entry:
-                        artist_parts.append(str(entry.get("name") or ""))
-                        artist_parts.append(str(entry.get("joinphrase") or ""))
-                artist_str = "".join(artist_parts).strip() or "Unknown Artist"
+                    # Simple matching
+                    title_score = fuzz.ratio(title.lower(), rec_title.lower())
+                    artist_score = fuzz.ratio(artist.lower(), rec_artist.lower())
 
-                # Extract release details for album and duration
-                releases = recording.get("releases") or []
-                first_release = releases[0] if releases else {}
-                album = str(first_release.get("title") or "Unknown Album")
+                    if title_score > 80 and artist_score > 80:
+                        mbid = str(recording.get("id"))
+                        releases = recording.get("releases") or []
+                        first_release = releases[0] if releases else {}
+                        album = str(first_release.get("title") or "Unknown Album")
 
-                # Duration
-                duration_ms = None
-                dur = recording.get("length")
-                if dur and str(dur).isdigit():
-                    duration_ms = int(dur)
+                        duration_ms = None
+                        dur = recording.get("length")
+                        if dur and str(dur).isdigit():
+                            duration_ms = int(dur)
 
-                track = self.create_echo_sync_track(
-                    title=rec_title,
-                    artist=artist_str,
-                    album=album,
-                    musicbrainz_id=mbid,
-                    duration_ms=duration_ms,
-                    provider_id=mbid,
-                    source=self.name,
-                )
+                        track = self.create_echo_sync_track(
+                            title=rec_title,
+                            artist=rec_artist or "Unknown Artist",
+                            album=album,
+                            musicbrainz_id=mbid,
+                            duration_ms=duration_ms,
+                            provider_id=mbid,
+                            source=self.name,
+                        )
 
-                # Grab ISRC if present in recording
-                isrcs = recording.get("isrcs") or []
-                if isrcs:
-                    track.isrc = str(isrcs[0])
+                        isrcs = recording.get("isrcs") or []
+                        if isrcs:
+                            track.isrc = str(isrcs[0])
 
-                results.append(track)
+                        best_matches.append(track)
+                        if len(best_matches) >= 3:
+                            break
 
-            return results
+                # Resolve future
+                if not future.done():
+                    future.set_result(best_matches)
+
+                # Cache successful results
+                if best_matches:
+                    try:
+                        working_db = get_working_database()
+                        with working_db.session_scope() as session:
+                            # Avoid duplicates
+                            if not session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first():
+                                metadata_json = [t.model_dump() for t in best_matches]
+                                cached_entry = PluginMusicbrainzCache(
+                                    id=lookup_hash,
+                                    lookup_hash=lookup_hash,
+                                    mbid=best_matches[0].musicbrainz_id,
+                                    metadata_json=metadata_json
+                                )
+                                session.add(cached_entry)
+                    except Exception as e:
+                        logger.error(f"Failed to cache MusicBrainz batch result: {e}")
 
         except Exception as e:
-            logger.warning(f"MusicBrainz strict search API error: {e}", exc_info=True)
-            return []
+            logger.error(f"Exception during MusicBrainz batch processing: {e}")
+            for _, _, _, future in batch:
+                if not future.done():
+                    future.set_result([])
 
     def search_by_isrc(self, isrc: str) -> Optional[EchosyncTrack]:
         """Implement ProviderBase.search_by_isrc via the MusicBrainz ISRC endpoint."""

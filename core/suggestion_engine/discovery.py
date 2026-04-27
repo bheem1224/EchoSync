@@ -9,15 +9,11 @@ Two entry points:
 """
 
 import datetime
-from typing import List, Optional, Set
-from core.plugin_loader import get_provider
-from core.enums import Capability
-from core.event_bus import event_bus
-from database.working_database import get_working_database, UserTrackState, PlaybackHistory
+from typing import List, Optional
+from database.working_database import get_working_database, PlaybackHistory
 from database.music_database import get_database as get_music_database, Track, Artist, TrackAudioFeatures
 from core.matching_engine.text_utils import generate_deterministic_id
 from core.suggestion_engine.vibe_profiler import calculate_user_vibe, calculate_vibe_distance
-from core.suggestion_engine.analytics import PlaybackAnalytics
 from time_utils import utc_now
 
 
@@ -37,7 +33,6 @@ def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
     working_db = get_working_database()
     music_db = get_music_database()
 
-    from sqlalchemy import func as sa_func
     from database.music_database import ExternalIdentifier
     thirty_days_ago = utc_now() - datetime.timedelta(days=30)
     with working_db.session_scope() as w_session:
@@ -230,46 +225,82 @@ def discover_new_tracks(user_id: str) -> List[dict]:
     if not discovered_tracks:
         return []
 
-    # 3. Filter to ensure they don't exist in our MusicDatabase (using musicbrainz_id checks)
+    # 3. ListenBrainz / MusicBrainz cross-referencing loop (Chunked Concurrency)
     new_tracks = []
-    with music_db.session_scope() as session:
-        for track in discovered_tracks:
-            # Check by musicbrainz_id
-            mbid = track.get("musicbrainz_id") if isinstance(track, dict) else getattr(track, "musicbrainz_id", None)
 
-            if mbid:
-                exists = session.query(Track).filter_by(musicbrainz_id=mbid).first()
-                if exists:
-                    continue
+    mb_provider = provider_registry.get_provider('musicbrainz')
+    import asyncio
 
-            # Fallback: check by title and artist
-            title = track.get("title") if isinstance(track, dict) else getattr(track, "title", None)
-            artist_name = track.get("artist_name") if isinstance(track, dict) else getattr(track, "artist_name", None)
+    CHUNK_SIZE = 50
+    for chunk_start in range(0, len(discovered_tracks), CHUNK_SIZE):
+        chunk = discovered_tracks[chunk_start:chunk_start + CHUNK_SIZE]
 
-            if title and artist_name:
-                base_sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
-                # Re-verify if exists by string match or generated ID logic, wait, we can just use check_track_exists
-                # or a simple exact query
-                exists = session.query(Track).join(Artist).filter(
-                    Track.title == title,
-                    Artist.name == artist_name
-                ).first()
+        async def fetch_mbids(chunk_list):
+            if not mb_provider:
+                return [[] for _ in chunk_list]
 
-                if exists:
-                    continue
+            tasks = []
+            for track in chunk_list:
+                mbid = track.get("musicbrainz_id") if isinstance(track, dict) else getattr(track, "musicbrainz_id", None)
+                if not mbid:
+                    title = track.get("title") if isinstance(track, dict) else getattr(track, "title", None)
+                    artist_name = track.get("artist_name") if isinstance(track, dict) else getattr(track, "artist_name", None)
+                    if title and artist_name:
+                        tasks.append(mb_provider.search_recording_strict(artist_name, title, immediate=False))
+                    else:
+                        tasks.append(asyncio.sleep(0, result=[]))
+                else:
+                    tasks.append(asyncio.sleep(0, result=[]))
 
-            # Convert to dict if necessary
-            if not isinstance(track, dict):
-                track_dict = {
-                    "title": getattr(track, "title", None),
-                    "artist_name": getattr(track, "artist_name", None),
-                    "musicbrainz_id": getattr(track, "musicbrainz_id", None)
-                }
-                new_tracks.append(track_dict)
-            else:
-                new_tracks.append(track)
+            return await asyncio.gather(*tasks, return_exceptions=True)
 
-    return new_tracks
+        mb_results_batch = asyncio.run(fetch_mbids(chunk)) if mb_provider else [[] for _ in chunk]
+
+        with music_db.session_scope() as session:
+            for track, mb_results in zip(chunk, mb_results_batch):
+                # Update MBID if found via cross-reference
+                mbid = track.get("musicbrainz_id") if isinstance(track, dict) else getattr(track, "musicbrainz_id", None)
+
+                if not mbid and not isinstance(mb_results, Exception) and mb_results:
+                    top_match = mb_results[0]
+                    mbid = top_match.musicbrainz_id
+                    if isinstance(track, dict):
+                        track["musicbrainz_id"] = mbid
+                    else:
+                        setattr(track, "musicbrainz_id", mbid)
+
+                if mbid:
+                    from database.music_database import Track, Artist
+                    exists = session.query(Track).filter_by(musicbrainz_id=mbid).first()
+                    if exists:
+                        continue
+
+                title = track.get("title") if isinstance(track, dict) else getattr(track, "title", None)
+                artist_name = track.get("artist_name") if isinstance(track, dict) else getattr(track, "artist_name", None)
+
+                if title and artist_name:
+                    from database.music_database import Track, Artist
+                    exists = session.query(Track).join(Artist).filter(
+                        Track.title == title,
+                        Artist.name == artist_name
+                    ).first()
+                    if exists:
+                        continue
+
+                if not isinstance(track, dict):
+                    track_dict = {
+                        "title": getattr(track, "title", None),
+                        "artist_name": getattr(track, "artist_name", None),
+                        "musicbrainz_id": getattr(track, "musicbrainz_id", None)
+                    }
+                    new_tracks.append(track_dict)
+                else:
+                    new_tracks.append(track)
+
+        # Yield to let tasks clear out
+        asyncio.run(asyncio.sleep(0))
+
+        return new_tracks
 
 
 # Backward-compatibility alias — prefer discover_new_tracks() in new code.
@@ -378,7 +409,7 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
     from sqlalchemy.exc import IntegrityError
     from plugins.spotify.cache_manager import SpotifyCacheManager
     from database.working_database import get_working_database, SuggestionStagingQueue, Download
-    from database.music_database import get_database as get_music_database, Track, Artist
+    from database.music_database import get_database as get_music_database, Track
 
     logger = logging.getLogger("suggestion_engine.discovery")
 
