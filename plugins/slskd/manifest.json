@@ -2,7 +2,7 @@
   "id": "core.slskd",
   "name": "Slskd",
   "description": "Official EchoSync provider for slskd",
-  "version": "1.0.1",
+  "version": "2.4.1",
   "author": "EchoSync",
   "type": "download_client",
   "requirements": [],

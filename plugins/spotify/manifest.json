@@ -2,7 +2,7 @@
   "id": "core.spotify",
   "name": "Spotify",
   "description": "Official EchoSync provider for spotify",
-  "version": "1.0.1",
+  "version": "2.4.1",
   "author": "EchoSync",
   "type": "metadata",
   "requirements": [],

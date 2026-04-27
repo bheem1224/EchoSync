@@ -2,7 +2,7 @@
   "id": "core.plex",
   "name": "Plex",
   "description": "Official EchoSync provider for plex",
-  "version": "1.0.1",
+  "version": "2.4.1",
   "author": "EchoSync",
   "type": "media_server",
   "requirements": [],

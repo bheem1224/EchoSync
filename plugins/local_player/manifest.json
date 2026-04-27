@@ -2,7 +2,7 @@
   "id": "core.local_player",
   "name": "Local Player",
   "description": "Official EchoSync provider for local_player",
-  "version": "1.0.1",
+  "version": "2.4.1",
   "author": "EchoSync",
   "type": "media_player",
   "requirements": [],
