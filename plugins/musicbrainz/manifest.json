@@ -15,5 +15,6 @@
       "default": "https://musicbrainz.org/ws/2",
       "description": "Base URL for the MusicBrainz API"
     }
-  }
+  },
+  "beta_version": "2.4.2-beta.1"
 }
