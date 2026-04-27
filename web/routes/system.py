@@ -29,15 +29,45 @@ def health_check():
 def system_status():
     """System health check and service status."""
     try:
+        from core.state import system_state
         return jsonify({
             "status": "online",
             "platform": platform.system(),
             "python_version": platform.python_version(),
             "uptime": None,  # TODO: track app start time
+            "restart_pending": system_state.restart_pending
         }), 200
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
         return jsonify({"error": "Failed to get status"}), 500
+
+
+@bp.post("/restart")
+@require_auth
+def request_restart():
+    """Forcefully but cleanly exit the application to trigger a Docker/System restart."""
+    import time
+    import threading
+    import signal
+    import os
+    from core.state import system_state
+
+    logger.info("Application restart requested via API")
+    system_state.restart_pending = True
+
+    def delayed_exit():
+        time.sleep(2)
+        logger.warning("RESTART TRIGGERED: Sending SIGTERM to self...")
+        # signal.SIGTERM allows the app to run its atexit handlers and shutdown hooks
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    # Run exit in background so we can return 200 OK to the frontend first
+    threading.Thread(target=delayed_exit, daemon=True).start()
+
+    return jsonify({
+        "success": True, 
+        "message": "Restart initiated. The server will be offline for a few moments."
+    }), 200
 
 
 @bp.get("/stats")

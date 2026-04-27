@@ -118,6 +118,8 @@ def install_plugin():
 
     success = plugin_store.download_plugin(plugin_info)
     if success:
+        from core.state import system_state
+        system_state.restart_pending = True
         return jsonify({"success": True})
     else:
         return jsonify({"error": "Failed to install plugin"}), 500

@@ -3,6 +3,7 @@
   import apiClient from '../../../api/client';
   import { feedback } from '../../../stores/feedback';
   import ConfirmDialog from '../../../components/ConfirmDialog.svelte';
+  import PluginCard from './PluginCard.svelte';
 
   let plugins = [];
   let repos = [];
@@ -94,7 +95,14 @@
       feedback.addToast(`Successfully ${isUpdate ? 'updated' : 'installed'} ${plugin.name}. Restart required.`, 'success');
       // Mark as installed locally so UI updates
       plugins = plugins.map(p =>
-        (p.id === plugin.id || p.name === plugin.name) ? { ...p, _installed: true, is_installed: true, update_available: false, installed_version: p.version } : p
+        (p.id === plugin.id || p.name === plugin.name) ? { 
+          ...p, 
+          _installed: true, 
+          is_installed: true, 
+          update_available: false, 
+          installed_version: plugin.version || p.version,
+          installed_channel: plugin.channel || 'release'
+        } : p
       );
     } catch (err) {
       feedback.addToast(`Failed to ${isUpdate ? 'update' : 'install'} ${plugin.name}.`, 'error');
@@ -231,77 +239,13 @@
   {:else}
     <div class="plugin-grid">
       {#each plugins as plugin (plugin.id || plugin.name)}
-        <div class="plugin-card">
-          <div class="plugin-header relative pr-6">
-            <span class="plugin-icon">📦</span>
-            <div>
-              <h3 class="plugin-name">{plugin.name}</h3>
-              <span class="plugin-id">{plugin.id || 'unknown'}</span>
-            </div>
-
-            {#if plugin._installed || plugin.is_installed}
-              <div class="kebab-menu absolute top-0 right-0">
-                <button class="text-white opacity-50 hover:opacity-100 p-1 px-2 rounded-global bg-transparent border-none cursor-pointer" on:click={() => openMenuId = (openMenuId === (plugin.id || plugin.name) ? null : (plugin.id || plugin.name))}>⋮</button>
-                {#if openMenuId === (plugin.id || plugin.name)}
-                  <div class="absolute right-0 top-8 w-32 bg-surface border border-glass-border shadow-lg rounded-global z-50 overflow-hidden">
-                    <button class="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-black/20 border-none bg-transparent cursor-pointer" on:click={() => requestUninstall(plugin)}>Uninstall</button>
-                  </div>
-                {/if}
-              </div>
-            {/if}
-          </div>
-
-          {#if plugin.description}
-            <p class="plugin-description">{plugin.description}</p>
-          {/if}
-
-          <div class="plugin-meta flex items-center justify-between mt-auto">
-            <div class="flex flex-wrap gap-1.5">
-              {#if plugin.version}
-                <span class="meta-chip">
-                  {#if (plugin._installed || plugin.is_installed) && plugin.update_available && plugin.installed_version}
-                    v{plugin.installed_version} ➔ v{plugin.version}
-                  {:else}
-                    v{plugin.version}
-                  {/if}
-                </span>
-              {/if}
-              {#if plugin.author}
-                <span class="meta-chip">by {plugin.author}</span>
-              {/if}
-              {#if plugin.type}
-                <span class="meta-chip type-chip">{plugin.type}</span>
-              {/if}
-              {#if plugin.verified_source === 'official'}
-                <span class="meta-chip official-chip" title="Verified Official Source">✓ Official</span>
-              {/if}
-            </div>
-
-            <div class="action-zone flex-shrink-0 ml-2">
-              {#if plugin.update_available}
-                <button
-                  class="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-global text-xs font-bold border-none cursor-pointer active:scale-95 transition-all whitespace-nowrap"
-                  disabled={downloading !== null}
-                  on:click={() => installPlugin(plugin, true)}
-                >
-                  {downloading === (plugin.id || plugin.name) ? 'Updating...' : 'Update'}
-                </button>
-              {:else if plugin._installed || plugin.is_installed}
-                <span class="inline-block bg-black/20 text-slate-400 border border-glass-border px-3 py-1.5 rounded-global text-xs font-bold whitespace-nowrap select-none">
-                  Installed ✓
-                </span>
-              {:else}
-                <button
-                  class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-global text-xs font-bold border-none cursor-pointer active:scale-95 transition-all whitespace-nowrap"
-                  disabled={downloading !== null}
-                  on:click={() => installPlugin(plugin)}
-                >
-                  {downloading === (plugin.id || plugin.name) ? 'Installing...' : 'Install'}
-                </button>
-              {/if}
-            </div>
-          </div>
-        </div>
+        <PluginCard 
+          {plugin} 
+          globalBetaEnabled={betaOpt} 
+          downloading={downloading === (plugin.id || plugin.name)}
+          on:install={(e) => installPlugin(e.detail, true)}
+          on:uninstall={(e) => requestUninstall(e.detail)}
+        />
       {/each}
     </div>
   {/if}

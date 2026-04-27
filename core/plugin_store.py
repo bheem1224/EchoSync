@@ -197,6 +197,8 @@ class PluginStore:
 
     def download_plugin(self, plugin_info: Dict) -> bool:
         from core.settings import config_manager
+        from core.state import system_state
+        from core.event_bus import event_bus
         import shutil
         import tempfile
         import os
@@ -207,25 +209,21 @@ class PluginStore:
             return False
 
         try:
-            logger.info(f"Downloading plugin {plugin_info.get('name')} from {download_url}")
+            plugin_id = plugin_info.get("id", plugin_info.get("name", "unknown_plugin"))
+            plugin_id = plugin_id.split(".")[-1]
+            logger.info(f"Downloading plugin {plugin_id} from {download_url}")
+            
             req_mgr = RequestManager(provider="system")
             resp = req_mgr.get(download_url, timeout=30)
             resp.raise_for_status()
 
-            plugin_id = plugin_info.get("id", plugin_info.get("name", "unknown_plugin"))
-            plugin_id = plugin_id.split(".")[-1]
-            channel = config_manager.get_plugin_channel(plugin_id)
+            # Task 1: Temporary Extraction (Atomic Swap Preparation)
+            tmp_dir = self.plugins_dir / f"tmp_{plugin_id}"
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
 
-            dest_dir = self.plugins_dir / plugin_id
-            if channel == "beta":
-                dest_dir = dest_dir / "beta"
-
-            # Clear existing plugin folder
-            if dest_dir.exists():
-                shutil.rmtree(dest_dir, ignore_errors=True)
-            dest_dir.mkdir(parents=True, exist_ok=True)
-
-            # Create temp zip file
+            # Create temp zip file for extraction
             with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
                 tmp_file.write(resp.content)
                 tmp_zip_path = tmp_file.name
@@ -237,65 +235,77 @@ class PluginStore:
                         logger.error("Empty zip file")
                         return False
 
-                    extracted_count = 0
                     uncompressed_size = 0
                     for zi in zip_infos:
                         if zi.filename.endswith('/'):
                             continue
 
-                        # Extract directly into dest_dir, stripping any potential root folder in the zip if needed,
-                        # but as per instructions: "extract the .zip contents directly into that folder".
-                        # However, sometimes zips contain a single root dir. If so, we can strip it, or just extract everything.
-                        # Since the instruction is specific: "extract the .zip contents directly into that folder",
-                        # we will extract files without stripping unless it creates a nested folder of the plugin id.
-                        # Usually, `releases/{version}.zip` contains the plugin files directly or in a folder. Let's just extract all.
                         rel_path = zi.filename
-                        # If the zip contains a single root folder with the same name, we can handle it or just extract flat.
-                        # Let's extract flat if there's a common prefix, or just extract as is.
-                        # I'll extract as is, except to prevent zip slip.
                         if '..' in rel_path or rel_path.startswith('/'):
                             logger.error(f"Malicious path detected in zip: {rel_path}")
-                            shutil.rmtree(dest_dir, ignore_errors=True)
                             return False
 
-                        target_file = (dest_dir / rel_path).resolve()
-                        if not target_file.is_relative_to(dest_dir.resolve()):
+                        target_file = (tmp_dir / rel_path).resolve()
+                        if not target_file.is_relative_to(tmp_dir.resolve()):
                             logger.error(f"Zip Slip prevented for: {target_file}")
-                            shutil.rmtree(dest_dir, ignore_errors=True)
                             raise ValueError("Path traversal attempt detected in zip")
 
                         target_file.parent.mkdir(parents=True, exist_ok=True)
 
                         uncompressed_size += zi.file_size
-                        if uncompressed_size > 50 * 1024 * 1024:
-                            logger.error("Zip bomb detected: uncompressed size exceeds 50MB limit.")
-                            shutil.rmtree(dest_dir, ignore_errors=True)
+                        if uncompressed_size > 100 * 1024 * 1024: # 100MB limit for plugin zips
+                            logger.error("Zip bomb detected: uncompressed size exceeds 100MB limit.")
                             return False
 
                         with target_file.open('wb') as out_f:
                             out_f.write(z.read(zi))
-                        extracted_count += 1
 
-                    if extracted_count == 0:
-                        logger.error(f"No files extracted for plugin {plugin_id}")
-                        return False
-            finally:
-                os.remove(tmp_zip_path)
+                # Task 2: Validation
+                manifest_file = tmp_dir / "manifest.json"
+                if not manifest_file.exists():
+                    logger.error(f"Validation failed: No manifest.json found in extracted package for {plugin_id}")
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    return False
 
-            manifest_file = dest_dir / "manifest.json"
-            if manifest_file.exists():
-                with open(manifest_file, "r") as f:
-                    local_manifest = json.load(f)
+                # Task 3: Atomic Swap
+                dest_dir = self.plugins_dir / plugin_id
+                if dest_dir.exists():
+                    logger.info(f"Removing old plugin version at {dest_dir}")
+                    shutil.rmtree(dest_dir, ignore_errors=True)
+                
+                os.rename(str(tmp_dir), str(dest_dir))
+                logger.info(f"Successfully performed atomic swap for {plugin_id}")
 
+                # Watermark official plugins
                 if plugin_info.get("_source_repo") == self.default_repo:
-                    local_manifest["verified_source"] = "official"
-                    with open(manifest_file, "w") as f:
-                        json.dump(local_manifest, f, indent=4)
-                    logger.info(f"Watermarked {plugin_id} as official.")
+                    try:
+                        with open(manifest_file, "r") as f:
+                            local_manifest = json.load(f)
+                        local_manifest["verified_source"] = "official"
+                        with open(manifest_file, "w") as f:
+                            json.dump(local_manifest, f, indent=4)
+                    except Exception as e:
+                        logger.warning(f"Failed to watermark plugin: {e}")
 
-            return True
+                # Task 4: Trigger Flag & Notify
+                system_state.restart_pending = True
+                event_bus.publish("SYSTEM", "PLUGIN_UPDATE_COMPLETE", {
+                    "plugin_id": plugin_id,
+                    "name": plugin_info.get("name"),
+                    "version": plugin_info.get("version"),
+                    "restart_required": True
+                })
+                
+                return True
+
+            finally:
+                if os.path.exists(tmp_zip_path):
+                    os.remove(tmp_zip_path)
+                if tmp_dir.exists():
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+
         except Exception as e:
-            logger.error(f"Failed to download and extract plugin: {e}")
+            logger.error(f"Failed to download and extract plugin: {e}", exc_info=True)
             return False
     def uninstall_plugin(self, plugin_id: str) -> bool:
         import re

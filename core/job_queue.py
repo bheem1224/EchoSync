@@ -374,7 +374,15 @@ class JobQueue:
             return self._is_running.get(name, False) or self._jobs.get(name, ScheduledJob(time.time(), "_dummy", lambda: None)).running
 
     def _run_loop(self):
+        from core.state import system_state
+        
         while self._running:
+            # Task 2: Freeze execution if a restart is pending to avoid code mismatch
+            if system_state.restart_pending:
+                logger.warning("JobQueue: RESTART_PENDING is True. Freezing background job execution until reboot.")
+                time.sleep(5)
+                continue
+
             with self._lock:
                 now = time.time()
 
