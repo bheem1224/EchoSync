@@ -41,6 +41,59 @@ jobs:
             exit 0
           fi
 
+          # --- SAFELY WRITE PYTHON SCRIPT TO DISK ---
+          cat << 'EOF' > raw_bump.py
+          import sys, json, re
+
+          plugin_name = sys.argv[1]
+          manifest_path = sys.argv[2]
+          commit_msg = sys.argv[3]
+
+          with open(manifest_path, "r") as f:
+              manifest = json.load(f)
+
+          current_version = manifest.get("version", "0.0.0")
+          major, minor, patch = map(int, current_version.split("."))
+
+          build_type = "beta"
+          is_stable_release = "[release-plugins]" in commit_msg
+
+          override_match = re.search(rf"{plugin_name}:v(\d+\.\d+\.\d+)", commit_msg, re.IGNORECASE)
+
+          if override_match:
+              new_version = override_match.group(1)
+              build_type = "stable"
+              manifest["version"] = new_version
+          elif is_stable_release:
+              if patch > 0 or current_version == "0.0.0":
+                  if minor == 9:
+                      major += 1
+                      minor = 0
+                  else:
+                      minor += 1
+                  patch = 0
+              new_version = f"{major}.{minor}.{patch}"
+              build_type = "stable"
+              manifest["version"] = new_version
+          else:
+              current_beta = manifest.get("beta_version", f"{major}.{minor}.{patch+1}-beta.0")
+              try:
+                  beta_num = int(current_beta.split("beta.")[-1]) + 1
+              except:
+                  beta_num = 1
+              new_version = f"{major}.{minor}.{patch+1}-beta.{beta_num}"
+              build_type = "beta"
+              manifest["beta_version"] = new_version
+
+          with open(manifest_path, "w") as f:
+              json.dump(manifest, f, indent=2)
+
+          print(f"{build_type},{new_version}")
+          EOF
+
+          # Clean YAML indentation off the Python script to prevent IndentationErrors
+          python3 -c "import textwrap; open('bump.py', 'w').write(textwrap.dedent(open('raw_bump.py').read()))"
+
           for DIR in $CHANGED_DIRS; do
             PLUGIN_NAME=$(basename $DIR)
             MANIFEST="$DIR/manifest.json"
@@ -55,56 +108,8 @@ jobs:
             echo "⚙️ Processing Plugin: $PLUGIN_NAME"
             echo "========================================"
 
-            # --- PYTHON VERSIONING LOGIC ---
-            RESULT=$(python3 -c '
-import sys, json, re
-
-plugin_name = sys.argv[1]
-manifest_path = sys.argv[2]
-commit_msg = sys.argv[3]
-
-with open(manifest_path, "r") as f:
-    manifest = json.load(f)
-
-current_version = manifest.get("version", "0.0.0")
-major, minor, patch = map(int, current_version.split("."))
-
-build_type = "beta"
-is_stable_release = "[release-plugins]" in commit_msg
-
-override_match = re.search(rf"{plugin_name}:v(\d+\.\d+\.\d+)", commit_msg, re.IGNORECASE)
-
-if override_match:
-    new_version = override_match.group(1)
-    build_type = "stable"
-    manifest["version"] = new_version
-elif is_stable_release:
-    if patch > 0 or current_version == "0.0.0":
-        if minor == 9:
-            major += 1
-            minor = 0
-        else:
-            minor += 1
-        patch = 0
-    new_version = f"{major}.{minor}.{patch}"
-    build_type = "stable"
-    manifest["version"] = new_version
-else:
-    # Handle Beta Versioning
-    current_beta = manifest.get("beta_version", f"{major}.{minor}.{patch+1}-beta.0")
-    try:
-        beta_num = int(current_beta.split("beta.")[-1]) + 1
-    except:
-        beta_num = 1
-    new_version = f"{major}.{minor}.{patch+1}-beta.{beta_num}"
-    build_type = "beta"
-    manifest["beta_version"] = new_version
-
-with open(manifest_path, "w") as f:
-    json.dump(manifest, f, indent=2)
-
-print(f"{build_type},{new_version}")
-            ' "$PLUGIN_NAME" "$MANIFEST" "$COMMIT_MSG")
+            # Execute the sanitized Python script
+            RESULT=$(python3 bump.py "$PLUGIN_NAME" "$MANIFEST" "$COMMIT_MSG")
 
             BUILD_TYPE=$(echo "$RESULT" | cut -d',' -f1)
             NEW_VERSION=$(echo "$RESULT" | cut -d',' -f2)
@@ -136,27 +141,23 @@ print(f"{build_type},{new_version}")
             if [ "$BUILD_TYPE" = "stable" ]; then
               echo "🗜️ Packaging stable release v$NEW_VERSION..."
               mkdir -p "releases"
-              ZIP_NAME="{PLUGIN_VERSION}.zip" # This will literally be replaced with the version number by the app, but let's name it dynamically
               DYNAMIC_ZIP_NAME="v${NEW_VERSION}.zip"
               
-              # Zip everything EXCEPT UI source, Rust source, pycache, and beta/release artifacts
               zip -r "releases/$DYNAMIC_ZIP_NAME" . -x "ui/*" -x "src/*" -x "target/*" -x "releases/*" -x "beta.zip" -x "*/__pycache__/*"
               echo "✅ Created stable package: releases/$DYNAMIC_ZIP_NAME"
             else
               echo "🗜️ Packaging beta release..."
-              # Remove old beta zip to ensure clean slate
               rm -f "beta.zip"
               zip -r "beta.zip" . -x "ui/*" -x "src/*" -x "target/*" -x "releases/*" -x "*/__pycache__/*"
               echo "✅ Created beta package: beta.zip"
             fi
             
             cd ../../
-
           done
 
       - name: Generate store-manifest.json
         run: |
-          python3 -c '
+          cat << 'EOF' > raw_manifest.py
           import glob, json
           
           store_manifest = []
@@ -172,7 +173,9 @@ print(f"{build_type},{new_version}")
                       
           with open("store-manifest.json", "w") as f:
               json.dump(store_manifest, f, indent=2)
-          '
+          EOF
+          python3 -c "import textwrap; open('manifest.py', 'w').write(textwrap.dedent(open('raw_manifest.py').read()))"
+          python3 manifest.py
           echo "✅ store-manifest.json generated successfully."
 
       - name: Commit Assets Back to Repo
