@@ -505,6 +505,53 @@ def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400,
     )
 
 
+
+def register_plugin_update_check_job(interval_seconds: int = 43200, enabled: bool = True):
+    """Register a 12-hour job to check for plugin updates and emit UI notifications."""
+    def run_plugin_update_check():
+        try:
+            logger.info("Starting scheduled plugin update check")
+            from core.plugin_store import plugin_store
+            from core.event_bus import event_bus
+
+            plugins = plugin_store.get_all_store_plugins()
+            updates_found = []
+
+            for p in plugins:
+                if p.get("_installed") and p.get("update_available"):
+                    updates_found.append(p.get("name", "Unknown Plugin"))
+
+            if updates_found:
+                event_bus.publish("NOTIFICATION", {
+                    "type": "info",
+                    "title": "Plugin Updates Available",
+                    "message": f"Updates are available for: {', '.join(updates_found)}"
+                })
+                logger.info(f"Plugin updates found for: {', '.join(updates_found)}")
+            else:
+                logger.info("No plugin updates available.")
+
+        except Exception as e:
+            logger.error(f"Plugin update check job failed: {e}", exc_info=True)
+            from core.event_bus import event_bus
+            event_bus.publish("NOTIFICATION", {
+                "type": "error",
+                "title": "Plugin Update Check Failed",
+                "message": str(e)
+            })
+
+    job_queue.register_job(
+        name="plugin_update_check",
+        func=run_plugin_update_check,
+        interval_seconds=interval_seconds,
+        enabled=enabled,
+        tags=["system", "plugins", "updates"],
+        max_retries=1,
+    )
+    logger.info(
+        f"Plugin update check job registered (interval: {interval_seconds}s = {interval_seconds / 3600:.1f}h, enabled={enabled})"
+    )
+
 def register_all_system_jobs():
     """
     Register all system jobs with the global job_queue.
@@ -537,6 +584,9 @@ def register_all_system_jobs():
 
         # Daily retroactive metadata enhancement for tracks missing MusicBrainz IDs.
         register_retroactive_metadata_enhancement_job(interval_seconds=86400, enabled=True)
+
+        # 12-hour plugin update check
+        register_plugin_update_check_job(interval_seconds=43200, enabled=True)
 
         logger.info("All system jobs registered successfully")
     except Exception as e:

@@ -5,12 +5,10 @@ from dotenv import load_dotenv
 
 # Ensure environment variables from project .env are loaded before ConfigManager initializes
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=True)
-import sqlite3
 from typing import Dict, Any, Optional, Callable
 from cryptography.fernet import Fernet
 from pathlib import Path
 import copy
-from database import get_database
 from core.tiered_logger import get_logger
 
 logger = get_logger("config_manager")
@@ -105,14 +103,14 @@ class ConfigManager:
         
         # At DEBUG level, also log the source (ENV vs default)
         if config_dir_env:
-            logger.debug(f"Config directory from ECHOSYNC_CONFIG_DIR")
+            logger.debug("Config directory from ECHOSYNC_CONFIG_DIR")
         else:
-            logger.debug(f"Config directory from fallback default")
+            logger.debug("Config directory from fallback default")
         
         if data_dir_env:
-            logger.debug(f"Data directory from ECHOSYNC_DATA_DIR")
+            logger.debug("Data directory from ECHOSYNC_DATA_DIR")
         else:
-            logger.debug(f"Data directory from fallback default")
+            logger.debug("Data directory from fallback default")
 
         # Ensure directories exist
         self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -213,7 +211,7 @@ class ConfigManager:
         
         # Set in current environment so initialization completes
         os.environ['MASTER_KEY'] = new_key
-        logger.warning(f"Encryption key auto-generated. Pass MASTER_KEY as env variable to persist across restarts.")
+        logger.warning("Encryption key auto-generated. Pass MASTER_KEY as env variable to persist across restarts.")
         
         self.cipher = Fernet(new_key.encode())
     
@@ -246,7 +244,7 @@ class ConfigManager:
                 try:
                     with open(env_path, 'w') as f:
                         f.write('\n'.join(lines))
-                    logger.debug(f"Encryption key persisted to .env")
+                    logger.debug("Encryption key persisted to .env")
                     return
                 except PermissionError:
                     if attempt < max_retries - 1:
@@ -257,7 +255,7 @@ class ConfigManager:
                         raise
         except Exception as e:
             logger.warning(f"Could not persist encryption key to .env: {e}")
-            logger.warning(f"The key will be lost on next startup unless manually set!")
+            logger.warning("The key will be lost on next startup unless manually set!")
             logger.warning(f"Manually add this line to your .env file: MASTER_KEY={key}")
 
     def _path_matches_any(self, key_path: str, patterns: list) -> bool:
@@ -292,11 +290,11 @@ class ConfigManager:
                 encrypted_val = value[4:]
                 decrypted = self.cipher.decrypt(encrypted_val.encode()).decode()
                 return decrypted
-            except Exception as e:
-                logger.warning(f"Decryption failed: The encryption key may have changed")
+            except Exception:
+                logger.warning("Decryption failed: The encryption key may have changed")
                 return ""  # Return empty string on decryption failure
         elif isinstance(value, str) and value.startswith("enc:"):
-            logger.warning(f"Found encrypted value but cipher is not initialized")
+            logger.warning("Found encrypted value but cipher is not initialized")
             return value
         return value
 
@@ -781,6 +779,12 @@ class ConfigManager:
 
     def get_soulseek_config(self) -> Dict[str, str]:
         return self.get('soulseek', {})
+
+    def get_plugin_channel(self, plugin_id: str) -> str:
+        """Get the active update channel ('stable' or 'beta') for a plugin."""
+        if not self.get('ui.beta_plugin_ui', False):
+            return 'stable'
+        return self.get(f'plugins.{plugin_id}.channel', 'stable')
 
     def get_settings(self) -> Dict[str, Any]:
         return self.get('settings', {})
