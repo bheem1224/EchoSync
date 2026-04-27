@@ -11,6 +11,63 @@ import base64
 
 
 
+
+# OPTIMIZATION: Compile regex patterns globally once to avoid millions of local instantiations
+_OST_PATTERNS = [
+    re.compile(r'\s*-\s*from\s+"[^"]*"', flags=re.IGNORECASE),
+    re.compile(r'\s*-\s*from\s+[\w\s]+$', flags=re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*original\s+motion\s+picture\s+soundtrack\s*[\)\]]', flags=re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*motion\s+picture\s+soundtrack\s*[\)\]]', flags=re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*from\s+"[^"]*"\s*[\)\]]', flags=re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*from\s+[^\)\]]+[\)\]]', flags=re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*ost\s+[^\)\]]*[\)\]]', flags=re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*ost\s*[\)\]]', flags=re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*soundtrack\s*[\)\]]', flags=re.IGNORECASE),
+]
+
+_VERSION_PATTERNS = [
+    (re.compile(r'\s*\(([^)]*(?:remix|version|edit|live|acoustic|instrumental|remaster|radio|mix|club)[^)]*)\)', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*\[([^\]]*(?:remix|version|edit|live|acoustic|instrumental|remaster|radio|mix|club)[^\]]*)\]', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*-\s*([^-]*(?:remix|version|edit|live at|live|acoustic|instrumental|remaster|radio|mix|club)[^-]*)$', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*-\s*((?:[A-Z][a-z]+\s+)*(?:Radio|Edit|Mix|Remix|Version)[^-]*)$', flags=re.IGNORECASE), 1),
+]
+
+_EDITION_PATTERNS = [
+    (re.compile(r'\b(remaster(?:ed)?)\b', flags=re.IGNORECASE), 'Remastered'),
+    (re.compile(r'\b(remastering)\b', flags=re.IGNORECASE), 'Remastered'),
+    (re.compile(r'\b(live)\b', flags=re.IGNORECASE), 'Live'),
+    (re.compile(r'\b(remix(?:ed)?)\b', flags=re.IGNORECASE), 'Remix'),
+    (re.compile(r'\b(rmx)\b', flags=re.IGNORECASE), 'Remix'),
+    (re.compile(r'\b(deluxe)\s*(?:edition)?\b', flags=re.IGNORECASE), 'Deluxe'),
+    (re.compile(r'\b(standard)\s*(?:edition)?\b', flags=re.IGNORECASE), 'Standard'),
+    (re.compile(r'\b(expanded)\s*(?:edition)?\b', flags=re.IGNORECASE), 'Expanded'),
+    (re.compile(r'\b(limited)\s*(?:edition)?\b', flags=re.IGNORECASE), 'Limited'),
+    (re.compile(r'\b(special)\s*(?:edition)?\b', flags=re.IGNORECASE), 'Special'),
+    (re.compile(r'\b(anniversary)\s*(?:edition)?\b', flags=re.IGNORECASE), 'Anniversary'),
+    (re.compile(r'\b(collector\'?s?)\s*(?:edition)?\b', flags=re.IGNORECASE), 'Collectors'),
+    (re.compile(r'\b(explicit)\b', flags=re.IGNORECASE), 'Explicit'),
+    (re.compile(r'\b(clean)\b', flags=re.IGNORECASE), 'Clean'),
+    (re.compile(r'\b(instrumental)\b', flags=re.IGNORECASE), 'Instrumental'),
+    (re.compile(r'\b(acapella|a\s*cappella)\b', flags=re.IGNORECASE), 'Acapella'),
+    (re.compile(r'\b(acoustic)\b', flags=re.IGNORECASE), 'Acoustic'),
+    (re.compile(r'\b(unplugged)\b', flags=re.IGNORECASE), 'Unplugged'),
+    (re.compile(r'\b(original)\s*(?:version|mix)?\b', flags=re.IGNORECASE), 'Original'),
+    (re.compile(r'\b(radio)\s*(?:edit|version|mix)?\b', flags=re.IGNORECASE), 'Radio Edit'),
+    (re.compile(r'\b(extended)\s*(?:version|mix)?\b', flags=re.IGNORECASE), 'Extended'),
+    (re.compile(r'\b(club)\s*(?:version|mix)?\b', flags=re.IGNORECASE), 'Club Mix'),
+    (re.compile(r'\b(album)\s*(?:version)?\b', flags=re.IGNORECASE), 'Album Version'),
+    (re.compile(r'\b(single)\s*(?:version)?\b', flags=re.IGNORECASE), 'Single Version'),
+    (re.compile(r'\b(24\s*bit)\b', flags=re.IGNORECASE), '24-bit'),
+    (re.compile(r'\b(16\s*bit)\b', flags=re.IGNORECASE), '16-bit'),
+    (re.compile(r'\b(hi\s*res|high\s*resolution)\b', flags=re.IGNORECASE), 'Hi-Res'),
+]
+
+_EDITION_CLEAN_BRACKETS_RE = re.compile(r'\s*[\(\[\{]\s*[\)\]\}]\s*')
+_EDITION_CLEAN_TRAIL_DASH_RE = re.compile(r'\s*[-–—]\s*$')
+_EDITION_CLEAN_LEAD_DASH_RE = re.compile(r'^\s*[-–—]\s*')
+_EDITION_CLEAN_SPACES_RE = re.compile(r'\s+')
+_EDITION_MARKER_CLEAN_RE = re.compile(r'\s*\(?(?:deluxe|standard|explicit|clean|remaster|remastered|edition|ed\.)\)?', flags=re.IGNORECASE)
+
 def normalize_chars(text: Optional[str]) -> str:
     """
     Normalize Unicode character variants to their plain ASCII canonical equivalents.
@@ -275,20 +332,11 @@ def normalize_album(album: Optional[str]) -> str:
     normalized = normalize_text(album)
     
     # Remove OST/Soundtrack metadata (same patterns as normalize_title)
-    ost_patterns = [
-        r'\s*[\(\[]\s*original\s+motion\s+picture\s+soundtrack\s*[\)\]]',
-        r'\s*[\(\[]\s*motion\s+picture\s+soundtrack\s*[\)\]]',
-        r'\s*[\(\[]\s*from\s+"[^"]*"\s*[\)\]]',
-        r'\s*[\(\[]\s*from\s+[^\)\]]+[\)\]]',
-        r'\s*[\(\[]\s*ost\s+[^\)\]]*[\)\]]',
-        r'\s*[\(\[]\s*ost\s*[\)\]]',
-        r'\s*[\(\[]\s*soundtrack\s*[\)\]]',
-    ]
-    for pattern in ost_patterns:
-        normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
+    for pattern in _OST_PATTERNS:
+        normalized = pattern.sub('', normalized)
     
     # Remove edition markers like "Deluxe Edition", "(Remastered)", etc.
-    normalized = re.sub(r'\s*\(?(?:deluxe|standard|explicit|clean|remaster|remastered|edition|ed\.)\)?', '', normalized, flags=re.IGNORECASE)
+    normalized = _EDITION_MARKER_CLEAN_RE.sub('', normalized)
     
     return normalized.strip()
 
@@ -341,22 +389,11 @@ def extract_version_info(title: Optional[str]) -> Tuple[str, Optional[str]]:
     if not title:
         return "", None
     
-    VERSION_PATTERNS = [
-        # Parentheses with version keywords
-        (r'\s*\(([^)]*(?:remix|version|edit|live|acoustic|instrumental|remaster|radio|mix|club)[^)]*)\)', 1),
-        # Square brackets with version keywords  
-        (r'\s*\[([^\]]*(?:remix|version|edit|live|acoustic|instrumental|remaster|radio|mix|club)[^\]]*)\]', 1),
-        # Dash followed by version keywords (including "Live at X", "Radio", remixer names)
-        (r'\s*-\s*([^-]*(?:remix|version|edit|live at|live|acoustic|instrumental|remaster|radio|mix|club)[^-]*)$', 1),
-        # Dash followed by remixer/producer name + "Radio/Edit/Mix/Remix" pattern (e.g., "- Gabry Ponte Ice Pop Radio")
-        (r'\s*-\s*((?:[A-Z][a-z]+\s+)*(?:Radio|Edit|Mix|Remix|Version)[^-]*)$', 1),
-    ]
-    
-    for pattern, group in VERSION_PATTERNS:
-        match = re.search(pattern, title, re.IGNORECASE)
+    for pattern, group in _VERSION_PATTERNS:
+        match = pattern.search(title)
         if match:
             version = match.group(group).strip()
-            clean_title = re.sub(pattern, '', title, flags=re.IGNORECASE).strip()
+            clean_title = pattern.sub('', title).strip()
             return clean_title, version
     
     return title, None

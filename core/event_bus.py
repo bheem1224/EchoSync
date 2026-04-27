@@ -51,16 +51,36 @@ class EventBus:
             specific = list(self._subscribers.get(event_name, []))
             universal = list(self._subscribers.get("*", []))
 
+        # OPTIMIZATION: Serialize JSON once for all network subscribers to prevent
+        # duplicate CPU work during fan-out broadcasts.
+        # Pass serialized string via kwargs to avoid payload mutation.
+        import json
+        try:
+            serialized = json.dumps(payload, default=str)
+        except Exception:
+            serialized = "{}"
+
         for handler in specific:
             try:
-                handler(payload)
+                # Check if handler accepts kwargs, otherwise just send payload
+                import inspect
+                sig = inspect.signature(handler)
+                if '_serialized' in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                    handler(payload, _serialized=serialized)
+                else:
+                    handler(payload)
             except Exception as e:
                 import logging
                 logging.getLogger("event_bus").error(f"Error in event handler for {event_name}: {e}", exc_info=True)
 
         for handler in universal:
             try:
-                handler(payload)
+                import inspect
+                sig = inspect.signature(handler)
+                if '_serialized' in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                    handler(payload, _serialized=serialized)
+                else:
+                    handler(payload)
             except Exception as e:
                 import logging
                 logging.getLogger("event_bus").error(f"Error in universal event handler: {e}", exc_info=True)
