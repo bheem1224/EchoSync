@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Dict, Generator, List, Optional, Tuple
 
 from time_utils import UTCDateTime, utc_now
+from sqlalchemy.orm import joinedload, selectinload
+from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.matching_engine.matching_engine import WeightedMatchingEngine
+from core.matching_engine.scoring_profile import ExactSyncProfile
+import re
+from sqlalchemy import or_
 
 from sqlalchemy import (
     BigInteger,
@@ -303,6 +309,8 @@ class MusicDatabase:
         search_term = f"%{query}%"
 
         with self.session_scope() as session:
+            # OPTIMIZATION: joinedload eliminates N+1 lazy loading queries
+
             # Search Artists
             artists = session.query(Artist).filter(Artist.name.ilike(search_term)).limit(20).all()
             for artist in artists:
@@ -313,7 +321,9 @@ class MusicDatabase:
                 })
 
             # Search Albums
-            albums = session.query(Album).join(Artist).filter(
+            albums = session.query(Album).options(
+                joinedload(Album.artist)
+            ).join(Artist).filter(
                 (Album.title.ilike(search_term)) |
                 (Artist.name.ilike(search_term))
             ).limit(20).all()
@@ -328,7 +338,10 @@ class MusicDatabase:
                 })
 
             # Search Tracks
-            tracks = session.query(Track).join(Artist).join(Album, isouter=True).filter(
+            tracks = session.query(Track).options(
+                joinedload(Track.artist),
+                joinedload(Track.album)
+            ).join(Artist).join(Album, isouter=True).filter(
                 (Track.title.ilike(search_term)) |
                 (Artist.name.ilike(search_term)) |
                 (Album.title.ilike(search_term))
@@ -352,11 +365,17 @@ class MusicDatabase:
 
         Returns a list of ``EchosyncTrack`` objects (each has a ``to_dict()`` method).
         """
-        from core.matching_engine.echo_sync_track import EchosyncTrack
         results = []
         with self.session_scope() as session:
+            # OPTIMIZATION: joinedload and selectinload eliminate N+1 queries during mapping
+
             query = (
                 session.query(Track)
+                .options(
+                    joinedload(Track.artist),
+                    joinedload(Track.album),
+                    selectinload(Track.audio_fingerprints)
+                )
                 .join(Artist)
                 .join(Album, isouter=True)
                 .filter(Track.title.ilike(f"%{title}%"))
@@ -392,8 +411,6 @@ class MusicDatabase:
         The ``acoustid`` parameter filters via the ``audio_fingerprints`` table.
         Returns a list of ``EchosyncTrack`` objects.
         """
-        from core.matching_engine.echo_sync_track import EchosyncTrack
-        from sqlalchemy import or_
         results = []
         filters = []
         if isrc:
@@ -487,11 +504,8 @@ class MusicDatabase:
     def check_track_exists(self, title: str, artist: str, confidence_threshold: float = 0.7, server_source: str = None) -> Tuple[Optional[Track], float]:
         """Check if a track exists in the database using fuzzy matching."""
         # Local imports to avoid potential circular dependency at module level
-        from core.matching_engine.matching_engine import WeightedMatchingEngine
-        from core.matching_engine.scoring_profile import ExactSyncProfile
-        from core.matching_engine.echo_sync_track import EchosyncTrack
-        from sqlalchemy import or_
         import re
+        from sqlalchemy import or_
 
         profile = ExactSyncProfile()
         engine = WeightedMatchingEngine(profile)
@@ -550,13 +564,15 @@ class MusicDatabase:
             # Use selectinload (separate SELECT per relationship) rather than joinedload
             # (which emits a single Cartesian-product JOIN). For large libraries the JOIN
             # inflates row count to artists×albums×tracks, causing an OOM spike.
-            from sqlalchemy.orm import selectinload
-            artists = session.query(Artist).options(
+            from datetime import date
+
+            # OPTIMIZATION: yield_per fetches results in batches of 1000 to drastically lower RAM
+            artists_query = session.query(Artist).options(
                 selectinload(Artist.albums).selectinload(Album.tracks)
-            ).order_by(Artist.name).all()
+            ).order_by(Artist.name).yield_per(1000)
 
             hierarchy = []
-            for artist in artists:
+            for artist in artists_query:
                 artist_data = {
                     "id": artist.id,
                     "name": artist.name,
@@ -576,7 +592,7 @@ class MusicDatabase:
                         "tracks": []
                     }
 
-                    # Sort tracks by track number
+                    # Sort tracks by disc number and track number
                     sorted_tracks = sorted(album.tracks, key=lambda t: (t.disc_number or 1, t.track_number or 0))
 
                     for track in sorted_tracks:

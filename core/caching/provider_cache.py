@@ -9,6 +9,7 @@ This module provides:
 """
 
 import functools
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import threading
@@ -100,7 +101,7 @@ class ProviderCache:
 
     def set(self, key: str, value: Any, ttl_seconds: int = 3600) -> bool:
         """
-        Store value in cache with TTL
+        Store value in cache with TTL (deferred to background pool)
 
         Args:
             key: Cache key
@@ -108,33 +109,46 @@ class ProviderCache:
             ttl_seconds: Time-to-live in seconds
 
         Returns:
-            True if successful, False otherwise
+            True immediately without waiting for DB commit
         """
-        try:
-            # Serialize value to JSON
-            json_value = json.dumps(value, default=str)
+        # OPTIMIZATION: Defer cache persistence to background to prevent blocking main thread
+        def _persist_cache():
+            try:
+                import json
+                from datetime import timedelta
+                from sqlalchemy import text
+                from time_utils import utc_now
 
-            # Calculate expiration time
-            expires_at = utc_now() + timedelta(seconds=ttl_seconds)
+                json_value = json.dumps(value, default=str)
+                expires_at = utc_now() + timedelta(seconds=ttl_seconds)
 
-            query = text("""
-                INSERT OR REPLACE INTO parsed_tracks
-                (raw_string, parsed_json, created_at, ttl_expires_at)
-                VALUES (:key, :value, CURRENT_TIMESTAMP, :expires)
-            """)
+                query = text("""
+                    INSERT OR REPLACE INTO parsed_tracks
+                    (raw_string, parsed_json, created_at, ttl_expires_at)
+                    VALUES (:key, :value, CURRENT_TIMESTAMP, :expires)
+                """)
 
-            with self.db.engine.connect() as conn:
-                conn.execute(query, {
-                    "key": key,
-                    "value": json_value,
-                    "expires": expires_at
-                })
-                conn.commit()
-            return True
+                with self.db.engine.connect() as conn:
+                    conn.execute(query, {
+                        "key": key,
+                        "value": json_value,
+                        "expires": expires_at
+                    })
+                    conn.commit()
+            except Exception as e:
+                import logging
+                logging.getLogger("provider_cache").error(f"Error storing in cache: {e}")
 
-        except Exception as e:
-            logger.error(f"Error storing in cache: {e}")
-            return False
+        # OPTIMIZATION: Dispatch via a static ThreadPoolExecutor to prevent thread exhaustion
+        # during heavy burst cache writes (e.g. library scanning)
+        from concurrent.futures import ThreadPoolExecutor
+
+        global _cache_write_executor
+        if '_cache_write_executor' not in globals():
+            _cache_write_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="provider_cache_writer")
+
+        _cache_write_executor.submit(_persist_cache)
+        return True
 
     def delete(self, key: str) -> bool:
         """
@@ -196,6 +210,7 @@ class ProviderCache:
 
 
 # Global cache instance
+_cache_write_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix='provider_cache_writer')
 _cache_instance: Optional[ProviderCache] = None
 _cache_lock = threading.Lock()
 

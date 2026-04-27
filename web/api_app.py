@@ -271,14 +271,18 @@ def create_app() -> Flask:
 
         # Explicitly handle app assets to prevent fallback to index.html
         # SvelteKit with adapter-static uses _app/immutable/...
+        resolved_path = os.path.abspath(os.path.join(app.static_folder, path))
+        if not resolved_path.startswith(os.path.abspath(app.static_folder)):
+            return "Forbidden", 403
+
         if path.startswith('_app/') or path.startswith('assets/'):
-             if path and os.path.exists(os.path.join(app.static_folder, path)):
+             if path and os.path.exists(resolved_path):
                  return send_from_directory(app.static_folder, path)
              else:
                  return "Asset not found", 404
 
         # serve the requested file if it exists under static_folder
-        if path and os.path.exists(os.path.join(app.static_folder, path)):
+        if path and os.path.exists(resolved_path):
             return send_from_directory(app.static_folder, path)
 
         # otherwise fall back to index.html (for client-side routing)
