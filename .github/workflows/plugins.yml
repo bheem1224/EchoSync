@@ -11,6 +11,7 @@ permissions:
 jobs:
   version-and-build:
     runs-on: [self-hosted, linux, x64]
+    if: "!contains(github.event.head_commit.message, 'chore(plugins)')"
     
     steps:
       - name: Checkout repository
@@ -189,5 +190,5 @@ jobs:
       - name: Commit Assets Back to Repo
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore(plugins): sync versions, package artifacts, and update store"
+          commit_message: "chore(plugins): sync versions, package artifacts, and update store [skip ci]"
           file_pattern: 'plugins/ store-manifest.json'
