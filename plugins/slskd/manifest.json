@@ -8,5 +8,6 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "verified_source": "official"
+  "verified_source": "official",
+  "beta_version": "2.4.2-beta.1"
 }
