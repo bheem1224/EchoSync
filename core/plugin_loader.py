@@ -7,7 +7,7 @@ import os
 import sys
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 
 from core.plugin_venv import setup_plugin_venv
 
@@ -18,7 +18,6 @@ from core.provider import ProviderRegistry
 from core.provider_base import ProviderBase
 from core.tiered_logger import get_logger
 from core.settings import config_manager
-from core.binary_runner import CoreBinaryRunner
 
 logger = get_logger("plugin_loader")
 
@@ -164,6 +163,12 @@ class PluginLoader:
                     disabled = config_manager.get_disabled_providers()
                     if f"plugin.{item.name}" in disabled or item.name in disabled:
                         continue
+
+                if source_type == 'community':
+                    # Support Side-by-Side Architecture
+                    channel = config_manager.get_plugin_channel(item.name)
+                    if channel == 'beta' and (item / 'beta').exists():
+                        item = item / 'beta'
 
                 manifest_file = item / "manifest.json"
                 if manifest_file.exists():
@@ -404,12 +409,9 @@ def get_provider(capability: Capability) -> Optional[ProviderBase]:
 
 
 def get_all_plugins() -> list:
-    import os
     import json
     from pathlib import Path
     from core.settings import config_manager
-    from core.binary_runner import CoreBinaryRunner
-    from core.provider import ProviderRegistry
 
     plugins = []
 

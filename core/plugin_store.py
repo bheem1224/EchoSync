@@ -1,10 +1,10 @@
 import json
 import logging
 import zipfile
-import io
 import requests
-from pathlib import Path
-from typing import List, Dict, Optional
+from core.request_manager import RequestManager
+from packaging import version
+from typing import List, Dict
 from core.settings import config_manager
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,12 @@ class PluginStore:
             logger.error(f"Error removing custom repository {url}: {e}")
             return False
 
+
+
     def scan_repository(self, repo_url: str) -> List[Dict]:
+        from core.settings import config_manager
+        import json
+
         parts = repo_url.rstrip('/').split('/')
         if "github.com" in parts:
             try:
@@ -61,40 +66,77 @@ class PluginStore:
                 
                 branch = "main"
                 subfolder = ""
-                if len(parts) > gh_idx + 4 and parts[gh_idx + 3] == "tree":
+                if len(parts) > gh_idx + 3 and parts[gh_idx + 3] == "tree":
                     branch = parts[gh_idx + 4]
-                    subfolder = "/".join(parts[gh_idx + 5:])
-                
-                if subfolder:
-                    raw_urls = [f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{subfolder}/store-manifest.json"]
-                else:
-                    raw_urls = [
-                        f"https://raw.githubusercontent.com/{user}/{repo}/main/store-manifest.json",
-                        f"https://raw.githubusercontent.com/{user}/{repo}/master/store-manifest.json"
-                    ]
+                    if len(parts) > gh_idx + 5:
+                        subfolder = "/".join(parts[gh_idx + 5:])
 
-                for check_url in raw_urls:
+                check_url = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{subfolder}/manifest.json".replace("//manifest", "/manifest")
+
+                req_mgr = RequestManager(provider="system")
+                etags_file = self.plugins_dir / ".etags.json"
+                etags = {}
+                if etags_file.exists():
                     try:
-                        resp = requests.get(check_url, timeout=10)
-                        if resp.status_code == 200:
-                            manifest_data = resp.json()
-                            plugins = manifest_data.get("plugins", [])
-                            for p in plugins:
-                                p["_source_repo"] = repo_url
-                                if "download_url" not in p and "_download_url" not in p:
-                                    p["_download_url"] = f"https://github.com/{user}/{repo}/archive/refs/heads/{branch}.zip"
-                                    plugin_id = p.get("id", "")
-                                    if plugin_id:
-                                        p["_folder_path"] = f"{subfolder}/{plugin_id}" if subfolder else plugin_id
-                            return plugins
-                    except Exception as e:
-                        logger.debug(f"Could not fetch {check_url}: {e}")
+                        with open(etags_file, "r") as f:
+                            etags = json.load(f)
+                    except Exception:
+                        pass
+
+                headers = {}
+                if check_url in etags:
+                    headers["If-None-Match"] = etags[check_url]["etag"]
+
+                try:
+                    resp = req_mgr.get(check_url, headers=headers, timeout=10)
+                    if resp.status_code == 304:
+                        logger.debug(f"Manifest not modified (304) for {check_url}")
+                        plugins = etags[check_url].get("plugins", [])
+                    elif resp.status_code == 200:
+                        manifest_data = resp.json()
+                        plugins = manifest_data.get("plugins", [])
+
+                        if "ETag" in resp.headers:
+                            etags[check_url] = {"etag": resp.headers["ETag"], "plugins": plugins}
+                            with open(etags_file, "w") as f:
+                                json.dump(etags, f)
+                    else:
+                        return []
+
+                    filtered_plugins = []
+                    for p in plugins:
+                        p["_source_repo"] = repo_url
+                        plugin_id = p.get("id", "")
+                        if plugin_id:
+                            p["_folder_path"] = f"{subfolder}/{plugin_id}" if subfolder else plugin_id
+
+                        # Apply application bounds
+                        p["privileged_mode"] = p.get("privileged_mode", False)
+
+                        # Filter by channel
+                        channel = config_manager.get_plugin_channel(plugin_id)
+                        version_str = p.get("version", "1.0.0")
+
+                        base_dl_path = f"https://github.com/{user}/{repo}/raw/refs/heads/{branch}/{subfolder}"
+                        base_dl_path = base_dl_path.replace("//raw", "/raw").rstrip('/')
+
+                        if channel == "beta":
+                            p["_download_url"] = f"{base_dl_path}/beta.zip"
+                            if p.get("beta_version"):
+                                p["version"] = p.get("beta_version")
+                        else:
+                            p["_download_url"] = f"{base_dl_path}/releases/{version_str}.zip"
+
+                        filtered_plugins.append(p)
+
+                    return filtered_plugins
+                except Exception as e:
+                    logger.debug(f"Could not fetch {check_url}: {e}")
 
                 return self._scan_github_api(user, repo, branch, subfolder, repo_url)
             except IndexError:
                 logger.error(f"Malformed GitHub URL: {repo_url}")
         return []
-
     def _scan_github_api(self, user: str, repo: str, branch: str, subfolder: str, original_repo_url: str) -> List[Dict]:
         api_url = f"https://api.github.com/repos/{user}/{repo}/contents"
         if subfolder:
@@ -126,6 +168,7 @@ class PluginStore:
 
         return plugins
 
+
     def get_all_store_plugins(self) -> List[Dict]:
         all_plugins = []
         for repo in self.get_repositories():
@@ -135,11 +178,29 @@ class PluginStore:
             plugin_id = plugin.get("id", plugin.get("name", "unknown_plugin"))
             plugin_id = plugin_id.split(".")[-1]
             dest_dir = self.plugins_dir / plugin_id
-            plugin["_installed"] = dest_dir.exists() and (dest_dir / "manifest.json").exists()
+            manifest_file = dest_dir / "manifest.json"
+            plugin["_installed"] = dest_dir.exists() and manifest_file.exists()
+
+            plugin["update_available"] = False
+            if plugin["_installed"]:
+                try:
+                    with open(manifest_file, "r") as f:
+                        local_manifest = json.load(f)
+                    local_version = local_manifest.get("version", "0.0.0")
+                    remote_version = plugin.get("version", "0.0.0")
+                    if version.parse(remote_version) > version.parse(local_version):
+                        plugin["update_available"] = True
+                except Exception:
+                    pass
             
         return all_plugins
 
     def download_plugin(self, plugin_info: Dict) -> bool:
+        from core.settings import config_manager
+        import shutil
+        import tempfile
+        import os
+
         download_url = plugin_info.get("download_url") or plugin_info.get("_download_url")
         if not download_url:
             logger.error("No download URL provided for plugin.")
@@ -147,72 +208,79 @@ class PluginStore:
 
         try:
             logger.info(f"Downloading plugin {plugin_info.get('name')} from {download_url}")
-            resp = requests.get(download_url, timeout=30)
+            req_mgr = RequestManager(provider="system")
+            resp = req_mgr.get(download_url, timeout=30)
             resp.raise_for_status()
 
-            with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
-                plugin_id = plugin_info.get("id", plugin_info.get("name", "unknown_plugin"))
-                plugin_id = plugin_id.split(".")[-1]
+            plugin_id = plugin_info.get("id", plugin_info.get("name", "unknown_plugin"))
+            plugin_id = plugin_id.split(".")[-1]
+            channel = config_manager.get_plugin_channel(plugin_id)
 
-                dest_dir = self.plugins_dir / plugin_id
-                dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_dir = self.plugins_dir / plugin_id
+            if channel == "beta":
+                dest_dir = dest_dir / "beta"
 
-                folder_path = plugin_info.get("_folder_path")
+            # Clear existing plugin folder
+            if dest_dir.exists():
+                shutil.rmtree(dest_dir, ignore_errors=True)
+            dest_dir.mkdir(parents=True, exist_ok=True)
 
-                zip_infos = z.infolist()
-                
-                if not zip_infos:
-                    logger.error("Empty zip file")
-                    return False
-                    
-                root_dir = zip_infos[0].filename.split('/')[0]
+            # Create temp zip file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+                tmp_file.write(resp.content)
+                tmp_zip_path = tmp_file.name
 
-                target_prefix = f"{root_dir}/{folder_path}/" if folder_path else f"{root_dir}/"
-                
-                if folder_path:
-                    prefix_exists = any(zi.filename.startswith(target_prefix) for zi in zip_infos)
-                    if not prefix_exists:
-                        for zi in zip_infos:
-                            if zi.filename.endswith('/manifest.json'):
-                                dir_path = zi.filename[:-14]
-                                if dir_path.endswith(f"/{plugin_id}"):
-                                    target_prefix = dir_path + "/"
-                                    break
+            try:
+                with zipfile.ZipFile(tmp_zip_path, 'r') as z:
+                    zip_infos = z.infolist()
+                    if not zip_infos:
+                        logger.error("Empty zip file")
+                        return False
 
-                extracted_count = 0
-                uncompressed_size = 0
-                import shutil
-                for zi in zip_infos:
-                    if zi.filename.endswith('/'):
-                        continue
-                        
-                    if zi.filename.startswith(target_prefix):
-                        rel_path = zi.filename[len(target_prefix):]
-                        if rel_path:
-                            if '..' in rel_path or rel_path.startswith('/'):
-                                logger.error(f"Malicious path detected in zip: {rel_path}")
-                                shutil.rmtree(dest_dir, ignore_errors=True)
-                                return False
-                            target_file = (dest_dir / rel_path).resolve()
-                            if not target_file.is_relative_to(dest_dir.resolve()):
-                                logger.error(f"Zip Slip prevented for: {target_file}")
-                                shutil.rmtree(dest_dir, ignore_errors=True)
-                                raise ValueError("Path traversal attempt detected in zip")
-                            target_file.parent.mkdir(parents=True, exist_ok=True)
+                    extracted_count = 0
+                    uncompressed_size = 0
+                    for zi in zip_infos:
+                        if zi.filename.endswith('/'):
+                            continue
 
-                            uncompressed_size += zi.file_size
-                            if uncompressed_size > 50 * 1024 * 1024:
-                                logger.error(f"Zip bomb detected: uncompressed size exceeds 50MB limit.")
-                                shutil.rmtree(dest_dir, ignore_errors=True)
-                                return False
+                        # Extract directly into dest_dir, stripping any potential root folder in the zip if needed,
+                        # but as per instructions: "extract the .zip contents directly into that folder".
+                        # However, sometimes zips contain a single root dir. If so, we can strip it, or just extract everything.
+                        # Since the instruction is specific: "extract the .zip contents directly into that folder",
+                        # we will extract files without stripping unless it creates a nested folder of the plugin id.
+                        # Usually, `releases/{version}.zip` contains the plugin files directly or in a folder. Let's just extract all.
+                        rel_path = zi.filename
+                        # If the zip contains a single root folder with the same name, we can handle it or just extract flat.
+                        # Let's extract flat if there's a common prefix, or just extract as is.
+                        # I'll extract as is, except to prevent zip slip.
+                        if '..' in rel_path or rel_path.startswith('/'):
+                            logger.error(f"Malicious path detected in zip: {rel_path}")
+                            shutil.rmtree(dest_dir, ignore_errors=True)
+                            return False
 
-                            with target_file.open('wb') as f:
-                                f.write(z.read(zi))
-                            extracted_count += 1
-                
-                if extracted_count == 0:
-                    logger.error(f"No files extracted for plugin {plugin_id} with prefix {target_prefix}")
-                    return False
+                        target_file = (dest_dir / rel_path).resolve()
+                        if not target_file.is_relative_to(dest_dir.resolve()):
+                            logger.error(f"Zip Slip prevented for: {target_file}")
+                            shutil.rmtree(dest_dir, ignore_errors=True)
+                            raise ValueError("Path traversal attempt detected in zip")
+
+                        target_file.parent.mkdir(parents=True, exist_ok=True)
+
+                        uncompressed_size += zi.file_size
+                        if uncompressed_size > 50 * 1024 * 1024:
+                            logger.error("Zip bomb detected: uncompressed size exceeds 50MB limit.")
+                            shutil.rmtree(dest_dir, ignore_errors=True)
+                            return False
+
+                        with target_file.open('wb') as out_f:
+                            out_f.write(z.read(zi))
+                        extracted_count += 1
+
+                    if extracted_count == 0:
+                        logger.error(f"No files extracted for plugin {plugin_id}")
+                        return False
+            finally:
+                os.remove(tmp_zip_path)
 
             manifest_file = dest_dir / "manifest.json"
             if manifest_file.exists():
@@ -229,7 +297,6 @@ class PluginStore:
         except Exception as e:
             logger.error(f"Failed to download and extract plugin: {e}")
             return False
-
     def uninstall_plugin(self, plugin_id: str) -> bool:
         import re
         import shutil
