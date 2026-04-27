@@ -12,7 +12,8 @@ class PluginRouterRegistry:
         Strictly enforces the /api/plugins/{plugin_id} namespace.
         Applies require_auth to all routes to lock them down to internal Svelte frontend.
         """
-        # Enforce strict namespace
+        # Force the blueprint name to avoid Flask registry collisions
+        router.name = f"plugin_router_{plugin_id}"
         prefix = f"/api/plugins/{plugin_id}"
         router.url_prefix = prefix
 
