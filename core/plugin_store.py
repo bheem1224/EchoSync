@@ -179,19 +179,30 @@ class PluginStore:
             plugin_id = plugin_id.split(".")[-1]
             dest_dir = self.plugins_dir / plugin_id
             manifest_file = dest_dir / "manifest.json"
+            
             plugin["_installed"] = dest_dir.exists() and manifest_file.exists()
-
+            plugin["installed_version"] = None
+            plugin["installed_channel"] = config_manager.get_plugin_channel(plugin_id)
             plugin["update_available"] = False
+
             if plugin["_installed"]:
                 try:
                     with open(manifest_file, "r") as f:
                         local_manifest = json.load(f)
+                    
                     local_version = local_manifest.get("version", "0.0.0")
+                    plugin["installed_version"] = local_version
+                    
                     remote_version = plugin.get("version", "0.0.0")
-                    if version.parse(remote_version) > version.parse(local_version):
-                        plugin["update_available"] = True
-                except Exception:
-                    pass
+                    try:
+                        if version.parse(remote_version) > version.parse(local_version):
+                            plugin["update_available"] = True
+                    except Exception:
+                        # Fallback to simple comparison if semver parsing fails
+                        if remote_version != local_version:
+                            plugin["update_available"] = True
+                except Exception as e:
+                    logger.debug(f"Error checking local version for {plugin_id}: {e}")
             
         return all_plugins
 

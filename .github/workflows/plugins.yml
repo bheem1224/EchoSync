@@ -29,11 +29,23 @@ jobs:
           COMMIT_MSG: ${{ github.event.head_commit.message }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [[ "$COMMIT_MSG" == *"[plugin-beta]"* ]] || [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "🚀 Manual trigger or [plugin-beta] override detected. Building ALL plugins."
+          # --- UNIFIED GLOBAL RELEASE DETECTION ---
+          if echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then
+            # Extracts pure numbers (e.g., "2.5.0") for the JSON manifest
+            GLOBAL_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 | sed -E 's/version:\s*v?//i')
+            echo "🚀 Global Release detected (v$GLOBAL_VERSION). Syncing ALL plugins."
             CHANGED_DIRS=$(find plugins -mindepth 1 -maxdepth 1 -type d)
+            IS_GLOBAL_RELEASE="true"
+          elif [[ "$COMMIT_MSG" == *"[plugin-beta]"* ]] || [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "🚀 Manual trigger or [plugin-beta] override. Building ALL plugins as beta."
+            CHANGED_DIRS=$(find plugins -mindepth 1 -maxdepth 1 -type d)
+            IS_GLOBAL_RELEASE="false"
+            GLOBAL_VERSION="0.0.0"
           else
+            echo "🔍 Incremental commit. Detecting changed plugins for beta build."
             CHANGED_DIRS=$(git diff --name-only HEAD^ HEAD | grep '^plugins/' | cut -d/ -f1,2 | sort -u)
+            IS_GLOBAL_RELEASE="false"
+            GLOBAL_VERSION="0.0.0"
           fi
 
           if [ -z "$CHANGED_DIRS" ]; then
@@ -48,6 +60,8 @@ jobs:
           plugin_name = sys.argv[1]
           manifest_path = sys.argv[2]
           commit_msg = sys.argv[3]
+          is_global_release = sys.argv[4]
+          global_version = sys.argv[5]
 
           with open(manifest_path, "r") as f:
               manifest = json.load(f)
@@ -56,25 +70,20 @@ jobs:
           major, minor, patch = map(int, current_version.split("."))
 
           build_type = "beta"
-          is_stable_release = "[release-plugins]" in commit_msg
 
           override_match = re.search(rf"{plugin_name}:v(\d+\.\d+\.\d+)", commit_msg, re.IGNORECASE)
 
+          # 1. Specific plugin override (e.g., musicbrainz:v1.2.0)
           if override_match:
               new_version = override_match.group(1)
               build_type = "stable"
               manifest["version"] = new_version
-          elif is_stable_release:
-              if patch > 0 or current_version == "0.0.0":
-                  if minor == 9:
-                      major += 1
-                      minor = 0
-                  else:
-                      minor += 1
-                  patch = 0
-              new_version = f"{major}.{minor}.{patch}"
+          # 2. Global Release Sync
+          elif is_global_release == "true":
+              new_version = global_version
               build_type = "stable"
               manifest["version"] = new_version
+          # 3. Incremental Beta Bump
           else:
               current_beta = manifest.get("beta_version", f"{major}.{minor}.{patch+1}-beta.0")
               try:
@@ -91,7 +100,6 @@ jobs:
           print(f"{build_type},{new_version}")
           EOF
 
-          # Clean YAML indentation off the Python script to prevent IndentationErrors
           python3 -c "import textwrap; open('bump.py', 'w').write(textwrap.dedent(open('raw_bump.py').read()))"
 
           for DIR in $CHANGED_DIRS; do
@@ -108,8 +116,8 @@ jobs:
             echo "⚙️ Processing Plugin: $PLUGIN_NAME"
             echo "========================================"
 
-            # Execute the sanitized Python script
-            RESULT=$(python3 bump.py "$PLUGIN_NAME" "$MANIFEST" "$COMMIT_MSG")
+            # Execute Python script with parameters
+            RESULT=$(python3 bump.py "$PLUGIN_NAME" "$MANIFEST" "$COMMIT_MSG" "$IS_GLOBAL_RELEASE" "$GLOBAL_VERSION")
 
             BUILD_TYPE=$(echo "$RESULT" | cut -d',' -f1)
             NEW_VERSION=$(echo "$RESULT" | cut -d',' -f2)
@@ -124,11 +132,12 @@ jobs:
               if [ ! -f "package.json" ]; then
                 echo "📦 Initializing temporary Node environment..."
                 npm init -y > /dev/null
-                npm install svelte @sveltejs/vite-plugin-svelte vite --no-save
                 npm pkg set scripts.build="vite build"
-              else
-                npm install
               fi
+
+              npm install
+              echo "📦 Injecting Vite and Svelte compilers..."
+              npm install vite svelte @sveltejs/vite-plugin-svelte --no-save
 
               npm run build
               cd ../../../
@@ -165,7 +174,6 @@ jobs:
               with open(manifest_file, "r") as f:
                   try:
                       plugin_data = json.load(f)
-                      # Inject the plugin ID (folder name) just in case
                       plugin_data["plugin_id"] = manifest_file.split("/")[1]
                       store_manifest.append(plugin_data)
                   except:
@@ -181,5 +189,5 @@ jobs:
       - name: Commit Assets Back to Repo
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore(plugins): auto-versioning, release packaging, and store manifest update"
+          commit_message: "chore(plugins): sync versions, package artifacts, and update store"
           file_pattern: 'plugins/ store-manifest.json'

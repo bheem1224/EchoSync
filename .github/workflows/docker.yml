@@ -3,7 +3,7 @@ name: Build and Publish Docker Image
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch: # 👈 THIS ADDS THE MANUAL "RUN" BUTTON IN GITHUB UI
+  workflow_dispatch:
     inputs:
           no_cache:
             description: 'Force build without cache'
@@ -14,7 +14,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
-  contents: write  # Upgraded to 'write' so the action can create a GitHub Release
+  contents: write
   packages: write
 
 jobs:
@@ -32,38 +32,52 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - name: Determine Docker Tags
+      - name: Determine Docker Tags & Version
         id: extract_tags
         env:
-          # CRITICAL FIX 1: Pass commit message securely to handle multiline markdown and quotes
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           BASE_IMAGE="ghcr.io/${{ github.repository_owner }}/echosync"
           
           # Check for version string securely using the env var
           if echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then
-            EXTRACTED_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -n 1 | sed -E 's/version:\s*//i')
+            EXTRACTED_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 | sed -E 's/version:\s*//i')
             
             TAGS="$BASE_IMAGE:$EXTRACTED_VERSION,$BASE_IMAGE:latest"
-            echo "Detected version tag: $EXTRACTED_VERSION. Tagging as $EXTRACTED_VERSION and latest."
+            echo "🚀 Global Release detected: $EXTRACTED_VERSION. Tagging as $EXTRACTED_VERSION and latest."
             
-            # Export the version for the GitHub Release step
+            # --- RELEASE NOTES PARSING ---
+            # Extract Line 2 as the Title
+            RELEASE_TITLE=$(echo "$COMMIT_MSG" | awk 'NR==2')
+            
+            # If Line 2 is accidentally left blank, fallback to standard naming
+            if [ -z "$(echo "$RELEASE_TITLE" | tr -d '[:space:]')" ]; then
+              RELEASE_TITLE="Release $EXTRACTED_VERSION"
+            fi
+            
+            # Extract Line 3 and everything after it as the Body
+            RELEASE_BODY=$(echo "$COMMIT_MSG" | awk 'NR>2')
+            
             echo "version=$EXTRACTED_VERSION" >> $GITHUB_OUTPUT
+            echo "title=$RELEASE_TITLE" >> $GITHUB_OUTPUT
+            
+            # Safely pass multi-line string to GitHub outputs
+            echo "body<<EOF" >> $GITHUB_OUTPUT
+            echo "$RELEASE_BODY" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
           else
             TAGS="$BASE_IMAGE:beta"
-            echo "No explicit version found. Building 'beta' only."
+            echo "🔍 No explicit version found. Building 'beta' only."
           fi
           
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
           
           # --- NO-CACHE DETECTION ---
-          # Check if commit message contains [no-cache] OR if the manual UI checkbox was ticked
           if echo "$COMMIT_MSG" | grep -qi '\[no-cache\]' || [ "${{ github.event.inputs.no_cache }}" == "true" ]; then
             echo "no_cache=true" >> $GITHUB_OUTPUT
             echo "🚨 No-cache flag detected! Forcing a clean Docker build."
           else
             echo "no_cache=false" >> $GITHUB_OUTPUT
-            echo "Using standard Docker caching."
           fi
 
       - name: Build and push Docker image
@@ -75,13 +89,11 @@ jobs:
           no-cache: ${{ steps.extract_tags.outputs.no_cache == 'true' }}
 
       - name: Create GitHub Release
-        # Only run this step if a version was successfully extracted
         if: steps.extract_tags.outputs.version != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.extract_tags.outputs.version }}
-          name: Release ${{ steps.extract_tags.outputs.version }}
-          # CRITICAL FIX 2: Explicitly set the release body to your commit message
-          body: ${{ github.event.head_commit.message }}
+          name: ${{ steps.extract_tags.outputs.title }}  # 👈 Injects Line 2
+          body: ${{ steps.extract_tags.outputs.body }}   # 👈 Injects Line 3+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
