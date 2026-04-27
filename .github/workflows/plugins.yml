@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
-          token: ${{ secrets.COMMIT_PAT }} # 👈 THIS IS THE MAGIC KEY
+          token: ${{ secrets.COMMIT_PAT }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -55,66 +55,71 @@ jobs:
             echo "⚙️ Processing Plugin: $PLUGIN_NAME"
             echo "========================================"
 
+            # --- PYTHON VERSIONING LOGIC ---
             RESULT=$(python3 -c '
-          import sys, json, re
+import sys, json, re
 
-          plugin_name = sys.argv[1]
-          manifest_path = sys.argv[2]
-          commit_msg = sys.argv[3]
+plugin_name = sys.argv[1]
+manifest_path = sys.argv[2]
+commit_msg = sys.argv[3]
 
-          with open(manifest_path, "r") as f:
-              manifest = json.load(f)
+with open(manifest_path, "r") as f:
+    manifest = json.load(f)
 
-          current_version = manifest.get("version", "0.0.0")
-          major, minor, patch = map(int, current_version.split("."))
+current_version = manifest.get("version", "0.0.0")
+major, minor, patch = map(int, current_version.split("."))
 
-          build_type = "beta"
-          is_stable_release = "[release-plugins]" in commit_msg
+build_type = "beta"
+is_stable_release = "[release-plugins]" in commit_msg
 
-          override_match = re.search(rf"{plugin_name}:v(\d+\.\d+\.\d+)", commit_msg, re.IGNORECASE)
+override_match = re.search(rf"{plugin_name}:v(\d+\.\d+\.\d+)", commit_msg, re.IGNORECASE)
 
-          if override_match:
-              new_version = override_match.group(1)
-              build_type = "stable"
-          elif is_stable_release:
-              if patch > 0 or current_version == "0.0.0":
-                  if minor == 9:
-                      major += 1
-                      minor = 0
-                  else:
-                      minor += 1
-                  patch = 0
-              new_version = f"{major}.{minor}.{patch}"
-              build_type = "stable"
-          else:
-              patch += 1
-              new_version = f"{major}.{minor}.{patch}"
-              build_type = "beta"
+if override_match:
+    new_version = override_match.group(1)
+    build_type = "stable"
+    manifest["version"] = new_version
+elif is_stable_release:
+    if patch > 0 or current_version == "0.0.0":
+        if minor == 9:
+            major += 1
+            minor = 0
+        else:
+            minor += 1
+        patch = 0
+    new_version = f"{major}.{minor}.{patch}"
+    build_type = "stable"
+    manifest["version"] = new_version
+else:
+    # Handle Beta Versioning
+    current_beta = manifest.get("beta_version", f"{major}.{minor}.{patch+1}-beta.0")
+    try:
+        beta_num = int(current_beta.split("beta.")[-1]) + 1
+    except:
+        beta_num = 1
+    new_version = f"{major}.{minor}.{patch+1}-beta.{beta_num}"
+    build_type = "beta"
+    manifest["beta_version"] = new_version
 
-          manifest["version"] = new_version
-          with open(manifest_path, "w") as f:
-              json.dump(manifest, f, indent=2)
+with open(manifest_path, "w") as f:
+    json.dump(manifest, f, indent=2)
 
-          print(f"{build_type},{new_version}")
+print(f"{build_type},{new_version}")
             ' "$PLUGIN_NAME" "$MANIFEST" "$COMMIT_MSG")
 
             BUILD_TYPE=$(echo "$RESULT" | cut -d',' -f1)
             NEW_VERSION=$(echo "$RESULT" | cut -d',' -f2)
 
-            echo "✅ Version updated to $NEW_VERSION ($BUILD_TYPE build)"
+            echo "✅ Manifest updated to $NEW_VERSION ($BUILD_TYPE build)"
 
             # --- UI BUILD PIPELINE ---
             if [ -d "$UI_DIR" ]; then
               mkdir -p "$STATIC_DIR"
               cd "$UI_DIR"
               
-              # FIX: Create package.json and inject the build script
               if [ ! -f "package.json" ]; then
                 echo "📦 Initializing temporary Node environment..."
                 npm init -y > /dev/null
                 npm install svelte @sveltejs/vite-plugin-svelte vite --no-save
-                
-                # THIS IS THE MAGIC LINE: 
                 npm pkg set scripts.build="vite build"
               else
                 npm install
@@ -122,36 +127,56 @@ jobs:
 
               npm run build
               cd ../../../
-              
-              if [ "$BUILD_TYPE" = "beta" ]; then
-                mv "$STATIC_DIR/bundle.js" "$STATIC_DIR/bundle.beta.js"
-                echo "📦 Saved as bundle.beta.js"
-              else
-                echo "📦 Saved as bundle.js (Stable)"
-              fi
-            else
-              echo "ℹ️ No UI directory found. Backend-only version bump applied."
+              echo "📦 UI Compiled to bundle.js"
             fi
 
-            # --- STABLE RELEASE PACKAGER ---
+            # --- ZIP PACKAGING PIPELINE ---
+            cd "$DIR"
+            
             if [ "$BUILD_TYPE" = "stable" ]; then
               echo "🗜️ Packaging stable release v$NEW_VERSION..."
-              mkdir -p "$DIR/releases"
-              ZIP_NAME="${PLUGIN_NAME}-v${NEW_VERSION}.zip"
+              mkdir -p "releases"
+              ZIP_NAME="{PLUGIN_VERSION}.zip" # This will literally be replaced with the version number by the app, but let's name it dynamically
+              DYNAMIC_ZIP_NAME="v${NEW_VERSION}.zip"
               
-              # Move into the plugin directory to zip so paths inside the zip are clean
-              cd "$DIR"
-              # Zip everything EXCEPT the raw svelte UI source, previous releases, and pycache
-              zip -r "releases/$ZIP_NAME" . -x "ui/*" -x "releases/*" -x "*/__pycache__/*"
-              cd ../../
-              
-              echo "✅ Created release package: $DIR/releases/$ZIP_NAME"
+              # Zip everything EXCEPT UI source, Rust source, pycache, and beta/release artifacts
+              zip -r "releases/$DYNAMIC_ZIP_NAME" . -x "ui/*" -x "src/*" -x "target/*" -x "releases/*" -x "beta.zip" -x "*/__pycache__/*"
+              echo "✅ Created stable package: releases/$DYNAMIC_ZIP_NAME"
+            else
+              echo "🗜️ Packaging beta release..."
+              # Remove old beta zip to ensure clean slate
+              rm -f "beta.zip"
+              zip -r "beta.zip" . -x "ui/*" -x "src/*" -x "target/*" -x "releases/*" -x "*/__pycache__/*"
+              echo "✅ Created beta package: beta.zip"
             fi
+            
+            cd ../../
 
           done
+
+      - name: Generate store-manifest.json
+        run: |
+          python3 -c '
+          import glob, json
+          
+          store_manifest = []
+          for manifest_file in glob.glob("plugins/*/manifest.json"):
+              with open(manifest_file, "r") as f:
+                  try:
+                      plugin_data = json.load(f)
+                      # Inject the plugin ID (folder name) just in case
+                      plugin_data["plugin_id"] = manifest_file.split("/")[1]
+                      store_manifest.append(plugin_data)
+                  except:
+                      pass
+                      
+          with open("store-manifest.json", "w") as f:
+              json.dump(store_manifest, f, indent=2)
+          '
+          echo "✅ store-manifest.json generated successfully."
 
       - name: Commit Assets Back to Repo
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore(plugins): auto-versioning and release packaging"
-          file_pattern: 'plugins/'
+          commit_message: "chore(plugins): auto-versioning, release packaging, and store manifest update"
+          file_pattern: 'plugins/ store-manifest.json'
