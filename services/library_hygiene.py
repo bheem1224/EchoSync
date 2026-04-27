@@ -36,7 +36,7 @@ class DuplicateHygieneService:
                 )
 
                 # Get the fingerprints
-                duplicate_hashes = [row[0] for row in subquery.all()]
+                duplicate_hashes = [row[0] for row in subquery.yield_per(1000)]
 
                 for fp_hash in duplicate_hashes:
                     # Get all tracks for this fingerprint
@@ -49,8 +49,10 @@ class DuplicateHygieneService:
                     track_ids = [fp.track_id for fp in fingerprints]
                     # Fetch tracks eagerly with Artist to avoid N+1 inside loop
                     # Actually session is open, so lazy load is fine, but better to be efficient if possible.
+                    from sqlalchemy.orm import joinedload
                     tracks = (
                         session.query(Track)
+                        .options(joinedload(Track.artist), joinedload(Track.album))
                         .join(Artist)
                         .filter(Track.id.in_(track_ids))
                         .all()
@@ -344,11 +346,14 @@ class DuplicateHygieneService:
         with self.db.session_scope() as music_session:
             with working_db.session_scope() as work_session:
                 # Find corresponding track IDs
-                ext_idents = music_session.query(ExternalIdentifier, Track).join(
+                from sqlalchemy.orm import joinedload
+                ext_idents = music_session.query(ExternalIdentifier, Track).options(
+                    joinedload(Track.artist)
+                ).join(
                     Track, ExternalIdentifier.track_id == Track.id
                 ).filter(
                     ExternalIdentifier.provider_item_id.in_(stale_provider_ids)
-                ).all()
+                ).yield_per(1000)
 
                 for ext, track in ext_idents:
                     # Resolve to sync_id
@@ -357,7 +362,7 @@ class DuplicateHygieneService:
 
                     states = work_session.query(UserTrackState).filter(
                         UserTrackState.sync_id == sync_id
-                    ).all()
+                    ).yield_per(1000)
 
                     for state in states:
                         # Only mark stale if it's not already staged for deletion/upgrade or exempt

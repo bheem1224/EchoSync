@@ -85,10 +85,10 @@ def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
             selectinload(Track.artist),
             selectinload(Track.external_identifiers),
             selectinload(Track.album)
-        ).all()
+        ).yield_per(1000)
 
         # Pre-fetch all TrackAudioFeatures into a dictionary
-        all_features = session.query(TrackAudioFeatures).all()
+        all_features = session.query(TrackAudioFeatures).yield_per(1000)
         features_dict = {f.sync_id: f for f in all_features}
 
         for t in all_tracks:
