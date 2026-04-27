@@ -18,6 +18,8 @@
   let showSecret = false;
   let savingCreds = false;
   let redirectCollapsed = false;
+  let customApiBaseUrl = 'https://musicbrainz.org/ws/2';
+
 
   // Add-account modal
   let showAddModal = false;
@@ -45,6 +47,13 @@
       }
 
       // Load existing credentials for display
+
+      // Load custom API Base URL
+      const settingsResp = await fetch(`${apiBase}/providers/musicbrainz/settings`);
+      if (settingsResp.data?.settings) {
+        customApiBaseUrl = settingsResp.data.settings.api_base_url || 'https://musicbrainz.org/ws/2';
+      }
+
       const credsResp = await fetch(`${apiBase}/providers/musicbrainz/credentials`);
       if (credsResp.data?.credentials) {
         clientId = credsResp.data.credentials.client_id || '';
@@ -83,6 +92,20 @@
       console.error(err);
     } finally {
       savingCreds = false;
+    }
+  }
+
+
+  async function saveSettings() {
+    try {
+      await fetch(`${apiBase}/providers/musicbrainz/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: { api_base_url: customApiBaseUrl } })
+      });
+      console.log('MusicBrainz settings saved');
+    } catch (err) {
+      console.error('Failed to save settings:', err);
     }
   }
 
@@ -180,6 +203,31 @@
   {#if loading}
     <div class="p-5 text-center text-secondary">Loading...</div>
   {:else}
+
+
+    <!-- Custom API Base URL -->
+    <div class="mb-6">
+      <h3 class="m-0 mb-4 text-base font-semibold">Custom API Base URL</h3>
+      <p class="text-xs text-secondary mt-1">
+        Point this to a local MusicBrainz Docker container to go 100% offline.
+      </p>
+
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <label class="text-[13px] font-medium text-primary" for="mb-api-base-url">API Base URL</label>
+          <input
+            id="mb-api-base-url"
+            type="text"
+            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+            bind:value={customApiBaseUrl}
+            placeholder="https://musicbrainz.org/ws/2"
+          />
+        </div>
+        <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={saveSettings}>
+          Save Settings
+        </button>
+      </div>
+    </div>
 
     <!-- Application Credentials -->
     <div class="mb-6">

@@ -218,6 +218,7 @@ class ProviderBase(ABC):
         quality_profile: Optional[Dict[str, Any]] = None,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
+        **kwargs,
     ) -> List[EchosyncTrack]:
         """Search for tracks. Must return EchosyncTrack objects.
 
