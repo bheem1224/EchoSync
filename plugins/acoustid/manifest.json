@@ -2,7 +2,7 @@
   "id": "core.acoustid",
   "name": "Acoustid",
   "description": "Official EchoSync provider for acoustid",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "author": "EchoSync",
   "type": "metadata",
   "requirements": [],
