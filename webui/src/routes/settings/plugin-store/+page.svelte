@@ -95,7 +95,7 @@
   }
 
   async function installPlugin(plugin, isUpdate = false) {
-    if (downloading) return;
+    console.log(`[PluginStore] installPlugin called for ${plugin.name} (ID: ${plugin.id}), isUpdate: ${isUpdate}, channel: ${plugin.channel}`);
     downloading = plugin.id || plugin.name;
 
     try {

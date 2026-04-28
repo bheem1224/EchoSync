@@ -29,9 +29,17 @@
 
   // Version Comparison Helper
   const isNewer = (v1, v2) => {
-    if (!v1 || !v2 || v1 === 'Unknown' || v2 === 'Unknown') return false;
+    if (!v1 || v1 === 'Unknown') return false;
+    if (!v2 || v2 === 'Unknown' || v2 === '0.0.0') return true;
+    if (v1 === v2) return false;
+    
     // Simple semver-lite comparison using localeCompare with numeric: true
-    return v1.localeCompare(v2, undefined, { numeric: true, sensitivity: 'base' }) > 0;
+    // This handles most cases like 1.2.1 vs 1.2.0
+    try {
+      return v1.localeCompare(v2, undefined, { numeric: true, sensitivity: 'base' }) > 0;
+    } catch (e) {
+      return v1 > v2;
+    }
   };
 
   $: hasStableUpdate = isNewer(latestRelease, installedVersion);
@@ -40,20 +48,24 @@
 
   // Action Handlers
   function handleMainAction() {
+    console.log(`[PluginCard] handleMainAction called. globalBetaEnabled: ${globalBetaEnabled}, installedChannel: ${installedChannel}, hasStableUpdate: ${hasStableUpdate}, hasBetaUpdate: ${hasBetaUpdate}`);
     if (downloading) return;
     
     if (globalBetaEnabled && installedChannel === 'beta') {
-      if (hasBetaUpdate) {
-        dispatch('install', { ...plugin, channel: 'beta', version: latestBeta });
-      }
+      console.log(`[PluginCard] Dispatching beta install for ${plugin.id}`);
+      dispatch('install', { ...plugin, channel: 'beta', version: latestBeta });
     } else {
       if (hasStableUpdate || !isInstalled) {
+        console.log(`[PluginCard] Dispatching release install for ${plugin.id}`);
         dispatch('install', { ...plugin, channel: 'release', version: latestRelease });
+      } else {
+        console.log(`[PluginCard] No update needed for release channel.`);
       }
     }
   }
 
   function handleSwitch(targetChannel) {
+    console.log(`[PluginCard] handleSwitch called. targetChannel: ${targetChannel}`);
     showDropdown = false;
     dispatch('install', { ...plugin, channel: targetChannel, version: targetChannel === 'beta' ? latestBeta : latestRelease });
   }
