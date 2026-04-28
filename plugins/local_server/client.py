@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Generator
 
 from core.provider_base import ProviderBase
-from core.provider import ProviderCapabilities
+from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
@@ -19,10 +19,12 @@ class LocalServerProvider(ProviderBase):
     enabled = True
 
     capabilities = ProviderCapabilities(
-        capabilities=[
-            Capability.SYNC_LIBRARY,
-            Capability.STREAM_AUDIO
-        ]
+        name='local_server',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=False),
+        metadata=MetadataRichness.LOW,
+        supports_library_scan=True,
+        supports_streaming=True,
     )
 
     def get_library_tracks(self) -> Generator[EchosyncTrack, None, None]:

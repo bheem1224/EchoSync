@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 from core.provider_base import ProviderBase
-from core.provider import ProviderCapabilities
+from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
@@ -12,10 +12,11 @@ class LocalMetadataProvider(ProviderBase):
     enabled = True
 
     capabilities = ProviderCapabilities(
-        capabilities=[
-            Capability.FETCH_METADATA,
-            Capability.TAG_FILES
-        ]
+        name='local_metadata',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=True),
+        metadata=MetadataRichness.MEDIUM,
+        supports_metadata_fetch=True
     )
 
     def authenticate(self, **kwargs) -> bool:

@@ -101,7 +101,7 @@ class SearchAdapter:
                 # handle GIL and thread isolation for CPU-heavy matching logic
                 results = await asyncio.wait_for(
                     asyncio.to_thread(provider.search, query, "track", 20),
-                    timeout=5.0
+                    timeout=10.0
                 )
                 return provider.name, results
             except Exception as e:
@@ -145,7 +145,7 @@ class SearchAdapter:
                     
                     try:
                         prov_instance = ProviderRegistry.create_instance(provider_name)
-                        is_local = isinstance(prov_instance, MediaServerProvider)
+                        is_local = isinstance(prov_instance, MediaServerProvider) or provider_name in ['local_metadata', 'local_server']
                     except Exception:
                         is_local = False
                     
