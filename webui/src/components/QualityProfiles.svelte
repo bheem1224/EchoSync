@@ -1,28 +1,23 @@
-<svelte:options customElement={{
-  tag: 'echosync-quality-profiles',
-  shadow: 'none'
-}} />
 <script>
   import { onMount } from 'svelte';
   import { preferences } from '../stores/preferences';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import { feedback } from '../stores/feedback';
-
-  let prefs;
-  const unsub = preferences.subscribe((v) => (prefs = v));
-  import { onDestroy } from 'svelte';
-  onDestroy(() => unsub && typeof unsub === 'function' && unsub());
-
-  let editingProfile = null;
-  let showEditor = false;
   import QualityProfileEditor from './QualityProfileEditor.svelte';
+
+  let editingProfile = $state(null);
+  let showEditor = $state(false);
+  let deletingId = $state(null);
+  let showConfirm = $state(false);
+  let dragIndex = $state(null);
+  let dialogElement = $state();
 
   onMount(async () => {
     await preferences.load();
   });
 
   function addProfile() {
-    const profiles = prefs?.profiles || [];
+    const profiles = $preferences?.profiles || [];
     if (profiles.length >= 6) return;
     const newProfile = {
       id: Date.now().toString(),
@@ -36,16 +31,13 @@
     openEditor(newProfile);
   }
 
-  let deletingId = null;
-  let showConfirm = false;
-
   function requestDeleteProfile(id) {
     deletingId = id;
     showConfirm = true;
   }
 
   function deleteProfileConfirmed() {
-    const updated = (prefs?.profiles || []).filter((p) => p.id !== deletingId);
+    const updated = ($preferences?.profiles || []).filter((p) => p.id !== deletingId);
     // delete auto-saves immediately but require confirmation
     preferences.saveProfiles(updated);
     deletingId = null;
@@ -59,7 +51,6 @@
   }
 
   // Drag and drop handlers
-  let dragIndex = null;
   function handleDragStart(e, idx) {
     dragIndex = idx;
     e.dataTransfer.effectAllowed = 'move';
@@ -71,7 +62,7 @@
   function handleDrop(e, idx) {
     e.preventDefault();
     if (dragIndex === null) return;
-    const list = [...(prefs?.profiles || [])];
+    const list = [...($preferences?.profiles || [])];
     const [moved] = list.splice(dragIndex, 1);
     list.splice(idx, 0, moved);
     // reordering is local-only until Save All
@@ -79,16 +70,15 @@
     dragIndex = null;
   }
 
-  let dialogElement;
-
   function openEditor(profile) {
     editingProfile = JSON.parse(JSON.stringify(profile));
     showEditor = true;
+    // In Svelte 5, $effect or a small timeout ensures dialog is in DOM
     setTimeout(() => {
       if (dialogElement && typeof dialogElement.showModal === 'function') {
         dialogElement.showModal();
       }
-    }, 10);
+    }, 20);
   }
 
   function closeEditor() {
@@ -116,12 +106,12 @@
     <div class="flex justify-between items-center">
       <h2 class="text-xl font-bold text-primary">Quality Profiles</h2>
       <div class="controls">
-        <button class="btn-primary add-btn active:scale-95 transition-all duration-200" on:click={addProfile} disabled={prefs?.profiles && prefs.profiles.length >= 6}>+ Add</button>
+        <button class="btn-primary add-btn active:scale-95 transition-all duration-200" on:click={addProfile} disabled={$preferences?.profiles && $preferences.profiles.length >= 6}>+ Add</button>
       </div>
     </div>
 
       <div class="flex flex-col gap-2 mt-3">
-    {#each prefs?.profiles ?? [] as profile, idx}
+    {#each $preferences?.profiles ?? [] as profile, idx}
       <div
         class="flex justify-between items-center p-2 rounded-global bg-surface-hover"
         draggable="true"

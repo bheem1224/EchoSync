@@ -3,25 +3,24 @@
   import { feedback } from '../stores/feedback';
   import apiClient from '../api/client';
 
-  let cpuUsage = 0;
-  let systemCpuUsage = 0;
-  let memoryUsedGb = 0;
-  let memoryTotalGb = 0;
-  let memoryUsage = 0;
-  let systemMemoryUsage = 0;
-  let appMemoryMb = 0;
+  let cpuUsage = $state(0);
+  let systemCpuUsage = $state(0);
+  let memoryUsedGb = $state(0);
+  let memoryTotalGb = $state(0);
+  let memoryUsage = $state(0);
+  let systemMemoryUsage = $state(0);
+  let appMemoryMb = $state(0);
 
-  let libraryStats = { totalTracks: '—', totalAlbums: '—', storageUsed: '—' };
+  let libraryStats = $state({ totalTracks: '—', totalAlbums: '—', storageUsed: '—' });
 
-  let providerStates = [];
-  let loadingProviders = true;
-  let isRebuildingDatabase = false;
+  let providerStates = $state([]);
+  let loadingProviders = $state(true);
+  let isRebuildingDatabase = $state(false);
 
   let statsPoll = null;
 
   onMount(async () => {
     await loadProviders();
-    // initial fetch
     await refreshStats();
     statsPoll = setInterval(refreshStats, 8000);
   });
@@ -34,7 +33,6 @@
     try {
       const response = await apiClient.get('/providers');
       if (response.data && Array.isArray(response.data)) {
-        // Map API response to component state
         providerStates = response.data.map(provider => ({
           id: provider.id,
           name: provider.display_name || provider.name || provider.id,
@@ -55,28 +53,24 @@
     try {
       const s = await apiClient.get('/stats');
       if (s && s.data) {
-        // App specific
         cpuUsage = Math.round(s.data.cpu?.app || 0);
         appMemoryMb = Math.round((s.data.memory?.app_rss || 0) / (1024 ** 2));
-        
-        // System wide
         systemCpuUsage = Math.round(s.data.cpu?.system || 0);
         memoryTotalGb = Math.round(((s.data.memory?.total || 0) / (1024 ** 3)) * 10) / 10;
         memoryUsedGb = Math.round(((s.data.memory?.total || 0) - (s.data.memory?.available || 0)) / (1024 ** 3) * 10) / 10;
         systemMemoryUsage = Math.round(s.data.memory?.percent || 0);
-        
-        // Progress bar for memory (app percentage of total system memory, boosted for visibility if small)
         const rawMemPercent = ((s.data.memory?.app_rss || 0) / (s.data.memory?.total || 1)) * 100;
-        memoryUsage = Math.max(rawMemPercent, 1); // min 1% for visibility
+        memoryUsage = Math.max(rawMemPercent, 1);
       }
 
       const health = await apiClient.get('/health');
       if (health && health.data) {
-        // Optional: extract library stats if provided by /health
         if (health.data.library) {
-          libraryStats.totalTracks = String(health.data.library.total_tracks || libraryStats.totalTracks);
-          libraryStats.totalAlbums = String(health.data.library.total_albums || libraryStats.totalAlbums);
-          libraryStats.storageUsed = String(health.data.library.storage_used || libraryStats.storageUsed);
+          libraryStats = {
+            totalTracks: String(health.data.library.total_tracks || libraryStats.totalTracks),
+            totalAlbums: String(health.data.library.total_albums || libraryStats.totalAlbums),
+            storageUsed: String(health.data.library.storage_used || libraryStats.storageUsed)
+          };
         }
       }
     } catch (e) {
@@ -89,9 +83,7 @@
       'WARNING: This will completely erase your local database schemas, including all tracks, matched states, and history. You will need to perform a full Library Import afterwards. Are you sure you want to proceed?'
     );
 
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     isRebuildingDatabase = true;
 

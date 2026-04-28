@@ -2,52 +2,31 @@
   // ─── BottomPlayer.svelte ────────────────────────────────────────────────────
   //
   // Single-ownership audio player.  This component owns the ONE <audio> element
-  // for the entire app.  Svelte's bind: directives keep local variables in sync
-  // with the element's live DOM properties; all other components interact with
-  // audio playback exclusively through the player store.
-  //
-  // Store → Component (command bus):
-  //   $player.streamUrl   — load a new track and autoplay
-  //   $player.playCommand — one-shot 'play' | 'pause' | 'stop'
-  //   $player.seekTo      — one-shot absolute seek position (seconds)
-  //   $player.volume      — desired volume level (0–1)
-  //
-  // Component → Store (state reporting):
-  //   on:play / on:pause  → player.update({ isPlaying })
-  //   on:timeupdate       → player.update({ currentTime })
-  //   on:durationchange   → player.update({ duration })
-  //
-  // Live-transcode streams (DSF/DFF/APE/WMA via FFmpeg) have no Content-Length,
-  // so `duration` resolves to Infinity or NaN.  The isLiveStream flag disables
-  // the seek bar and replaces the total-time label with a 'LIVE' badge.
+  // for the entire app.
   // ─────────────────────────────────────────────────────────────────────────────
 
   import { onMount, onDestroy } from 'svelte';
   import { player }   from '../stores/player';
   import { feedback } from '../stores/feedback';
 
-  // ── Audio element reference (populated by bind:this) ──────────────────────
-  let audioEl;
+  // ── Audio element reference ───────────────────────────────────────────────
+  let audioEl = $state();
 
-  // ── Two-way Svelte audio bindings ─────────────────────────────────────────
-  // Svelte keeps these variables in sync with the corresponding HTMLAudioElement
-  // DOM properties.  Writing to them also propagates back to the element.
-  let paused       = true;
-  let currentTime  = 0;
-  let duration     = 0;
-  let localVolume  = 1.0;   // named to avoid shadowing the CSS `volume` property
+  // ── State ────────────────────────────────────────────────────────────────
+  let paused = $state(true);
+  let currentTime = $state(0);
+  let duration = $state(0);
+  let localVolume = $state(1.0);
 
   // ── Live-transcode detection ───────────────────────────────────────────────
-  // FFmpeg live-transcode responses carry no Content-Length, so the browser
-  // cannot determine the total duration.  It exposes this as Infinity or NaN.
-  $: isLiveStream = !isFinite(duration) || duration === 0;
+  const isLiveStream = $derived(!isFinite(duration) || duration === 0);
 
-  // ── Scrub / seek: freeze thumb while the user is dragging ────────────────
-  let scrubbing  = false;
-  let scrubValue = 0;
+  // ── Scrub / seek ─────────────────────────────────────────────────────────
+  let scrubbing = $state(false);
+  let scrubValue = $state(0);
 
   function onScrubStart(e) {
-    scrubbing  = true;
+    scrubbing = true;
     scrubValue = +e.target.value;
   }
   function onScrubMove(e) {
@@ -58,62 +37,59 @@
     if (audioEl) audioEl.currentTime = +e.target.value;
   }
 
-  // The value shown in the time label and driving the range thumb:
-  // frozen to scrubValue while the user is dragging so timeupdate events
-  // don't fight the thumb back to the real playback position.
-  $: displayTime = scrubbing ? scrubValue : currentTime;
+  const displayTime = $derived(scrubbing ? scrubValue : currentTime);
 
-  // ── Store → Audio: load + autoplay whenever the URL changes ──────────────
-  // `lastLoadedUrl` prevents reloading when other store fields update.
-  let lastLoadedUrl = null;
+  // ── Store → Audio Sync ────────────────────────────────────────────────────
+  let lastLoadedUrl = $state(null);
 
-  $: if ($player.streamUrl !== lastLoadedUrl && audioEl) {
-    const newUrl    = $player.streamUrl;
-    lastLoadedUrl   = newUrl;
+  $effect(() => {
+    if ($player.streamUrl !== lastLoadedUrl && audioEl) {
+      const newUrl = $player.streamUrl;
+      lastLoadedUrl = newUrl;
 
-    if (newUrl) {
-      audioEl.src = newUrl;
-      audioEl.load();
-      audioEl.play().catch(handlePlaybackError);
-    } else {
-      // streamUrl was cleared (stop() was called)
-      audioEl.pause();
-      audioEl.src = '';
+      if (newUrl) {
+        audioEl.src = newUrl;
+        audioEl.load();
+        audioEl.play().catch(handlePlaybackError);
+      } else {
+        audioEl.pause();
+        audioEl.src = '';
+      }
     }
-  }
+  });
 
-  // ── Store → Audio: one-shot play / pause / stop commands ─────────────────
-  // External callers (keyboard shortcuts, other components) use player.pause()
-  // / player.resume() which set `playCommand`.  BottomPlayer consumes and
-  // clears the command so it fires exactly once.
-  $: if ($player.playCommand && audioEl) {
-    const cmd = $player.playCommand;
-    player.clearPlayCommand();                                // consume immediately
+  $effect(() => {
+    if ($player.playCommand && audioEl) {
+      const cmd = $player.playCommand;
+      player.clearPlayCommand();
 
-    if      (cmd === 'play')  audioEl.play().catch(handlePlaybackError);
-    else if (cmd === 'pause') audioEl.pause();
-    else if (cmd === 'stop')  { audioEl.pause(); audioEl.src = ''; lastLoadedUrl = null; }
-  }
+      if (cmd === 'play') audioEl.play().catch(handlePlaybackError);
+      else if (cmd === 'pause') audioEl.pause();
+      else if (cmd === 'stop') { 
+        audioEl.pause(); 
+        audioEl.src = ''; 
+        lastLoadedUrl = null; 
+      }
+    }
+  });
 
-  // ── Store → Audio: one-shot seek ─────────────────────────────────────────
-  $: if ($player.seekTo !== null && $player.seekTo !== undefined && audioEl) {
-    const t = $player.seekTo;
-    player.clearSeekTarget();                                 // consume immediately
-    audioEl.currentTime = t;
-  }
+  $effect(() => {
+    if ($player.seekTo !== null && $player.seekTo !== undefined && audioEl) {
+      const t = $player.seekTo;
+      player.clearSeekTarget();
+      audioEl.currentTime = t;
+    }
+  });
 
-  // ── Store → Audio: volume ─────────────────────────────────────────────────
-  // Reactive assignment keeps localVolume (and therefore bind:volume on the
-  // <audio> element) in sync when an external caller changes store volume.
-  $: localVolume = $player.volume;
+  $effect(() => {
+    localVolume = $player.volume;
+  });
 
-  // ── Audio → Store: report live playback state back to the store ──────────
-  // Other components (e.g. a mini player, keyboard handler) read isPlaying,
-  // currentTime, and duration from the store.
-  function onPlay()           { player.update(s => ({ ...s, isPlaying: true  })); }
-  function onPause()          { player.update(s => ({ ...s, isPlaying: false })); }
-  function onEnded()          { player.update(s => ({ ...s, isPlaying: false, currentTime: 0 })); }
-  function onTimeUpdate()     { player.update(s => ({ ...s, currentTime })); }
+  // ── Audio → Store Reporting ───────────────────────────────────────────────
+  function onPlay() { player.update(s => ({ ...s, isPlaying: true })); }
+  function onPause() { player.update(s => ({ ...s, isPlaying: false })); }
+  function onEnded() { player.update(s => ({ ...s, isPlaying: false, currentTime: 0 })); }
+  function onTimeUpdate() { player.update(s => ({ ...s, currentTime })); }
   function onDurationChange() {
     player.update(s => ({ ...s, duration: isFinite(duration) ? duration : 0 }));
   }
@@ -123,60 +99,49 @@
     const mediaError = e.target?.error;
     let msg = 'Playback failed.';
     if (mediaError) {
-      if      (mediaError.code === MediaError.MEDIA_ERR_NETWORK)          msg = 'Playback failed: network error.';
-      else if (mediaError.code === MediaError.MEDIA_ERR_DECODE)           msg = 'Playback failed: decode error.';
+      if (mediaError.code === MediaError.MEDIA_ERR_NETWORK) msg = 'Playback failed: network error.';
+      else if (mediaError.code === MediaError.MEDIA_ERR_DECODE) msg = 'Playback failed: decode error.';
       else if (mediaError.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) msg = 'Playback failed: format not supported.';
-      else    msg = `Playback failed: ${mediaError.message || 'unknown error'}.`;
+      else msg = `Playback failed: ${mediaError.message || 'unknown error'}.`;
     }
     feedback.addToast(msg, 'error');
     player.update(s => ({ ...s, isPlaying: false }));
   }
 
-  // AbortError is benign: the browser fires it when play() is interrupted by
-  // a src change (e.g. the user clicks a new track before the first one loads).
   function handlePlaybackError(err) {
     if (err?.name === 'AbortError') return;
     feedback.addToast(`Playback error: ${err?.message ?? 'unknown error'}`, 'error');
   }
 
-  // ── Play / Pause button ────────────────────────────────────────────────────
-  // Drives the audio element directly; bind:paused keeps the icon in sync.
   function onToggle() {
     if (!audioEl) return;
     if (paused) audioEl.play().catch(handlePlaybackError);
-    else        audioEl.pause();
+    else audioEl.pause();
   }
 
-  // ── Lifecycle ──────────────────────────────────────────────────────────────
   onMount(() => {
-    // Inherit current volume from store immediately so there is no blast on first play.
     localVolume = $player.volume;
-
-    // Handle the case where the store already holds a track URL when this
-    // component mounts (e.g. during SvelteKit hot-module replacement).
     if ($player.streamUrl) {
-      lastLoadedUrl   = $player.streamUrl;
-      audioEl.src     = $player.streamUrl;
+      lastLoadedUrl = $player.streamUrl;
+      audioEl.src = $player.streamUrl;
       audioEl.load();
       audioEl.play().catch(handlePlaybackError);
     }
   });
 
   onDestroy(() => {
-    // Release the audio resource when the component is torn down.
     if (audioEl) {
       audioEl.pause();
       audioEl.src = '';
     }
   });
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
   function formatTime(t) {
     if (!t || !isFinite(t) || isNaN(t)) return '0:00';
     const total = Math.floor(t);
-    const h     = Math.floor(total / 3600);
-    const m     = Math.floor((total % 3600) / 60);
-    const s     = total % 60;
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
     if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     return `${m}:${s.toString().padStart(2, '0')}`;
   }

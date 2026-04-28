@@ -1483,8 +1483,13 @@ class DownloadManager:
             download = session.query(Download).get(download_id)
             if download:
                 download.status = (status or "").lower()
-                download.current_speed = speed
-                download.progress_percent = progress
+                
+                # Store progress/speed in the JSON blob instead of invented columns
+                track_json = dict(download.echo_sync_track or {})
+                track_json["current_speed"] = speed
+                track_json["progress_percent"] = progress
+                download.echo_sync_track = track_json
+                
                 download.updated_at = utc_now()
                 if provider_id:
                     download.provider_id = provider_id

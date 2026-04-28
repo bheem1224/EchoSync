@@ -5,11 +5,11 @@
   import { flip } from 'svelte/animate';
   import MetadataReviewModal from '$lib/components/MetadataReviewModal.svelte';
 
-  let activeTab = 'suggestions'; // suggestions | review | downloads
-  let showReviewModal = false;
-  let selectedTask = null;
-  let loading = { suggestions: true, review: true, downloads: true };
-  let data = { suggestions: [], review: [], downloads: [] };
+  let activeTab = $state('suggestions'); // suggestions | review | downloads
+  let showReviewModal = $state(false);
+  let selectedTask = $state(null);
+  let loading = $state({ suggestions: true, review: true, downloads: true });
+  let data = $state({ suggestions: [], review: [], downloads: [] });
   let refreshInterval;
 
   onMount(async () => {
@@ -54,7 +54,6 @@
   }
 
   async function handleApproveSuggestion(id) {
-      // Placeholder for actual approve logic
       feedback.addToast('Suggestion approved', 'success');
   }
 

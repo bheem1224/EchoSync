@@ -3,42 +3,39 @@
   import { providers } from '../stores/providers';
   import { metadataQueue } from '../stores/metadataQueue';
   import { openSettings } from '../stores/settingsPanel';
-  import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
 
-  let providerCapabilities = [];
-  let settingsOpen = false; // Default to collapsed
+  let providerCapabilities = $state([]);
+  let settingsOpen = $state(false);
 
   onMount(() => {
     metadataQueue.fetchCount();
   });
 
-  $: {
+  // Sync provider capabilities reactively
+  $effect(() => {
     if ($providers.loaded) {
       providerCapabilities = Object.values($providers.items)
-        .filter((p) => !p.disabled) // Exclude disabled providers
+        .filter((p) => !p.disabled)
         .map((p) => p.capabilities);
     }
-  }
+  });
 
-  $: settingsLinks = [
+  const settingsLinks = $derived([
     { label: 'Preferences', href: '/settings/preferences' },
-    // ── Music Providers ───────────────────────────────────────────────────
     { label: '── Providers', href: null, divider: true },
     { label: 'Music Services', href: '/settings/music-services' },
     { label: 'Servers', href: '/settings/servers' },
     { label: 'Download Clients', href: '/settings/download-clients' },
-    // ── System Plugins ────────────────────────────────────────────────────
     { label: '── Plugins', href: null, divider: true },
     { label: 'Plugin Store', href: '/settings/plugin-store' },
-    // ── Other ─────────────────────────────────────────────────────────────
     { label: '── Other', href: null, divider: true },
     { label: 'Metadata', href: '/settings/metadata', badge: $metadataQueue.count },
     { label: 'Search', href: '/settings/search' },
     { label: 'Misc', href: '/settings/misc' },
     { label: 'Jobs', href: '/settings/jobs' },
     { label: 'System', href: '/settings/system' }
-  ];
+  ]);
 
   const navLinks = [
     { label: 'Dashboard', href: '/dashboard', icon: '🏠' },
@@ -51,7 +48,6 @@
   const isActive = (href) => $page.url.pathname.startsWith(href);
 
   function toggleSettings() {
-    // toggle only the settings panel state and open preferences; rely on native anchor href for navigation
     settingsOpen = !settingsOpen;
     if (settingsOpen) {
       openSettings('preferences');

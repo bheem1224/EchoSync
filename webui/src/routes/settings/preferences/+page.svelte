@@ -8,16 +8,20 @@
   import LibraryImportSettings from '../../../components/LibraryImportSettings.svelte';
   import { preferences } from '../../../stores/preferences';
 
-  let loadError = '';
-  let storageRef;
-  let libImportRef;
-  // console log level for dropdown (INFO/DEBUG/NOTSET)
-  let logLevel = 'INFO';
+  let loadError = $state('');
+  let storageRef = $state();
+  let libImportRef = $state();
+  
+  // logLevel is managed via $derived or $effect in Svelte 5 to sync with store
+  let logLevel = $state('INFO');
 
-  // when settings are loaded or change, update our local logLevel
-  $: if (userSettings && userSettings.log_level) {
-    logLevel = userSettings.log_level;
-  }
+  // Sync logLevel with userSettings whenever it changes
+  $effect(() => {
+    const level = $settings?.data?.log_level;
+    if (level) {
+      logLevel = level;
+    }
+  });
 
   import { feedback } from '../../../stores/feedback';
 
@@ -60,15 +64,16 @@
     }
   });
 
-  $: providerList = Object.values($providers?.items ?? []);
-  $: userSettings = $settings?.data ?? {};
-  $: devMode = userSettings?.dev_mode === true;
-  $: safeMode = userSettings?.safe_mode === true;
-  $: streamingProviders = providerList.filter((p) => (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE' || p.capabilities?.supports_sync);
-  $: serverProviders = providerList.filter((p) => p.capabilities?.server);
-  $: metadataProviders = providerList.filter((p) => p.capabilities?.metadata);
-  $: searchProviders = providerList.filter((p) => p.capabilities?.search?.tracks);
-  $: miscProviders = providerList.filter((p) => !streamingProviders.includes(p) && !serverProviders.includes(p) && !metadataProviders.includes(p) && !searchProviders.includes(p));
+  const providerList = $derived(Object.values($providers?.items ?? []));
+  const userSettings = $derived($settings?.data ?? {});
+  const devMode = $derived(userSettings?.dev_mode === true);
+  const safeMode = $derived(userSettings?.safe_mode === true);
+  
+  const streamingProviders = $derived(providerList.filter((p) => (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE' || p.capabilities?.supports_sync));
+  const serverProviders = $derived(providerList.filter((p) => p.capabilities?.server));
+  const metadataProviders = $derived(providerList.filter((p) => p.capabilities?.metadata));
+  const searchProviders = $derived(providerList.filter((p) => p.capabilities?.search?.tracks));
+  const miscProviders = $derived(providerList.filter((p) => !streamingProviders.includes(p) && !serverProviders.includes(p) && !metadataProviders.includes(p) && !searchProviders.includes(p)));
 
   function updateSetting(key, value) {
     settings.save({ [key]: value });

@@ -1,22 +1,23 @@
 <script>
-  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import apiClient from '../../api/client';
   
-  export let forcedPrefix = "";
-  export let placeholder = "Search library, settings, or type ? for web search...";
-  export let mode = "inline"; // "inline" or "modal"
+  let { 
+    forcedPrefix = "", 
+    placeholder = "Search library, settings, or type ? for web search...", 
+    mode = "inline",
+    onselect = null
+  } = $props();
 
-  const dispatch = createEventDispatcher();
-
-  export let query = "";
-  let isFocused = false;
-  let isOpen = false; // Only used in modal mode
-  let inputRef;
+  let query = $state("");
+  let isFocused = $state(false);
+  let isOpen = $state(false); // Only used in modal mode
+  let inputRef = $state();
   let searchTimer;
-  let isSearching = false;
+  let isSearching = $state(false);
 
-  let results = {
+  let results = $state({
     settings: [],
     plugins: [],
     external: [],
@@ -25,7 +26,7 @@
       albums: [],
       tracks: []
     }
-  };
+  });
 
   const SETTINGS_ROUTES = [
     { label: "Settings: Preferences", path: "/settings/preferences" },
@@ -50,14 +51,13 @@
     { prefix: "@ ", label: "@", desc: "Search Artists Only" }
   ];
 
-  // Evaluate the query silently injecting the forcedPrefix
-  $: evaluatedQuery = (forcedPrefix + query).trimStart();
-  $: showGuide = (isFocused || (mode === 'modal' && isOpen)) && query === "" && forcedPrefix === "";
-  $: showResults = (isFocused || (mode === 'modal' && isOpen)) && evaluatedQuery.length > 0;
+  const evaluatedQuery = $derived((forcedPrefix + query).trimStart());
+  const showGuide = $derived((isFocused || (mode === 'modal' && isOpen)) && query === "" && forcedPrefix === "");
+  const showResults = $derived((isFocused || (mode === 'modal' && isOpen)) && evaluatedQuery.length > 0);
 
   function applyPrefix(prefix) {
     query = prefix;
-    inputRef.focus();
+    inputRef?.focus();
   }
 
   function handleInput() {
@@ -76,7 +76,7 @@
           route.label.toLowerCase().includes(searchTerm)
         );
       } else {
-        results.settings = SETTINGS_ROUTES; // Show all if just '>'
+        results.settings = SETTINGS_ROUTES;
       }
     } else {
       results.settings = [];
@@ -99,13 +99,11 @@
          return;
       }
 
-      // 1. Settings (Synchronously handled in handleInput)
       if (prefix === '>') {
         results.plugins = [];
         results.external = [];
         clearLibrary();
       }
-      // 2. Plugins
       else if (prefix === '!') {
         if (term.trim()) {
             const res = await apiClient.get(`/plugins/search?q=${encodeURIComponent(term)}`);
@@ -116,7 +114,6 @@
         results.external = [];
         clearLibrary();
       }
-      // 3. External (Discovery / Federated)
       else if (prefix === '?') {
         if (term.trim()) {
             const res = await apiClient.get(`/search/discovery?q=${encodeURIComponent(term)}`);
@@ -128,7 +125,6 @@
         clearLibrary();
         results.settings = [];
       }
-      // 4. Library Only (#)
       else if (prefix === '#') {
         if (term.trim()) {
             const res = await apiClient.get(`/library/search?q=${encodeURIComponent(term)}`);
@@ -142,7 +138,6 @@
         results.external = [];
         results.settings = [];
       }
-      // 5. Artist Only (@)
       else if (prefix === '@') {
         if (term.trim()) {
             const res = await apiClient.get(`/library/search?q=${encodeURIComponent(term)}&types=artists`);
@@ -156,7 +151,6 @@
         results.external = [];
         results.settings = [];
       }
-      // 6. Targeted Key:Value search (e.g. isrc:...)
       else if (term.includes(':')) {
         const [key, ...valueParts] = term.split(':');
         const value = valueParts.join(':').trim();
@@ -182,7 +176,6 @@
         results.plugins = [];
         results.settings = [];
       }
-      // 7. Default (Library + Settings)
       else {
         if (term.trim()) {
             const res = await apiClient.get(`/library/search?q=${encodeURIComponent(term)}`);
@@ -199,7 +192,6 @@
       console.error("Omnibar search error:", err);
     } finally {
       isSearching = false;
-      results = { ...results }; // trigger reactivity
     }
   }
 
@@ -216,15 +208,15 @@
     results.library = { artists: [], albums: [], tracks: [] };
   }
 
-  let activeIndex = -1;
-  $: flattenedResults = [
+  let activeIndex = $state(-1);
+  const flattenedResults = $derived([
     ...results.settings.map(r => ({ ...r, type: 'setting' })),
     ...results.library.artists.map(r => ({ ...r, type: 'artist' })),
     ...results.library.albums.map(r => ({ ...r, type: 'album' })),
     ...results.library.tracks.map(r => ({ ...r, type: 'track' })),
     ...results.plugins.map(r => ({ ...r, type: 'plugin' })),
     ...results.external.map(r => ({ ...r, type: 'external' }))
-  ];
+  ]);
 
   function handleKeydown(e) {
     if (e.key === 'Escape') {
@@ -247,7 +239,7 @@
     }
   }
 
-  $: getFlattenedIndex = (type, index) => {
+  const getFlattenedIndex = (type, index) => {
     let offset = 0;
     const types = ['setting', 'artist', 'album', 'track', 'plugin', 'external'];
     for (const t of types) {
@@ -273,7 +265,7 @@
       goto(`/library?artist_id=${item.artist_id}&highlight_track=${item.id}`);
     }
 
-    dispatch('select', { item, type });
+    if (onselect) onselect({ item, type });
     
     if (mode === 'modal') {
       closeModal();
@@ -300,7 +292,6 @@
   }
 
   function handleGlobalKeydown(e) {
-    // Ctrl+K or / (if not in input)
     const isInput = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName) || document.activeElement.isContentEditable;
     
     if ((e.ctrlKey && e.key === 'k') || (e.key === '/' && !isInput)) {

@@ -4,20 +4,18 @@
   import apiClient from '../../api/client';
   import { player } from '../../stores/player';
   import TrackRow from '$lib/components/TrackRow.svelte';
-  import Omnibar from '$lib/components/Omnibar.svelte';
 
   // Collection Data
-  let libraryIndex = [];
-  let loading = true;
-  let error = '';
+  let libraryIndex = $state([]);
+  let loading = $state(true);
+  let error = $state('');
 
   // UI State
-  let viewMode = 'grid'; // 'grid' | 'detail'
-  let selectedArtist = null;
-  let searchQuery = '';
+  let viewMode = $state('grid'); // 'grid' | 'detail'
+  let selectedArtist = $state(null);
 
   // Pagination / Virtualization for Artists Grid
-  let visibleCount = 50;
+  let visibleCount = $state(50);
   const PAGE_SIZE = 50;
 
   async function loadLibrary() {
@@ -25,7 +23,6 @@
     try {
       const res = await apiClient.get('/library/index');
       libraryIndex = res.data || [];
-      // Initial deep link check handled by reactive statement below
     } catch (err) {
       error = err.message;
     } finally {
@@ -34,9 +31,11 @@
   }
 
   // Reactive deep linking logic
-  $: if (libraryIndex.length > 0 && $page.url.searchParams.has('artist_id')) {
+  $effect(() => {
+    if (libraryIndex.length > 0 && $page.url.searchParams.has('artist_id')) {
       handleDeepLinks();
-  }
+    }
+  });
 
   async function handleDeepLinks() {
       const artistId = $page.url.searchParams.get('artist_id');
@@ -44,7 +43,7 @@
       const highlightAlbumId = $page.url.searchParams.get('highlight_album');
 
       if (artistId) {
-          const artistIndex = libraryIndex.findIndex(a => a.id == artistId);
+          const artistIndex = libraryIndex.findIndex(a => String(a.id) === String(artistId));
           if (artistIndex !== -1) {
               const artist = libraryIndex[artistIndex];
 
@@ -71,17 +70,7 @@
       }
   }
 
-  $: visibleArtists = libraryIndex
-      .filter(a => {
-          if (!searchQuery) return true;
-          const q = searchQuery.toLowerCase();
-          if (a.name.toLowerCase().includes(q)) return true;
-          return a.albums && a.albums.some(album => 
-              (album.title && album.title.toLowerCase().includes(q)) || 
-              (album.tracks && album.tracks.some(track => track.title && track.title.toLowerCase().includes(q)))
-          );
-      })
-      .slice(0, visibleCount);
+  const visibleArtists = $derived(libraryIndex.slice(0, visibleCount));
 
   function loadMore() {
       if (visibleCount < libraryIndex.length) {
@@ -102,8 +91,6 @@
       url.search = '';
       window.history.pushState({}, '', url);
   }
-
-  // --- Actions ---
 
   function playTrack(track, artist, album) {
       player.play({
@@ -139,6 +126,7 @@
       if (album.tracks.length === 0) {
            selectedArtist.albums = selectedArtist.albums.filter(a => a.id !== album.id);
       }
+      // Re-assign to trigger Svelte 5 state update if needed (though mutation in $state is often fine)
       libraryIndex = [...libraryIndex];
       if (selectedArtist) selectedArtist = {...selectedArtist};
   }

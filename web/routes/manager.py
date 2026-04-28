@@ -6,7 +6,7 @@ from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
 from services.metadata_enhancer import get_metadata_enhancer
 from database.music_database import get_database, Track, Artist
-from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState, User
+from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState, User, SuggestionStagingQueue
 from database.config_database import get_config_database
 from core.suggestion_engine.consensus import calculate_consensus
 from core.suggestion_engine.deletion import execute_delete_now, execute_upgrade_now, apply_lifecycle_action
@@ -524,9 +524,9 @@ def force_delete_track(track_id: int):
         # Drop it from the pending queue
         if status == 200:
             work_db = get_working_database()
-            from database.working_database import SuggestionIntent
+            from database.working_database import SuggestionStagingQueue
             with work_db.session_scope() as session:
-                intent = session.query(SuggestionIntent).filter_by(sync_id=sync_id).first()
+                intent = session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).first()
                 if intent:
                     session.delete(intent)
 
@@ -583,9 +583,9 @@ def force_upgrade_track(track_id: int):
 
         # Drop it from the pending queue
         work_db = get_working_database()
-        from database.working_database import SuggestionIntent
+        from database.working_database import SuggestionStagingQueue
         with work_db.session_scope() as session:
-            intent = session.query(SuggestionIntent).filter_by(sync_id=sync_id).first()
+            intent = session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).first()
             if intent:
                 session.delete(intent)
 
@@ -734,21 +734,21 @@ def set_manager_settings():
 @require_auth
 def get_suggestion_queue():
     work_db = get_working_database()
-    from database.working_database import SuggestionIntent
     try:
         with work_db.session_scope() as session:
-            intents = session.query(SuggestionIntent).filter(SuggestionIntent.status == "PENDING_APPROVAL").all()
+            # Use SuggestionStagingQueue (the real table) instead of invented SuggestionIntent
+            items = session.query(SuggestionStagingQueue).filter(SuggestionStagingQueue.status == "pending").all()
             return jsonify({
                 "success": True,
                 "suggestions": [
                     {
-                        "sync_id": intent.sync_id,
-                        "type": intent.type,
-                        "originator": intent.originator,
-                        "title": intent.track_name,
-                        "track_id": intent.track_id,
-                        "action_needed": intent.action_needed
-                    } for intent in intents
+                        "sync_id": item.sync_id,
+                        "type": item.reason,
+                        "originator": (item.context_data or {}).get("originator", "Consensus Engine"),
+                        "title": item.ui_label,
+                        "track_id": item.music_db_track_id,
+                        "action_needed": (item.context_data or {}).get("action_needed", "SUGGESTION")
+                    } for item in items
                 ]
             }), 200
     except Exception as e:
@@ -760,21 +760,27 @@ def get_suggestion_queue():
 def override_suggestion_candidate():
     payload = request.get_json(silent=True) or {}
     sync_id = payload.get("sync_id")
+    # Note: These fields are usually in UserTrackState, but if the UI is overriding the staging queue directly:
     field = payload.get("field")
     value = payload.get("value")
 
-    if not sync_id or field not in ("admin_exempt_deletion", "admin_force_upgrade") or value is None:
+    if not sync_id or value is None:
         return jsonify({"error": "Invalid payload"}), 400
 
     work_db = get_working_database()
-    from database.working_database import SuggestionIntent
     try:
         with work_db.session_scope() as session:
-            intent = session.query(SuggestionIntent).filter_by(sync_id=sync_id).first()
-            if not intent:
-                return jsonify({"error": "Suggestion intent not found"}), 404
+            item = session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).first()
+            if not item:
+                return jsonify({"error": "Suggestion not found"}), 404
 
-            setattr(intent, field, value)
+            # Update context_data if the field is not a direct column
+            if hasattr(item, field):
+                setattr(item, field, value)
+            else:
+                ctx = dict(item.context_data or {})
+                ctx[field] = value
+                item.context_data = ctx
             return jsonify({"success": True}), 200
     except Exception as e:
         logger.error(f"Error overriding suggestion candidate: {e}", exc_info=True)

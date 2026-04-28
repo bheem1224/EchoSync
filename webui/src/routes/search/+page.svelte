@@ -4,63 +4,17 @@
   import apiClient from '../../api/client';
   import Omnibar from '../../lib/components/Omnibar.svelte';
 
-  let query = '';
-  let lastSearchedQuery = '';
-  let selectedProviders = [];
-  let searchTypes = ['tracks'];
-  let results = [];
-  let searching = false;
-  let error = '';
+  let results = $state([]);
+  let searching = $state(false);
+  let error = $state('');
+  let lastSearchedQuery = $state('');
 
-  $: groupedResults = results.reduce((acc, item) => {
+  const groupedResults = $derived(results.reduce((acc, item) => {
     const t = item.type || 'unknown';
     if (!acc[t]) acc[t] = [];
     acc[t].push(item);
     return acc;
-  }, {});
-
-  async function handleSearch() {
-    if (!query.trim()) return;
-
-    searching = true;
-    error = '';
-    results = [];
-    lastSearchedQuery = query.trim();
-
-    try {
-      const params = new URLSearchParams();
-      params.append('q', query);
-      if (selectedProviders.length > 0) {
-        params.append('providers', selectedProviders.join(','));
-      }
-      if (searchTypes.length > 0) {
-        params.append('types', searchTypes.join(','));
-      }
-
-      const response = await apiClient.get(`/search?${params.toString()}`);
-      results = response.data.results || [];
-    } catch (err) {
-      error = `Search failed: ${err.response?.data?.error || err.message}`;
-    } finally {
-      searching = false;
-    }
-  }
-
-  function toggleProvider(id) {
-    if (selectedProviders.includes(id)) {
-      selectedProviders = selectedProviders.filter(i => i !== id);
-    } else {
-      selectedProviders = [...selectedProviders, id];
-    }
-  }
-
-  function toggleType(type) {
-    if (searchTypes.includes(type)) {
-      searchTypes = searchTypes.filter(t => t !== type);
-    } else {
-      searchTypes = [...searchTypes, type];
-    }
-  }
+  }, {}));
 
   async function handleAction(item, action) {
     try {
@@ -94,62 +48,8 @@
   </header>
 
   <div class="search-layout">
-    <!-- Sidebar Filters -->
-    <aside class="search-filters">
-      <div class="card">
-        <h3>Search Types</h3>
-        <div class="filter-group">
-          {#each ['tracks', 'albums', 'artists', 'playlists'] as type}
-            <div class="filter-item flex items-center justify-between gap-3">
-              <span class="capitalize">{type}</span>
-              <label class="switch">
-                <input type="checkbox"
-                       checked={searchTypes.includes(type)}
-                       on:change={() => toggleType(type)} />
-                <span class="slider"></span>
-              </label>
-            </div>
-          {/each}
-        </div>
-
-        <div class="divider"></div>
-
-        <h3>Providers</h3>
-        <div class="filter-group">
-          {#each $searchProviders as p}
-            <div class="filter-item flex items-center justify-between gap-3">
-              <span>{p.name}</span>
-              <label class="switch">
-                <input type="checkbox"
-                       checked={selectedProviders.includes(p.id)}
-                       on:change={() => toggleProvider(p.id)} />
-                <span class="slider"></span>
-              </label>
-            </div>
-          {/each}
-          {#if $searchProviders.length === 0}
-            <p class="muted small">No search providers available.</p>
-          {/if}
-        </div>
-      </div>
-    </aside>
-
     <!-- Main Search Area -->
     <main class="search-main">
-      <div class="mb-6 relative z-50">
-        <Omnibar 
-            placeholder="Search all services, library, or type ? for web..." 
-            on:select={(e) => {
-              const { item, type } = e.detail;
-              if (type === 'external' || type === 'track') {
-                results = [item, ...results];
-              } else if (type === 'download') {
-                handleAction(item, 'download');
-              }
-            }}
-        />
-      </div>
-
       {#if error}
         <div class="error-card">
           <p>{error}</p>
@@ -221,91 +121,14 @@
   }
 
   .search-layout {
-    display: grid;
-    grid-template-columns: 240px 1fr;
-    gap: 24px;
-    align-items: start;
+    display: block; /* Removed grid since sidebar is gone */
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
   }
 
-  @media (max-width: 900px) {
-    .search-layout {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .search-filters .card {
-    padding: 20px;
-    background: var(--glass);
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--glass-border);
-    border-radius: 14px;
-    position: sticky;
-    top: 20px;
-  }
-
-  .search-filters h3 {
-    font-size: 14px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #94a3b8;
-    margin: 0 0 16px;
-  }
-
-  .filter-group {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .filter-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 14px;
-    cursor: pointer;
-    color: #e2e8f0;
-  }
-
-  .divider {
-    height: 1px;
-    background: rgba(255, 255, 255, 0.05);
-    margin: 20px 0;
-  }
-
-  .search-bar {
-    display: flex;
-    gap: 12px;
-    padding: 12px;
-    margin-bottom: 24px;
-    background: var(--glass);
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--glass-border);
-    border-radius: 14px;
-  }
-
-  .search-bar input {
-    flex: 1;
-    background: transparent;
-    border: none;
-    color: #fff;
-    font-size: 16px;
-    padding: 8px 12px;
-    outline: none;
-  }
-
-  .btn--primary {
-    background: var(--accent);
-    color: #000;
-    padding: 8px 24px;
-    border-radius: 8px;
-    font-weight: 700;
-    border: none;
-    cursor: pointer;
-  }
-
-  .btn--primary:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
+  .search-main {
+    width: 100%;
   }
 
   .results-list {
@@ -356,16 +179,6 @@
     align-items: center;
     gap: 10px;
     margin-bottom: 4px;
-  }
-
-  .result-type-tag {
-    font-size: 9px;
-    text-transform: uppercase;
-    font-weight: 800;
-    padding: 2px 6px;
-    border-radius: 4px;
-    background: rgba(255, 255, 255, 0.1);
-    color: #94a3b8;
   }
 
   .confidence-bar {
@@ -436,18 +249,10 @@
     margin-bottom: 16px;
   }
 
-  .spinner--small {
-    width: 18px;
-    height: 18px;
-    border-width: 2px;
-    margin-bottom: 0;
-  }
-
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
   .capitalize { text-transform: capitalize; }
   .muted { color: #94a3b8; }
-  .small { font-size: 12px; }
 </style>

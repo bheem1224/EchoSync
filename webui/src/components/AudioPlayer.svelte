@@ -11,11 +11,8 @@
   import { player } from '../stores/player';
 
   // ── Scrub / seek interaction ───────────────────────────────────────────────
-  // While the user is dragging the seek thumb, we freeze the displayed time at
-  // the drag position so timeupdate events don't fight the thumb back to the
-  // real playback position.
-  let scrubbing = false;
-  let scrubTime = 0;
+  let scrubbing = $state(false);
+  let scrubTime = $state(0);
 
   function onScrubStart(e) {
     scrubbing = true;
@@ -41,7 +38,7 @@
 
   // The seek thumb value: frozen to scrub position while dragging, otherwise
   // follows the live store position.
-  $: sliderTime = scrubbing ? scrubTime : $player.currentTime;
+  const sliderTime = $derived(scrubbing ? scrubTime : $player.currentTime);
 </script>
 
 {#if $player.showPlayer && $player.currentTrack}

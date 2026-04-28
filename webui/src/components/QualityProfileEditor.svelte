@@ -1,55 +1,38 @@
-<svelte:options customElement={{
-  tag: 'echosync-quality-profile-editor',
-  shadow: 'none'
-}} />
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
+  import { providers } from '../stores/providers';
 
-  export let profile: any = null;
-
+  const { profile = null } = $props();
   const dispatch = createEventDispatcher();
 
-  // Local editable copy
-  let p: any = {
+  // Local editable copy as state
+  let p = $state({
     id: '',
     name: '',
     formats: [],
-
-
     tie_breaker: 'MAX_QUALITY',
     metadataRequired: false
-  };
-  let selectedFormat: string = '';
+  });
+  let selectedFormat = $state('');
+  let dragIndex = $state(null);
 
   const AVAILABLE_FORMATS = [
     'MP3','FLAC','OGG','AAC','ALAC','APE','WAV','DSD'
   ];
 
-  // providers awareness (show advanced options only when supported by installed providers)
-  import { providers } from '../stores/providers';
-  let providerList: any[] = [];
-  let hasMetadataProvider = false;
-  let hasMatchingProvider = false;
-  const unsubProviders = providers.subscribe((v) => {
-    providerList = Object.values(v?.items ?? {});
-    // Check for high-quality metadata providers (Spotify, Tidal, etc)
-    hasMetadataProvider = providerList.some((p) => p.capabilities?.metadata_richness === 'HIGH' || p.capabilities?.metadata_richness === 'MEDIUM');
-    // Check for matching capability (implies we have good metadata to match against duration)
-    // Check both 'search' and 'search_capabilities' for robustness
-    hasMatchingProvider = providerList.some((p) =>
-      p.capabilities?.metadata_richness === 'HIGH' ||
-      p.capabilities?.search?.tracks ||
-      p.capabilities?.search_capabilities?.tracks
-    );
-  });
+  // Derived state from providers store
+  const providerList = $derived(Object.values($providers?.items ?? {}));
+  const hasMetadataProvider = $derived(providerList.some((p) => p.capabilities?.metadata_richness === 'HIGH' || p.capabilities?.metadata_richness === 'MEDIUM'));
+  const hasMatchingProvider = $derived(providerList.some((p) =>
+    p.capabilities?.metadata_richness === 'HIGH' ||
+    p.capabilities?.search?.tracks ||
+    p.capabilities?.search_capabilities?.tracks
+  ));
+  const hasDownloaderWithSearch = $derived(providerList.some(p => p.capabilities?.search?.tracks));
 
   onMount(() => {
     if (profile) {
-      // shallow clone
       p = JSON.parse(JSON.stringify(profile));
-
-      // Initialize new fields if missing
-
       if (p.tie_breaker === undefined) p.tie_breaker = 'MAX_QUALITY';
     }
   });
@@ -67,21 +50,17 @@
       bit_depths: [],
       sample_rates: []
     };
-    p.formats.push(card);
-    // reset selection (if select is bound)
+    p.formats = [...p.formats, card];
     selectedFormat = '';
-    // ensure Svelte reactivity picks up change
-    p = { ...p, formats: [...p.formats] };
   }
 
   function removeFormat(idx:number) {
-    p.formats.splice(idx,1);
-    // reassign for reactivity
-    p = { ...p, formats: [...p.formats] };
+    const list = [...p.formats];
+    list.splice(idx, 1);
+    p.formats = list;
   }
 
   // Drag and drop handlers
-  let dragIndex: number | null = null;
   function handleDragStart(e: DragEvent, idx: number) {
     dragIndex = idx;
     e.dataTransfer!.effectAllowed = 'move';
@@ -98,7 +77,6 @@
   }
 
   function toggleArray(arr: any[], val:any) {
-    // operate immutably so Svelte picks up nested changes
     const copy = Array.isArray(arr) ? [...arr] : [];
     const i = copy.indexOf(val);
     if (i === -1) copy.push(val);
@@ -107,10 +85,10 @@
   }
 
   function toggleFormatField(fmtObj: any, field: string, val: any) {
-    const updated = toggleArray(fmtObj[field] || [], val);
-    fmtObj[field] = updated;
-    // force parent-level reassign so Svelte recognizes the change
-    p = { ...p, formats: [...(p.formats || [])] };
+    fmtObj[field] = toggleArray(fmtObj[field] || [], val);
+    // Svelte 5 state is deep by default if initialized correctly, 
+    // but re-triggering array updates ensures UI refresh.
+    p.formats = [...p.formats];
   }
 
   function applyPriority(fmtObj: any, e: Event) {
@@ -119,20 +97,15 @@
     if (isNaN(v) || v < 1) v = 1;
     fmtObj.priority = v;
 
-    // Reorder formats by priority and then normalize to sequential priorities
-    const list = Array.isArray(p.formats) ? [...p.formats] : [];
-    // ensure the object reference in list matches fmtObj (we modified in place)
+    const list = [...p.formats];
     list.sort((a, b) => (Number(a.priority) || 0) - (Number(b.priority) || 0));
     for (let i = 0; i < list.length; i++) {
       list[i].priority = i + 1;
     }
     p.formats = list;
-    // force reassign
-    p = { ...p, formats: [...p.formats] };
   }
 
   function save() {
-    // basic validation
     if (!p.name || p.name.trim().length === 0) {
       alert('Profile must have a name');
       return;
@@ -141,11 +114,6 @@
   }
 
   function cancel() { dispatch('cancel'); }
-
-  import { onDestroy } from 'svelte';
-  onDestroy(() => {
-    try { unsubProviders && typeof unsubProviders === 'function' && unsubProviders(); } catch (e) {}
-  });
 </script>
 
 <div class="flex flex-col gap-4">

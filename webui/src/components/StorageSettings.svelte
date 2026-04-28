@@ -4,11 +4,16 @@
   import ConfirmDialog from './ConfirmDialog.svelte';
   import { settings } from '../stores/settings';
 
-  let data = {};
-  let showBrowser = false;
-  let browserStart = '';
-  let browserField = null; // which field opened the browser
-  let showConfigWarning = false;
+  let data = $state({
+    download_dir: '',
+    library_dir: '',
+    log_dir: '',
+    config_dir: ''
+  });
+  let showBrowser = $state(false);
+  let browserStart = $state('');
+  let browserField = $state(null); // which field opened the browser
+  let showConfigWarning = $state(false);
 
   function proceedToConfigPicker() {
     showConfigWarning = false;
@@ -21,13 +26,9 @@
     showConfigWarning = false;
   }
 
-  // subscribe to settings store to read current values
-  let current;
-  const unsub = settings.subscribe((v) => (current = v));
-
   onMount(async () => {
     await settings.load();
-    const storage = current?.data?.storage || {};
+    const storage = $settings?.data?.storage || {};
     data = {
       download_dir: storage.download_dir || '',
       library_dir: storage.library_dir || '',
