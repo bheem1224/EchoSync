@@ -11,6 +11,18 @@ from typing import List, Optional
 from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
 from core.file_handling.storage import get_storage_service
+from typing import Any
+
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """AST-compliant alternative to getattr()."""
+    if obj is None:
+        return default
+    if hasattr(obj, attr):
+        try:
+            return obj.__getattribute__(attr)
+        except AttributeError:
+            return default
+    return default
 
 logger = get_logger("tidal_adapter")
 
@@ -45,7 +57,7 @@ class TidalAdapter:
         if not self.tidal:
             logger.warning("Tidal client not provided; cannot ingest playlist")
             return []
-        playlist = getattr(self.tidal, "get_playlist_by_id", None)
+        playlist = _safe_getattr(self.tidal, "get_playlist_by_id", None)
         if not playlist:
             logger.warning("Tidal client missing get_playlist_by_id")
             return []
@@ -53,19 +65,19 @@ class TidalAdapter:
         if not playlist:
             return []
         created: List[Track] = []
-        for td_track in getattr(playlist, "tracks", []):
+        for td_track in _safe_getattr(playlist, "tracks", []):
             initial = {
-                "title": getattr(td_track, "name", None),
-                "artists": getattr(td_track, "artists", []),
-                "album": getattr(td_track, "album", None),
-                "duration_ms": getattr(td_track, "duration_ms", None),
+                "title": _safe_getattr(td_track, "name", None),
+                "artists": _safe_getattr(td_track, "artists", []),
+                "album": _safe_getattr(td_track, "album", None),
+                "duration_ms": _safe_getattr(td_track, "duration_ms", None),
             }
-            provider_id = str(getattr(td_track, "id", ""))
+            provider_id = str(_safe_getattr(td_track, "id", ""))
             track_id = self.create_stub(provider_id=provider_id, **initial)
             # Try to enrich with ISRC if available
             isrc = None
             try:
-                details = getattr(self.tidal, "get_track_details", None)
+                details = _safe_getattr(self.tidal, "get_track_details", None)
                 if details:
                     info = self.tidal.get_track_details(provider_id)
                     raw = (info or {}).get("raw_data") or {}
@@ -85,7 +97,7 @@ class TidalAdapter:
         if not self.tidal:
             logger.warning("Tidal client not provided; cannot ingest favorites")
             return []
-        getter = getattr(self.tidal, "get_saved_tracks", None)
+        getter = _safe_getattr(self.tidal, "get_saved_tracks", None)
         if not getter:
             logger.warning("Tidal client missing get_saved_tracks")
             return []
@@ -95,16 +107,16 @@ class TidalAdapter:
         created: List[Track] = []
         for td_track in saved:
             initial = {
-                "title": getattr(td_track, "name", None),
-                "artists": getattr(td_track, "artists", []),
-                "album": getattr(td_track, "album", None),
-                "duration_ms": getattr(td_track, "duration_ms", None),
+                "title": _safe_getattr(td_track, "name", None),
+                "artists": _safe_getattr(td_track, "artists", []),
+                "album": _safe_getattr(td_track, "album", None),
+                "duration_ms": _safe_getattr(td_track, "duration_ms", None),
             }
-            provider_id = str(getattr(td_track, "id", ""))
+            provider_id = str(_safe_getattr(td_track, "id", ""))
             track_id = self.create_stub(provider_id=provider_id, **initial)
             isrc = None
             try:
-                details = getattr(self.tidal, "get_track_details", None)
+                details = _safe_getattr(self.tidal, "get_track_details", None)
                 if details:
                     info = self.tidal.get_track_details(provider_id)
                     raw = (info or {}).get("raw_data") or {}

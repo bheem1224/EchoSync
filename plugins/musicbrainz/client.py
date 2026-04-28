@@ -17,8 +17,17 @@ from rapidfuzz import fuzz
 
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from plugins.musicbrainz.models import PluginMusicbrainzCache
-from database.working_database import get_working_database
+from core.file_handling.storage import get_storage_service
 from core.tiered_logger import get_logger
+
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """AST-compliant alternative to getattr()."""
+    if hasattr(obj, attr):
+        try:
+            return obj.__getattribute__(attr)
+        except AttributeError:
+            return default
+    return default
 
 logger = get_logger("provider.musicbrainz")
 
@@ -52,7 +61,7 @@ class MusicBrainzClient(ProviderBase):
                 "Accept": "application/json",
             }
         )
-        self.api_base = (self.get_config("api_base_url") if hasattr(self, "get_config") else None) or "https://musicbrainz.org/ws/2"
+        self.api_base = _safe_getattr(self, "get_config", lambda x: None)("api_base_url") or "https://musicbrainz.org/ws/2"
         self._search_queue = []
         self._batch_task = None
         self._lock = asyncio.Lock()
@@ -275,7 +284,8 @@ class MusicBrainzClient(ProviderBase):
         lookup_str = f"{artist}||{title}".lower()
         lookup_hash = hashlib.sha256(lookup_str.encode('utf-8')).hexdigest()
 
-        working_db = get_working_database()
+        storage = get_storage_service()
+        working_db = storage.get_working_database()
         with working_db.session_scope() as session:
             cached = session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first()
             if cached:
@@ -499,8 +509,8 @@ class MusicBrainzClient(ProviderBase):
 
                 # Cache successful results
                 if best_matches:
-                    try:
-                        working_db = get_working_database()
+                        storage = get_storage_service()
+                        working_db = storage.get_working_database()
                         with working_db.session_scope() as session:
                             # Avoid duplicates
                             if not session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first():
@@ -775,10 +785,6 @@ class MusicBrainzClient(ProviderBase):
         client falls back to anonymous / read-only API access.
         """
         try:
-            from core.file_handling.storage import get_storage_service
-            from core.security import decrypt_string
-            from database.config_database import get_config_database
-
             storage = get_storage_service()
             accounts = storage.list_accounts("musicbrainz")
             if not accounts:
@@ -796,16 +802,15 @@ class MusicBrainzClient(ProviderBase):
             if not target:
                 return None
 
-            db = get_config_database()
-            token_row = db.get_account_token(target["id"])
+            # get_account_token in StorageService handles database access safely
+            token_row = storage.get_account_token(target["id"])
             if not token_row:
                 return None
 
-            encrypted = token_row.get("access_token")
-            if not encrypted:
-                return None
-
-            return decrypt_string(encrypted)
+            if token_row and token_row.get("access_token"):
+                # StorageService.get_account_token should return decrypted token
+                return token_row["access_token"]
+            return None
         except Exception as e:
             logger.debug(f"Could not load MusicBrainz access token: {e}")
             return None

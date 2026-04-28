@@ -6,10 +6,12 @@
   import BottomNav from '../components/BottomNav.svelte';
   import ToastNotifications from '../lib/components/ToastNotifications.svelte';
   import Omnibar from '../lib/components/Omnibar.svelte';
+  import RestartBanner from '../components/RestartBanner.svelte';
   import BottomPlayer from '../components/BottomPlayer.svelte';
   import EncryptionKeyWarning from '../components/EncryptionKeyWarning.svelte';
   import MigrationModal from '../components/MigrationModal.svelte';
   import { providers } from '../stores/providers';
+  import { systemStatus } from '../stores/systemStatus';
   import apiClient from '../api/client';
   import '../app.css';
 
@@ -21,6 +23,7 @@
 
   onMount(async () => {
     providers.load();
+    systemStatus.startPolling(5000); // Poll every 5 seconds
     
     // Check for encryption key auto-generation warning
     try {
@@ -43,6 +46,10 @@
     } catch (error) {
       console.error('Failed to check migration status:', error);
     }
+
+    return () => {
+      systemStatus.stopPolling();
+    };
   });
 
   function dismissEncryptionWarning() {
@@ -57,6 +64,7 @@
 <svelte:window bind:innerWidth />
 
 <div class="h-screen w-full flex flex-col overflow-hidden bg-transparent text-white">
+  <RestartBanner />
   <div class="flex-1 flex overflow-hidden min-h-0">
     {#if innerWidth >= 768}
       <Sidebar />

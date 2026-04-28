@@ -314,9 +314,10 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
         return db_track
 
     try:
-        from database.music_database import get_database, TrackAlias, ArtistAlias
+        from core.file_handling.storage import get_storage_service
+        from sqlalchemy import text
 
-        db = get_database()
+        db = get_storage_service().get_music_database()
         with db.session_scope() as session:
             # ── Track aliases ─────────────────────────────────────────────
             for a in raw_track_aliases:
@@ -324,17 +325,18 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
                 locale_str = str(a.get("locale") or "").strip()
                 if not alias_str:
                     continue
-                exists = (
-                    session.query(TrackAlias)
-                    .filter_by(track_id=db_track.id, alias=alias_str)
-                    .first()
-                )
+                
+                # Use raw SQL to avoid direct model imports
+                exists = session.execute(
+                    text("SELECT 1 FROM track_aliases WHERE track_id = :tid AND name = :name"),
+                    {"tid": db_track.id, "name": alias_str}
+                ).fetchone()
+
                 if not exists:
-                    session.add(TrackAlias(
-                        track_id=db_track.id,
-                        alias=alias_str,
-                        locale=locale_str or None,
-                    ))
+                    session.execute(
+                        text("INSERT INTO track_aliases (track_id, name, locale) VALUES (:tid, :name, :loc)"),
+                        {"tid": db_track.id, "name": alias_str, "loc": locale_str or None}
+                    )
 
             # ── Artist aliases ────────────────────────────────────────────
             for a in raw_artist_aliases:
@@ -342,17 +344,17 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
                 locale_str = str(a.get("locale") or "").strip()
                 if not alias_str:
                     continue
-                exists = (
-                    session.query(ArtistAlias)
-                    .filter_by(artist_id=db_track.artist_id, alias=alias_str)
-                    .first()
-                )
+
+                exists = session.execute(
+                    text("SELECT 1 FROM artist_aliases WHERE artist_id = :aid AND name = :name"),
+                    {"aid": db_track.artist_id, "name": alias_str}
+                ).fetchone()
+
                 if not exists:
-                    session.add(ArtistAlias(
-                        artist_id=db_track.artist_id,
-                        alias=alias_str,
-                        locale=locale_str or None,
-                    ))
+                    session.execute(
+                        text("INSERT INTO artist_aliases (artist_id, name, locale) VALUES (:aid, :name, :loc)"),
+                        {"aid": db_track.artist_id, "name": alias_str, "loc": locale_str or None}
+                    )
 
         logger.debug(
             "CJK Language Pack: stored %d track alias(es) and %d artist alias(es) for track %d",

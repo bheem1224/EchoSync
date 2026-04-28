@@ -9,8 +9,8 @@ from datetime import datetime
 from core.tiered_logger import get_logger
 from core.provider_base import ProviderBase
 from core.job_queue import register_job
-from database.music_database import get_database
-from sdk.http_client import HttpClient, RetryConfig, RateLimitConfig
+from core.file_handling.storage import get_storage_service
+from core.request_manager import RequestManager, RateLimitConfig, RetryConfig
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = get_logger("listenbrainz_metadata_provider")
@@ -48,7 +48,7 @@ class ListenBrainzMetadataProvider(ProviderBase):
         self.client = ListenBrainzClient()
         
         # Initialize HTTP client for cover art fetching
-        self._http = HttpClient(
+        self._http = RequestManager(
             'listenbrainz_cover',
             retry=RetryConfig(max_retries=2),
             rate=RateLimitConfig(requests_per_second=5.0)
@@ -129,7 +129,7 @@ class ListenBrainzMetadataProvider(ProviderBase):
             return {"success": False, "error": "Not authenticated"}
         
         logger.info("🔄 Syncing ListenBrainz playlists...")
-        db = get_database()
+        db = get_storage_service().get_music_database()
         
         summary = {
             "created_for": {"updated": 0, "skipped": 0, "new": 0},
@@ -343,7 +343,7 @@ class ListenBrainzMetadataProvider(ProviderBase):
     def get_cached_playlists(self, playlist_type: str) -> List[Dict]:
         """Get cached playlists of a specific type"""
         try:
-            db = get_database()
+            db = get_storage_service().get_music_database()
             cursor = db.conn.cursor()
             
             cursor.execute("""
@@ -374,7 +374,7 @@ class ListenBrainzMetadataProvider(ProviderBase):
     def has_cached_playlists(self) -> bool:
         """Check if there are cached playlists"""
         try:
-            db = get_database()
+            db = get_storage_service().get_music_database()
             cursor = db.conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM listenbrainz_playlists")
             count = cursor.fetchone()[0]
@@ -386,7 +386,7 @@ class ListenBrainzMetadataProvider(ProviderBase):
     def get_cached_tracks(self, playlist_mbid: str) -> List[Dict]:
         """Get cached tracks for a playlist"""
         try:
-            db = get_database()
+            db = get_storage_service().get_music_database()
             cursor = db.conn.cursor()
             
             # Get playlist ID

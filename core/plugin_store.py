@@ -318,6 +318,22 @@ class PluginStore:
                     # If this happens, we might be downloading a full repo zip by mistake
                     return False
 
+                # Task 4: Inject Verified Source Block if from Official Repo
+                # This allows official plugins to bypass the AST scanner safely.
+                if plugin_info.get("_source_repo") == self.default_repo:
+                    try:
+                        with open(manifest_file, "r") as f:
+                            manifest_data = json.load(f)
+                        
+                        manifest_data["verified_source"] = "official"
+                        manifest_data["author"] = "EchoSync"
+                        
+                        with open(manifest_file, "w") as f:
+                            json.dump(manifest_data, f, indent=2)
+                        logger.info(f"Injected verified_source block for {plugin_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to inject verified_source for {plugin_id}: {e}")
+
                 # Task 3: Atomic Swap
                 dest_dir = self.plugins_dir / folder_id
                 if dest_dir.exists():

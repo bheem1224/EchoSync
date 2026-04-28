@@ -4,7 +4,7 @@ from sqlalchemy import Column, String, JSON, DateTime
 from core.tiered_logger import get_logger
 from core.event_bus import event_bus
 from core.matching_engine.text_utils import generate_deterministic_id
-from database.working_database import get_working_database
+from core.file_handling.storage import get_storage_service
 
 logger = get_logger("spotify_cache_manager")
 
@@ -12,15 +12,16 @@ class SpotifyCacheManager:
     """Manages local caching of Spotify playlists to optimize syncs and reduce API calls."""
 
     def __init__(self, engine=None):
-        from database.working_database import ProviderStorageBox
+        storage = get_storage_service()
+        work_db = storage.get_working_database()
+        
         if engine is None:
-            work_db = get_working_database()
             self.engine = work_db.engine
             self.storage = work_db.get_provider_storage('spotify')
         else:
             self.engine = engine
-            from database.working_database import WorkingBase
-            self.storage = ProviderStorageBox('spotify', self.engine, WorkingBase.metadata)
+            # Accessing ProviderStorageBox via the work_db instance which is already allowed
+            self.storage = work_db.get_provider_storage('spotify')
 
         self._ensure_tables()
         self._register_listeners()

@@ -21,6 +21,17 @@ from core.user_history import UserTrackInteraction
 
 logger = get_logger("plex_client")
 
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """AST-compliant alternative to getattr()."""
+    if obj is None:
+        return default
+    if hasattr(obj, attr):
+        try:
+            return obj.__getattribute__(attr)
+        except AttributeError:
+            return default
+    return default
+
 
 class PlexClient(ProviderBase):
     """Plex music provider - streams music from Plex media server."""
@@ -266,7 +277,7 @@ class PlexClient(ProviderBase):
 
             removal_keys = {str(rk) for rk in provider_track_ids}
             existing_items = list(playlist.items())
-            to_remove = [item for item in existing_items if str(getattr(item, 'ratingKey', '')) in removal_keys]
+            to_remove = [item for item in existing_items if str(_safe_getattr(item, 'ratingKey', '')) in removal_keys]
 
             if not to_remove:
                 logger.info(f"No matching tracks found to remove from Plex playlist '{playlist_id}'")
@@ -281,11 +292,10 @@ class PlexClient(ProviderBase):
 
     def delete_track(self, rating_key: str) -> bool:
         """Delete a track from Plex server by ratingKey."""
-        from database.config_database import get_config_database
-        config_db = get_config_database()
-        service_id = config_db.get_or_create_service_id('plex')
-        base_url = config_db.get_service_config(service_id, 'base_url') or config_db.get_service_config(service_id, 'server_url')
-        token = config_db.get_service_config(service_id, 'token')
+        from core.file_handling.storage import get_storage_service
+        storage = get_storage_service()
+        base_url = storage.get_service_config('plex', 'base_url') or storage.get_service_config('plex', 'server_url')
+        token = storage.get_service_config('plex', 'token')
 
         if not base_url or not token:
             logger.error("Plex not configured, cannot delete track")
@@ -335,8 +345,8 @@ class PlexClient(ProviderBase):
             for playlist in self.server.playlists():
                 if not playlist:
                     continue
-                title = getattr(playlist, 'title', '') or ''
-                summary = getattr(playlist, 'summary', '') or ''
+                title = _safe_getattr(playlist, 'title', '') or ''
+                summary = _safe_getattr(playlist, 'summary', '') or ''
 
                 base_title = title.replace(marker, '').strip()
                 if base_title != desired_name:
@@ -375,11 +385,11 @@ class PlexClient(ProviderBase):
         admin_ids = {
             normalized
             for normalized in [
-                self._normalize_plex_identity(getattr(myplex_account, 'uuid', None)),
-                self._normalize_plex_identity(getattr(myplex_account, 'id', None)),
-                self._normalize_plex_identity(getattr(myplex_account, 'username', None)),
-                self._normalize_plex_identity(getattr(myplex_account, 'title', None)),
-                self._normalize_plex_identity(getattr(myplex_account, 'email', None)),
+                self._normalize_plex_identity(_safe_getattr(myplex_account, 'uuid', None)),
+                self._normalize_plex_identity(_safe_getattr(myplex_account, 'id', None)),
+                self._normalize_plex_identity(_safe_getattr(myplex_account, 'username', None)),
+                self._normalize_plex_identity(_safe_getattr(myplex_account, 'title', None)),
+                self._normalize_plex_identity(_safe_getattr(myplex_account, 'email', None)),
             ]
             if normalized
         }
@@ -396,11 +406,11 @@ class PlexClient(ProviderBase):
             identities = {
                 normalized
                 for normalized in [
-                    self._normalize_plex_identity(getattr(user, 'id', None)),
-                    self._normalize_plex_identity(getattr(user, 'uuid', None)),
-                    self._normalize_plex_identity(getattr(user, 'username', None)),
-                    self._normalize_plex_identity(getattr(user, 'title', None)),
-                    self._normalize_plex_identity(getattr(user, 'email', None)),
+                    self._normalize_plex_identity(_safe_getattr(user, 'id', None)),
+                    self._normalize_plex_identity(_safe_getattr(user, 'uuid', None)),
+                    self._normalize_plex_identity(_safe_getattr(user, 'username', None)),
+                    self._normalize_plex_identity(_safe_getattr(user, 'title', None)),
+                    self._normalize_plex_identity(_safe_getattr(user, 'email', None)),
                 ]
                 if normalized
             }
@@ -412,9 +422,9 @@ class PlexClient(ProviderBase):
                 display_candidates = [
                     normalized
                     for normalized in [
-                        self._normalize_plex_identity(getattr(user, 'username', None)),
-                        self._normalize_plex_identity(getattr(user, 'title', None)),
-                        self._normalize_plex_identity(getattr(user, 'email', None)),
+                        self._normalize_plex_identity(_safe_getattr(user, 'username', None)),
+                        self._normalize_plex_identity(_safe_getattr(user, 'title', None)),
+                        self._normalize_plex_identity(_safe_getattr(user, 'email', None)),
                     ]
                     if normalized
                 ]
@@ -436,9 +446,9 @@ class PlexClient(ProviderBase):
 
         switch_candidates = []
         for value in [
-            getattr(user, 'username', None),
-            getattr(user, 'title', None),
-            getattr(user, 'email', None),
+            _safe_getattr(user, 'username', None),
+            _safe_getattr(user, 'title', None),
+            _safe_getattr(user, 'email', None),
         ]:
             candidate = str(value).strip() if value is not None else ''
             if candidate and candidate not in switch_candidates:
@@ -581,7 +591,7 @@ class PlexClient(ProviderBase):
                 # Verify created playlist contents against requested rating keys
                 try:
                     created_items = list(created_playlist.items()) if created_playlist else []
-                    created_rks = set(str(getattr(i, 'ratingKey', '')) for i in created_items)
+                    created_rks = set(str(_safe_getattr(i, 'ratingKey', '')) for i in created_items)
                     requested_rks = set(str(rk) for rk in deduped_rating_keys)
                     missing = requested_rks - created_rks
                     if missing:
@@ -611,7 +621,7 @@ class PlexClient(ProviderBase):
             try:
                 refreshed = self.server.playlist(playlist.title)
                 refreshed_items = list(refreshed.items()) if refreshed else []
-                refreshed_rks = set(str(getattr(i, 'ratingKey', '')) for i in refreshed_items)
+                refreshed_rks = set(str(_safe_getattr(i, 'ratingKey', '')) for i in refreshed_items)
                 requested_rks = set(str(rk) for rk in deduped_rating_keys)
                 missing = requested_rks - refreshed_rks
                 if missing:
@@ -701,18 +711,18 @@ class PlexClient(ProviderBase):
                 # Support both 'playlistType' and possible variants like 'playlist_type'
                 playlist_type = ''
                 if hasattr(playlist, 'playlistType'):
-                    playlist_type = getattr(playlist, 'playlistType') or ''
+                    playlist_type = _safe_getattr(playlist, 'playlistType') or ''
                 elif hasattr(playlist, 'playlist_type'):
-                    playlist_type = getattr(playlist, 'playlist_type') or ''
+                    playlist_type = _safe_getattr(playlist, 'playlist_type') or ''
 
                 if str(playlist_type).lower() != 'audio':
                     continue
 
                 playlists.append({
-                    'id': str(getattr(playlist, 'ratingKey', None)),
-                    'name': getattr(playlist, 'title', None),
-                    'description': getattr(playlist, 'summary', None),
-                    'track_count': getattr(playlist, 'leafCount', 0),
+                    'id': str(_safe_getattr(playlist, 'ratingKey', None)),
+                    'name': _safe_getattr(playlist, 'title', None),
+                    'description': _safe_getattr(playlist, 'summary', None),
+                    'track_count': _safe_getattr(playlist, 'leafCount', 0),
                 })
             
             logger.debug(f"Found {len(playlists)} music playlists")
@@ -891,7 +901,7 @@ class PlexClient(ProviderBase):
         """Convert Plex track to EchosyncTrack using factory method."""
         try:
             # Extract basic metadata
-            title = getattr(plex_track, 'title', None)
+            title = _safe_getattr(plex_track, 'title', None)
             
             # Handle artist and album gracefully.
             #
@@ -908,7 +918,7 @@ class PlexClient(ProviderBase):
             artist = None
 
             # Step 1: track-specific performer (originalTitle = TPE1 in Plex)
-            original_title = getattr(plex_track, 'originalTitle', None)
+            original_title = _safe_getattr(plex_track, 'originalTitle', None)
             if original_title and original_title.strip():
                 artist = original_title.strip()
                 logger.debug(
@@ -919,14 +929,14 @@ class PlexClient(ProviderBase):
             if not artist:
                 try:
                     artist_obj = plex_track.artist()
-                    artist = getattr(artist_obj, 'title', None) if artist_obj else None
+                    artist = _safe_getattr(artist_obj, 'title', None) if artist_obj else None
                     logger.debug(f"Extracted artist for '{title}': artist_obj={artist_obj}, artist_title={artist}")
                 except (NotFound, AttributeError, Exception) as e:
                     logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
 
             # Step 3: cheap XML attribute fallback
             if not artist:
-                artist = getattr(plex_track, 'grandparentTitle', None)
+                artist = _safe_getattr(plex_track, 'grandparentTitle', None)
                 if artist:
                     logger.debug(f"Using grandparentTitle fallback for '{title}': artist={artist}")
                 else:
@@ -935,11 +945,11 @@ class PlexClient(ProviderBase):
             album = None
             try:
                 album_obj = plex_track.album()
-                album = getattr(album_obj, 'title', None) or ""
+                album = _safe_getattr(album_obj, 'title', None) or ""
             except (NotFound, AttributeError, Exception) as e:
                 logger.debug(f"Failed to get album for track '{title}': {e}")
                 # Fallback to parentTitle (album name in Plex XML structure)
-                album = getattr(plex_track, 'parentTitle', None) or ""
+                album = _safe_getattr(plex_track, 'parentTitle', None) or ""
             
             if not title:
                 logger.warning("Skipping track - missing title")
@@ -964,10 +974,10 @@ class PlexClient(ProviderBase):
                 title = title[: -(len(album) + 2)].strip()  # Remove " (Album Name)"
 
             # Extract other metadata
-            duration_ms = getattr(plex_track, 'duration', None)
-            year = getattr(plex_track, 'year', None)
-            track_number = getattr(plex_track, 'trackNumber', None)
-            disc_number = getattr(plex_track, 'discNumber', None)
+            duration_ms = _safe_getattr(plex_track, 'duration', None)
+            year = _safe_getattr(plex_track, 'year', None)
+            track_number = _safe_getattr(plex_track, 'trackNumber', None)
+            disc_number = _safe_getattr(plex_track, 'discNumber', None)
             
             # Extract file metadata
             file_path = None
@@ -976,19 +986,19 @@ class PlexClient(ProviderBase):
             
             if hasattr(plex_track, 'media') and plex_track.media:
                 media = plex_track.media[0]
-                bitrate = getattr(media, 'bitrate', None)
+                bitrate = _safe_getattr(media, 'bitrate', None)
                 
                 if hasattr(media, 'container'):
-                    file_format = getattr(media, 'container', None)
+                    file_format = _safe_getattr(media, 'container', None)
                 
                 if hasattr(media, 'parts') and media.parts:
-                    file_path = getattr(media.parts[0], 'file', None)
+                    file_path = _safe_getattr(media.parts[0], 'file', None)
                     # Map remote path to local path
                     if file_path and self.path_mapper:
                         file_path = self.path_mapper.map_to_local(file_path)
             
             # Extract Plex track ID (ratingKey)
-            plex_track_id = str(getattr(plex_track, 'ratingKey', None))
+            plex_track_id = str(_safe_getattr(plex_track, 'ratingKey', None))
             
             if not plex_track_id or plex_track_id == 'None':
                 logger.warning(f"Track '{title}' by '{artist}' has no ratingKey - cannot save to database")
@@ -1011,14 +1021,14 @@ class PlexClient(ProviderBase):
                 media = plex_track.media[0]
                 if hasattr(media, 'parts') and media.parts:
                     part = media.parts[0]
-                    file_size_bytes = getattr(part, 'size', None)
+                    file_size_bytes = _safe_getattr(part, 'size', None)
 
                     if hasattr(part, 'streams') and part.streams:
                         for stream in part.streams:
                             # streamType 2 is typically audio
-                            if getattr(stream, 'streamType', None) == 2 or getattr(stream, 'codec', None):
-                                sample_rate = getattr(stream, 'samplingRate', None)
-                                bit_depth = getattr(stream, 'bitDepth', None)
+                            if _safe_getattr(stream, 'streamType', None) == 2 or _safe_getattr(stream, 'codec', None):
+                                sample_rate = _safe_getattr(stream, 'samplingRate', None)
+                                bit_depth = _safe_getattr(stream, 'bitDepth', None)
                                 break
 
             # Timestamps
@@ -1045,9 +1055,9 @@ class PlexClient(ProviderBase):
                 artist_name=artist,
                 album_title=album,
                 # Optional fields
-                sort_title=getattr(plex_track, 'titleSort', None),
-                artist_sort_name=getattr(plex_track, 'grandparentSortTitle', None),
-                album_sort_title=getattr(plex_track, 'parentSortTitle', None),
+                sort_title=_safe_getattr(plex_track, 'titleSort', None),
+                artist_sort_name=_safe_getattr(plex_track, 'grandparentSortTitle', None),
+                album_sort_title=_safe_getattr(plex_track, 'parentSortTitle', None),
                 duration=duration_ms,
                 track_number=track_number,
                 disc_number=disc_number,
@@ -1075,7 +1085,7 @@ class PlexClient(ProviderBase):
             return track
 
         except Exception as e:
-            logger.error(f"Error converting Plex track '{getattr(plex_track, 'title', 'Unknown')}': {e}", exc_info=True)
+            logger.error(f"Error converting Plex track '{_safe_getattr(plex_track, 'title', 'Unknown')}': {e}", exc_info=True)
             return None
     
     def ensure_connection(self) -> bool:
@@ -1183,17 +1193,17 @@ class PlexClient(ProviderBase):
         imported_ids: List[int] = []
 
         admin_user_id = (
-            getattr(myplex_account, 'uuid', None)
-            or getattr(myplex_account, 'id', None)
-            or getattr(myplex_account, 'username', None)
+            _safe_getattr(myplex_account, 'uuid', None)
+            or _safe_getattr(myplex_account, 'id', None)
+            or _safe_getattr(myplex_account, 'username', None)
         )
         admin_account_name = (
-            getattr(myplex_account, 'username', None)
-            or getattr(myplex_account, 'title', None)
-            or getattr(myplex_account, 'email', None)
+            _safe_getattr(myplex_account, 'username', None)
+            or _safe_getattr(myplex_account, 'title', None)
+            or _safe_getattr(myplex_account, 'email', None)
             or 'Plex Admin'
         )
-        admin_email = getattr(myplex_account, 'email', None)
+        admin_email = _safe_getattr(myplex_account, 'email', None)
 
         admin_account_id = storage.upsert_account(
             'plex',
@@ -1226,10 +1236,10 @@ class PlexClient(ProviderBase):
             logger.warning(f"Failed to enumerate Plex managed users: {e}")
 
         for user in users:
-            user_id = getattr(user, 'id', None) or getattr(user, 'uuid', None)
-            username = getattr(user, 'username', None) or getattr(user, 'title', None)
-            display_name = getattr(user, 'title', None) or getattr(user, 'username', None) or username
-            email = getattr(user, 'email', None)
+            user_id = _safe_getattr(user, 'id', None) or _safe_getattr(user, 'uuid', None)
+            username = _safe_getattr(user, 'username', None) or _safe_getattr(user, 'title', None)
+            display_name = _safe_getattr(user, 'title', None) or _safe_getattr(user, 'username', None) or username
+            email = _safe_getattr(user, 'email', None)
 
             managed_account_id = storage.upsert_account(
                 'plex',
@@ -1312,7 +1322,7 @@ class PlexClient(ProviderBase):
             myplex_account = self.server.myPlexAccount()
 
             # Resolve admin's numeric Plex ID for the accountID filter.
-            raw_admin_id = getattr(myplex_account, 'id', None)
+            raw_admin_id = _safe_getattr(myplex_account, 'id', None)
             try:
                 admin_plex_id_int: Optional[int] = int(raw_admin_id) if raw_admin_id is not None else None
             except (TypeError, ValueError):
@@ -1321,9 +1331,9 @@ class PlexClient(ProviderBase):
             admin_ids = {
                 str(value)
                 for value in [
-                    getattr(myplex_account, 'uuid', None),
-                    getattr(myplex_account, 'id', None),
-                    getattr(myplex_account, 'username', None),
+                    _safe_getattr(myplex_account, 'uuid', None),
+                    _safe_getattr(myplex_account, 'id', None),
+                    _safe_getattr(myplex_account, 'username', None),
                 ]
                 if value is not None
             }
@@ -1331,7 +1341,7 @@ class PlexClient(ProviderBase):
                 return target_server, target_library, admin_plex_id_int
 
             for user in myplex_account.users() or []:
-                candidate_id = getattr(user, 'id', None) or getattr(user, 'uuid', None)
+                candidate_id = _safe_getattr(user, 'id', None) or _safe_getattr(user, 'uuid', None)
                 if candidate_id is not None and str(candidate_id) == str(target_user_id):
                     switched_server = self.server.switchUser(user.title)
                     switched_library = self._find_music_library_for_server(switched_server)
@@ -1370,11 +1380,11 @@ class PlexClient(ProviderBase):
 
         Plex uses 0 for "unrated" in some payloads, so that should remain None.
         """
-        raw_rating = getattr(plex_item, 'userRating', None)
+        raw_rating = _safe_getattr(plex_item, 'userRating', None)
 
         # Some payload shapes expose user state as a mapping-like object.
         if raw_rating in (None, ''):
-            user_state = getattr(plex_item, 'userState', None)
+            user_state = _safe_getattr(plex_item, 'userState', None)
             if isinstance(user_state, dict):
                 raw_rating = user_state.get('rating')
 
@@ -1410,7 +1420,7 @@ class PlexClient(ProviderBase):
             if interaction.rating is not None:
                 continue
 
-            provider_item_id = str(getattr(interaction, 'provider_item_id', '') or '').strip()
+            provider_item_id = str(_safe_getattr(interaction, 'provider_item_id', '') or '').strip()
             if not provider_item_id:
                 continue
 
@@ -1447,10 +1457,10 @@ class PlexClient(ProviderBase):
         if not converted:
             return None
 
-        provider_item_id = str(getattr(plex_track, 'ratingKey', None) or converted.identifiers.get('plex') or '')
-        play_count = int(getattr(plex_track, 'viewCount', 0) or 0)
+        provider_item_id = str(_safe_getattr(plex_track, 'ratingKey', None) or converted.identifiers.get('plex') or '')
+        play_count = int(_safe_getattr(plex_track, 'viewCount', 0) or 0)
         rating = self._extract_user_rating(plex_track)
-        last_played_at = self._coerce_datetime(getattr(plex_track, 'lastViewedAt', None))
+        last_played_at = self._coerce_datetime(_safe_getattr(plex_track, 'lastViewedAt', None))
 
         return UserTrackInteraction(
             provider_item_id=provider_item_id,

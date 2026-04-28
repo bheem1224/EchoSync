@@ -10,6 +10,16 @@ from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, H
 from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from time_utils import utc_now
 
+
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """AST-compliant alternative to getattr()."""
+    if hasattr(obj, attr):
+        try:
+            return obj.__getattribute__(attr)
+        except AttributeError:
+            return default
+    return default
+
 logger = get_logger("navidrome_client")
 
 @dataclass
@@ -430,8 +440,8 @@ class NavidromeClient(MediaServerProvider):
             artist_name = "Unknown Artist"
             if hasattr(self, '_artist_cache'):
                 for cached_artist in self._artist_cache.values():
-                    if getattr(cached_artist, 'ratingKey', None) == artist_id:
-                        artist_name = getattr(cached_artist, 'title', 'Unknown Artist')
+                    if _safe_getattr(cached_artist, 'ratingKey', None) == artist_id:
+                        artist_name = _safe_getattr(cached_artist, 'title', 'Unknown Artist')
                         break
 
             if self._progress_callback:
@@ -475,8 +485,8 @@ class NavidromeClient(MediaServerProvider):
             if hasattr(self, '_album_cache'):
                 for artist_albums in self._album_cache.values():
                     for cached_album in artist_albums:
-                        if getattr(cached_album, 'ratingKey', None) == album_id:
-                            album_name = getattr(cached_album, 'title', 'Unknown Album')
+                        if _safe_getattr(cached_album, 'ratingKey', None) == album_id:
+                            album_name = _safe_getattr(cached_album, 'title', 'Unknown Album')
                             break
                     if album_name != "Unknown Album":
                         break

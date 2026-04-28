@@ -1,5 +1,4 @@
 import asyncio
-import os
 import re
 from typing import List, Optional, Dict, Any, Union, Tuple
 from dataclasses import dataclass
@@ -17,7 +16,7 @@ logger = get_logger("slskd_provider")
 def _sanitize_peer_filename(filename: str) -> str:
     """Collapse any peer-supplied path to a safe local filename."""
     normalized = (filename or "").replace('\\', '/')
-    basename = os.path.basename(normalized)
+    basename = Path(normalized).name
     return basename or "downloaded_file"
 
 @dataclass
@@ -51,8 +50,6 @@ class TrackResult(SearchResult):
 
     def _parse_filename_metadata(self):
         """Extract artist, title, album, bit depth, sample rate from filename patterns"""
-        import re
-        import os
 
         # Normalize path separators (handle both / and \ from Soulseek)
         normalized_path = self.filename.replace('\\', '/')
@@ -62,7 +59,7 @@ class TrackResult(SearchResult):
         
         # Get just the filename (last component) without extension
         file_with_ext = path_parts[-1] if path_parts else self.filename
-        clean_filename = os.path.splitext(file_with_ext)[0]
+        clean_filename = Path(file_with_ext).stem
 
         # 1. Parse Technical Metadata (Bit Depth / Sample Rate)
         # Look for patterns like "24bit", "24-bit", "24b", "96kHz", "44.1kHz", "44100Hz"
@@ -232,12 +229,11 @@ class SlskdProvider(DownloaderProvider):
         register_health_check_job("slskd_health_check", slskd_health_check, interval_seconds=300)
 
     def _setup_client(self):
-        from database.config_database import get_config_database
-        config_db = get_config_database()
-        service_id = config_db.get_or_create_service_id('soulseek')
-
-        slskd_url = config_db.get_service_config(service_id, 'slskd_url') or config_db.get_service_config(service_id, 'server_url')
-        api_key = config_db.get_service_config(service_id, 'api_key') or ''
+        from core.file_handling.storage import get_storage_service
+        storage = get_storage_service()
+        
+        slskd_url = storage.get_service_config('soulseek', 'slskd_url') or storage.get_service_config('soulseek', 'server_url')
+        api_key = storage.get_service_config('soulseek', 'api_key') or ''
 
         # Fallback: if URL isn't stored in config DB (e.g., saved only to config.json via config_manager),
         # read it from config_manager so the provider can initialize when UI saved the URL there.
@@ -254,7 +250,7 @@ class SlskdProvider(DownloaderProvider):
             return
 
         # Apply Docker URL resolution if running in container
-        if os.path.exists('/.dockerenv') and 'localhost' in slskd_url:
+        if config_manager.get('IS_DOCKER') and 'localhost' in slskd_url:
             slskd_url = slskd_url.replace('localhost', 'host.docker.internal')
             logger.info(f"Docker detected, using {slskd_url} for slskd connection")
 
@@ -268,8 +264,8 @@ class SlskdProvider(DownloaderProvider):
             storage_cfg = {}
 
         # Handle download path with Docker translation
-        download_path_str = storage_cfg.get('download_dir') or config.get('download_path', './downloads')
-        if os.path.exists('/.dockerenv') and len(download_path_str) >= 3 and download_path_str[1] == ':' and download_path_str[0].isalpha():
+        download_path_str = storage_cfg.get('download_dir') or './downloads'
+        if config_manager.get('IS_DOCKER') and len(download_path_str) >= 3 and download_path_str[1] == ':' and download_path_str[0].isalpha():
             # Convert Windows path (E:/path) to WSL mount path (/mnt/e/path)
             drive_letter = download_path_str[0].lower()
             rest_of_path = download_path_str[2:].replace('\\', '/')  # Remove E: and convert backslashes

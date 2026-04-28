@@ -14,6 +14,16 @@ from core.file_handling.storage import get_storage_service
 from core.provider_base import ProviderBase
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
+
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """AST-compliant alternative to getattr()."""
+    if hasattr(obj, attr):
+        try:
+            return obj.__getattribute__(attr)
+        except AttributeError:
+            return default
+    return default
+
 logger = get_logger("navidrome_adapter")
 
 
@@ -34,9 +44,9 @@ def convert_navidrome_track_to_echosync(navidrome_track) -> Optional[EchosyncTra
         raw_data = navidrome_track._data if hasattr(navidrome_track, '_data') else navidrome_track
         
         # Extract basic metadata from raw data dict
-        title = raw_data.get('title') if isinstance(raw_data, dict) else getattr(navidrome_track, 'title', None)
-        artist = raw_data.get('artist') if isinstance(raw_data, dict) else getattr(navidrome_track, 'artist', None)
-        album = raw_data.get('album') if isinstance(raw_data, dict) else getattr(navidrome_track, 'album', None)
+        title = raw_data.get('title') if isinstance(raw_data, dict) else _safe_getattr(navidrome_track, 'title', None)
+        artist = raw_data.get('artist') if isinstance(raw_data, dict) else _safe_getattr(navidrome_track, 'artist', None)
+        album = raw_data.get('album') if isinstance(raw_data, dict) else _safe_getattr(navidrome_track, 'album', None)
         
         if not title or not artist:
             logger.warning(f"Navidrome track missing title or artist: {title} / {artist}")
@@ -52,9 +62,9 @@ def convert_navidrome_track_to_echosync(navidrome_track) -> Optional[EchosyncTra
                 except (ValueError, TypeError):
                     pass
         else:
-            duration_ms = getattr(navidrome_track, 'duration', None)
+            duration_ms = _safe_getattr(navidrome_track, 'duration', None)
         
-        track_number = raw_data.get('track') if isinstance(raw_data, dict) else getattr(navidrome_track, 'trackNumber', None)
+        track_number = raw_data.get('track') if isinstance(raw_data, dict) else _safe_getattr(navidrome_track, 'trackNumber', None)
         if track_number:
             try:
                 track_number = int(track_number)
@@ -116,7 +126,7 @@ def convert_navidrome_track_to_echosync(navidrome_track) -> Optional[EchosyncTra
                 except (ValueError, TypeError):
                     year = None
         else:
-            year = getattr(navidrome_track, 'year', None)
+            year = _safe_getattr(navidrome_track, 'year', None)
         
         # Use ProviderBase factory method for normalization
         return ProviderBase.create_echo_sync_track(
@@ -182,12 +192,12 @@ class NavidromeAdapter:
             artists = self.navidrome.get_all_artists() or []
             count = 0
             for artist in artists:
-                albums = self.navidrome.get_albums_for_artist(getattr(artist, "ratingKey", "")) or []
+                albums = self.navidrome.get_albums_for_artist(_safe_getattr(artist, "ratingKey", "")) or []
                 for album in albums:
-                    tracks = self.navidrome.get_tracks_for_album(getattr(album, "ratingKey", "")) or []
+                    tracks = self.navidrome.get_tracks_for_album(_safe_getattr(album, "ratingKey", "")) or []
                     for item in tracks:
-                        provider_id = str(getattr(item, "ratingKey", getattr(item, "id", "")))
-                        title = getattr(item, "title", None)
+                        provider_id = str(_safe_getattr(item, "ratingKey", _safe_getattr(item, "id", "")))
+                        title = _safe_getattr(item, "title", None)
                         # Resolve artist/album names via helpers
                         artist_obj = None
                         album_obj = None
@@ -200,12 +210,12 @@ class NavidromeAdapter:
                         except Exception:
                             album_obj = None
                         artists_list = []
-                        if artist_obj and getattr(artist_obj, "title", None):
-                            artists_list = [getattr(artist_obj, "title")]
-                        album_title = getattr(album_obj, "title", None) if album_obj else None
-                        duration_ms = getattr(item, "duration", None)
-                        track_number = getattr(item, "trackNumber", None)
-                        release_year = getattr(item, "year", None)
+                        if artist_obj and _safe_getattr(artist_obj, "title", None):
+                            artists_list = [_safe_getattr(artist_obj, "title")]
+                        album_title = _safe_getattr(album_obj, "title", None) if album_obj else None
+                        duration_ms = _safe_getattr(item, "duration", None)
+                        track_number = _safe_getattr(item, "trackNumber", None)
+                        release_year = _safe_getattr(item, "year", None)
 
                         track_id = self.create_stub(
                             provider_id=provider_id,

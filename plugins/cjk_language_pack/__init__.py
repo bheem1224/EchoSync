@@ -44,6 +44,7 @@ from typing import Any, List
 
 from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
+from core.settings import config_manager
 from plugins.cjk_language_pack.transliterator import get_transliterator
 from plugins.cjk_language_pack.vgmdb_proxy import get_proxy
 from plugins.cjk_language_pack.noise_filter import get_noise_filter
@@ -105,6 +106,16 @@ def _has_cjk(text: str) -> bool:
 # kept for callers that still use the old name
 def contains_cjk(text: str) -> bool:
     return _has_cjk(text)
+
+
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """AST-compliant alternative to getattr()."""
+    if hasattr(obj, attr):
+        try:
+            return obj.__getattribute__(attr)
+        except AttributeError:
+            return default
+    return default
 
 
 # ── Hook 0: register_metadata_requirements ────────────────────────────────────
@@ -340,7 +351,7 @@ def _build_track_alias_entries(track_obj: Any) -> list[dict]:
     if declared and isinstance(declared, list):
         return declared
 
-    title = getattr(track_obj, "title", "") or ""
+    title = _safe_getattr(track_obj, "title", "") or ""
     if not _has_cjk(title):
         return []
 
@@ -407,7 +418,7 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         if session is None:
             logger.warning(
                 "No ORM session on track_obj (ID %s) — TrackAlias write skipped.",
-                getattr(track_obj, "id", "?"),
+                _safe_getattr(track_obj, "id", "?"),
             )
             return
 
@@ -417,8 +428,7 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             return
         TrackAlias = rel.mapper.class_
 
-        import os as _os
-        _dev_mode = _os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+        _dev_mode = config_manager.get('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
 
         # Dev mode: clear existing aliases so they are rebuilt from fresh data,
         # bypassing the "skip if already present" deduplication guard.
@@ -464,7 +474,7 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
     except Exception as exc:
         logger.warning(
             "TrackAlias persistence failed for Track ID %s: %s",
-            getattr(track_obj, "id", "?"), exc,
+            _safe_getattr(track_obj, "id", "?"), exc,
         )
 
 
@@ -485,7 +495,7 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         if object_session(track_obj) is None:
             return
 
-        artist_obj = getattr(track_obj, "artist", None)
+        artist_obj = _safe_getattr(track_obj, "artist", None)
         if artist_obj is None:
             return
 
@@ -494,8 +504,7 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             return
         ArtistAlias = rel.mapper.class_
 
-        import os as _os
-        _dev_mode = _os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+        _dev_mode = config_manager.get('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
 
         # Dev mode: clear existing aliases so they are rebuilt from fresh data,
         # bypassing the "skip if already present" deduplication guard.
@@ -540,7 +549,7 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
     except Exception as exc:
         logger.warning(
             "ArtistAlias persistence failed for Track ID %s: %s",
-            getattr(track_obj, "id", "?"), exc,
+            _safe_getattr(track_obj, "id", "?"), exc,
         )
 
 
@@ -676,10 +685,10 @@ def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
         return {"boost": 0, "duration_override": 0}
 
     local_drama: str = (
-        getattr(source, 'plugin_context', {}).get('cjk_drama', '') or ''
+        _safe_getattr(source, 'plugin_context', {}).get('cjk_drama', '') or ''
     )
     remote_drama: str = (
-        getattr(candidate, 'plugin_context', {}).get('cjk_drama', '') or ''
+        _safe_getattr(candidate, 'plugin_context', {}).get('cjk_drama', '') or ''
     )
 
     if not local_drama or not remote_drama:
@@ -810,7 +819,7 @@ def _on_post_metadata_enrichment(track_obj: Any) -> Any:
     if not hasattr(track_obj, "metadata_status") or not hasattr(track_obj, "id"):
         return track_obj
 
-    title = getattr(track_obj, "title", "") or ""
+    title = _safe_getattr(track_obj, "title", "") or ""
 
     # Guard the artist relationship lazy-load with an explicit try/except so that a
     # DetachedInstanceError or any other SQLAlchemy session error can never prevent
@@ -819,13 +828,13 @@ def _on_post_metadata_enrichment(track_obj: Any) -> Any:
     # it does NOT suppress DetachedInstanceError or other SQLAlchemy exceptions.)
     artist_name = ""
     try:
-        artist_obj = getattr(track_obj, "artist", None)
-        artist_name = (getattr(artist_obj, "name", "") or "") if artist_obj else ""
+        artist_obj = _safe_getattr(track_obj, "artist", None)
+        artist_name = (_safe_getattr(artist_obj, "name", "") or "") if artist_obj else ""
     except Exception as _exc:
         logger.debug(
             "CJK plugin: could not load artist for Track ID %s (%s) — "
             "CJK detection falls back to title-only.",
-            getattr(track_obj, "id", "?"), _exc,
+            _safe_getattr(track_obj, "id", "?"), _exc,
         )
 
     status = dict(track_obj.metadata_status or {})

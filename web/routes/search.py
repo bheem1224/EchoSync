@@ -21,7 +21,8 @@ def aggregate_search():
 
 
 @bp.get("/discovery")
-async def federated_discovery():
+def federated_discovery():
+    import asyncio
     q = request.args.get("q")
     if not q:
         return jsonify({"error": "missing query"}), 400
@@ -30,7 +31,14 @@ async def federated_discovery():
     provider_names = [p for p in providers_param.split(",") if p] or None
 
     adapter = SearchAdapter()
-    results = await adapter.federated_discovery(q, enabled_providers=provider_names)
+    # Run the async federated discovery in a sync context to avoid Flask [async] extra requirement
+    try:
+        results = asyncio.run(adapter.federated_discovery(q, enabled_providers=provider_names))
+    except Exception as e:
+        from core.tiered_logger import get_logger
+        get_logger("search_route").error(f"Federated discovery error: {e}")
+        results = []
+
     return jsonify({"query": q, "results": results}), 200
 
 

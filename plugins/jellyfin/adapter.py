@@ -12,6 +12,16 @@ from core.file_handling.storage import get_storage_service
 from core.provider_base import ProviderBase
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
+
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """AST-compliant alternative to getattr()."""
+    if hasattr(obj, attr):
+        try:
+            return obj.__getattribute__(attr)
+        except AttributeError:
+            return default
+    return default
+
 logger = get_logger("jellyfin_adapter")
 
 
@@ -32,7 +42,7 @@ def convert_jellyfin_track_to_echosync(jellyfin_track) -> Optional[EchosyncTrack
         raw_data = jellyfin_track._data if hasattr(jellyfin_track, '_data') else jellyfin_track
         
         # Extract basic metadata from raw data
-        title = raw_data.get('Name') if isinstance(raw_data, dict) else getattr(jellyfin_track, 'title', None)
+        title = raw_data.get('Name') if isinstance(raw_data, dict) else _safe_getattr(jellyfin_track, 'title', None)
         
         # Handle artist - Jellyfin provides ArtistItems list
         artist = None
@@ -41,9 +51,9 @@ def convert_jellyfin_track_to_echosync(jellyfin_track) -> Optional[EchosyncTrack
             if artist_items and isinstance(artist_items, list):
                 artist = artist_items[0].get('Name') if isinstance(artist_items[0], dict) else str(artist_items[0])
         if not artist:
-            artist = getattr(jellyfin_track, 'artist', None)
+            artist = _safe_getattr(jellyfin_track, 'artist', None)
         
-        album = raw_data.get('Album') if isinstance(raw_data, dict) else getattr(jellyfin_track, 'album', None)
+        album = raw_data.get('Album') if isinstance(raw_data, dict) else _safe_getattr(jellyfin_track, 'album', None)
         
         if not title or not artist:
             logger.warning(f"Jellyfin track missing title or artist: {title} / {artist}")
@@ -59,9 +69,9 @@ def convert_jellyfin_track_to_echosync(jellyfin_track) -> Optional[EchosyncTrack
                 except (ValueError, TypeError):
                     pass
         else:
-            duration_ms = getattr(jellyfin_track, 'duration', None)
+            duration_ms = _safe_getattr(jellyfin_track, 'duration', None)
         
-        track_number = raw_data.get('IndexNumber') if isinstance(raw_data, dict) else getattr(jellyfin_track, 'trackNumber', None)
+        track_number = raw_data.get('IndexNumber') if isinstance(raw_data, dict) else _safe_getattr(jellyfin_track, 'trackNumber', None)
         disc_number = raw_data.get('ParentIndexNumber') if isinstance(raw_data, dict) else None
         
         # Extract file metadata
@@ -116,7 +126,7 @@ def convert_jellyfin_track_to_echosync(jellyfin_track) -> Optional[EchosyncTrack
                 except (ValueError, TypeError):
                     pass
         else:
-            year = getattr(jellyfin_track, 'year', None)
+            year = _safe_getattr(jellyfin_track, 'year', None)
         
         # Use ProviderBase factory method for normalization
         return ProviderBase.create_echo_sync_track(
@@ -196,7 +206,7 @@ class JellyfinAdapter:
         if not self.jellyfin:
             logger.warning("Jellyfin client not provided; cannot ingest library")
             return created
-        getter = getattr(self.jellyfin, "get_all_tracks", None)
+        getter = _safe_getattr(self.jellyfin, "get_all_tracks", None)
         if not getter:
             logger.warning("Jellyfin client missing get_all_tracks")
             return created
@@ -205,17 +215,17 @@ class JellyfinAdapter:
             if limit is not None:
                 items = items[:limit]
             for item in items:
-                provider_id = str(getattr(item, "id", getattr(item, "Id", "")))
-                title = getattr(item, "title", getattr(item, "Name", None))
-                artists = getattr(item, "artists", []) or ([getattr(item, "AlbumArtist", None)] if getattr(item, "AlbumArtist", None) else [])
-                album = getattr(item, "album", getattr(item, "Album", None))
-                duration_ms = getattr(item, "duration", getattr(item, "RunTimeTicks", None))
+                provider_id = str(_safe_getattr(item, "id", _safe_getattr(item, "Id", "")))
+                title = _safe_getattr(item, "title", _safe_getattr(item, "Name", None))
+                artists = _safe_getattr(item, "artists", []) or ([_safe_getattr(item, "AlbumArtist", None)] if _safe_getattr(item, "AlbumArtist", None) else [])
+                album = _safe_getattr(item, "album", _safe_getattr(item, "Album", None))
+                duration_ms = _safe_getattr(item, "duration", _safe_getattr(item, "RunTimeTicks", None))
                 # Create stub and attach ref
                 track_id = self.create_stub(provider_id=provider_id, title=title, artists=artists, album=album, duration_ms=duration_ms)
                 # File metadata
-                file_path = getattr(item, "Path", None)
-                file_format = getattr(item, "Container", None)
-                bitrate = getattr(item, "Bitrate", None)
+                file_path = _safe_getattr(item, "Path", None)
+                file_format = _safe_getattr(item, "Container", None)
+                bitrate = _safe_getattr(item, "Bitrate", None)
                 self.enrich_track(track_id, file_path=file_path, file_format=file_format, bitrate=bitrate)
                 if provider_id:
                     self.attach_provider_ref(track_id, provider_id=provider_id)

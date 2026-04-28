@@ -241,6 +241,18 @@ class StorageService:
         except Exception:  # pragma: no cover
             pass
 
+    # ----- database accessors --------------------------------------------------
+
+    def get_working_database(self):
+        """SDK-compliant way to get the working database."""
+        from database.working_database import get_working_database
+        return get_working_database()
+
+    def get_music_database(self):
+        """SDK-compliant way to get the music database."""
+        from database.music_database import get_music_database
+        return get_music_database()
+
 
 # global singleton -------------------------------------------------------------
 _storage_instance: Optional[StorageService] = None

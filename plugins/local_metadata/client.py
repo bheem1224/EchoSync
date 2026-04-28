@@ -28,14 +28,9 @@ class LocalMetadataProvider(ProviderBase):
         limit: int = 10,
         quality_profile: Optional[Dict[str, Any]] = None,
     ) -> List[EchosyncTrack]:
-        """Search the local MusicDatabase by title (and optionally artist).
-
-        ``query`` may be a plain title string or an ``"artist - title"``
-        compound string.  The function splits on the first " - " if present.
-        """
-        from database.music_database import get_database
-
-        db = get_database()
+        """Search the local MusicDatabase by title (and optionally artist)."""
+        from core.file_handling.storage import get_storage_service
+        db = get_storage_service().get_music_database()
         # Support simple "artist - title" compound queries
         artist: Optional[str] = None
         title = query
@@ -47,10 +42,12 @@ class LocalMetadataProvider(ProviderBase):
 
     def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         """Fetch a single track from the local MusicDatabase by its integer ID."""
-        from database.music_database import get_database, Track
+        from core.file_handling.storage import get_storage_service
         from sqlalchemy.orm import joinedload
 
-        db = get_database()
+        db = get_storage_service().get_music_database()
+        Track = self.models.Track
+        
         try:
             tid = int(track_id)
         except (TypeError, ValueError):

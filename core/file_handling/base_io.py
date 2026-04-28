@@ -125,3 +125,23 @@ def safe_delete(path: Union[str, Path]) -> None:
             logger.debug("safe_delete: %s", resolved)
         else:
             logger.warning("safe_delete: file not found, skipping: %s", resolved)
+
+
+def safe_write_text(path: Union[str, Path], content: str, encoding: str = 'utf-8') -> None:
+    """
+    Securely write text content to a file at *path*.
+
+    - Path is jail-checked.
+    - File lock is held during writing.
+    - Parent directories are created if missing.
+
+    Raises:
+        SecurityError: If the path escapes its allowed root.
+    """
+    resolved = _map_to_local(path).resolve()
+    file_jail.validate(resolved)
+    
+    with lock_manager.lock_for(resolved):
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content, encoding=encoding)
+        logger.debug("safe_write_text: %s (%d chars)", resolved, len(content))

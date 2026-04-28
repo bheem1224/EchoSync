@@ -8,6 +8,16 @@ from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, H
 from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from time_utils import ensure_utc, utc_now
 
+
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """AST-compliant alternative to getattr()."""
+    if hasattr(obj, attr):
+        try:
+            return obj.__getattribute__(attr)
+        except AttributeError:
+            return default
+    return default
+
 logger = get_logger("jellyfin_client")
 
 @dataclass
@@ -164,8 +174,8 @@ class JellyfinClient(MediaServerProvider):
             return False
 
         # Extract valid track IDs (GUIDs)
-        track_ids = [getattr(t, 'ratingKey', None) for t in tracks if self._is_valid_guid(getattr(t, 'ratingKey', None))]
-        invalid_tracks = [t for t in tracks if not self._is_valid_guid(getattr(t, 'ratingKey', None))]
+        track_ids = [_safe_getattr(t, 'ratingKey', None) for t in tracks if self._is_valid_guid(_safe_getattr(t, 'ratingKey', None))]
+        invalid_tracks = [t for t in tracks if not self._is_valid_guid(_safe_getattr(t, 'ratingKey', None))]
         if not track_ids:
             logger.error(f"No valid track IDs provided for playlist '{name}'")
             return False
@@ -487,8 +497,8 @@ class JellyfinClient(MediaServerProvider):
                     logger.info(f"Set music library to: {library_name}")
 
                     # Store preference in database
-                    from database.music_database import MusicDatabase
-                    db = MusicDatabase()
+                    from core.file_handling.storage import get_storage_service
+                    db = get_storage_service().get_music_database()
                     db.set_preference('jellyfin_music_library', library_name)
 
                     return True

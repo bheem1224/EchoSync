@@ -38,24 +38,17 @@ class AcoustIDProvider(ProviderBase):
     def _get_api_key(self) -> Optional[str]:
         """Get AcoustID API key from config database with proper decryption."""
         try:
-            from database.config_database import get_config_database
-            config_db = get_config_database()
-            
-            # Get or create service ID
-            service_id = config_db.get_or_create_service_id(self.name)
-            if not service_id:
-                return None
-            
-            # Get API key from database (automatically decrypts if marked sensitive)
-            api_key = config_db.get_service_config(service_id, 'api_key')
+            storage = get_storage_service()
+            # get_service_config automatically handles decryption for sensitive keys
+            api_key = storage.get_service_config(self.name, 'api_key')
             if api_key:
                 api_key = str(api_key).strip()
-                logger.debug(f"AcoustID API key loaded from config DB (length={len(api_key)})")
+                logger.debug(f"AcoustID API key loaded from storage (length={len(api_key)})")
                 return api_key or None
         except Exception as e:
-            logger.debug(f"Could not load AcoustID API key from config DB: {e}")
+            logger.debug(f"Could not load AcoustID API key from storage: {e}")
         
-        # Fallback to direct config get with decryption
+        # Fallback to direct config get
         api_key = config_manager.get('acoustid.api_key')
         if api_key:
             api_key = str(api_key).strip()

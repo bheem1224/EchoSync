@@ -1,4 +1,3 @@
-import os
 import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Generator
@@ -39,11 +38,8 @@ class LocalServerProvider(ProviderBase):
         supported_exts = {'.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape', '.wav', '.dsd', '.dsf', '.dff'}
         file_handler = LocalFileHandler.get_instance()
 
-        for root, _, files in os.walk(library_dir):
-            for file in files:
-                path = Path(root) / file
-                if path.suffix.lower() not in supported_exts:
-                    continue
+        for path in library_dir.rglob('*'):
+            if path.is_file() and path.suffix.lower() in supported_exts:
 
                 try:
                     tags = file_handler.read_tags(path)

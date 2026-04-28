@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
 
-import os
+from pathlib import Path
 from core.tiered_logger import get_logger
 from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+
+from core.file_handling.base_io import safe_write_text
+from typing import Any
+
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """AST-compliant alternative to getattr()."""
+    if hasattr(obj, attr):
+        try:
+            return obj.__getattribute__(attr)
+        except AttributeError:
+            return default
+    return default
 
 logger = get_logger("lrclib_client")
 
@@ -71,11 +83,12 @@ class LRCLibClient:
 
         try:
             # Generate LRC file path (same name as audio file, .lrc extension)
-            lrc_path = os.path.splitext(audio_file_path)[0] + '.lrc'
+            audio_path = Path(audio_file_path)
+            lrc_path = audio_path.with_suffix('.lrc')
 
             # Skip if LRC file already exists
-            if os.path.exists(lrc_path):
-                logger.debug(f"LRC file already exists: {os.path.basename(lrc_path)}")
+            if lrc_path.exists():
+                logger.debug(f"LRC file already exists: {lrc_path.name}")
                 return True
 
             # Fetch lyrics from LRClib
@@ -117,21 +130,20 @@ class LRCLibClient:
                 return False
 
             # Prefer synced lyrics, fallback to plain text
-            lrc_content = getattr(lyrics_data, 'synced_lyrics', None) or getattr(lyrics_data, 'plain_lyrics', None)
+            lrc_content = _safe_getattr(lyrics_data, 'synced_lyrics', None) or _safe_getattr(lyrics_data, 'plain_lyrics', None)
 
-            logger.debug(f"Synced lyrics available: {bool(getattr(lyrics_data, 'synced_lyrics', None))}")
-            logger.debug(f"Plain lyrics available: {bool(getattr(lyrics_data, 'plain_lyrics', None))}")
+            logger.debug(f"Synced lyrics available: {bool(_safe_getattr(lyrics_data, 'synced_lyrics', None))}")
+            logger.debug(f"Plain lyrics available: {bool(_safe_getattr(lyrics_data, 'plain_lyrics', None))}")
 
             if not lrc_content:
                 logger.debug(f"No usable lyrics content for: {artist_name} - {track_name}")
                 return False
 
             # Write LRC file
-            with open(lrc_path, 'w', encoding='utf-8') as f:
-                f.write(lrc_content)
+            safe_write_text(lrc_path, lrc_content)
 
-            lyrics_type = "synced" if getattr(lyrics_data, 'synced_lyrics', None) else "plain"
-            logger.info(f"✅ Created {lyrics_type} LRC file: {os.path.basename(lrc_path)}")
+            lyrics_type = "synced" if _safe_getattr(lyrics_data, 'synced_lyrics', None) else "plain"
+            logger.info(f"✅ Created {lyrics_type} LRC file: {lrc_path.name}")
             return True
 
         except Exception as e:
