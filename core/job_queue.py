@@ -49,6 +49,8 @@ class ScheduledJob:
 
 
 class JobQueue:
+    RESTART_PENDING = False
+
     def __init__(self, worker_count: int = 2, poll_interval: float = 0.5):
         self._lock = threading.Lock()
         self._jobs: Dict[str, ScheduledJob] = {}
@@ -378,7 +380,7 @@ class JobQueue:
         
         while self._running:
             # Task 2: Freeze execution if a restart is pending to avoid code mismatch
-            if system_state.restart_pending:
+            if system_state.restart_pending or JobQueue.RESTART_PENDING:
                 logger.warning("JobQueue: RESTART_PENDING is True. Freezing background job execution until reboot.")
                 time.sleep(5)
                 continue

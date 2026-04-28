@@ -48,25 +48,28 @@ def request_restart():
     """Forcefully but cleanly exit the application to trigger a Docker/System restart."""
     import time
     import threading
-    import signal
     import os
     from core.state import system_state
+    from core.job_queue import JobQueue
 
     logger.info("Application restart requested via API")
+    
+    # 1. Tell the job queue to freeze
     system_state.restart_pending = True
+    JobQueue.RESTART_PENDING = True
 
-    def delayed_exit():
-        time.sleep(2)
-        logger.warning("RESTART TRIGGERED: Sending SIGTERM to self...")
-        # signal.SIGTERM allows the app to run its atexit handlers and shutdown hooks
-        os.kill(os.getpid(), signal.SIGTERM)
+    # 2. Define a hard-kill function
+    def hard_kill():
+        time.sleep(2) # Give the API exactly 2 seconds to return the 200 OK to the frontend
+        logger.warning("Executing hard restart via os._exit(1)...")
+        os._exit(1)   # Instantly kills the container. Docker will reboot it.
 
-    # Run exit in background so we can return 200 OK to the frontend first
-    threading.Thread(target=delayed_exit, daemon=True).start()
+    # 3. Spin it off in a background thread so the HTTP response can complete
+    threading.Thread(target=hard_kill, daemon=True).start()
 
     return jsonify({
         "success": True, 
-        "message": "Restart initiated. The server will be offline for a few moments."
+        "message": "Restarting EchoSync..."
     }), 200
 
 

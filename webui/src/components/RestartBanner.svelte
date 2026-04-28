@@ -10,27 +10,27 @@
   let countdown = 0;
   
   async function handleRestart() {
-    isRestarting = true;
     try {
+      isRestarting = true;
       await apiClient.post('/restart');
       
-      // Notify user via toast
-      window.dispatchEvent(new CustomEvent('es-toast', { 
-        detail: { 
-          message: 'Restart initiated. Attempting to reconnect...', 
-          type: 'info' 
-        } 
-      }));
-      
-      // Start a countdown for page reload
-      countdown = 8;
-      const timer = setInterval(() => {
-        countdown -= 1;
-        if (countdown <= 0) {
-          clearInterval(timer);
-          window.location.reload();
-        }
-      }, 1000);
+      // Wait 3 seconds for the container to die
+      setTimeout(() => {
+        // Poll the health endpoint until it comes back online
+        const interval = setInterval(async () => {
+          try {
+            // Using raw fetch to avoid interceptors that might redirect to login during downtime
+            let res = await fetch('/api/health');
+            if (res.ok) {
+              clearInterval(interval);
+              window.location.reload(); // Now refresh!
+            }
+          } catch (e) {
+            // Server is down, keep waiting...
+            console.debug('Waiting for server to come back online...');
+          }
+        }, 2000);
+      }, 3000);
 
     } catch (error) {
       console.error('Restart failed:', error);
@@ -67,7 +67,7 @@
         {#if isRestarting || $systemStatus.status === 'offline'}
           <div class="restarting-state" in:fade>
             <span class="spinner"></span>
-            <span>{isRestarting ? `Reconnecting in ${countdown}s` : 'Retrying...'}</span>
+            <span>{isRestarting ? 'Restarting...' : 'Reconnecting...'}</span>
           </div>
         {:else}
           <button 
