@@ -1,7 +1,7 @@
 {
   "components": {
     "media_server": {
-      "element_tag": "navidrome-card",
+      "element_tag": "navidrome-dashboard-card",
       "bundle_url": "/api/system/plugins/navidrome/static/bundle.js"
     }
   },

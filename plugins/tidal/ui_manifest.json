@@ -1,7 +1,7 @@
 {
   "components": {
     "music_service": {
-      "element_tag": "tidal-card",
+      "element_tag": "tidal-dashboard-card",
       "bundle_url": "/api/system/plugins/tidal/static/bundle.js"
     }
   },

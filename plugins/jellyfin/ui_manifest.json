@@ -1,7 +1,7 @@
 {
   "components": {
     "media_server": {
-      "element_tag": "jellyfin-card",
+      "element_tag": "jellyfin-dashboard-card",
       "bundle_url": "/api/system/plugins/jellyfin/static/bundle.js"
     }
   },

@@ -57,7 +57,7 @@
     { label: '── Plugins',        href: null, divider: true },
     { label: 'Plugin Store',      href: '/settings/plugin-store' },
     { label: '── Other',          href: null, divider: true },
-    { label: 'Metadata',          href: '/settings/metadata', badge: $metadataQueue.count },
+    { label: 'Metadata',          href: '/settings/metadata' },
     { label: 'Search',            href: '/settings/search' },
     { label: 'Misc',              href: '/settings/misc' },
     { label: 'Jobs',              href: '/settings/jobs' },

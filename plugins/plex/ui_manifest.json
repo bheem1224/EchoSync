@@ -1,7 +1,7 @@
 {
   "components": {
     "media_server": {
-      "element_tag": "plex-card",
+      "element_tag": "plex-dashboard-card",
       "bundle_url": "/api/system/plugins/plex/static/bundle.js"
     }
   },

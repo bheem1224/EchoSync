@@ -1,7 +1,7 @@
 {
   "components": {
     "music_service": {
-      "element_tag": "echosync-spotify-card",
+      "element_tag": "spotify-dashboard-card",
       "bundle_url": "/api/system/plugins/spotify/static/bundle.js"
     }
   },
