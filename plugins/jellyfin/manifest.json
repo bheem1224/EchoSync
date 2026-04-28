@@ -2,7 +2,7 @@
   "id": "core.jellyfin",
   "name": "Jellyfin",
   "description": "Official EchoSync provider for jellyfin",
-  "version": "2.4.2",
+  "version": "2.4.1",
   "author": "EchoSync",
   "type": "media_server",
   "requirements": [],

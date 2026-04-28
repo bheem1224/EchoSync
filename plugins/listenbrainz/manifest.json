@@ -2,7 +2,7 @@
   "id": "core.listenbrainz",
   "name": "Listenbrainz",
   "description": "Official EchoSync provider for listenbrainz",
-  "version": "2.4.2",
+  "version": "2.4.1",
   "author": "EchoSync",
   "type": "metadata",
   "requirements": [],
