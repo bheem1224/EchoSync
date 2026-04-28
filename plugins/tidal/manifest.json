@@ -2,7 +2,7 @@
   "id": "core.tidal",
   "name": "Tidal",
   "description": "Official EchoSync provider for tidal",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "author": "EchoSync",
   "type": "metadata",
   "requirements": [],

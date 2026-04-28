@@ -2,7 +2,7 @@
   "id": "core.local_metadata",
   "name": "Local Metadata",
   "description": "Official EchoSync provider for local_metadata",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "author": "EchoSync",
   "type": "metadata",
   "requirements": [],
