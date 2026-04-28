@@ -2,16 +2,17 @@ import json
 import logging
 import zipfile
 import requests
-from core.request_manager import RequestManager
+from pathlib import Path
 from packaging import version
-from typing import List, Dict
+from typing import List, Dict, Optional
+from core.request_manager import RequestManager
 from core.settings import config_manager
 
 logger = logging.getLogger(__name__)
 
 class PluginStore:
     def __init__(self):
-        self.plugins_dir = config_manager.get_plugins_dir()
+        self.plugins_dir = Path(config_manager.get_plugins_dir())
         self.default_repo = "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/store-manifest.json"
 
     def get_repositories(self) -> List[str]:
@@ -54,8 +55,11 @@ class PluginStore:
 
 
     def scan_repository(self, repo_url: str) -> List[Dict]:
-        from core.settings import config_manager
-        import json
+        logger.debug(f"Scanning repository: {repo_url}")
+        if not hasattr(self, 'plugins_dir') or self.plugins_dir is None:
+            from core.settings import config_manager
+            self.plugins_dir = Path(config_manager.get_plugins_dir())
+            logger.debug(f"Lazy initialized plugins_dir: {self.plugins_dir}")
 
         plugins = []
         req_mgr = RequestManager(provider="system")
@@ -180,7 +184,7 @@ class PluginStore:
                     filtered_plugins.append(p)
                 return filtered_plugins
             except Exception as e:
-                logger.error(f"Error scanning repository {repo_url}: {e}")
+                logger.error(f"Error scanning repository {repo_url}: {e}", exc_info=True)
         return []
 
     def _scan_github_api(self, user: str, repo: str, branch: str, subfolder: str, original_repo_url: str) -> List[Dict]:

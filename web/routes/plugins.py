@@ -182,6 +182,7 @@ def get_plugin_store():
         plugins = plugin_store.get_all_store_plugins()
         return jsonify({'plugins': plugins})
     except Exception as e:
+        logger.error(f"Error fetching plugin store: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @bp.route('/install', methods=['POST'])

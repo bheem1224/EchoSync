@@ -31,7 +31,7 @@
 
   async function loadProviders() {
     try {
-      const response = await apiClient.get('/providers');
+      const response = await apiClient.get('/plugins');
       if (response.data && Array.isArray(response.data)) {
         providerStates = response.data.map(provider => ({
           id: provider.id,
