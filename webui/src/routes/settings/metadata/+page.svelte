@@ -6,11 +6,11 @@
   import DynamicPluginLoader from '../../../components/DynamicPluginLoader.svelte';
 
   // Tabs
-  let activeTab = 'providers'; // providers, settings
+  let activeTab = $state('providers'); // providers, settings
 
   // Providers Logic
-  let metadataProviders = [];
-  let loadError = '';
+  let metadataProviders = $state([]);
+  let loadError = $state('');
 
   onMount(async () => {
     // Initial Load

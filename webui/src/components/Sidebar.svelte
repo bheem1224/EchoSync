@@ -35,17 +35,17 @@
   ];
 
   // ── Derived: visible nav links (respects sidebarPrefs.hiddenRoutes) ──
-  $: hiddenSet   = new Set($sidebarPrefs?.hiddenRoutes ?? []);
-  $: visibleLinks = ALL_NAV_LINKS.filter(link =>
+  const hiddenSet    = $derived(new Set($sidebarPrefs?.hiddenRoutes ?? []));
+  const visibleLinks = $derived(ALL_NAV_LINKS.filter(link =>
     link.locked || !hiddenSet.has(link.href)
-  );
+  ));
 
   // ── Derived: pinned plugin views ──────────────────────────────────────
-  $: pinnedIds   = $sidebarPrefs?.pinnedViews ?? [];
-  $: allViews    = $pluginViews;
-  $: pinnedViews = pinnedIds
+  const pinnedIds   = $derived($sidebarPrefs?.pinnedViews ?? []);
+  const allViews    = $derived($pluginViews);
+  const pinnedViews = $derived(pinnedIds
     .map(id => allViews.find(v => v.id === id))
-    .filter(Boolean);
+    .filter(Boolean));
 
   // ── Settings links ────────────────────────────────────────────────────
   const settingsLinks = $derived([

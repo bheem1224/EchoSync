@@ -4,9 +4,9 @@
   import DynamicPluginLoader from '../../../components/DynamicPluginLoader.svelte';
 
   // ── State ──────────────────────────────────────────────────────────────
-  let loadError = '';
+  let loadError = $state('');
   /** Provider objects from the store, used to render fallback cards. */
-  let serverProviders = [];
+  let serverProviders = $state([]);
 
   onMount(async () => {
     try {
@@ -31,7 +31,7 @@
     }
   });
 
-  $: hasFallbackProviders = serverProviders.length > 0;
+  const hasFallbackProviders = $derived(serverProviders.length > 0);
 </script>
 
 <svelte:head>
