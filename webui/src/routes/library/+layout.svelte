@@ -48,9 +48,7 @@
                 </nav>
             </div>
 
-            <div class="w-full md:w-1/2 max-w-xl ml-auto">
-                <Omnibar />
-            </div>
+
         </div>
 
         <!-- Content Slot -->

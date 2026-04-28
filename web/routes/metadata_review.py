@@ -17,7 +17,7 @@ from core.settings import config_manager
 from core.tiered_logger import get_logger
 from database import LibraryManager, get_database
 from database.working_database import ReviewTask, get_working_database
-from services.metadata_enhancer import get_metadata_enhancer
+from services.metadata_enhancer import get_metadata_enhancer, MetadataEnhancerService
 
 logger = get_logger("metadata_review_route")
 bp = Blueprint("metadata_review", __name__, url_prefix="/api")
@@ -92,9 +92,22 @@ def _read_current_metadata(task: ReviewTask) -> Dict[str, Any]:
         return {}
 
     try:
-        enhancer = get_metadata_enhancer()
-        metadata = enhancer.read_tags(resolved_file)
-        return {str(key): value for key, value in metadata.items()}
+        # Direct class check to avoid instance caching issues if they exist
+        enhancer = MetadataEnhancerService.get_instance()
+        if not hasattr(enhancer, 'read_tags'):
+             # Critical fallback: if the instance is stale or class was redefined
+             from core.file_handling.tagging_io import read_tags
+             metadata = read_tags(resolved_file)
+        else:
+             metadata = enhancer.read_tags(resolved_file)
+             
+        # Remove raw cover data from the general metadata dict to keep JSON response light
+        clean_metadata = {str(key): value for key, value in metadata.items() if not str(key).startswith("_cover_")}
+        # Add a flag if cover is present
+        if "_cover_data" in metadata:
+            clean_metadata["_has_embedded_cover"] = True
+            
+        return clean_metadata
     except Exception as exc:
         logger.debug(f"Failed to read current metadata for {task.file_path}: {exc}")
     return {}
@@ -491,6 +504,40 @@ def stream_review_queue_item(task_id: int):
         conditional=True,
         download_name=file_path.name
     )
+
+
+@bp.get("/review-queue/<int:task_id>/cover")
+def get_review_queue_item_cover(task_id: int):
+    """Stream embedded cover art for a review task."""
+    db = get_working_database()
+    try:
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task:
+                return jsonify({"error": "Task not found"}), 404
+
+            file_path = _resolve_task_file(task)
+            if not file_path:
+                return jsonify({"error": "File does not exist"}), 404
+
+            from core.file_handling.tagging_io import read_tags
+            metadata = read_tags(file_path)
+            
+            cover_data = metadata.get("_cover_data")
+            cover_mime = metadata.get("_cover_mime") or "image/jpeg"
+            
+            if not cover_data:
+                return jsonify({"error": "No embedded cover found"}), 404
+
+            import io
+            return send_file(
+                io.BytesIO(cover_data),
+                mimetype=cover_mime,
+                as_attachment=False
+            )
+    except Exception as e:
+        logger.error(f"Failed to fetch cover for review task {task_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to fetch cover"}), 500
 
 
 @bp.post("/review-queue/<int:task_id>/lookup/acoustid")

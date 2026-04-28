@@ -17,6 +17,8 @@
   let betaOpt = false;
   let devMode = false;
   let showBetaWarning = false;
+  let showBetaOptOutMessage = false;
+  import { systemStatus } from '../../../stores/systemStatus';
 
   async function handleBetaToggle() {
     if (!betaOpt) {
@@ -27,10 +29,16 @@
   }
 
   async function proceedWithBetaToggle() {
+    const isOptingOut = betaOpt;
     showBetaWarning = false;
     showOverflowMenu = false;
     await setUiBetaOpt(!betaOpt);
-    setTimeout(() => window.location.reload(), 500);
+    
+    if (isOptingOut) {
+      showBetaOptOutMessage = true;
+    } else {
+      setTimeout(() => window.location.reload(), 500);
+    }
   }
 
   async function loadStore() {
@@ -104,6 +112,8 @@
           installed_channel: plugin.channel || 'release'
         } : p
       );
+      // Force status reload to show restart banner immediately
+      await systemStatus.load();
     } catch (err) {
       feedback.addToast(`Failed to ${isUpdate ? 'update' : 'install'} ${plugin.name}.`, 'error');
       console.error(err);
@@ -132,6 +142,8 @@
       plugins = plugins.map(p =>
         (p.id === pluginToUninstall.id || p.name === pluginToUninstall.name) ? { ...p, _installed: false, is_installed: false, update_available: false } : p
       );
+      // Force status reload to show restart banner immediately
+      await systemStatus.load();
     } catch (err) {
       feedback.addToast(`Failed to uninstall ${pluginToUninstall.name}.`, 'error');
       console.error(err);
@@ -279,6 +291,25 @@
           Are you sure you want to uninstall <strong>{pluginToUninstall?.name}</strong>? This will remove its files and may disable any functionality that relies on it.
           <br/><br/>
           <span class="text-red-400 font-bold">A restart of EchoSync will be required to complete the removal.</span>
+      </div>
+  </ConfirmDialog>
+{/if}
+
+{#if showBetaOptOutMessage}
+  <ConfirmDialog 
+      title="🚀 Beta Opt-out"
+      confirmText="Restart Now"
+      cancelText="Later"
+      on:confirm={() => {
+        apiClient.post('/restart');
+        window.location.reload();
+      }}
+      on:cancel={() => showBetaOptOutMessage = false}
+  >
+      <div class="text-sm mt-2">
+          <span class="text-xl">😏</span> <strong>See I told you so.</strong>
+          <br/><br/>
+          You have opted out of the beta program. A restart is highly recommended to purge any unstable beta components and restore system stability.
       </div>
   </ConfirmDialog>
 {/if}

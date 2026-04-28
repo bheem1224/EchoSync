@@ -180,14 +180,8 @@
 
     <!-- GRID VIEW -->
     {#if viewMode === 'grid'}
-        <div class="mb-6 flex justify-end relative z-50">
-            <div class="relative w-full max-w-md">
-                <Omnibar 
-                    forcedPrefix="#" 
-                    placeholder="Search your downloaded library..." 
-                    bind:query={searchQuery}
-                />
-            </div>
+        <div class="mb-6 flex justify-end text-xs text-muted">
+            <p>Press <kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono text-white">Ctrl+K</kbd> or <kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono text-white">/</kbd> to search your library</p>
         </div>
 
         <div class="artist-grid">

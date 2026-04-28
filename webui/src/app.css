@@ -251,3 +251,14 @@ hr {
   border-top: 1px solid var(--border-subtle);
   margin: 16px 0;
 }
+
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 2px 4px;
+  font-size: 0.85em;
+  color: var(--accent);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.4);
+}

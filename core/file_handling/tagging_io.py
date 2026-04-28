@@ -259,6 +259,20 @@ def _extract_detailed_tags(audio: Any) -> Dict[str, Any]:
         if not metadata.get("musicbrainz_id") and metadata.get("recording_id"):
             metadata["musicbrainz_id"] = metadata["recording_id"]
 
+        # Cover Art extraction
+        cover_data, cover_mime = _extract_id3_cover(tags)
+        if cover_data:
+            metadata["_cover_data"] = cover_data
+            metadata["_cover_mime"] = cover_mime
+
+        return {k: v for k, v in metadata.items() if v not in (None, "", [], {})}
+
+    if isinstance(tags, FLAC):
+        metadata = _map_simple_tags(tags)
+        cover_data, cover_mime = _extract_flac_cover(tags)
+        if cover_data:
+            metadata["_cover_data"] = cover_data
+            metadata["_cover_mime"] = cover_mime
         return {k: v for k, v in metadata.items() if v not in (None, "", [], {})}
 
     return _map_simple_tags(tags)
@@ -328,6 +342,23 @@ def _frame_text(frame: Any) -> Optional[str]:
 def _id3_text(tags: Any, frame_id: str) -> Optional[str]:
     frames = tags.getall(frame_id)
     return _frame_text(frames[0]) if frames else None
+
+
+def _extract_id3_cover(tags: Any) -> Tuple[Optional[bytes], Optional[str]]:
+    """Extract APIC frame from ID3 tags."""
+    from mutagen.id3 import APIC
+    for frame in tags.getall("APIC"):
+        if isinstance(frame, APIC):
+            return frame.data, frame.mime
+    return None, None
+
+
+def _extract_flac_cover(audio: Any) -> Tuple[Optional[bytes], Optional[str]]:
+    """Extract picture from FLAC file."""
+    if hasattr(audio, "pictures") and audio.pictures:
+        pic = audio.pictures[0]
+        return pic.data, pic.mime
+    return None, None
 
 
 def _read_wav_tags(file_path: Path) -> Dict[str, Any]:

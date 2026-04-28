@@ -207,8 +207,8 @@
 
   <!-- ── Fixed bottom bar ───────────────────────────────────────────────── -->
   <div
-    class="fixed bottom-0 left-0 right-0 h-auto min-h-[5rem] py-2 md:py-0 md:h-20 bg-gray-900 border-t border-gray-800
-           flex flex-col md:flex-row items-center px-2 md:px-4 gap-2 md:gap-4 z-50"
+    class="w-full h-auto min-h-[5rem] py-2 md:py-0 md:h-20 bg-gray-900 border-t border-gray-800
+           flex flex-col md:flex-row items-center px-2 md:px-4 gap-2 md:gap-4 relative z-40"
   >
 
     <!-- ── Mobile Top: Progress Bar (visible only on small screens) ─────────── -->

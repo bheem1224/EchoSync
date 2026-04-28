@@ -64,7 +64,7 @@
 
   async function handleAction(item, action) {
     try {
-      await apiClient.post('/api/search/route', {
+      await apiClient.post('/search/route', {
         item,
         action,
         target: 'default'
@@ -138,8 +138,15 @@
     <main class="search-main">
       <div class="mb-6 relative z-50">
         <Omnibar 
-            forcedPrefix="?" 
-            placeholder="Search MusicBrainz to download..." 
+            placeholder="Search all services, library, or type ? for web..." 
+            on:select={(e) => {
+              const { item, type } = e.detail;
+              if (type === 'external' || type === 'track') {
+                results = [item, ...results];
+              } else if (type === 'download') {
+                handleAction(item, 'download');
+              }
+            }}
         />
       </div>
 
@@ -197,7 +204,8 @@
           </div>
         {:else}
           <div class="empty-state">
-            <p class="muted">Enter a query to start searching.</p>
+            <p class="muted">Press <kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono text-white">Ctrl+K</kbd> or <kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono text-white">/</kbd> to start searching.</p>
+            <p class="text-xs text-muted/60 mt-2">You can also use the search bar above.</p>
           </div>
         {/if}
       </div>

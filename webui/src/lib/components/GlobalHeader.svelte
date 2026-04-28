@@ -1,5 +1,6 @@
 <script>
-  import { unreadAlerts, activeDownloads } from '../../stores/headerStatus';
+  import { metadataQueue } from '../../stores/metadataQueue';
+  import { jobs } from '../../stores/jobs';
   import DownloadQueueDrawer from './DownloadQueueDrawer.svelte';
 
   export let toggleNotificationDrawer = () => {};
@@ -26,7 +27,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0018 9.75v-.7A6 6 0 006 9.05v.7a8.967 8.967 0 00-2.311 6.022 23.85 23.85 0 005.454 1.31m5.714 0a3 3 0 11-5.714 0m5.714 0H9.143" />
         </svg>
 
-        {#if $unreadAlerts > 0}
+        {#if $metadataQueue.count > 0}
           <span class="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-red-500"></span>
           <span class="absolute right-2 top-2 h-2.5 w-2.5 animate-ping rounded-full bg-red-500"></span>
         {/if}
@@ -44,9 +45,9 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 8.5v6m0 0l-2.25-2.25M12 14.5l2.25-2.25" />
         </svg>
 
-        {#if $activeDownloads > 0}
+        {#if $jobs.active.length > 0}
           <span class="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-indigo-500 px-1 text-[10px] font-semibold leading-none text-white">
-            {$activeDownloads}
+            {$jobs.active.length}
           </span>
         {/if}
       </button>

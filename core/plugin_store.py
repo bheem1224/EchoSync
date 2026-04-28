@@ -227,6 +227,12 @@ class PluginStore:
             
         for plugin in all_plugins:
             plugin_id = plugin.get("id", plugin.get("name", "unknown_plugin"))
+            
+            # 1. Inject Official Status from Source
+            if plugin.get("_source_repo") == self.default_repo:
+                plugin["verified_source"] = "official"
+                plugin["author"] = "EchoSync"
+
             # Clean up ID for dest dir
             folder_id = plugin_id.split(".")[-1]
             dest_dir = self.plugins_dir / folder_id
@@ -242,6 +248,10 @@ class PluginStore:
                     with open(manifest_file, "r") as f:
                         local_manifest = json.load(f)
                     
+                    # Merge local verified status (overrides remote if mismatch)
+                    if local_manifest.get("verified_source") == "official":
+                        plugin["verified_source"] = "official"
+
                     local_version = local_manifest.get("version", "0.0.0")
                     plugin["installed_version"] = local_version
                     

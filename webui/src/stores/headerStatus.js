@@ -1,6 +1,4 @@
-import { writable } from 'svelte/store';
-
-// Placeholder stores for GlobalHeader badges.
-// Hook these up to backend polling/actions from layout or page-level logic later.
-export const unreadAlerts = writable(0);
-export const activeDownloads = writable(0);
+// DEPRECATED: This store was a placeholder. 
+// Use metadataQueue for alerts and jobs for active downloads.
+export const unreadAlerts = { subscribe: () => {} };
+export const activeDownloads = { subscribe: () => {} };

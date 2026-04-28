@@ -48,6 +48,8 @@ def get_queue():
                     "status": _to_ui_status(download.status),
                     "provider_id": download.provider_id,
                     "retry_count": download.retry_count,
+                    "current_speed": download.current_speed,
+                    "progress_percent": download.progress_percent,
                     "created_at": download.created_at.isoformat() if download.created_at else None,
                     "updated_at": download.updated_at.isoformat() if download.updated_at else None,
                 })

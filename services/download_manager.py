@@ -912,9 +912,14 @@ class DownloadManager:
                     elif remote_state == "queued":
                         new_status = "downloading"
 
+                    # Extract speed and progress (0-100)
+                    speed = status.get('speed', 0.0) # bytes/s
+                    progress = status.get('progress', 0.0) # 0.0 to 100.0
+
+                    self._update_status(db_id, new_status, provider_id, speed, progress)
+
                     if new_status != "downloading":
                         logger.info(f"Download {db_id} (Provider {found_provider}, ID {provider_id}) finished with status: {new_status}")
-                        self._update_status(db_id, new_status)
 
                         if new_status == "completed":
                             logger.info(f"Download completed, removing {db_id} from queue")
@@ -1472,12 +1477,14 @@ class DownloadManager:
         except Exception as e:
             logger.warning(f"Library cleanup job failed: {e}")
 
-    def _update_status(self, download_id: int, status: str, provider_id: Optional[str] = None):
-        """Helper to update DB status"""
+    def _update_status(self, download_id: int, status: str, provider_id: Optional[str] = None, speed: float = 0.0, progress: float = 0.0):
+        """Helper to update DB status, speed, and progress"""
         with self.work_db.session_scope() as session:
             download = session.query(Download).get(download_id)
             if download:
                 download.status = (status or "").lower()
+                download.current_speed = speed
+                download.progress_percent = progress
                 download.updated_at = utc_now()
                 if provider_id:
                     download.provider_id = provider_id

@@ -17,6 +17,16 @@
   $: latestRelease = plugin.version || '0.0.0';
   $: latestBeta = plugin.beta_version || '0.0.0';
 
+  const getRepoLabel = (url) => {
+    if (!url) return '';
+    try {
+      const u = new URL(url);
+      return u.hostname.replace('www.', '');
+    } catch (e) {
+      return url.split('/').slice(0, 3).join('/'); // Fallback to start of string
+    }
+  };
+
   // Version Comparison Helper
   const isNewer = (v1, v2) => {
     if (!v1 || !v2 || v1 === 'Unknown' || v2 === 'Unknown') return false;
@@ -81,10 +91,14 @@
     </div>
     <div class="flex-1 min-w-0">
       <div class="flex items-center justify-between gap-2">
-        <div class="flex items-center gap-2 overflow-hidden">
-          <h3 class="text-lg font-bold text-white truncate">{plugin.name}</h3>
+        <div class="flex items-center gap-1.5 flex-nowrap shrink-0 overflow-visible">
+          <h3 class="text-lg font-bold text-white truncate max-w-[150px] lg:max-w-[200px]" title={plugin.name}>{plugin.name}</h3>
           {#if plugin.verified_source === 'official'}
-            <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 text-[10px] font-bold uppercase tracking-wider rounded border border-green-500/30 shrink-0">Official</span>
+            <span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 text-[10px] font-bold uppercase tracking-wider rounded border border-green-500/30 shrink-0 whitespace-nowrap">Official</span>
+          {:else if plugin._source_repo}
+            <span class="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 text-[10px] font-bold uppercase tracking-wider rounded border border-blue-500/30 shrink-0 truncate max-w-[120px] whitespace-nowrap" title={plugin._source_repo}>
+              {getRepoLabel(plugin._source_repo)}
+            </span>
           {/if}
         </div>
         

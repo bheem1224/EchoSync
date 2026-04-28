@@ -133,6 +133,8 @@ class Download(WorkingBase):
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    current_speed: Mapped[float] = mapped_column(Float, default=0.0)
+    progress_percent: Mapped[float] = mapped_column(Float, default=0.0)
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(

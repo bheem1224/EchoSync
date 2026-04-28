@@ -182,6 +182,18 @@
       isOpen = false;
     }
   }
+
+  function formatSpeed(bytesPerSec) {
+    if (!bytesPerSec || bytesPerSec <= 0) return '0 B/s';
+    const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+    let speed = bytesPerSec;
+    let unitIndex = 0;
+    while (speed >= 1024 && unitIndex < units.length - 1) {
+      speed /= 1024;
+      unitIndex++;
+    }
+    return `${speed.toFixed(1)} ${units[unitIndex]}`;
+  }
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -345,9 +357,28 @@
 
           <!-- Track Info -->
           <div class="flex-1 min-w-0">
-            <div class="text-white font-medium truncate">{track.title}</div>
-            <div class="text-sm text-gray-400 truncate">{track.artist}</div>
-            {#if track.album}
+            <div class="flex justify-between items-start">
+              <div class="min-w-0">
+                <div class="text-white font-medium truncate">{track.title}</div>
+                <div class="text-sm text-gray-400 truncate">{track.artist}</div>
+              </div>
+              {#if track.status === 'DOWNLOADING'}
+                <div class="text-xs font-mono text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                  {formatSpeed(track.current_speed)}
+                </div>
+              {/if}
+            </div>
+            
+            {#if track.status === 'DOWNLOADING'}
+              <div class="mt-2 w-full bg-gray-900 rounded-full h-1.5 overflow-hidden border border-gray-700">
+                <div 
+                  class="bg-indigo-500 h-full transition-all duration-500" 
+                  style="width: {track.progress_percent || 0}%"
+                ></div>
+              </div>
+            {/if}
+            
+            {#if track.album && track.status !== 'DOWNLOADING'}
               <div class="text-xs text-gray-500 truncate">{track.album}</div>
             {/if}
           </div>

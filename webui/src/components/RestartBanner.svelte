@@ -45,10 +45,11 @@
   }
 </script>
 
-{#if $systemStatus.restart_pending}
+{#if $systemStatus.restart_pending || $systemStatus.status === 'offline'}
   <div 
     class="restart-banner" 
     class:restarting={isRestarting}
+    class:offline={$systemStatus.status === 'offline'}
     transition:slide={{ duration: 300 }}
   >
     <div class="banner-content">
@@ -58,15 +59,15 @@
       </div>
       
       <div class="message-container">
-        <h3>Restart Required</h3>
-        <p>A system update or plugin change has been applied. Restart EchoSync to activate all changes.</p>
+        <h3>{$systemStatus.status === 'offline' ? 'Connection Lost' : 'Restart Required'}</h3>
+        <p>{$systemStatus.status === 'offline' ? 'EchoSync server is unreachable. Attempting to reconnect...' : 'A system update or plugin change has been applied. Restart EchoSync to activate all changes.'}</p>
       </div>
 
       <div class="actions">
-        {#if isRestarting}
+        {#if isRestarting || $systemStatus.status === 'offline'}
           <div class="restarting-state" in:fade>
             <span class="spinner"></span>
-            <span>Reconnecting in {countdown}s</span>
+            <span>{isRestarting ? `Reconnecting in ${countdown}s` : 'Retrying...'}</span>
           </div>
         {:else}
           <button 

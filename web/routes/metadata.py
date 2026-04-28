@@ -261,3 +261,82 @@ def lookup_isrc(isrc: str):
         return jsonify({"isrc": data["isrc"], "result": None, "tried": data["tried"]}), 404
 
     return jsonify(data), 200
+
+
+@bp.get("/cover-art")
+def get_cover_art():
+    """Extract embedded cover art from an audio file.
+
+    Query params:
+      - path: absolute path to audio file
+    """
+    import io
+    from flask import make_response
+
+    file_path_str = request.args.get("path")
+    if not file_path_str:
+        return jsonify({"error": "Missing path"}), 400
+
+    file_path = Path(file_path_str)
+    if not file_path.exists() or not file_path.is_file():
+        return jsonify({"error": "File not found"}), 404
+
+    try:
+        import mutagen
+        audio = mutagen.File(str(file_path))
+        if not audio:
+            return jsonify({"error": "Unsupported file format"}), 400
+
+        # Try to find embedded art
+        # Mutagen handles different formats differently:
+        # ID3 (MP3): 'APIC:'
+        # FLAC: audio.pictures
+        # MP4/M4A: 'covr'
+        # Vorbis (OGG/OPUS): 'metadata_block_picture'
+        
+        image_data = None
+        mime_type = "image/jpeg"
+
+        if hasattr(audio, "pictures") and audio.pictures:
+            # FLAC
+            image_data = audio.pictures[0].data
+            mime_type = audio.pictures[0].mime
+        elif "APIC:" in audio:
+            # ID3 (MP3)
+            image_data = audio["APIC:"].data
+            mime_type = audio["APIC:"].mime
+        elif "covr" in audio:
+            # MP4
+            image_data = audio["covr"][0]
+            # M4A covers are often raw bytes, we'll guess mime if needed or use default
+            # mutagen sometimes returns them as bytes or list of bytes
+        elif "metadata_block_picture" in audio:
+            # OGG/Vorbis/Opus often store picture in a base64 block
+            from mutagen.flac import Picture
+            import base64
+            for b64_data in audio["metadata_block_picture"]:
+                try:
+                    data = base64.b64decode(b64_data)
+                    pic = Picture(data)
+                    image_data = pic.data
+                    mime_type = pic.mime
+                    break
+                except Exception:
+                    continue
+
+        if not image_data:
+            # Fallback: check for folder.jpg or cover.jpg in same directory
+            for name in ["cover.jpg", "folder.jpg", "cover.png", "folder.png"]:
+                fallback = file_path.parent / name
+                if fallback.exists():
+                    return send_file(str(fallback))
+            return jsonify({"error": "No cover art found"}), 404
+
+        response = make_response(image_data)
+        response.headers.set("Content-Type", mime_type)
+        response.headers.set("Cache-Control", "public, max-age=86400") # 1 day cache
+        return response
+
+    except Exception as e:
+        logger.error(f"Error extracting cover art for {file_path}: {e}")
+        return jsonify({"error": str(e)}), 500

@@ -1,127 +1,55 @@
 <script>
-  import { onMount } from "svelte";
-  import ManagerSettings from "../../../components/ManagerSettings.svelte";
-  import ManagedAccounts from "../../../components/ManagedAccounts.svelte";
-  import DuplicateResolutionCard from "../../../components/DuplicateResolutionCard.svelte";
-  import PendingActionsCard from "../../../components/PendingActionsCard.svelte";
-  import AccountLinker from "../../../components/AccountLinker.svelte";
-
-  let layout = null;
-  let activeView = null;
-  let sidebarOpen = false;
-
-  const componentMap = {
-      'echosync-manager-settings': ManagerSettings,
-      'echosync-managed-accounts': ManagedAccounts,
-      'echosync-duplicate-resolution': DuplicateResolutionCard,
-      'echosync-pending-actions': PendingActionsCard,
-      'echosync-account-linker': AccountLinker,
-  };
-
-  onMount(async () => {
-    try {
-      // Fetch the YAML layout from the backend
-      const res = await fetch("/api/dashboard/layout");
-      if (res.ok) {
-        layout = await res.json();
-        // Find the manager view, or default to the first available view
-        activeView =
-          layout.dashboard.views.find((v) => v.id === "manager") ||
-          layout.dashboard.views[0];
-      }
-    } catch (err) {
-      console.error("Failed to load Lovelace layout:", err);
-    }
-  });
+  import TabbedQueues from './TabbedQueues.svelte';
+  import ManagerSidebar from './ManagerSidebar.svelte';
 </script>
 
-{#if activeView}
-  <div
-    class="h-full w-full flex flex-col gap-6 relative text-white bg-transparent"
-  >
-    <header class="flex justify-between items-center">
-      <h1 class="text-2xl font-bold">{activeView.title}</h1>
-      {#if activeView.sidebar?.enabled}
-        <button
-          class="flex items-center justify-center w-10 h-10 bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.1)] text-white rounded-full hover:bg-[rgba(255,255,255,0.1)] transition-colors"
-          title="Account Linker"
-          on:click={() => (sidebarOpen = true)}
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
-        </button>
-      {/if}
-    </header>
+<svelte:head>
+  <title>Media Manager | EchoSync</title>
+</svelte:head>
 
-    <div
-      class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start"
-    >
-      {#if activeView.sections}
-        {#each activeView.sections as section}
-          <div class="flex flex-col gap-4 {section.fullWidth ? 'md:col-span-2' : ''}">
-            {#if section.title}
-              <h2 class="text-lg font-semibold text-muted">{section.title}</h2>
-            {/if}
-
-            {#if section.cards}
-              {#each section.cards as card}
-                {#if componentMap[card.type]}
-                  <div class="card p-4 overflow-hidden">
-                    <svelte:component this={componentMap[card.type]} />
-                  </div>
-                {:else}
-                  <svelte:element
-                    this={card.type}
-                    class="card p-4 overflow-hidden block w-full"
-                  ></svelte:element>
-                {/if}
-              {/each}
-            {/if}
-          </div>
-        {/each}
-      {/if}
+<div class="h-full w-full flex flex-col gap-6 text-white p-6 md:p-10">
+  <!-- Page Header -->
+  <header class="flex justify-between items-center mb-4">
+    <div class="flex flex-col">
+      <div class="text-[10px] uppercase font-black tracking-[0.3em] text-primary mb-1">Media Management</div>
+      <h1 class="text-3xl font-black tracking-tight flex items-center gap-3">
+        Media Manager
+        <span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+      </h1>
     </div>
-
-    {#if activeView.sidebar?.enabled && sidebarOpen}
-      <div
-        class="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 cursor-pointer"
-        on:click={() => (sidebarOpen = false)}
-        role="button"
-        tabindex="0"
-        on:keydown={(e) => e.key === "Escape" && (sidebarOpen = false)}
-      ></div>
-
-      <div
-        class="fixed top-0 right-0 h-screen w-96 z-50 bg-surface backdrop-blur-xl border-l border-glass-border shadow-2xl flex flex-col p-6 overflow-y-auto transform transition-transform"
-      >
-        <div class="flex justify-between items-center mb-6">
-          <h2 class="text-xl font-bold">Options</h2>
-          <button
-            class="text-muted hover:text-white text-2xl"
-            on:click={() => (sidebarOpen = false)}>✕</button
-          >
-        </div>
-
-        <div class="flex flex-col gap-4">
-          {#if activeView.sidebar.cards}
-            {#each activeView.sidebar.cards as card}
-              {#if componentMap[card.type]}
-                <div class="bg-card border border-glass-border rounded-global block w-full p-4">
-                  <svelte:component this={componentMap[card.type]} />
-                </div>
-              {:else}
-                <svelte:element
-                  this={card.type}
-                  class="bg-card border border-glass-border rounded-global block w-full p-4"
-                ></svelte:element>
-              {/if}
-            {/each}
-          {/if}
-        </div>
+    
+    <div class="flex items-center gap-4">
+      <div class="hidden md:flex flex-col items-end mr-4">
+        <span class="text-[10px] text-muted uppercase font-bold">Consensus Status</span>
+        <span class="text-xs text-emerald-400 font-bold">Synchronized</span>
       </div>
-    {/if}
+      <div class="w-10 h-10 rounded-full bg-surface border border-glass-border flex items-center justify-center hover:border-primary/50 transition-colors cursor-pointer">
+        <svg class="w-5 h-5 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Layout Grid -->
+  <div class="flex-grow grid grid-cols-1 lg:grid-cols-10 gap-8 min-h-0">
+    <!-- Left Column: Queues (70%) -->
+    <main class="lg:col-span-7 flex flex-col min-h-0 bg-surface/20 backdrop-blur-sm border border-glass-border rounded-[2rem] p-8 shadow-2xl">
+      <TabbedQueues />
+    </main>
+
+    <!-- Right Column: Account Builder (30%) -->
+    <div class="lg:col-span-3 flex flex-col min-h-0">
+      <div class="flex-grow rounded-[2rem] overflow-hidden border border-glass-border shadow-2xl">
+        <ManagerSidebar />
+      </div>
+    </div>
   </div>
-{:else}
-  <div class="flex items-center justify-center h-64 text-muted">
-    <p>Loading YAML Dashboard Layout...</p>
-  </div>
-{/if}
+</div>
+
+<style>
+  :global(body) {
+    background-color: #050505;
+    background-image: 
+      radial-gradient(circle at 0% 0%, rgba(29, 185, 84, 0.05) 0%, transparent 50%),
+      radial-gradient(circle at 100% 100%, rgba(0, 229, 255, 0.05) 0%, transparent 50%);
+  }
+</style>

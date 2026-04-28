@@ -49,7 +49,19 @@
 
     <!-- Track identity -->
     <div class="track-info">
-      <div class="cover-placeholder">🎵</div>
+      <div class="cover-placeholder">
+        {#if $player.currentTrack.cover_art_url}
+          <img src={$player.currentTrack.cover_art_url} alt="Cover" class="cover-img" />
+        {:else if $player.currentTrack.file_path || $player.currentTrack.path}
+          <img src={`/api/metadata/cover-art?path=${encodeURIComponent($player.currentTrack.file_path || $player.currentTrack.path)}`} 
+               alt="Cover" 
+               class="cover-img" 
+               on:error={(e) => e.target.style.display = 'none'} />
+          <span class="placeholder-icon">🎵</span>
+        {:else}
+          🎵
+        {/if}
+      </div>
       <div class="meta">
         <span class="title">{$player.currentTrack.title ?? 'Unknown title'}</span>
         <span class="artist">{$player.currentTrack.artist ?? 'Unknown artist'}</span>
@@ -163,6 +175,23 @@
       justify-content: center;
       font-size: 20px;
       flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+  }
+
+  .cover-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: 2;
+  }
+
+  .placeholder-icon {
+    position: absolute;
+    z-index: 1;
   }
 
   .meta {

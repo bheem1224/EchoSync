@@ -676,6 +676,10 @@ class MetadataEnhancerService:
 
         return results
 
+    def read_tags(self, file_path: Path) -> Dict[str, Any]:
+        """Read tags from a file using the internal tagging helper."""
+        return _tagging_read(file_path)
+
     def tag_file(self, file_path: Path, metadata: Dict[str, Any]) -> None:
         """Write *metadata* to the physical audio file at *file_path*.
 

@@ -4,9 +4,12 @@
   import apiClient from '../api/client';
 
   let cpuUsage = 0;
+  let systemCpuUsage = 0;
   let memoryUsedGb = 0;
   let memoryTotalGb = 0;
   let memoryUsage = 0;
+  let systemMemoryUsage = 0;
+  let appMemoryMb = 0;
 
   let libraryStats = { totalTracks: '—', totalAlbums: '—', storageUsed: '—' };
 
@@ -52,10 +55,19 @@
     try {
       const s = await apiClient.get('/stats');
       if (s && s.data) {
-        cpuUsage = Math.round(s.data.cpu_percent || 0);
+        // App specific
+        cpuUsage = Math.round(s.data.cpu?.app || 0);
+        appMemoryMb = Math.round((s.data.memory?.app_rss || 0) / (1024 ** 2));
+        
+        // System wide
+        systemCpuUsage = Math.round(s.data.cpu?.system || 0);
         memoryTotalGb = Math.round(((s.data.memory?.total || 0) / (1024 ** 3)) * 10) / 10;
         memoryUsedGb = Math.round(((s.data.memory?.total || 0) - (s.data.memory?.available || 0)) / (1024 ** 3) * 10) / 10;
-        memoryUsage = Math.round(s.data.memory?.percent || 0);
+        systemMemoryUsage = Math.round(s.data.memory?.percent || 0);
+        
+        // Progress bar for memory (app percentage of total system memory, boosted for visibility if small)
+        const rawMemPercent = ((s.data.memory?.app_rss || 0) / (s.data.memory?.total || 1)) * 100;
+        memoryUsage = Math.max(rawMemPercent, 1); // min 1% for visibility
       }
 
       const health = await apiClient.get('/health');
@@ -110,27 +122,33 @@
       <h2 class="text-base font-semibold mb-4">System Resources</h2>
 
       <div class="space-y-4">
-        <div>
-          <div class="flex items-center justify-between text-sm mb-2">
-            <span class="text-gray-300">CPU Usage</span>
-            <span class="font-medium text-cyan-300">{cpuUsage}%</span>
+        <div class="stat-group">
+          <div class="flex justify-between items-center mb-1.5">
+            <span class="text-gray-300 font-medium">CPU Usage</span>
+            <div class="text-right">
+              <span class="text-white font-bold">{cpuUsage}%</span>
+              <span class="text-gray-500 text-xs ml-1">(System Total: {systemCpuUsage}%)</span>
+            </div>
           </div>
-          <div class="w-full h-2.5 bg-gray-700 rounded-full overflow-hidden">
-            <div
-              class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-700 ease-out"
+          <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div 
+              class="h-full bg-blue-500 rounded-full transition-all duration-500"
               style="width: {cpuUsage}%"
             ></div>
           </div>
         </div>
 
-        <div>
-          <div class="flex items-center justify-between text-sm mb-2">
-            <span class="text-gray-300">Memory Usage</span>
-            <span class="font-medium text-emerald-300">{memoryUsedGb} GB / {memoryTotalGb} GB</span>
+        <div class="stat-group">
+          <div class="flex justify-between items-center mb-1.5">
+            <span class="text-gray-300 font-medium">Memory Usage</span>
+            <div class="text-right">
+              <span class="text-white font-bold">{appMemoryMb} MB</span>
+              <span class="text-gray-500 text-xs ml-1">(System total: {memoryTotalGb} GB)</span>
+            </div>
           </div>
-          <div class="w-full h-2.5 bg-gray-700 rounded-full overflow-hidden">
-            <div
-              class="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-700 ease-out"
+          <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div 
+              class="h-full bg-purple-500 rounded-full transition-all duration-500"
               style="width: {memoryUsage}%"
             ></div>
           </div>

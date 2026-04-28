@@ -99,6 +99,7 @@
     {};
 
   $: streamUrl = task?.id ? `/api/review-queue/${task.id}/stream` : '';
+  $: coverUrl = task?.current_metadata?._has_embedded_cover ? `/api/review-queue/${task.id}/cover` : '';
 
   function getFilename(filePath) {
     if (!filePath) return 'Unknown file';
@@ -358,7 +359,7 @@
   }
 
   async function doRunISRCLookup(isrc) {
-    if (isrcLookupLoading || musicbrainzLookupLoading || acoustidLookupLoading || approving) {
+    if (isrcLookupLoading || musicbrainzLookupLoading || acoustidLookupLoading || approving || savingDraft) {
       return;
     }
 
@@ -395,6 +396,17 @@
     }
   }
 
+  function submitIsrcPrompt() {
+    const isrc = isrcInputValue.trim();
+    if (!isrc) {
+      feedback.addToast('Please enter an ISRC code', 'error');
+      return;
+    }
+    closeIsrcPrompt();
+    doRunISRCLookup(isrc);
+  }
+
+
   onDestroy(() => {
     clearAutosaveTimer();
   });
@@ -423,7 +435,21 @@
       <div class="p-5 md:p-6 max-h-[70vh] overflow-y-auto">
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <section class="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-            <h4 class="text-sm font-semibold text-slate-100 mb-3">Current File Metadata</h4>
+            <div class="flex items-start gap-4 mb-4">
+              {#if coverUrl}
+                <div class="w-24 h-24 rounded-lg overflow-hidden border border-slate-700 shadow-lg flex-shrink-0">
+                  <img src={coverUrl} alt="Album Cover" class="w-full h-full object-cover" />
+                </div>
+              {:else}
+                <div class="w-24 h-24 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0 text-slate-500 border border-slate-700">
+                  <span class="text-2xl">🎵</span>
+                </div>
+              {/if}
+              <div class="flex-1 min-w-0">
+                <h4 class="text-sm font-semibold text-slate-100 mb-1">Current File Metadata</h4>
+                <p class="text-xs text-slate-400 truncate" title={task?.file_path}>{task?.file_path}</p>
+              </div>
+            </div>
             <div class="space-y-2 text-sm">
               <div class="flex justify-between gap-4">
                 <span class="text-slate-400">Title</span>

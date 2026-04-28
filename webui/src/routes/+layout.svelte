@@ -104,7 +104,7 @@
   </div>
 
   <ToastNotifications />
-  <Omnibar />
+  <Omnibar mode="modal" />
   
   {#if showEncryptionWarning}
     <EncryptionKeyWarning 

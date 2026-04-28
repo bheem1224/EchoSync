@@ -72,16 +72,37 @@ def request_restart():
 
 @bp.get("/stats")
 def system_stats():
-    """System resource usage statistics."""
+    """System resource usage statistics, distinguishing app vs system."""
     try:
-        mem = psutil.virtual_memory()
+        import os
+        # Total system stats
+        sys_mem = psutil.virtual_memory()
+        # Get system CPU first (non-blocking)
+        sys_cpu = psutil.cpu_percent(interval=None)
+
+        # App-specific stats
+        process = psutil.Process(os.getpid())
+        app_mem = process.memory_info().rss
+        # Get app CPU (non-blocking)
+        app_cpu = process.cpu_percent(interval=None)
+
+        # Wait a tiny bit for meaningful deltas
+        time.sleep(0.1)
+        
+        sys_cpu = psutil.cpu_percent(interval=None)
+        app_cpu = process.cpu_percent(interval=None)
+
         return jsonify({
             "memory": {
-                "total": mem.total,
-                "available": mem.available,
-                "percent": mem.percent,
+                "total": sys_mem.total,
+                "available": sys_mem.available,
+                "percent": sys_mem.percent,
+                "app_rss": app_mem
             },
-            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "cpu": {
+                "system": sys_cpu,
+                "app": app_cpu
+            }
         }), 200
     except Exception as e:
         logger.error(f"Error getting system stats: {e}")
@@ -181,15 +202,109 @@ _SETTINGS_ALLOWLIST: frozenset = frozenset({
     "active_download_client",
     "metadata_enhancement",
     "quality_profiles",
-    "library_path",
     "scan_interval",
-    "download_path",
     "file_rename_template",
     "match_threshold",
+    "storage",
+    "theme",
+    "active_matching_engine",
+    "account_mapping",
 })
 
 
-@bp.post("/settings")
+@bp.get("/system/accounts")
+@require_auth
+def get_all_system_accounts():
+    """Returns music accounts and media server users for the manager UI."""
+    from database.config_database import get_config_database
+    from web.services.provider_registry import list_providers
+    try:
+        config_db = get_config_database()
+        
+        # 1. Get all music service accounts
+        all_accounts = []
+        providers = list_providers()
+        for provider in providers:
+            if provider.id == 'plex' or provider.category != 'provider':
+                continue
+            
+            service_id = config_db.get_or_create_service_id(provider.id)
+            accounts = config_db.get_accounts(service_id=service_id)
+            for acc in accounts:
+                all_accounts.append({
+                    'id': acc.get('id'),
+                    'name': acc.get('display_name') or acc.get('account_name'),
+                    'service': provider.id,
+                    'label': f"{acc.get('display_name') or acc.get('account_name')} ({provider.id.title()})",
+                    'color': '#1DB954' if provider.id == 'spotify' else '#00E5FF' if provider.id == 'tidal' else '#5b21b6'
+                })
+        
+        # 2. Get media server users (managed users)
+        media_users = []
+        active_media_server = config_manager.get_active_media_server()
+        if active_media_server == 'plex':
+            from plugins.plex.client import PlexClient
+            try:
+                client = PlexClient()
+                if client.ensure_connection() and client.server:
+                    myplex = client.server.myPlexAccount()
+                    # Add admin
+                    media_users.append({
+                        'id': str(myplex.id),
+                        'name': myplex.title or myplex.username,
+                        'is_admin': True,
+                        'linked_account_ids': [] # To be populated from config
+                    })
+                    # Add managed users
+                    for user in myplex.users():
+                        media_users.append({
+                            'id': str(user.id),
+                            'name': user.title or user.username,
+                            'is_admin': False,
+                            'linked_account_ids': []
+                        })
+            except Exception as e:
+                logger.warning(f"Failed to fetch Plex users: {e}")
+
+        # 3. Load existing mapping from config
+        mapping = config_manager.get('account_mapping', {})
+        for user in media_users:
+            user['linked_account_ids'] = mapping.get(user['id'], [])
+
+        return jsonify({
+            'music_accounts': all_accounts,
+            'media_users': media_users
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting system accounts: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.post("/system/accounts/map")
+@require_auth
+def map_system_accounts():
+    """Save the mapping between media server users and music accounts."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        user_id = str(payload.get('user_id'))
+        account_ids = payload.get('account_ids', [])
+        
+        if not user_id:
+            return jsonify({'error': 'user_id is required'}), 400
+        
+        mapping = config_manager.get('account_mapping', {})
+        mapping[user_id] = account_ids
+        
+        config_manager.set('account_mapping', mapping)
+        config_manager.save_settings(config_manager.get_settings())
+        
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        logger.error(f"Error mapping accounts: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/settings", methods=["POST", "PATCH"])
 @require_auth
 def update_settings():
     """Update application settings (partial update).
@@ -206,7 +321,12 @@ def update_settings():
         # Reject any key not in the explicit allowlist.
         rejected_keys = [k for k in payload if k not in _SETTINGS_ALLOWLIST]
         if rejected_keys:
-            return jsonify({"error": f"Rejected unknown settings keys: {rejected_keys}"}), 400
+            logger.warning(f"Rejected unknown settings keys: {rejected_keys}")
+            return jsonify({
+                "error": "Rejected unknown settings keys",
+                "rejected_keys": rejected_keys,
+                "allowed_keys": list(_SETTINGS_ALLOWLIST)
+            }), 400
 
         # Adjust log level immediately if requested.
         if "log_level" in payload:
@@ -378,14 +498,15 @@ def browse_filesystem():
     """
     try:
         requested = request.args.get('path', '')
-        settings = config_manager.get_all() or {}
+        settings_data = config_manager.get_all() or {}
+        storage = settings_data.get('storage', {})
 
         roots = {
-            'data': settings.get('data_dir'),
-            'downloads': settings.get('downloads_path') or settings.get('storage', {}).get('download_dir'),
-            'library': settings.get('library_path'),
-            'logs': settings.get('logs_path'),
-            'config': settings.get('config_dir'),
+            'data': storage.get('data_dir'),
+            'downloads': storage.get('download_dir'),
+            'library': storage.get('library_dir'),
+            'logs': storage.get('log_dir'),
+            'config': storage.get('config_dir'),
         }
         # Filter out None values
         allowed_roots = {k: os.path.abspath(v) for k, v in roots.items() if v}

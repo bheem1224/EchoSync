@@ -3,11 +3,9 @@
   import { providers } from '../../../stores/providers';
   import { feedback } from '../../../stores/feedback';
   import { getConfig, setConfig } from '../../../stores/config';
-  import apiClient from '../../../api/client';
-  import { metadataQueue } from '../../../stores/metadataQueue';
 
   // Tabs
-  let activeTab = 'providers'; // providers, settings, queue
+  let activeTab = 'providers'; // providers, settings
 
   // Providers Logic
   let metadataProviders = [];
@@ -22,25 +20,10 @@
   let embedCoverArt = true;
   let settingsLoaded = false;
 
-  // Queue Logic
-  let queueItems = [];
-  let queueLoading = false;
-  let queueDetailLoading = false;
-  let selectedQueueTaskId = null;
-  let selectedQueueItem = null;
-  let queueAudioUrl = '';
-  let audioPreviewEl;
-  let manualSearchModalOpen = false;
-  let selectedTask = null;
-  let manualSearchQuery = '';
-  let manualSearchResults = [];
-  let manualSearchLoading = false;
-
   onMount(async () => {
     // Initial Load
     await loadProviders();
     await loadSettings();
-    metadataQueue.fetchCount(); // Update badge
   });
 
   // --- Providers ---
@@ -152,131 +135,6 @@
           feedback.setLoading(false);
       }
   }
-
-    async function setActiveTab(tabName) {
-      activeTab = tabName;
-      if (tabName === 'queue') {
-        await loadQueue();
-      }
-    }
-
-    // --- Queue ---
-  async function loadQueue() {
-      queueLoading = true;
-      try {
-          const resp = await apiClient.get('/api/metadata/queue');
-          queueItems = resp.data.queue || [];
-
-        if (queueItems.length === 0) {
-          selectedQueueTaskId = null;
-          selectedQueueItem = null;
-          queueAudioUrl = '';
-        } else {
-          const stillSelected = selectedQueueTaskId && queueItems.some(item => item.id === selectedQueueTaskId);
-          const nextSelectedId = stillSelected ? selectedQueueTaskId : queueItems[0].id;
-          await selectQueueItem(nextSelectedId);
-        }
-      } catch (e) {
-          console.error(e);
-          // Don't toast for empty queue or minor errors, just log
-          if (e.response && e.response.data && e.response.data.error) {
-              feedback.addToast(e.response.data.error, 'error');
-          } else {
-              feedback.addToast('Failed to load queue', 'error');
-          }
-      } finally {
-          queueLoading = false;
-      }
-  }
-
-        async function selectQueueItem(taskId) {
-          selectedQueueTaskId = taskId;
-          selectedQueueItem = null;
-          queueAudioUrl = '';
-          queueDetailLoading = true;
-
-          try {
-            const resp = await apiClient.get(`/api/metadata/queue/${taskId}`);
-            selectedQueueItem = resp.data?.item || null;
-            if (selectedQueueItem?.file_exists) {
-              queueAudioUrl = `/api/metadata/queue/${taskId}/audio?ts=${Date.now()}`;
-            }
-          } catch (e) {
-            selectedQueueItem = null;
-            queueAudioUrl = '';
-            feedback.addToast(e.response?.data?.error || 'Failed to load review details', 'error');
-          } finally {
-            queueDetailLoading = false;
-          }
-        }
-
-  async function approveTask(task, metadataOverride=null) {
-      try {
-          feedback.setLoading(true);
-          await apiClient.post('/api/metadata/queue/approve', {
-              id: task.id,
-              metadata: metadataOverride || task.detected_metadata
-          });
-          feedback.addToast('Match approved', 'success');
-          await loadQueue();
-          metadataQueue.fetchCount();
-          if (manualSearchModalOpen) manualSearchModalOpen = false;
-      } catch (e) {
-          feedback.addToast('Failed to approve match', 'error');
-      } finally {
-          feedback.setLoading(false);
-      }
-  }
-
-      async function playSelectedAudio() {
-        if (!audioPreviewEl) return;
-        try {
-          await audioPreviewEl.play();
-        } catch (e) {
-          feedback.addToast('Unable to start audio preview', 'error');
-        }
-      }
-
-  async function ignoreTask(task) {
-       try {
-          await apiClient.delete('/api/metadata/queue/ignore', {
-              data: { id: task.id }
-          });
-          feedback.addToast('Task ignored', 'success');
-          await loadQueue();
-          metadataQueue.fetchCount();
-      } catch (e) {
-          feedback.addToast('Failed to ignore task', 'error');
-      }
-  }
-
-  function openManualSearch(task) {
-      selectedTask = task;
-      manualSearchQuery = task.filename.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
-      manualSearchResults = [];
-      manualSearchModalOpen = true;
-  }
-
-  async function searchManual() {
-      if (!manualSearchQuery) return;
-      manualSearchLoading = true;
-      try {
-          const resp = await apiClient.post('/api/metadata/queue/manual-search', {
-              query: manualSearchQuery
-          });
-          manualSearchResults = resp.data.results || [];
-      } catch (e) {
-          feedback.addToast('Search failed', 'error');
-      } finally {
-          manualSearchLoading = false;
-      }
-  }
-
-  function closeManualSearch() {
-      manualSearchModalOpen = false;
-      selectedTask = null;
-  }
-
 </script>
 
 <svelte:head>
@@ -286,23 +144,16 @@
 <section class="page">
   <header class="page__header">
     <h1>Metadata Manager</h1>
-    <p class="subtitle">Manage metadata providers and review queue.</p>
+    <p class="subtitle">Manage metadata providers and enhancement settings.</p>
   </header>
 
   <div class="tabs">
-      <button class="tab-btn active:scale-95 transition-all duration-200" class:active={activeTab === 'providers'} on:click={() => setActiveTab('providers')}>Providers</button>
-      <button class="tab-btn active:scale-95 transition-all duration-200" class:active={activeTab === 'settings'} on:click={() => setActiveTab('settings')}>Settings</button>
-      <button class="tab-btn active:scale-95 transition-all duration-200" class:active={activeTab === 'queue'} on:click={() => setActiveTab('queue')}>
-        Review Queue
-        {#if $metadataQueue.count > 0}
-            <span class="tab-badge">{$metadataQueue.count}</span>
-        {/if}
-      </button>
+      <button class="tab-btn active:scale-95 transition-all duration-200" class:active={activeTab === 'providers'} on:click={() => activeTab = 'providers'}>Providers</button>
+      <button class="tab-btn active:scale-95 transition-all duration-200" class:active={activeTab === 'settings'} on:click={() => activeTab = 'settings'}>Settings</button>
   </div>
 
   <div class="tab-content">
       {#if activeTab === 'providers'}
-          <!-- Providers Tab Content (Existing Logic) -->
           {#if loadError}
             <div class="error-card"><p>{loadError}</p></div>
           {:else if metadataProviders.length === 0}
@@ -333,11 +184,6 @@
                   <p class="provider-description">{getProviderDescription(provider)}</p>
                   <div class="provider-config">
                     {#each getConfigFields(provider.name) as field}
-                      {#if field.type === 'info'}
-                        <div class="info-box">
-                          <p>{field.value}</p>
-                        </div>
-                      {:else}
                         <div class="config-field">
                           <label for="{provider.name}-{field.key}">{field.label}</label>
                           <div class="input-group">
@@ -363,7 +209,6 @@
                             </button>
                           </div>
                         </div>
-                      {/if}
                     {/each}
                   </div>
                 </div>
@@ -372,145 +217,12 @@
           {/if}
 
       {:else if activeTab === 'settings'}
-          <!-- Settings Tab -->
           <div class="settings-card">
               <p class="text-sm text-slate-400">Settings are now automatically managed by the backend auto_importer engine.</p>
           </div>
-
-      {:else if activeTab === 'queue'}
-          <!-- Queue Tab -->
-          {#if queueLoading}
-              <div class="loading">Loading queue...</div>
-          {:else if queueItems.length === 0}
-              <div class="empty-state">No items in review queue.</div>
-          {:else}
-            <div class="queue-review-grid">
-              <div class="queue-list">
-                {#each queueItems as item}
-                  <button
-                    type="button"
-                    class="queue-item active:scale-95 transition-all duration-200"
-                    class:selected={selectedQueueTaskId === item.id}
-                    on:click={() => selectQueueItem(item.id)}
-                  >
-                    <div class="queue-info">
-                      <div class="filename" title={item.file_path}>{item.filename}</div>
-                      {#if item.detected_metadata}
-                        <div class="match-info">
-                          <span class="match-artist">{item.detected_metadata.artist || 'Unknown Artist'}</span> -
-                          <span class="match-title">{item.detected_metadata.title || 'Unknown Title'}</span>
-                          <span class="match-score" class:low={item.confidence_score < 0.9}>
-                            {Math.round(item.confidence_score * 100)}% Match
-                          </span>
-                        </div>
-                      {:else}
-                        <div class="no-match">No matched metadata yet</div>
-                      {/if}
-                    </div>
-                  </button>
-                {/each}
-              </div>
-
-              <div class="review-panel card">
-                {#if queueDetailLoading}
-                  <div class="loading">Loading track details...</div>
-                {:else if !selectedQueueItem}
-                  <div class="empty-state">Select a track to review metadata.</div>
-                {:else}
-                  <div class="review-header">
-                    <h3>{selectedQueueItem.filename}</h3>
-                    <p class="muted small" title={selectedQueueItem.file_path}>{selectedQueueItem.file_path}</p>
-                  </div>
-
-                  <div class="review-sections">
-                    <div class="review-block">
-                      <h4>Source Metadata (File)</h4>
-                      <div class="kv-grid">
-                        <div><span class="k">Title</span><span class="v">{selectedQueueItem.source_metadata?.title || '—'}</span></div>
-                        <div><span class="k">Artist</span><span class="v">{selectedQueueItem.source_metadata?.artist || '—'}</span></div>
-                        <div><span class="k">Album</span><span class="v">{selectedQueueItem.source_metadata?.album || '—'}</span></div>
-                        <div><span class="k">Format</span><span class="v">{selectedQueueItem.source_metadata?.file_format || '—'}</span></div>
-                        <div><span class="k">Duration</span><span class="v">{selectedQueueItem.source_metadata?.duration_seconds ?? '—'}s</span></div>
-                        <div><span class="k">Bitrate</span><span class="v">{selectedQueueItem.source_metadata?.bitrate_kbps ?? '—'} kbps</span></div>
-                      </div>
-                    </div>
-
-                    <div class="review-block">
-                      <h4>Matched Metadata (MusicBrainz)</h4>
-                      {#if selectedQueueItem.detected_metadata}
-                        <div class="kv-grid">
-                          <div><span class="k">Title</span><span class="v">{selectedQueueItem.detected_metadata?.title || '—'}</span></div>
-                          <div><span class="k">Artist</span><span class="v">{selectedQueueItem.detected_metadata?.artist || '—'}</span></div>
-                          <div><span class="k">Album</span><span class="v">{selectedQueueItem.detected_metadata?.album || '—'}</span></div>
-                          <div><span class="k">Year</span><span class="v">{selectedQueueItem.detected_metadata?.year || '—'}</span></div>
-                          <div><span class="k">Track</span><span class="v">{selectedQueueItem.detected_metadata?.track_number || '—'}</span></div>
-                          <div><span class="k">Confidence</span><span class="v">{Math.round((selectedQueueItem.confidence_score || 0) * 100)}%</span></div>
-                        </div>
-                      {:else}
-                        <div class="no-match">No matched metadata detected for this file.</div>
-                      {/if}
-                    </div>
-
-                    <div class="review-block">
-                      <h4>Audio Preview</h4>
-                      {#if queueAudioUrl}
-                          <div class="audio-controls">
-                            <button class="btn-manual active:scale-95 transition-all duration-200" on:click={playSelectedAudio}>Play Preview</button>
-                          </div>
-                          <audio bind:this={audioPreviewEl} controls preload="none" src={queueAudioUrl} class="audio-player"></audio>
-                      {:else}
-                        <div class="muted small">Audio preview unavailable (file missing).</div>
-                      {/if}
-                    </div>
-                  </div>
-
-                  <div class="queue-actions">
-                    {#if selectedQueueItem.detected_metadata}
-                      <button class="btn-approve active:scale-95 transition-all duration-200" on:click={() => approveTask(selectedQueueItem)}>Accept & Import</button>
-                    {/if}
-                    <button class="btn-manual active:scale-95 transition-all duration-200" on:click={() => openManualSearch(selectedQueueItem)}>Manual Search</button>
-                    <button class="btn-ignore active:scale-95 transition-all duration-200" on:click={() => ignoreTask(selectedQueueItem)}>Ignore</button>
-                  </div>
-                {/if}
-              </div>
-            </div>
-          {/if}
-
       {/if}
   </div>
 </section>
-
-<!-- Manual Search Modal -->
-{#if manualSearchModalOpen}
-    <div class="modal-overlay" on:click={closeManualSearch}>
-        <div class="modal" on:click|stopPropagation>
-            <h3>Manual Search</h3>
-            <div class="search-box">
-                <input type="text" bind:value={manualSearchQuery} on:keydown={(e) => e.key === 'Enter' && searchManual()} placeholder="Artist - Title or MBID" />
-                <button on:click={searchManual}>Search</button>
-            </div>
-
-            <div class="search-results">
-                {#if manualSearchLoading}
-                    <div class="loading">Searching...</div>
-                {:else}
-                    {#each manualSearchResults as result}
-                        <div class="result-item">
-                            <div class="result-info">
-                                <div><strong>{result.artist}</strong> - {result.title}</div>
-                                <div class="muted">{result.album} ({result.year})</div>
-                            </div>
-                            <button class="btn-select active:scale-95 transition-all duration-200" on:click={() => approveTask(selectedTask, result)}>Select</button>
-                        </div>
-                    {/each}
-                {/if}
-            </div>
-
-            <button class="btn-close active:scale-95 transition-all duration-200" on:click={closeManualSearch}>Close</button>
-        </div>
-    </div>
-{/if}
-
 
 <style>
   .page { display: flex; flex-direction: column; gap: 20px; }
@@ -524,9 +236,8 @@
       border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 6px;
   }
   .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .tab-badge { background: #ef4444; color: white; font-size: 10px; padding: 1px 5px; border-radius: 10px; }
 
-  /* Providers Styles (Recycled) */
+  /* Providers Styles */
   .providers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: 16px; }
   .provider-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
   .provider-header { display: flex; justify-content: space-between; }
@@ -545,57 +256,6 @@
 
   /* Settings Styles */
   .settings-card { background: var(--card-bg); padding: 20px; border-radius: 8px; border: 1px solid var(--border); max-width: 600px; display: flex; flex-direction: column; gap: 20px; }
-  .field { display: flex; flex-direction: column; gap: 8px; }
-  .field-row { display: flex; gap: 8px; align-items: center; }
-  .switch-label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
-  .help-text { font-size: 12px; color: var(--muted); margin: 0; }
-  .btn-primary { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; align-self: flex-start; }
-
-  /* Queue Styles */
-  .queue-review-grid { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 16px; align-items: start; }
-  .queue-list { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow: auto; }
-  .queue-item { background: var(--card-bg); border: 1px solid var(--border); padding: 14px; border-radius: 8px; text-align: left; cursor: pointer; }
-  .queue-item.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-  .filename { font-family: monospace; font-size: 13px; margin-bottom: 4px; word-break: break-all; }
-  .match-info { font-size: 14px; }
-  .match-artist { font-weight: 600; }
-  .match-score { font-size: 12px; margin-left: 8px; color: #22c55e; font-weight: 500; }
-  .match-score.low { color: #fbbf24; }
-  .no-match { color: #ef4444; font-size: 13px; }
-  .review-panel { padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); }
-  .review-header h3 { margin: 0 0 4px; }
-  .review-sections { display: grid; gap: 12px; margin: 14px 0; }
-  .review-block { border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
-  .review-block h4 { margin: 0 0 10px; font-size: 14px; }
-  .kv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
-  .kv-grid > div { display: flex; flex-direction: column; gap: 2px; }
-  .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .v { font-size: 13px; color: var(--text); }
-  .audio-controls { margin-bottom: 8px; }
-  .audio-player { width: 100%; }
-  .queue-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .btn-approve { background: #22c55e; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
-  .btn-manual { background: var(--accent); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
-  .btn-ignore { background: transparent; border: 1px solid #ef4444; color: #ef4444; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
-  .btn-ignore:hover { background: #ef4444; color: white; }
-
-  @media (max-width: 1100px) {
-    .queue-review-grid { grid-template-columns: 1fr; }
-    .queue-list { max-height: 40vh; }
-    .kv-grid { grid-template-columns: 1fr; }
-  }
-
-  /* Modal */
-  .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 100; }
-  .modal { background: var(--card-bg); padding: 24px; border-radius: 12px; width: 500px; max-width: 90%; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; border: 1px solid var(--border); }
-  .modal h3 { margin: 0; }
-  .search-box { display: flex; gap: 8px; }
-  .search-box input { flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--input-bg); color: var(--text); }
-  .search-results { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
-  .result-item { padding: 10px; border: 1px solid var(--border); border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
-  .result-info { font-size: 13px; }
-  .btn-select { background: var(--accent); color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-  .btn-close { align-self: flex-end; background: none; border: none; color: var(--muted); cursor: pointer; }
 
   .btn-toggle-visibility {
     padding: 10px 12px;
@@ -613,10 +273,6 @@
     background: var(--hover-bg, rgba(255, 255, 255, 0.05));
     border-color: var(--accent, #3b82f6);
     color: var(--accent, #3b82f6);
-  }
-  .btn-toggle-visibility svg {
-    width: 18px;
-    height: 18px;
   }
 
   .loading, .empty-state { text-align: center; color: var(--muted); padding: 40px; }
