@@ -2,8 +2,8 @@
   import { onMount } from 'svelte';
   import { dndzone } from 'svelte-dnd-action';
   import { flip } from 'svelte/animate';
-  import apiClient from '../../api/client';
-  import { feedback } from '../../stores/feedback';
+  import apiClient from '../../../api/client';
+  import { feedback } from '../../../stores/feedback';
 
   let musicAccounts = []; // Draggable items (Available Music Accounts)
   let mediaUsers = [];   // Drop Zones (Media Server Users)

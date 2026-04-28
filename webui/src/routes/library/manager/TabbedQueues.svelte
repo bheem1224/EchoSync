@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import apiClient from '../../api/client';
-  import { feedback } from '../../stores/feedback';
+  import apiClient from '../../../api/client';
+  import { feedback } from '../../../stores/feedback';
   import { flip } from 'svelte/animate';
   import MetadataReviewModal from '$lib/components/MetadataReviewModal.svelte';
 
