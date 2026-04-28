@@ -501,6 +501,13 @@ class MusicDatabase:
         with self.session_scope() as session:
             return session.query(Track).count()
 
+    def get_total_storage_used(self) -> int:
+        """Return total size of all tracks in bytes."""
+        from sqlalchemy import func
+        with self.session_scope() as session:
+            result = session.query(func.sum(Track.file_size_bytes)).scalar()
+            return int(result or 0)
+
     def check_track_exists(self, title: str, artist: str, confidence_threshold: float = 0.7, server_source: str = None) -> Tuple[Optional[Track], float]:
         """Check if a track exists in the database using fuzzy matching."""
         # Local imports to avoid potential circular dependency at module level

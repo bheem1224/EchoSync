@@ -64,14 +64,12 @@
       }
 
       const health = await apiClient.get('/health');
-      if (health && health.data) {
-        if (health.data.library) {
-          libraryStats = {
-            totalTracks: String(health.data.library.total_tracks || libraryStats.totalTracks),
-            totalAlbums: String(health.data.library.total_albums || libraryStats.totalAlbums),
-            storageUsed: String(health.data.library.storage_used || libraryStats.storageUsed)
-          };
-        }
+      if (health && health.data && health.data.library) {
+        libraryStats = {
+          totalTracks: health.data.library.total_tracks !== undefined ? String(health.data.library.total_tracks) : libraryStats.totalTracks,
+          totalAlbums: health.data.library.total_albums !== undefined ? String(health.data.library.total_albums) : libraryStats.totalAlbums,
+          storageUsed: health.data.library.storage_used || libraryStats.storageUsed
+        };
       }
     } catch (e) {
       console.warn('Failed to refresh stats', e);

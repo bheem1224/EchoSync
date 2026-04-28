@@ -87,7 +87,8 @@ def system_stats():
         app_cpu = process.cpu_percent(interval=None)
 
         # Wait a tiny bit for meaningful deltas
-        time.sleep(0.1)
+        import time
+        time.sleep(0.5)
         
         sys_cpu = psutil.cpu_percent(interval=None)
         app_cpu = process.cpu_percent(interval=None)
@@ -215,19 +216,24 @@ _SETTINGS_ALLOWLIST: frozenset = frozenset({
 @bp.get("/system/accounts")
 @require_auth
 def get_all_system_accounts():
-    """Returns music accounts and media server users for the manager UI."""
+    """Returns music accounts and media server users for the manager UI.
+
+    Mapping data is now read from config.db (account_mappings table) instead of
+    the flat config.json 'account_mapping' key.
+    """
     from database.config_database import get_config_database
     from web.services.provider_registry import list_providers
     try:
         config_db = get_config_database()
-        
+        active_media_server = config_manager.get_active_media_server() or "plex"
+
         # 1. Get all music service accounts
         all_accounts = []
         providers = list_providers()
         for provider in providers:
             if provider.id == 'plex' or provider.category != 'provider':
                 continue
-            
+
             service_id = config_db.get_or_create_service_id(provider.id)
             accounts = config_db.get_accounts(service_id=service_id)
             for acc in accounts:
@@ -238,24 +244,21 @@ def get_all_system_accounts():
                     'label': f"{acc.get('display_name') or acc.get('account_name')} ({provider.id.title()})",
                     'color': '#1DB954' if provider.id == 'spotify' else '#00E5FF' if provider.id == 'tidal' else '#5b21b6'
                 })
-        
+
         # 2. Get media server users (managed users)
         media_users = []
-        active_media_server = config_manager.get_active_media_server()
         if active_media_server == 'plex':
             from plugins.plex.client import PlexClient
             try:
                 client = PlexClient()
                 if client.ensure_connection() and client.server:
                     myplex = client.server.myPlexAccount()
-                    # Add admin
                     media_users.append({
                         'id': str(myplex.id),
                         'name': myplex.title or myplex.username,
                         'is_admin': True,
-                        'linked_account_ids': [] # To be populated from config
+                        'linked_account_ids': []
                     })
-                    # Add managed users
                     for user in myplex.users():
                         media_users.append({
                             'id': str(user.id),
@@ -266,10 +269,18 @@ def get_all_system_accounts():
             except Exception as e:
                 logger.warning(f"Failed to fetch Plex users: {e}")
 
-        # 3. Load existing mapping from config
-        mapping = config_manager.get('account_mapping', {})
+        # 3. Load existing stateful mappings from config.db
+        # Build a map: managed_user_id → list of config.db account rows
+        all_mappings = config_db.get_account_mappings(media_server_id=active_media_server)
+        # Build a lookup: provider_account_id → account id in all_accounts
+        acc_lookup = {str(a['id']): a['id'] for a in all_accounts}
+        mapping_by_user: dict = {}
+        for m in all_mappings:
+            uid = m['managed_user_id']
+            mapping_by_user.setdefault(uid, []).append(acc_lookup.get(m['provider_account_id']))
+
         for user in media_users:
-            user['linked_account_ids'] = mapping.get(user['id'], [])
+            user['linked_account_ids'] = [aid for aid in mapping_by_user.get(user['id'], []) if aid is not None]
 
         return jsonify({
             'music_accounts': all_accounts,
@@ -283,21 +294,62 @@ def get_all_system_accounts():
 @bp.post("/system/accounts/map")
 @require_auth
 def map_system_accounts():
-    """Save the mapping between media server users and music accounts."""
+    """Save the mapping between a media server user and music service accounts.
+
+    Accepts:
+        { "user_id": "<media_server_user_id>", "account_ids": [<int>, ...] }
+
+    Each account_id is resolved to its provider + native provider_account_id
+    and stored as a stateful row in config.db (account_mappings table).  Any
+    previous mappings for this user are first cleared so the call is idempotent.
+    """
     try:
         payload = request.get_json(silent=True) or {}
-        user_id = str(payload.get('user_id'))
-        account_ids = payload.get('account_ids', [])
-        
+        user_id = str(payload.get('user_id', ''))
+        account_ids = [int(aid) for aid in payload.get('account_ids', [])]
+        active_media_server = config_manager.get_active_media_server() or "plex"
+
         if not user_id:
             return jsonify({'error': 'user_id is required'}), 400
-        
-        mapping = config_manager.get('account_mapping', {})
-        mapping[user_id] = account_ids
-        
-        config_manager.set('account_mapping', mapping)
-        config_manager.save_settings(config_manager.get_settings())
-        
+
+        config_db = get_config_database()
+        from web.services.provider_registry import list_providers
+
+        # Build a lookup: config.db account id → (provider_id, str(account id))
+        acc_meta: dict[int, tuple[str, str]] = {}
+        providers = list_providers()
+        for provider in providers:
+            if provider.id == 'plex' or provider.category != 'provider':
+                continue
+            service_id = config_db.get_or_create_service_id(provider.id)
+            for acc in config_db.get_accounts(service_id=service_id):
+                acc_meta[int(acc['id'])] = (provider.id, str(acc['id']))
+
+        # Clear existing mappings for this user on this media server
+        existing = config_db.get_account_mappings(
+            media_server_id=active_media_server,
+            managed_user_id=user_id,
+        )
+        for m in existing:
+            config_db.delete_account_mapping(
+                media_server_id=active_media_server,
+                managed_user_id=user_id,
+                provider_id=m['provider_id'],
+                provider_account_id=m['provider_account_id'],
+            )
+
+        # Insert new mappings
+        for aid in account_ids:
+            meta = acc_meta.get(aid)
+            if meta:
+                provider_id, provider_account_id = meta
+                config_db.set_account_mapping(
+                    media_server_id=active_media_server,
+                    managed_user_id=user_id,
+                    provider_id=provider_id,
+                    provider_account_id=provider_account_id,
+                )
+
         return jsonify({'success': True}), 200
     except Exception as e:
         logger.error(f"Error mapping accounts: {e}", exc_info=True)

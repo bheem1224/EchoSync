@@ -85,13 +85,14 @@
 }
 
 .switch input:checked + .slider {
-  background-color: rgba(34, 211, 238, 0.18);
-  border-color: rgba(34, 211, 238, 0.45);
+  background-color: var(--color-primary);
+  border-color: var(--color-primary-hover);
 }
 
 .switch input:checked + .slider::before {
   transform: translateX(20px);
-  background-color: var(--color-primary);
+  background-color: #ffffff;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
 }
 
 

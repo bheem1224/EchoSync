@@ -190,45 +190,21 @@
     </section>
 
     <section class="advanced">
-      <h3>Advanced Filters</h3>
-      {#if hasMatchingProvider}
-        <div class="flex flex-col gap-2">
-          <div class="flex items-center justify-between gap-2">
-            <span>Enforce Duration Match</span>
-            <label class="switch">
-
-              <span class="slider"></span>
-            </label>
-          </div>
-
-          {#if hasDownloaderWithSearch}
-            <label class="flex flex-col gap-1 mt-4">
-              <span class="text-xs text-secondary font-medium">Tie-Breaker Strategy</span>
-              <select
-                bind:value={p.tie_breaker}
-                class="w-full px-3 py-2 bg-surface border border-glass-border rounded-global text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-              >
-                <option value="MAX_QUALITY" class="bg-black/50 text-white">Max Quality (Largest File)</option>
-                <option value="SAVE_STORAGE" class="bg-black/50 text-white">Save Storage (Smallest File)</option>
-                <option value="SPEED" class="bg-black/50 text-white">Speed (First Available)</option>
-              </select>
-            </label>
-          {/if}
-        </div>
-      {/if}
-
-      {#if hasMetadataProvider}
-        <div class="flex items-center justify-between gap-2">
-          <span>Require MusicBrainz Release ID</span>
-          <label class="switch">
-            <input type="checkbox" bind:checked={p.metadataRequired} />
-            <span class="slider"></span>
-          </label>
-        </div>
-      {/if}
-
-      {#if !hasMetadataProvider && !hasMatchingProvider}
-        <p class="muted">Advanced filters available when capable providers are installed.</p>
+      <h3 class="text-base font-semibold mb-3">Tie-Breaker Strategy</h3>
+      {#if hasMatchingProvider && hasDownloaderWithSearch}
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-secondary font-medium mb-1">Select priority when multiple high-quality matches are found:</span>
+          <select
+            bind:value={p.tie_breaker}
+            class="w-full px-3 py-2 bg-surface border border-glass-border rounded-global text-sm text-white focus:outline-none focus:ring-1 focus:ring-teal-500/50"
+          >
+            <option value="MAX_QUALITY" class="bg-black/50 text-white">Max Quality (Largest File)</option>
+            <option value="SAVE_STORAGE" class="bg-black/50 text-white">Save Storage (Smallest File)</option>
+            <option value="SPEED" class="bg-black/50 text-white">Speed (First Available)</option>
+          </select>
+        </label>
+      {:else if !hasMatchingProvider}
+        <p class="muted">Tie-breaker options available when capable providers are installed.</p>
       {/if}
     </section>
   </div>

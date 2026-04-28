@@ -134,11 +134,30 @@ class ConfigDatabase:
                         FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
                     )
                 """)
+                # Account Mappings (Stateful Managed Account Builder)
+                # Stores the permanent mapping between a media-server user and a
+                # provider (music-service) account.  Both sides cascade-delete so
+                # removing a plugin/provider account automatically cleans up its
+                # mapping rows – mirroring how tokens/secrets are purged.
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS account_mappings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        media_server_id TEXT NOT NULL,
+                        managed_user_id TEXT NOT NULL,
+                        provider_id TEXT NOT NULL,
+                        provider_account_id TEXT NOT NULL,
+                        created_at INTEGER DEFAULT (strftime('%s','now')),
+                        updated_at INTEGER DEFAULT (strftime('%s','now')),
+                        UNIQUE(media_server_id, managed_user_id, provider_id, provider_account_id)
+                    )
+                """)
                 # Indexes
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_account ON account_tokens(account_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_user ON account_mappings(media_server_id, managed_user_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_provider ON account_mappings(provider_id, provider_account_id)")
 
             # Run schema creation on writer thread to avoid concurrent-writes
             execute_write(str(self.database_path), _schema)
@@ -687,6 +706,110 @@ class ConfigDatabase:
         except Exception as e:
             logger.error(f"Error setting download provider priority: {e}")
             return False
+
+
+    # ── Account Mapping helpers ─────────────────────────────────────────────
+
+    def set_account_mapping(
+        self,
+        media_server_id: str,
+        managed_user_id: str,
+        provider_id: str,
+        provider_account_id: str,
+    ) -> bool:
+        """Upsert a stateful mapping between a media-server user and a provider account."""
+        try:
+            execute_write_sql(
+                str(self.database_path),
+                """
+                    INSERT INTO account_mappings(
+                        media_server_id, managed_user_id, provider_id, provider_account_id
+                    ) VALUES(?,?,?,?)
+                    ON CONFLICT(media_server_id, managed_user_id, provider_id, provider_account_id)
+                    DO UPDATE SET updated_at=strftime('%s','now')
+                """,
+                (media_server_id, managed_user_id, provider_id, provider_account_id),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error setting account mapping: {e}")
+            return False
+
+    def get_account_mappings(
+        self,
+        media_server_id: Optional[str] = None,
+        managed_user_id: Optional[str] = None,
+        provider_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve account mapping rows, optionally filtered."""
+        try:
+            import contextlib
+            with contextlib.closing(self._get_connection()) as conn:
+                c = conn.cursor()
+                query = "SELECT id, media_server_id, managed_user_id, provider_id, provider_account_id, created_at, updated_at FROM account_mappings WHERE 1=1"
+                params: list = []
+                if media_server_id:
+                    query += " AND media_server_id = ?"; params.append(media_server_id)
+                if managed_user_id:
+                    query += " AND managed_user_id = ?"; params.append(managed_user_id)
+                if provider_id:
+                    query += " AND provider_id = ?"; params.append(provider_id)
+                c.execute(query, params)
+                rows = c.fetchall()
+                return [
+                    {
+                        'id': r[0],
+                        'media_server_id': r[1],
+                        'managed_user_id': r[2],
+                        'provider_id': r[3],
+                        'provider_account_id': r[4],
+                        'created_at': r[5],
+                        'updated_at': r[6],
+                    }
+                    for r in rows
+                ]
+        except Exception as e:
+            logger.error(f"Error getting account mappings: {e}")
+            return []
+
+    def delete_account_mapping(
+        self,
+        media_server_id: str,
+        managed_user_id: str,
+        provider_id: str,
+        provider_account_id: str,
+    ) -> bool:
+        """Remove a specific account mapping row."""
+        try:
+            rowcount = execute_write_sql(
+                str(self.database_path),
+                "DELETE FROM account_mappings WHERE media_server_id=? AND managed_user_id=? AND provider_id=? AND provider_account_id=?",
+                (media_server_id, managed_user_id, provider_id, provider_account_id),
+            )
+            return bool(rowcount and rowcount > 0)
+        except Exception as e:
+            logger.error(f"Error deleting account mapping: {e}")
+            return False
+
+    def delete_account_mappings_for_provider_account(
+        self,
+        provider_id: str,
+        provider_account_id: str,
+    ) -> None:
+        """Quietly purge all mapping rows for a provider account being deleted.
+
+        Called by EchoSync core when a plugin or provider account is removed,
+        mirroring the way secrets are purged on account deletion.
+        """
+        try:
+            execute_write_sql(
+                str(self.database_path),
+                "DELETE FROM account_mappings WHERE provider_id=? AND provider_account_id=?",
+                (provider_id, provider_account_id),
+            )
+            logger.info(f"Purged account mappings for {provider_id}:{provider_account_id}")
+        except Exception as e:
+            logger.error(f"Error purging account mappings for {provider_id}:{provider_account_id}: {e}")
 
 
 _config_db: Optional[ConfigDatabase] = None

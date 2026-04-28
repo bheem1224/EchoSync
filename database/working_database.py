@@ -37,6 +37,19 @@ from sqlalchemy.orm import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Intent type constants (Task 2 – Intent Engine)
+# ---------------------------------------------------------------------------
+INTENT_TYPES = (
+    "USER_UPGRADE_REQUEST",      # User explicitly requested an upgrade
+    "USER_DELETE_REQUEST",       # User rated 1-2 stars → delete request
+    "SYSTEM_UPGRADE_SUGGESTION", # Heuristic: consensus engine upgrade proposal
+    "SYSTEM_DELETE_SUGGESTION",  # Heuristic: consensus engine delete proposal
+    "HYGIENE_DUPLICATION",       # Deterministic: duplicate track detected
+    "HYGIENE_QUALITY_UPGRADE",   # Deterministic: lower-quality copy exists
+)
+
+
 class WorkingBase(DeclarativeBase):
     """Base metadata class for WorkingDatabase SQLAlchemy models."""
 
@@ -305,6 +318,11 @@ class SuggestionStagingQueue(WorkingBase):
     # Short machine-readable reason tag used for UI grouping / filtering.
     reason: Mapped[str] = mapped_column(String, nullable=False, index=True)
 
+    # Structured intent type from the 6-value Intent Engine taxonomy.
+    # Nullable so existing rows (pre-migration) keep working – the UI
+    # should fall back to ``reason`` when this is NULL.
+    intent_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+
     # Human-readable label shown in the UI alongside the suggestion.
     ui_label: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -312,13 +330,36 @@ class SuggestionStagingQueue(WorkingBase):
     # duration diff, sync context, playlist name, etc.) to help the user decide.
     context_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
-    # Lifecycle: "pending" -> "accepted" | "dismissed"
+    # Lifecycle: "pending" -> "accepted" | "dismissed" | "vetoed"
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
+
+    @validates('sync_id')
+    def validate_sync_id(self, key, sync_id):
+        if sync_id:
+            return str(sync_id).split('?')[0]
+        return sync_id
+
+
+class SuggestionBlacklist(WorkingBase):
+    """
+    Persistent veto list for sync_ids.  Once a sync_id is added here the
+    Intent Engine will never surface it again in any queue, regardless of
+    future rating changes.
+
+    Populated via ``POST /api/manager/veto``.
+    """
+    __tablename__ = "suggestion_blacklist"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sync_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Optional admin note
+
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
     @validates('sync_id')
     def validate_sync_id(self, key, sync_id):
@@ -561,9 +602,12 @@ __all__ = [
     "MediaServerPlaylist",
     "MediaServerPlaylistItem",
     "PlaybackHistory",
+    "SuggestionStagingQueue",
+    "SuggestionBlacklist",
     "WorkingDatabase",
     "get_working_database",
     "close_working_database",
+    "INTENT_TYPES",
 ]
 
 

@@ -152,6 +152,34 @@ def get_system_health() -> Dict[str, Any]:
     # Total services = Core (1) + Enabled Providers
     total_services = 1 + enabled_providers_count
 
+    # 6. Library Statistics
+    library_data = {}
+    try:
+        from database.music_database import get_database
+        db = get_database()
+        tracks = db.count_tracks()
+        albums = db.count_albums()
+        storage_bytes = db.get_total_storage_used()
+        
+        # Format storage
+        if storage_bytes <= 0:
+            storage_str = "0 B"
+        else:
+            import math
+            units = ("B", "KB", "MB", "GB", "TB")
+            i = int(math.floor(math.log(storage_bytes, 1024)))
+            p = math.pow(1024, i)
+            s = round(storage_bytes / p, 1)
+            storage_str = f"{s} {units[i]}"
+
+        library_data = {
+            "total_tracks": tracks,
+            "total_albums": albums,
+            "storage_used": storage_str
+        }
+    except Exception as e:
+        logger.error(f"Failed to get library stats for health check: {e}")
+
     return {
         "status": overall_status,
         "results": results_dict,
@@ -159,5 +187,6 @@ def get_system_health() -> Dict[str, Any]:
         "summary": {
             "total": total_services,
             "operational": operational_count
-        }
+        },
+        "library": library_data
     }

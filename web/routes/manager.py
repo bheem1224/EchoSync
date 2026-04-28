@@ -6,7 +6,7 @@ from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
 from services.metadata_enhancer import get_metadata_enhancer
 from database.music_database import get_database, Track, Artist
-from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState, User, SuggestionStagingQueue
+from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState, User, SuggestionStagingQueue, SuggestionBlacklist
 from database.config_database import get_config_database
 from core.suggestion_engine.consensus import calculate_consensus
 from core.suggestion_engine.deletion import execute_delete_now, execute_upgrade_now, apply_lifecycle_action
@@ -18,6 +18,41 @@ import base64
 
 logger = get_logger("web.routes.manager")
 bp = Blueprint("manager", __name__, url_prefix="/api/manager")
+
+
+# ---------------------------------------------------------------------------
+# Automation Level → Intent Routing (Task 2 – Intent Engine)
+# ---------------------------------------------------------------------------
+
+DEFAULT_AUTO_ROUTE_INTENTS: dict[int, frozenset[str]] = {
+    # Level 1: Only deterministic hygiene actions are auto-routed to Pending Actions.
+    1: frozenset({"HYGIENE_DUPLICATION", "HYGIENE_QUALITY_UPGRADE"}),
+    # Level 2: Adds heuristic upgrade suggestions.
+    2: frozenset({"HYGIENE_DUPLICATION", "HYGIENE_QUALITY_UPGRADE", "SYSTEM_UPGRADE_SUGGESTION"}),
+    # Level 3: Adds heuristic delete suggestions (full automation).
+    3: frozenset({"HYGIENE_DUPLICATION", "HYGIENE_QUALITY_UPGRADE", "SYSTEM_UPGRADE_SUGGESTION", "SYSTEM_DELETE_SUGGESTION"}),
+}
+
+
+def automation_level_to_routing(level: int) -> dict:
+    """Translate a single integer automation_level (1-3) to internal routing booleans.
+
+    Returns a dict with:
+        auto_route_intents   : frozenset of intent_type strings that skip the
+                               Suggestions queue and land directly in Pending Actions.
+        auto_hygiene         : bool – deterministic hygiene actions are auto-routed.
+        auto_system_upgrade  : bool – heuristic upgrade suggestions are auto-routed.
+        auto_system_delete   : bool – heuristic delete suggestions are auto-routed.
+    """
+    level = max(1, min(level, 3))  # clamp to valid range
+    auto_route = DEFAULT_AUTO_ROUTE_INTENTS[level]
+    return {
+        "level": level,
+        "auto_route_intents": list(auto_route),
+        "auto_hygiene": level >= 1,
+        "auto_system_upgrade": level >= 2,
+        "auto_system_delete": level >= 3,
+    }
 
 
 def _normalize_sync_id(sync_id: str) -> str:
@@ -149,10 +184,8 @@ def manager_settings():
     """Get or update manager settings."""
     if request.method == "POST":
         payload = request.get_json() or {}
-        # Validation could be added here
         try:
             manager_config = config_manager.get('manager', {})
-            # Update known keys
             for key in [
                 'enabled',
                 'delete_threshold',
@@ -162,20 +195,25 @@ def manager_settings():
                 'upgrade_quality_profile_id',
                 'auto_delete_low_quality_duplicates',
                 'auto_process_suggestion_engine_ratings',
+                'automation_level',
             ]:
                 if key in payload:
                     manager_config[key] = payload[key]
 
+            # Compute and persist routing booleans derived from automation_level
+            level = int(manager_config.get('automation_level', 1))
+            routing = automation_level_to_routing(level)
+            manager_config['_routing'] = routing
+
             config_manager.set('manager', manager_config)
-            return jsonify({"success": True, "settings": manager_config}), 200
+            return jsonify({"success": True, "settings": manager_config, "routing": routing}), 200
         except Exception as e:
             logger.error(f"Error updating manager settings: {e}")
             return jsonify({"error": str(e)}), 500
     else:
         # GET
         try:
-            # Return defaults if not set
-            settings = config_manager.get('manager', {
+            defaults = {
                 'enabled': True,
                 'delete_threshold': 1,
                 'upgrade_threshold': 2,
@@ -184,8 +222,13 @@ def manager_settings():
                 'upgrade_quality_profile_id': None,
                 'auto_delete_low_quality_duplicates': False,
                 'auto_process_suggestion_engine_ratings': True,
-            })
-            return jsonify({"success": True, "settings": settings}), 200
+                'automation_level': 1,
+            }
+            settings = config_manager.get('manager', defaults)
+            level = int(settings.get('automation_level', 1))
+            routing = automation_level_to_routing(level)
+            settings['_routing'] = routing
+            return jsonify({"success": True, "settings": settings, "routing": routing}), 200
         except Exception as e:
             logger.error(f"Error getting manager settings: {e}")
             return jsonify({"error": str(e)}), 500
@@ -784,4 +827,108 @@ def override_suggestion_candidate():
             return jsonify({"success": True}), 200
     except Exception as e:
         logger.error(f"Error overriding suggestion candidate: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/veto", methods=["POST"])
+@require_auth
+def veto_suggestion():
+    """Add a sync_id to the persistent veto / blacklist so the Intent Engine
+    never surfaces it again.  Also marks any matching SuggestionStagingQueue
+    row as 'vetoed'.
+
+    Body: { "sync_id": "ss:track:meta:...", "reason": "<optional note>" }
+    """
+    payload = request.get_json(silent=True) or {}
+    sync_id = _normalize_sync_id(payload.get("sync_id", ""))
+    reason = payload.get("reason", "")
+
+    if not sync_id:
+        return jsonify({"error": "sync_id is required"}), 400
+
+    work_db = get_working_database()
+    try:
+        with work_db.session_scope() as session:
+            # Upsert into the blacklist table
+            existing = session.query(SuggestionBlacklist).filter_by(sync_id=sync_id).first()
+            if existing is None:
+                session.add(SuggestionBlacklist(sync_id=sync_id, reason=reason or None))
+            else:
+                if reason:
+                    existing.reason = reason
+
+            # Mark any pending suggestions as vetoed
+            items = session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).all()
+            for item in items:
+                item.status = "vetoed"
+
+        logger.info(f"Vetoed sync_id={sync_id} (reason={reason!r})")
+        return jsonify({"success": True, "sync_id": sync_id}), 200
+    except Exception as e:
+        logger.error(f"Error vetoing suggestion {sync_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/execute", methods=["POST"])
+@require_auth
+def execute_pending_action():
+    """Bypass countdown timers and immediately execute a Pending Actions entry.
+
+    Dispatches DELETE_MONTH_END → execute_delete_now
+               UPGRADE_WEEK_END → execute_upgrade_now (fires DOWNLOAD_INTENT).
+
+    Body: { "sync_id": "ss:track:meta:...", "quality_profile_id": "<optional>" }
+    """
+    from core.event_bus import event_bus
+
+    payload = request.get_json(silent=True) or {}
+    sync_id = _normalize_sync_id(payload.get("sync_id", ""))
+    quality_profile_id = payload.get("quality_profile_id")
+
+    if not sync_id:
+        return jsonify({"error": "sync_id is required"}), 400
+
+    work_db = get_working_database()
+    try:
+        # Determine the lifecycle action for this sync_id
+        with work_db.session_scope() as session:
+            states = (
+                session.query(UserTrackState)
+                .filter(
+                    UserTrackState.sync_id == sync_id,
+                    UserTrackState.lifecycle_action.in_(["DELETE_MONTH_END", "UPGRADE_WEEK_END"]),
+                )
+                .all()
+            )
+            if not states:
+                return jsonify({"error": "No pending lifecycle action found for this sync_id"}), 404
+
+            action = states[0].lifecycle_action  # All rows share the same action
+
+        if action == "DELETE_MONTH_END":
+            result = execute_delete_now(sync_id)
+            if not result.get("success"):
+                return jsonify(result), 400
+        elif action == "UPGRADE_WEEK_END":
+            preview = _resolve_track_preview(sync_id) or {}
+            event_bus.publish({
+                "event": "DOWNLOAD_INTENT",
+                "sync_id": sync_id,
+                "track": preview,
+                "target_quality_profile": quality_profile_id,
+                "priority": 1,
+            })
+        else:
+            return jsonify({"error": f"Unknown lifecycle action: {action}"}), 400
+
+        # Clear the lifecycle action from working DB rows
+        with work_db.session_scope() as session:
+            session.query(UserTrackState).filter(
+                UserTrackState.sync_id == sync_id
+            ).update({"lifecycle_action": None, "lifecycle_queued_at": None})
+
+        logger.info(f"Executed pending action {action} for sync_id={sync_id}")
+        return jsonify({"success": True, "sync_id": sync_id, "executed_action": action}), 200
+    except Exception as e:
+        logger.error(f"Error executing pending action for {sync_id}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
