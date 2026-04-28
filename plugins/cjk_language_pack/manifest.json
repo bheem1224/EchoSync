@@ -5,5 +5,5 @@
   "author": "Echosync",
   "description": "Transliterates Chinese (Simplified/Traditional), Japanese (Kanji/Kana), and Korean (Hangul) text to Romaji/Pinyin so the matching engine can compare CJK track titles against their Latin-script counterparts.",
   "type": "language_pack",
-  "beta_version": "2.4.2-beta.2"
+  "beta_version": "2.4.2-beta.3"
 }
