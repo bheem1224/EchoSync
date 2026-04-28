@@ -77,13 +77,15 @@ def begin_auth():
         # Use account_id as state so callback knows which account to save tokens under
         state = str(account_id)
 
+        from plugins.spotify.client import CallbackBypassCacheHandler
         sp_oauth = SpotifyOAuth(
             client_id=client_id,
             client_secret=decrypt_string(client_secret),
             redirect_uri=redirect_uri,
             scope=scope,
             state=state,
-            show_dialog=True
+            show_dialog=True,
+            cache_handler=CallbackBypassCacheHandler()
         )
         auth_url = sp_oauth.get_authorize_url()
         logger.info(f"Generated Spotify authorize URL for account {account_id} with redirect_uri {redirect_uri}")

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class PluginStore:
     def __init__(self):
         self.plugins_dir = config_manager.get_plugins_dir()
-        self.default_repo = "https://github.com/bheem1224/EchoSync/tree/main/plugins"
+        self.default_repo = "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/store-manifest.json"
 
     def get_repositories(self) -> List[str]:
         repos = [self.default_repo]
@@ -57,6 +57,64 @@ class PluginStore:
         from core.settings import config_manager
         import json
 
+        plugins = []
+        req_mgr = RequestManager(provider="system")
+        etags_file = self.plugins_dir / ".etags.json"
+        etags = {}
+        if etags_file.exists():
+            try:
+                with open(etags_file, "r") as f:
+                    etags = json.load(f)
+            except Exception:
+                pass
+
+        # Case 1: Direct JSON URL (New Default)
+        if repo_url.endswith(".json"):
+            try:
+                headers = {}
+                if repo_url in etags:
+                    headers["If-None-Match"] = etags[repo_url]["etag"]
+                
+                resp = req_mgr.get(repo_url, headers=headers, timeout=10)
+                if resp.status_code == 304:
+                    plugins = etags[repo_url].get("plugins", [])
+                elif resp.status_code == 200:
+                    data = resp.json()
+                    plugins = data["plugins"] if isinstance(data, dict) and "plugins" in data else data
+                    if not isinstance(plugins, list): plugins = [plugins]
+                    
+                    if "ETag" in resp.headers:
+                        etags[repo_url] = {"etag": resp.headers["ETag"], "plugins": plugins}
+                        with open(etags_file, "w") as f:
+                            json.dump(etags, f)
+                
+                # For direct JSON URLs, we need to infer the base paths if possible
+                # Default to EchoSync main if it matches
+                user, repo, branch = "bheem1224", "EchoSync", "main"
+                subfolder = "plugins"
+                
+                filtered_plugins = []
+                for p in plugins:
+                    p["_source_repo"] = repo_url
+                    plugin_id = p.get("id", "")
+                    if not plugin_id: continue
+                    
+                    folder_name = p.get("path") or plugin_id.split(".")[-1]
+                    p["_folder_path"] = f"{subfolder}/{folder_name}" if subfolder else folder_name
+                    
+                    repo_raw_base = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{p['_folder_path']}"
+                    if "download_url" not in p:
+                        v = p.get("version", "1.0.0")
+                        p["download_url"] = f"{repo_raw_base}/releases/v{v}.zip"
+                    if "beta_url" not in p:
+                        p["beta_url"] = f"{repo_raw_base}/beta.zip"
+                    filtered_plugins.append(p)
+                return filtered_plugins
+            except Exception as e:
+                logger.error(f"Failed to scan direct JSON repo {repo_url}: {e}")
+                return []
+
+        # Case 2: GitHub Browser URL (Legacy/Custom)
         parts = repo_url.rstrip('/').split('/')
         if "github.com" in parts:
             try:
@@ -73,17 +131,6 @@ class PluginStore:
 
                 # Try store-manifest.json first, then manifest.json
                 manifest_files = ["store-manifest.json", "manifest.json"]
-                plugins = []
-                req_mgr = RequestManager(provider="system")
-                etags_file = self.plugins_dir / ".etags.json"
-                etags = {}
-                if etags_file.exists():
-                    try:
-                        with open(etags_file, "r") as f:
-                            etags = json.load(f)
-                    except Exception:
-                        pass
-
                 for m_file in manifest_files:
                     check_url = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{subfolder}/{m_file}".replace(f"//{m_file}", f"/{m_file}")
                     
@@ -94,7 +141,6 @@ class PluginStore:
                     try:
                         resp = req_mgr.get(check_url, headers=headers, timeout=10)
                         if resp.status_code == 304:
-                            logger.debug(f"Manifest not modified (304) for {check_url}")
                             plugins = etags[check_url].get("plugins", [])
                             break
                         elif resp.status_code == 200:
@@ -119,25 +165,19 @@ class PluginStore:
                 for p in plugins:
                     p["_source_repo"] = repo_url
                     plugin_id = p.get("id", "")
-                    if not plugin_id:
-                        continue
+                    if not plugin_id: continue
                         
-                    # Calculate subfolder path within the repo
                     folder_name = p.get("path") or plugin_id.split(".")[-1]
                     p["_folder_path"] = f"{subfolder}/{folder_name}" if subfolder else folder_name
 
-                    # Construct default artifact URLs if not provided by the manifest
                     repo_raw_base = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{p['_folder_path']}"
-                    
                     if "download_url" not in p:
                         v = p.get("version", "1.0.0")
                         p["download_url"] = f"{repo_raw_base}/releases/v{v}.zip"
-                    
                     if "beta_url" not in p:
                         p["beta_url"] = f"{repo_raw_base}/beta.zip"
 
                     filtered_plugins.append(p)
-
                 return filtered_plugins
             except Exception as e:
                 logger.error(f"Error scanning repository {repo_url}: {e}")

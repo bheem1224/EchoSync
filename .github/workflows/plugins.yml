@@ -161,7 +161,6 @@ jobs:
               zip -r "beta.zip" . -x "ui/*" -x "src/*" -x "target/*" -x "releases/*" -x "*/__pycache__/*"
               echo "✅ Created beta package: beta.zip"
             fi
-            
             cd ../../
           done
 
@@ -179,13 +178,9 @@ jobs:
                       plugin_data = json.load(f)
                       folder_name = manifest_file.split("/")[1]
                       
-                      # Ensure IDs match the folder for physical mapping
                       plugin_data["plugin_id"] = folder_name
-                      
-                      # Maintain original source for UI display
                       plugin_data["source_url"] = f"https://github.com/bheem1224/EchoSync/tree/main/plugins/{folder_name}"
                       
-                      # Inject the DIRECT zip download URLs
                       stable_version = plugin_data.get("version", "0.0.0")
                       plugin_data["download_url"] = f"{repo_base}/{folder_name}/releases/v{stable_version}.zip"
                       plugin_data["beta_url"] = f"{repo_base}/{folder_name}/beta.zip"
@@ -194,15 +189,15 @@ jobs:
                   except Exception as e:
                       print(f"Error processing {manifest_file}: {e}")
                       
-          with open("store-manifest.json", "w") as f:
+          with open("plugins/store-manifest.json", "w") as f:
               json.dump(store_manifest, f, indent=2)
           EOF
           python3 -c "import textwrap; open('manifest.py', 'w').write(textwrap.dedent(open('raw_manifest.py').read()))"
           python3 manifest.py
-          echo "✅ store-manifest.json generated successfully."
+          echo "✅ plugins/store-manifest.json generated successfully."
 
       - name: Commit Assets Back to Repo
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(plugins): sync versions, package artifacts, and update store [skip ci]"
-          file_pattern: 'plugins/ store-manifest.json'
+          file_pattern: 'plugins/'
