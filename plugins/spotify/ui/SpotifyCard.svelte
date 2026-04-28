@@ -34,7 +34,7 @@
 
   async function loadGlobalSettings() {
     try {
-      const response = await fetch(`${apiBase}/providers/spotify/settings`);
+      const response = await fetch(`${apiBase}/settings`);
       const data = await response.json();
       if (data?.settings) {
         clientId = data.settings.client_id || '';
@@ -54,7 +54,7 @@
 
     try {
       savingGlobal = true;
-      await fetch(`${apiBase}/providers/spotify/settings`, { 
+      await fetch(`${apiBase}/settings`, { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({
@@ -153,7 +153,7 @@
     }
 
     try {
-      const resp = await fetch(`${apiBase}/spotify/auth?account_id=${accountId}`);
+      const resp = await fetch(`${apiBase}/auth?account_id=${accountId}`);
       const data = await resp.json();
       const url = data?.auth_url;
       if (url) {

@@ -138,7 +138,7 @@ class PluginLoader:
 
     def __init__(self, app_root: Path):
         self.app_root = app_root
-        self.providers_dir = app_root / "providers"
+        self.providers_dir = app_root / "plugins"
         self.plugins_dir = config_manager.get_plugins_dir()
         self.loaded_blueprints: List[Blueprint] = []
 
@@ -428,8 +428,8 @@ def get_all_plugins() -> list:
 
     plugins = []
 
-    # Get Core Providers
-    providers_dir = Path(__file__).parent.parent / "providers"
+    # Get Bundled/Official Plugins
+    providers_dir = Path(__file__).parent.parent / "plugins"
     if providers_dir.exists():
         for item in providers_dir.iterdir():
             if item.is_dir() and not item.name.startswith('_'):

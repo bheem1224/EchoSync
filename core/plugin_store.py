@@ -233,19 +233,35 @@ class PluginStore:
                 plugin["verified_source"] = "official"
                 plugin["author"] = "EchoSync"
 
-            # Clean up ID for dest dir
+            # Task 1: Resolve Active Version from Core or Community
+            # Precedence: Community (/data/plugins) > Core (/app/plugins)
             folder_id = plugin_id.split(".")[-1]
-            dest_dir = self.plugins_dir / folder_id
-            manifest_file = dest_dir / "manifest.json"
+            comm_dir = self.plugins_dir / folder_id
+            core_dir = Path(__file__).parent.parent / "plugins" / folder_id
             
-            plugin["_installed"] = dest_dir.exists() and manifest_file.exists()
+            comm_manifest = comm_dir / "manifest.json"
+            core_manifest = core_dir / "manifest.json"
+            
+            plugin["_installed"] = False
             plugin["installed_version"] = None
+            
+            # Check community first (updates/overrides)
+            if comm_dir.exists() and comm_manifest.exists():
+                plugin["_installed"] = True
+                active_manifest_path = comm_manifest
+            # Check core second (bundled)
+            elif core_dir.exists() and core_manifest.exists():
+                plugin["_installed"] = True
+                active_manifest_path = core_manifest
+            else:
+                active_manifest_path = None
+
             plugin["installed_channel"] = config_manager.get_plugin_channel(folder_id)
             plugin["update_available"] = False
 
-            if plugin["_installed"]:
+            if plugin["_installed"] and active_manifest_path:
                 try:
-                    with open(manifest_file, "r") as f:
+                    with open(active_manifest_path, "r") as f:
                         local_manifest = json.load(f)
                     
                     # Merge local verified status (overrides remote if mismatch)
@@ -256,6 +272,10 @@ class PluginStore:
                     plugin["installed_version"] = local_version
                     
                     remote_version = plugin.get("version", "0.0.0")
+                    # If on beta track, compare against beta version
+                    if plugin["installed_channel"] == "beta" and plugin.get("beta_version"):
+                        remote_version = plugin.get("beta_version")
+
                     try:
                         if version.parse(remote_version) > version.parse(local_version):
                             plugin["update_available"] = True

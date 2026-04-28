@@ -9,7 +9,7 @@ function createProvidersStore() {
 
   async function load() {
     try {
-      const response = await apiClient.get('/providers');
+      const response = await apiClient.get('/plugins');
       const list = Array.isArray(response.data)
         ? response.data
         : Array.isArray(response.data?.plugins)

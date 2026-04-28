@@ -3,8 +3,8 @@ from flask import Blueprint, jsonify, request
 from web.services.provider_registry import list_providers, get_providers_for_capability, get_provider
 from core.tiered_logger import get_logger
 
-logger = get_logger("providers_route")
-bp = Blueprint("providers", __name__, url_prefix="/api/providers")
+logger = get_logger("plugins_config_route")
+bp = Blueprint("plugins_config", __name__, url_prefix="/api/plugins")
 
 
 def _normalize_sensitive_value_for_ui(key, value):

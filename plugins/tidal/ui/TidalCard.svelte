@@ -36,7 +36,7 @@
 
   async function loadAccounts() {
     try {
-      const response = await fetch(`${apiBase}/accounts/tidal`);
+      const response = await fetch(`${apiBase}`);
       const data = await response.json();
       if (data) {
         accounts = data.accounts || [];
@@ -56,7 +56,7 @@
 
     try {
       savingRedirectUri = true;
-      await fetch(`${apiBase}/accounts/tidal/redirect-uri`, { 
+      await fetch(`${apiBase}/redirect-uri`, { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({
@@ -87,7 +87,7 @@
   async function openEditModal(account) {
     modalMode = 'edit';
     try {
-      const response = await fetch(`${apiBase}/accounts/tidal/${account.id}`);
+      const response = await fetch(`${apiBase}/${account.id}`);
       const data = await response.json();
       if (data?.account) {
         modalAccount = {
@@ -136,13 +136,13 @@
       };
       
       if (modalMode === 'add') {
-        await fetch(`${apiBase}/accounts/tidal`, { 
+        await fetch(`${apiBase}`, { 
           method: 'POST', 
           headers: { 'Content-Type': 'application/json' }, 
           body: JSON.stringify(accountData) 
         });
       } else {
-        await fetch(`${apiBase}/accounts/tidal/${modalAccount.id}`, { 
+        await fetch(`${apiBase}/${modalAccount.id}`, { 
           method: 'PUT', 
           headers: { 'Content-Type': 'application/json' }, 
           body: JSON.stringify(accountData) 
@@ -157,7 +157,7 @@
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await fetch(`${apiBase}/accounts/tidal/${accountId}/activate`, { 
+      await fetch(`${apiBase}/${accountId}/activate`, { 
         method: 'PUT', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({
@@ -174,7 +174,7 @@
     if (!confirm(`Delete account "${accountName}"?`)) return;
 
     try {
-      await fetch(`${apiBase}/accounts/tidal/${accountId}`, { method: 'DELETE' });
+      await fetch(`${apiBase}/${accountId}`, { method: 'DELETE' });
       await loadAccounts();
     } catch (error) {
       console.error('Failed to delete account:', error);
@@ -183,7 +183,7 @@
 
   async function authenticate(accountId) {
     try {
-      const resp = await fetch(`${apiBase}/tidal/auth?account_id=${accountId}`);
+      const resp = await fetch(`${apiBase}/auth?account_id=${accountId}`);
       const data = await resp.json();
       const url = data?.auth_url;
       if (url) {

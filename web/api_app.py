@@ -114,7 +114,7 @@ def create_app() -> Flask:
                  pass
 
     # Register Core API blueprints
-    app.register_blueprint(providers_bp)
+    app.register_blueprint(providers_bp, name="plugins_config_mount")
     app.register_blueprint(jobs_bp)
     app.register_blueprint(tracks_bp)
     app.register_blueprint(search_bp)

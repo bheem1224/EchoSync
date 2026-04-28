@@ -218,7 +218,6 @@ def serve_plugin_ui(plugin_id, filename):
     base_dirs = [
         str(plugins_dir),
         str(app_root / "plugins"),
-        str(app_root / "providers"),
     ]
 
     ui_dir = None
