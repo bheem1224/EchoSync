@@ -1,6 +1,15 @@
 {
-  "settings_element": "musicbrainz-settings-card",
-  "settings_src": "ui/MusicBrainzSettingsCard.svelte",
-  "dashboard_element": "musicbrainz-dashboard-card",
-  "dashboard_src": "ui/MusicBrainzCard.svelte"
+  "components": {
+    "settings_panel": {
+      "element_tag": "musicbrainz-settings-card",
+      "bundle_url": "/api/system/plugins/musicbrainz/ui/bundle.js"
+    },
+    "dashboard_card": {
+      "element_tag": "musicbrainz-dashboard-card",
+      "bundle_url": "/api/system/plugins/musicbrainz/ui/bundle.js"
+    }
+  },
+  "assets": {
+    "js": "/api/system/plugins/musicbrainz/ui/bundle.js"
+  }
 }

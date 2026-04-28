@@ -1,0 +1,11 @@
+{
+  "components": {
+    "music_service": {
+      "element_tag": "jellyfin-card",
+      "bundle_url": "/api/system/plugins/jellyfin/ui/bundle.js"
+    }
+  },
+  "assets": {
+    "js": "/api/system/plugins/jellyfin/ui/bundle.js"
+  }
+}

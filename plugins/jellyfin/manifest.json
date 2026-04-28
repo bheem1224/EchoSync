@@ -8,6 +8,7 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
+  "ui_manifest": "ui_manifest.json",
   "verified_source": "official",
   "beta_version": "2.4.2-beta.3"
 }

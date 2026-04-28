@@ -1,0 +1,11 @@
+{
+  "components": {
+    "music_service": {
+      "element_tag": "plex-card",
+      "bundle_url": "/api/system/plugins/plex/ui/bundle.js"
+    }
+  },
+  "assets": {
+    "js": "/api/system/plugins/plex/ui/bundle.js"
+  }
+}

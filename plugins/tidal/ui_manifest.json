@@ -1,0 +1,11 @@
+{
+  "components": {
+    "music_service": {
+      "element_tag": "tidal-card",
+      "bundle_url": "/api/system/plugins/tidal/ui/bundle.js"
+    }
+  },
+  "assets": {
+    "js": "/api/system/plugins/tidal/ui/bundle.js"
+  }
+}

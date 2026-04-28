@@ -107,7 +107,7 @@
           const bundleUrl = plugin.components[category]?.bundle_url;
           if (!bundleUrl) return Promise.resolve(null);
           // Build absolute URL: the backend serves bundles at /api/system/plugins/<id>/ui/<file>
-          const absoluteUrl = bundleUrl.startsWith('http')
+          const absoluteUrl = (bundleUrl.startsWith('http') || bundleUrl.startsWith('/'))
             ? bundleUrl
             : `/api/system/plugins/${plugin.id}/ui/${bundleUrl.replace(/^\//, '')}`;
           return injectScript(absoluteUrl).then(() => ({

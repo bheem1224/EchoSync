@@ -1,4 +1,11 @@
 {
-  "settings_element": "acoustid-settings-card",
-  "settings_src": "ui/AcoustIDCard.svelte"
+  "components": {
+    "settings_panel": {
+      "element_tag": "acoustid-settings-card",
+      "bundle_url": "/api/system/plugins/acoustid/ui/bundle.js"
+    }
+  },
+  "assets": {
+    "js": "/api/system/plugins/acoustid/ui/bundle.js"
+  }
 }

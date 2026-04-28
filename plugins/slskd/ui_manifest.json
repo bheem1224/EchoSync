@@ -1,0 +1,11 @@
+{
+  "components": {
+    "music_service": {
+      "element_tag": "slskd-card",
+      "bundle_url": "/api/system/plugins/slskd/ui/bundle.js"
+    }
+  },
+  "assets": {
+    "js": "/api/system/plugins/slskd/ui/bundle.js"
+  }
+}
