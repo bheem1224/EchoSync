@@ -165,8 +165,9 @@ class PluginLoader:
                         continue
 
                 if source_type == 'community':
-                    # Support Side-by-Side Architecture
+                    # Support Side-by-Side Architecture or Root Overwrite
                     channel = config_manager.get_plugin_channel(item.name)
+                    # If we have a beta subfolder, use it, otherwise the root contains the swapped artifact
                     if channel == 'beta' and (item / 'beta').exists():
                         item = item / 'beta'
 
@@ -226,10 +227,22 @@ class PluginLoader:
                 continue
 
             provider_name = item.name
-            init_file = item / "__init__.py"
+            
+            # Channel logic for community plugins
+            current_item = item
+            if source_type == 'community':
+                channel = config_manager.get_plugin_channel(provider_name)
+                if channel == 'beta' and (item / 'beta').exists():
+                    current_item = item / 'beta'
+                    # We still use the original provider_name for registration, 
+                    # but we need to adjust how we import it if it's in a subfolder.
+                    # However, Echosync's current architecture prefers atomic root overwrite.
+                    # This subfolder check is for legacy/side-by-side support.
+
+            init_file = current_item / "__init__.py"
 
             if not init_file.exists():
-                logger.debug(f"Skipping {provider_name}: no __init__.py found")
+                logger.debug(f"Skipping {provider_name}: no __init__.py found in {current_item}")
                 continue
 
             # Zero-Trust gate: scan community plugin source before importing

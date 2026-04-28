@@ -240,7 +240,7 @@ class PluginStore:
             
             plugin["_installed"] = dest_dir.exists() and manifest_file.exists()
             plugin["installed_version"] = None
-            plugin["installed_channel"] = config_manager.get_plugin_channel(plugin_id)
+            plugin["installed_channel"] = config_manager.get_plugin_channel(folder_id)
             plugin["update_available"] = False
 
             if plugin["_installed"]:
@@ -343,7 +343,7 @@ class PluginStore:
                         logger.info(f"Injected verified_source block for {plugin_id}")
                     except Exception as e:
                         logger.error(f"Failed to inject verified_source for {plugin_id}: {e}")
-
+                
                 # Task 3: Atomic Swap
                 dest_dir = self.plugins_dir / folder_id
                 if dest_dir.exists():
@@ -351,6 +351,10 @@ class PluginStore:
                 
                 os.rename(str(tmp_dir), str(dest_dir))
                 logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
+
+                # Task 5: Persist Channel Preference (use folder_id for PluginLoader compatibility)
+                config_manager.set(f'plugins.{folder_id}.channel', channel)
+                logger.info(f"Persisted channel '{channel}' for plugin {folder_id}")
 
                 # State Updates
                 system_state.restart_pending = True
