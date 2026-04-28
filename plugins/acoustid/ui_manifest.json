@@ -1,11 +1,11 @@
 {
   "components": {
-    "settings_panel": {
+    "metadata": {
       "element_tag": "acoustid-settings-card",
-      "bundle_url": "/api/system/plugins/acoustid/ui/bundle.js"
+      "bundle_url": "/api/system/plugins/acoustid/static/bundle.js"
     }
   },
   "assets": {
-    "js": "/api/system/plugins/acoustid/ui/bundle.js"
+    "js": "/api/system/plugins/acoustid/static/bundle.js"
   }
 }

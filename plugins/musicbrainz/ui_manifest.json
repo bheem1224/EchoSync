@@ -1,15 +1,11 @@
 {
   "components": {
-    "settings_panel": {
+    "metadata": {
       "element_tag": "musicbrainz-settings-card",
-      "bundle_url": "/api/system/plugins/musicbrainz/ui/bundle.js"
-    },
-    "dashboard_card": {
-      "element_tag": "musicbrainz-dashboard-card",
-      "bundle_url": "/api/system/plugins/musicbrainz/ui/bundle.js"
+      "bundle_url": "/api/system/plugins/musicbrainz/static/bundle.js"
     }
   },
   "assets": {
-    "js": "/api/system/plugins/musicbrainz/ui/bundle.js"
+    "js": "/api/system/plugins/musicbrainz/static/bundle.js"
   }
 }

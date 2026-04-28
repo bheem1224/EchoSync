@@ -1,101 +1,103 @@
 <script>
   import { onMount } from 'svelte';
-  import { settings } from '../../../stores/settings';
+  import { providers } from '../../../stores/providers';
+  import DynamicPluginLoader from '../../../components/DynamicPluginLoader.svelte';
 
-  let loading = true;
-  let error = '';
-  let downloadClients = [];
-  let enabledMap = {};
-  let activeClient = 'slskd';
+  // ── State ──────────────────────────────────────────────────────────────
+  let loadError = $state('');
+  let clientProviders = $state([]);
 
   onMount(async () => {
-    loading = true;
     try {
-      await settings.load();
-      const resp = await fetch('/api/providers/download-clients');
-      if (resp.ok) {
-        downloadClients = await resp.json();
-      } else {
-        downloadClients = [];
-      }
-
-      // Initialize enabled map from settings store data if present
-      const current = $settings?.data?.download_clients || {};
-      enabledMap = {};
-      (downloadClients || []).forEach((c) => {
-        const key = c.name || c.id || c.service || '';
-        enabledMap[key] = (current[key] === true) || !!c.enabled;
-      });
+      await providers.load();
+      const allProviders = Object.values($providers?.items ?? []);
+      
+      clientProviders = allProviders
+        .filter(p => !p.disabled)
+        .filter(p => {
+          return (
+            p.service_type === 'download_client' ||
+            ['slskd', 'transmission', 'qbittorrent'].includes((p.id || p.name || '').toLowerCase().replace('core.', ''))
+          );
+        });
     } catch (err) {
-      console.error('Failed to fetch download clients:', err);
-      error = err.message || String(err);
-    } finally {
-      loading = false;
+      loadError = 'Failed to load download clients.';
+      console.error(err);
     }
   });
 
-  function clientKey(c) {
-    return c?.name || c?.id || c?.service || '';
-  }
-
-  // note: keep small helper in-module to avoid polluting markup
-  async function toggleClient(key, value) {
-    enabledMap = { ...enabledMap, [key]: !!value };
-    try {
-      await settings.save({ download_clients: { [key]: !!value } });
-    } catch (err) {
-      console.error('Failed to save download client setting:', err);
-    }
-  }
+  const hasFallbackProviders = $derived(clientProviders.length > 0);
 </script>
 
-<section>
-  <h1>Download Clients</h1>
-  <p class="page-description">Configure download clients for obtaining music files</p>
-  
-  {#if loading}
-    <p>Loading download clients...</p>
-  {:else if error}
-    <p class="error">Error: {error}</p>
-  {:else}
-    {#if downloadClients.length === 0}
-      <p>No download clients available.</p>
-    {:else}
-      <div class="clients-list">
-        {#each downloadClients as client (client.name || client.id || client.service)}
-          <div class="client-row">
-            <label class="form-group">
-              <span class="label-text">{client.display_name || client.name || clientKey(client)}</span>
-              <input type="checkbox" checked={!!enabledMap[clientKey(client)]} on:change={(e) => toggleClient(clientKey(client), e.target.checked)} />
-            </label>
-          </div>
-        {/each}
-      </div>
-    {/if}
-  {/if}
+<svelte:head>
+  <title>Download Clients • EchoSync</title>
+</svelte:head>
 
-  
+<section class="page">
+  <header class="page__header">
+    <div class="page__eyebrow">Acquisition</div>
+    <h1>Download Clients</h1>
+    <p class="subtitle">Configure download clients for obtaining music files</p>
+  </header>
+
+  {#if loadError}
+    <div class="error-card" role="alert">
+      <span class="error-card__icon">⚠</span>
+      <p>{loadError}</p>
+    </div>
+  {:else}
+    <DynamicPluginLoader category="download_client">
+      <svelte:fragment slot="loading">
+        <div class="shimmer-container">
+          <div class="loading-shimmer"></div>
+        </div>
+      </svelte:fragment>
+
+      <svelte:fragment slot="empty-state">
+        {#if hasFallbackProviders}
+          <div class="fallback-grid">
+            {#each clientProviders as provider (provider.id)}
+              <div class="provider-card">
+                <div class="provider-header">
+                  <span class="provider-icon">📥</span>
+                  <div>
+                    <div class="provider-name">{provider.name ?? provider.id}</div>
+                    <div class="provider-type">Download Client</div>
+                  </div>
+                </div>
+                <p class="provider-desc">{provider.description ?? 'Configure your download client settings.'}</p>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="empty-state">
+            <p>No download clients found.</p>
+          </div>
+        {/if}
+      </svelte:fragment>
+    </DynamicPluginLoader>
+  {/if}
 </section>
 
 <style>
-  h1 {
-    margin-bottom: 8px;
-    font-size: 28px;
-    font-weight: 600;
-    color: var(--text-main, #ffffff);
-  }
+  .page { display: flex; flex-direction: column; gap: 24px; max-width: 900px; }
+  .page__eyebrow { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.25em; color: var(--color-primary); margin-bottom: 4px; }
+  .page__header h1 { margin: 0 0 6px 0; font-size: 28px; font-weight: 700; color: #fff; }
+  .subtitle { margin: 0; color: var(--text-muted, rgba(255,255,255,0.45)); font-size: 14px; }
 
-  .page-description {
-    color: var(--text-muted, #8b9bb4);
-    margin-bottom: 24px;
-    font-size: 14px;
-  }
-  
-  .error {
-    color: var(--color-error, #ff5252);
-    padding: 12px;
-    background: rgba(255, 82, 82, 0.1);
-    border-radius: 6px;
-    border-left: 3px solid #ff5252;
-  }
+  .error-card { display: flex; align-items: center; gap: 12px; padding: 14px 18px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 10px; color: #ef4444; }
+
+  .shimmer-container { display: flex; flex-direction: column; gap: 12px; }
+  .loading-shimmer { height: 120px; border-radius: 14px; background: linear-gradient(90deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 100%); background-size: 200% 100%; animation: shimmer 1.4s ease-in-out infinite; }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  .fallback-grid { display: flex; flex-direction: column; gap: 12px; }
+  .provider-card { padding: 22px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 14px; }
+  .provider-header { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+  .provider-icon { font-size: 24px; }
+  .provider-name { font-size: 16px; font-weight: 700; color: #fff; }
+  .provider-type { font-size: 11px; color: var(--text-muted, rgba(255,255,255,0.4)); text-transform: uppercase; }
+  .provider-desc { font-size: 13px; color: var(--text-muted, rgba(255,255,255,0.5)); margin: 0; }
+
+  .empty-state { padding: 60px; text-align: center; background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.08); border-radius: 16px; color: var(--text-muted, rgba(255,255,255,0.4)); }
 </style>

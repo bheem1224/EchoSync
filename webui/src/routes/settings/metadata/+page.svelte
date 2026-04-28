@@ -75,7 +75,7 @@
               Primary: DynamicPluginLoader renders Web Components for active plugins.
               Category "settings_panel" is used for metadata configuration cards.
             -->
-            <DynamicPluginLoader category="settings_panel">
+            <DynamicPluginLoader category="metadata">
               <svelte:fragment slot="loading">
                 <div class="services-loading">
                   <div class="loading-shimmer"></div>

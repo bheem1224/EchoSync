@@ -51,7 +51,7 @@
       <p>{loadError}</p>
     </div>
   {:else}
-    <DynamicPluginLoader category="music_service">
+    <DynamicPluginLoader category="media_server">
       <svelte:fragment slot="loading">
         <div class="services-loading">
           <div class="loading-shimmer"></div>
@@ -76,9 +76,6 @@
                 <p class="provider-card__desc">
                   {provider.description ?? 'Connect and sync your library from this server.'}
                 </p>
-                <a href="/settings/servers/{provider.id.replace('core.', '')}" class="provider-card__link">
-                  Configure →
-                </a>
               </div>
             {/each}
           </div>

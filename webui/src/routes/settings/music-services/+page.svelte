@@ -4,45 +4,39 @@
   import DynamicPluginLoader from '../../../components/DynamicPluginLoader.svelte';
 
   // ── State ──────────────────────────────────────────────────────────────
-  let loadError = '';
+  let loadError = $state('');
   /** Provider objects from the store, used to render fallback cards for
    *  services that don't yet ship a Web Component plugin bundle. */
-  let musicServiceProviders = [];
+  let musicServiceProviders = $state([]);
 
   onMount(async () => {
     try {
-      // Partial failures are caught inside load() itself
       await providers.load().catch(e =>
         console.warn('[music-services] Partial provider load failure:', e)
       );
 
       const allProviders = Object.values($providers?.items ?? []);
 
-      if (allProviders.length === 0) {
-        console.warn('[music-services] No providers found from store.');
-      }
-
       musicServiceProviders = allProviders
         .filter(p => !p.disabled)
         .filter(p => {
-          // Keep streaming and metadata providers
+          // Keep streaming and relevant services for this page
+          const id = (p.id || '').toLowerCase().replace('core.', '');
           return (
             p.capabilities?.supports_playlists !== 'NONE' ||
             p.capabilities?.supports_sync ||
-            p.capabilities?.search?.tracks ||
             p.service_type === 'streaming' ||
-            p.service_type === 'metadata'
+            ['spotify', 'tidal', 'deezer', 'qobuz', 'apple_music', 'youtube_music'].includes(id)
           );
         });
     } catch (err) {
-      // Should be rare given the internal catch, but keep for safety
       loadError = 'Failed to load music services. Check backend connection.';
       console.error('[music-services]', err);
     }
   });
 
   /** Whether there are any providers at all to show a fallback grid for */
-  $: hasFallbackProviders = musicServiceProviders.length > 0;
+  const hasFallbackProviders = $derived(musicServiceProviders.length > 0);
 </script>
 
 <svelte:head>
@@ -67,7 +61,6 @@
       The `empty-state` slot is shown when no music_service plugins are active.
     -->
     <DynamicPluginLoader category="music_service">
-      <!-- Override the loading state with something on-brand -->
       <svelte:fragment slot="loading">
         <div class="services-loading">
           <div class="loading-shimmer"></div>
@@ -75,7 +68,6 @@
         </div>
       </svelte:fragment>
 
-      <!-- Override the empty-state slot with fallback provider cards -->
       <svelte:fragment slot="empty-state">
         {#if hasFallbackProviders}
           <div class="services-grid">
@@ -91,11 +83,8 @@
                   </div>
                 </div>
                 <p class="provider-card__desc">
-                  {provider.description ?? 'Configure this service in the provider settings.'}
+                  {provider.description ?? 'This service is currently using the legacy view or is not yet configured.'}
                 </p>
-                <a href="/settings/servers/{provider.id}" class="provider-card__link">
-                  Configure →
-                </a>
               </div>
             {/each}
           </div>
@@ -105,8 +94,7 @@
             <p class="empty-state__title">No Music Services Active</p>
             <p class="empty-state__body">
               Enable a music service provider in the
-              <a href="/settings/plugin-store" class="link">Plugin Store</a>
-              and return here to configure it.
+              <a href="/settings/plugin-store" class="link">Plugin Store</a>.
             </p>
           </div>
         {/if}
@@ -116,150 +104,31 @@
 </section>
 
 <style>
-  .page {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    max-width: 900px;
-  }
+  .page { display: flex; flex-direction: column; gap: 24px; max-width: 900px; }
+  .page__eyebrow { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.25em; color: var(--color-primary); margin-bottom: 4px; }
+  .page__header h1 { margin: 0 0 6px 0; font-size: 28px; font-weight: 700; color: #fff; }
+  .subtitle { margin: 0; color: var(--text-muted, rgba(255,255,255,0.45)); font-size: 14px; }
 
-  /* ── Header ─────────────────────────────────────────────────────── */
-  .page__eyebrow {
-    font-size: 10px;
-    font-weight: 900;
-    text-transform: uppercase;
-    letter-spacing: 0.25em;
-    color: var(--color-primary);
-    margin-bottom: 4px;
-  }
+  .error-card { display: flex; align-items: center; gap: 12px; padding: 14px 18px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 10px; color: #ef4444; font-size: 14px; }
 
-  .page__header h1 {
-    margin: 0 0 6px 0;
-    font-size: 28px;
-    font-weight: 700;
-    color: var(--text-primary, #fff);
-  }
-
-  .subtitle {
-    margin: 0;
-    color: var(--text-muted, rgba(255,255,255,0.45));
-    font-size: 14px;
-  }
-
-  /* ── Error card ─────────────────────────────────────────────────── */
-  .error-card {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 18px;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.35);
-    border-radius: 10px;
-    color: #ef4444;
-    font-size: 14px;
-  }
-  .error-card__icon { font-size: 18px; flex-shrink: 0; }
-
-  /* ── Loading shimmer ─────────────────────────────────────────────── */
-  .services-loading {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .loading-shimmer {
-    height: 80px;
-    border-radius: 12px;
-    background: linear-gradient(
-      90deg,
-      rgba(255,255,255,0.04) 0%,
-      rgba(255,255,255,0.08) 50%,
-      rgba(255,255,255,0.04) 100%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 1.4s ease-in-out infinite;
-  }
+  .services-loading { display: flex; flex-direction: column; gap: 12px; }
+  .loading-shimmer { height: 80px; border-radius: 12px; background: linear-gradient(90deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 100%); background-size: 200% 100%; animation: shimmer 1.4s ease-in-out infinite; }
   .loading-shimmer--narrow { height: 60px; max-width: 60%; }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-  @keyframes shimmer {
-    0%   { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
-  }
+  .services-grid { display: flex; flex-direction: column; gap: 12px; }
+  .provider-card { padding: 20px 22px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 14px; }
+  .provider-card__header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .provider-card__icon { font-size: 22px; color: var(--color-primary); }
+  .provider-card__name { font-size: 15px; font-weight: 700; color: #fff; text-transform: capitalize; }
+  .provider-card__type { font-size: 11px; color: var(--text-muted, rgba(255,255,255,0.4)); text-transform: uppercase; }
+  .provider-card__desc { margin: 0; font-size: 13px; color: var(--text-muted, rgba(255,255,255,0.5)); line-height: 1.5; }
 
-  /* ── Fallback provider grid ─────────────────────────────────────── */
-  .services-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
+  .empty-state { padding: 52px 24px; text-align: center; border-radius: 16px; background: rgba(255, 255, 255, 0.02); border: 1px dashed rgba(255, 255, 255, 0.08); }
+  .empty-state__icon { font-size: 36px; margin-bottom: 12px; opacity: 0.5; }
+  .empty-state__title { margin: 0 0 8px; font-size: 16px; font-weight: 700; color: #fff; }
+  .empty-state__body { margin: 0; font-size: 13px; color: var(--text-muted, rgba(255,255,255,0.4)); line-height: 1.6; }
 
-  .provider-card {
-    padding: 20px 22px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 14px;
-    transition: border-color 0.2s, background 0.2s;
-  }
-  .provider-card:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.14);
-  }
-
-  .provider-card__header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 10px;
-  }
-  .provider-card__icon {
-    font-size: 22px;
-    color: var(--color-primary);
-    line-height: 1;
-  }
-  .provider-card__name {
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--text-primary, #fff);
-    text-transform: capitalize;
-  }
-  .provider-card__type {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted, rgba(255,255,255,0.4));
-    margin-top: 2px;
-  }
-
-  .provider-card__desc {
-    margin: 0 0 14px 0;
-    font-size: 13px;
-    color: var(--text-muted, rgba(255,255,255,0.5));
-    line-height: 1.5;
-  }
-  .provider-card__link {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--color-primary);
-    text-decoration: none;
-    transition: opacity 0.15s;
-  }
-  .provider-card__link:hover { opacity: 0.75; }
-
-  /* ── Empty state ─────────────────────────────────────────────────── */
-  .empty-state {
-    padding: 52px 24px;
-    text-align: center;
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px dashed rgba(255, 255, 255, 0.08);
-  }
-  .empty-state__icon   { font-size: 36px; margin-bottom: 12px; opacity: 0.5; }
-  .empty-state__title  { margin: 0 0 8px; font-size: 16px; font-weight: 700; color: var(--text-primary, #fff); }
-  .empty-state__body   { margin: 0; font-size: 13px; color: var(--text-muted, rgba(255,255,255,0.4)); line-height: 1.6; }
-
-  .link {
-    color: var(--color-primary);
-    text-decoration: none;
-    font-weight: 700;
-  }
+  .link { color: var(--color-primary); text-decoration: none; font-weight: 700; }
   .link:hover { text-decoration: underline; }
 </style>

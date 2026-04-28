@@ -1,11 +1,11 @@
 {
   "components": {
-    "music_service": {
+    "media_server": {
       "element_tag": "navidrome-card",
-      "bundle_url": "/api/system/plugins/navidrome/ui/bundle.js"
+      "bundle_url": "/api/system/plugins/navidrome/static/bundle.js"
     }
   },
   "assets": {
-    "js": "/api/system/plugins/navidrome/ui/bundle.js"
+    "js": "/api/system/plugins/navidrome/static/bundle.js"
   }
 }

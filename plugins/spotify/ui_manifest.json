@@ -2,19 +2,11 @@
   "components": {
     "music_service": {
       "element_tag": "echosync-spotify-card",
-      "bundle_url": "/api/system/plugins/spotify/ui/bundle.js"
-    },
-    "settings_panel": {
-      "element_tag": "echosync-spotify-settings",
-      "bundle_url": "/api/system/plugins/spotify/ui/bundle.js"
-    },
-    "dashboard_card": {
-      "element_tag": "echosync-spotify-dashboard-card",
-      "bundle_url": "/api/system/plugins/spotify/ui/bundle.js"
+      "bundle_url": "/api/system/plugins/spotify/static/bundle.js"
     }
   },
   "assets": {
-    "js": "/api/system/plugins/spotify/ui/bundle.js"
+    "js": "/api/system/plugins/spotify/static/bundle.js"
   },
   "views": [
     {

@@ -1,11 +1,11 @@
 {
   "components": {
-    "music_service": {
+    "media_server": {
       "element_tag": "jellyfin-card",
-      "bundle_url": "/api/system/plugins/jellyfin/ui/bundle.js"
+      "bundle_url": "/api/system/plugins/jellyfin/static/bundle.js"
     }
   },
   "assets": {
-    "js": "/api/system/plugins/jellyfin/ui/bundle.js"
+    "js": "/api/system/plugins/jellyfin/static/bundle.js"
   }
 }

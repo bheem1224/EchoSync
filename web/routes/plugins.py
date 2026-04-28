@@ -67,7 +67,7 @@ def get_ui_manifest():
 
         # Derive the canonical bundle URL from assets (fallback: legacy js key)
         def _default_bundle_url(folder):
-            return f'/api/system/plugins/{folder}/ui/bundle.js'
+            return f'/api/system/plugins/{folder}/static/bundle.js'
 
         bundle_url = (
             raw_assets.get('js')
@@ -210,3 +210,14 @@ def serve_plugin_ui(plugin_id, filename):
         abort(404)
 
     return send_from_directory(ui_dir, filename)
+
+@bp.route('/<plugin_id>/static/<path:filename>', methods=['GET'])
+@require_auth
+def serve_plugin_static(plugin_id, filename):
+    plugins_dir = str(config_manager.get_plugins_dir())
+    static_dir = safe_join(plugins_dir, plugin_id, 'static')
+
+    if static_dir is None or not os.path.exists(static_dir):
+        abort(404)
+
+    return send_from_directory(static_dir, filename)
