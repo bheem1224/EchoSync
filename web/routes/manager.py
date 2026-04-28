@@ -2,6 +2,7 @@ from web.auth import require_auth
 from flask import Blueprint, jsonify, request
 from time_utils import utc_now
 from core.tiered_logger import get_logger
+from core.plugin_store import plugin_store
 from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
 from services.metadata_enhancer import get_metadata_enhancer
@@ -251,8 +252,13 @@ def ui_beta_opt():
                 return jsonify({'error': 'beta_opt_in (boolean) required'}), 400
             # Persist to config under ui.beta_plugin_ui
             config_manager.set('ui.beta_plugin_ui', bool(val))
+            if not val:
+                restore_result = plugin_store.restore_stable_plugins()
+                logger.info(f"Beta opt-out restored stable plugins: {restore_result}")
+            else:
+                restore_result = {}
             config_manager.save_settings(config_manager.get_settings())
-            return jsonify({'success': True, 'beta_opt_in': bool(val)}), 200
+            return jsonify({'success': True, 'beta_opt_in': bool(val), 'restore_result': restore_result}), 200
 
         # GET: return current saved value and dev_mode env flag
         saved = bool(config_manager.get('ui.beta_plugin_ui', False))

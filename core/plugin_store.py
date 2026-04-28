@@ -4,7 +4,7 @@ import zipfile
 import requests
 from pathlib import Path
 from packaging import version
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from core.request_manager import RequestManager
 from core.settings import config_manager
 
@@ -250,9 +250,16 @@ class PluginStore:
             plugin["installed_version"] = None
             
             # Check community first (updates/overrides)
-            if comm_dir.exists() and comm_manifest.exists():
-                plugin["_installed"] = True
-                active_manifest_path = comm_manifest
+            if comm_dir.exists():
+                beta_manifest = comm_dir / "beta" / "manifest.json"
+                if plugin["installed_channel"] == "beta" and beta_manifest.exists():
+                    plugin["_installed"] = True
+                    active_manifest_path = beta_manifest
+                elif comm_manifest.exists():
+                    plugin["_installed"] = True
+                    active_manifest_path = comm_manifest
+                else:
+                    active_manifest_path = None
             # Check core second (bundled)
             elif core_dir.exists() and core_manifest.exists():
                 plugin["_installed"] = True
@@ -315,7 +322,14 @@ class PluginStore:
 
         plugin_id = plugin_info.get("id", plugin_info.get("name", "unknown_plugin"))
         folder_id = plugin_id.split(".")[-1]
-        
+        dest_dir = self.plugins_dir / folder_id
+        beta_dir = dest_dir / "beta"
+
+        if channel == "beta":
+            target_dir = beta_dir
+        else:
+            target_dir = dest_dir
+
         tmp_dir = self.plugins_dir / f"tmp_{folder_id}"
 
         try:
@@ -367,13 +381,18 @@ class PluginStore:
                         logger.info(f"Injected verified_source block for {plugin_id}")
                     except Exception as e:
                         logger.error(f"Failed to inject verified_source for {plugin_id}: {e}")
-                
+
                 # Task 3: Atomic Swap
-                dest_dir = self.plugins_dir / folder_id
-                if dest_dir.exists():
-                    shutil.rmtree(dest_dir, ignore_errors=True)
-                
-                os.rename(str(tmp_dir), str(dest_dir))
+                if channel == "stable" and beta_dir.exists():
+                    shutil.rmtree(beta_dir, ignore_errors=True)
+
+                if target_dir.exists():
+                    shutil.rmtree(target_dir, ignore_errors=True)
+
+                if target_dir == beta_dir and not dest_dir.exists():
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+
+                os.rename(str(tmp_dir), str(target_dir))
                 logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
 
                 # Task 5: Persist Channel Preference (use folder_id for PluginLoader compatibility)
@@ -399,6 +418,49 @@ class PluginStore:
         except Exception as e:
             logger.error(f"Fatal error during artifact installation: {e}", exc_info=True)
             return False
+
+    def _cleanup_beta_subfolder(self, folder_id: str) -> bool:
+        import shutil
+        beta_path = self.plugins_dir / folder_id / "beta"
+        if beta_path.exists():
+            shutil.rmtree(beta_path, ignore_errors=True)
+            logger.info(f"Removed leftover beta folder for plugin {folder_id}")
+            return True
+        return False
+
+    def restore_stable_plugins(self) -> Dict[str, Any]:
+        """Restore stable plugin artifacts for plugins that still had beta channel config."""
+        results = {}
+        plugin_settings = config_manager.get('plugins', {}) or {}
+        beta_plugin_ids = [pid for pid, data in plugin_settings.items() if isinstance(data, dict) and data.get('channel') == 'beta']
+        if not beta_plugin_ids:
+            return results
+
+        store_plugins = self.get_all_store_plugins()
+        for folder_id in beta_plugin_ids:
+            results[folder_id] = {"restored": False, "beta_removed": False, "errors": []}
+            if self._cleanup_beta_subfolder(folder_id):
+                results[folder_id]["beta_removed"] = True
+
+            plugin_info = next(
+                (p for p in store_plugins if p.get('id', '').split('.')[-1] == folder_id or p.get('id', '') == folder_id),
+                None,
+            )
+
+            config_manager.set(f'plugins.{folder_id}.channel', 'stable')
+            if plugin_info and plugin_info.get('download_url'):
+                if self.download_plugin(plugin_info, channel='stable'):
+                    results[folder_id]["restored"] = True
+                else:
+                    results[folder_id]["errors"].append('stable_download_failed')
+            else:
+                if not plugin_info:
+                    results[folder_id]["errors"].append('store_info_not_found')
+                else:
+                    results[folder_id]["errors"].append('stable_download_url_missing')
+
+        config_manager.save_settings(config_manager.get_settings())
+        return results
 
     def uninstall_plugin(self, plugin_id: str) -> bool:
         import re
