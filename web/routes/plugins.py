@@ -4,9 +4,12 @@ from flask import Blueprint, jsonify, request, abort, send_from_directory
 from core.settings import config_manager
 from werkzeug.utils import safe_join
 import os
+from pathlib import Path
 from core.plugin_loader import get_all_plugins
 from core.plugin_store import plugin_store
+from core.tiered_logger import get_logger
 
+logger = get_logger("plugins_route")
 bp = Blueprint('plugins', __name__, url_prefix='/api/system/plugins')
 
 @bp.route('', methods=['GET'])
@@ -203,10 +206,46 @@ def install_plugin():
 @bp.route('/<plugin_id>/ui/<path:filename>', methods=['GET'])
 @require_auth
 def serve_plugin_ui(plugin_id, filename):
-    plugins_dir = str(config_manager.get_plugins_dir())
-    ui_dir = safe_join(plugins_dir, plugin_id, 'ui')
+    # Strip prefixes if present
+    clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+    plugins_dir = config_manager.get_plugins_dir()
+    app_root = Path(__file__).parent.parent.parent
+    
+    logger.debug(f"[UISearch] Request for {plugin_id}/{filename} (Cleaned ID: {clean_id})")
+    
+    # Possible base directories for plugins
+    base_dirs = [
+        str(plugins_dir),
+        str(app_root / "plugins"),
+        str(app_root / "providers"),
+    ]
 
-    if ui_dir is None or not os.path.exists(ui_dir):
+    ui_dir = None
+    for base in base_dirs:
+        # Check standard folder
+        path = os.path.abspath(os.path.join(base, clean_id, 'ui'))
+        if os.path.exists(path):
+            ui_dir = path
+            break
+        
+        # Check beta folder
+        path = os.path.abspath(os.path.join(base, clean_id, 'beta', 'ui'))
+        if os.path.exists(path):
+            ui_dir = path
+            break
+
+    if not ui_dir:
+        logger.error(f"Plugin UI folder NOT FOUND for {plugin_id}. Searched in: {base_dirs}")
+        abort(404)
+
+    # Security check
+    file_path = os.path.abspath(os.path.join(ui_dir, filename))
+    if not file_path.startswith(ui_dir):
+        logger.warning(f"Security: Blocked UI traversal attempt for {plugin_id}: {filename}")
+        abort(403)
+
+    if not os.path.exists(file_path):
+        logger.error(f"Plugin UI file NOT FOUND: {file_path}")
         abort(404)
 
     return send_from_directory(ui_dir, filename)
@@ -214,10 +253,52 @@ def serve_plugin_ui(plugin_id, filename):
 @bp.route('/<plugin_id>/static/<path:filename>', methods=['GET'])
 @require_auth
 def serve_plugin_static(plugin_id, filename):
-    plugins_dir = str(config_manager.get_plugins_dir())
-    static_dir = safe_join(plugins_dir, plugin_id, 'static')
+    """
+    Serve static assets (JS bundles, CSS, etc.) for a plugin.
+    Checks community plugins, beta channel, and core plugins.
+    """
+    # Strip prefixes if present
+    clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+    plugins_dir = config_manager.get_plugins_dir()
+    app_root = Path(__file__).parent.parent.parent
+    
+    logger.debug(f"[AssetSearch] Request for {plugin_id}/{filename} (Cleaned ID: {clean_id})")
+    
+    # Possible base directories for plugins
+    base_dirs = [
+        str(plugins_dir),
+        str(app_root / "plugins"),
+        str(app_root / "providers"),
+    ]
 
-    if static_dir is None or not os.path.exists(static_dir):
+    static_dir = None
+    for base in base_dirs:
+        # Check standard static folder
+        path = os.path.abspath(os.path.join(base, clean_id, 'static'))
+        if os.path.exists(path):
+            static_dir = path
+            break
+        
+        # Check beta folder static folder
+        path = os.path.abspath(os.path.join(base, clean_id, 'beta', 'static'))
+        if os.path.exists(path):
+            static_dir = path
+            break
+
+    if not static_dir:
+        logger.error(f"Plugin asset folder NOT FOUND for {plugin_id}. Searched in: {base_dirs}")
         abort(404)
 
+    # Security check: Ensure we are not serving files outside the plugin static folder
+    # filename is already sanitized by Flask/Werkzeug to some extent
+    file_path = os.path.abspath(os.path.join(static_dir, filename))
+    if not file_path.startswith(static_dir):
+        logger.warning(f"Security: Blocked traversal attempt for {plugin_id}: {filename}")
+        abort(403)
+
+    if not os.path.exists(file_path):
+        logger.error(f"Plugin asset file NOT FOUND: {file_path}")
+        abort(404)
+
+    logger.info(f"Serving plugin asset: {file_path}")
     return send_from_directory(static_dir, filename)
