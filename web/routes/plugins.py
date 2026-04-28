@@ -113,16 +113,18 @@ def get_plugin_store():
 def install_plugin():
     data = request.json or {}
     plugin_info = data.get('plugin')
+    channel = data.get('channel', 'stable')
+    
     if not plugin_info:
         return jsonify({"error": "Plugin info required"}), 400
 
-    success = plugin_store.download_plugin(plugin_info)
+    success = plugin_store.download_plugin(plugin_info, channel=channel)
     if success:
         from core.state import system_state
         system_state.restart_pending = True
         return jsonify({"success": True})
     else:
-        return jsonify({"error": "Failed to install plugin"}), 500
+        return jsonify({"error": f"Failed to install plugin on channel {channel}"}), 500
 
 
 @bp.route('/<plugin_id>/ui/<path:filename>', methods=['GET'])

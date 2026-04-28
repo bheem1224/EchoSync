@@ -71,8 +71,9 @@ class PluginStore:
                     if len(parts) > gh_idx + 5:
                         subfolder = "/".join(parts[gh_idx + 5:])
 
-                check_url = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{subfolder}/manifest.json".replace("//manifest", "/manifest")
-
+                # Try store-manifest.json first, then manifest.json
+                manifest_files = ["store-manifest.json", "manifest.json"]
+                plugins = []
                 req_mgr = RequestManager(provider="system")
                 etags_file = self.plugins_dir / ".etags.json"
                 etags = {}
@@ -83,60 +84,65 @@ class PluginStore:
                     except Exception:
                         pass
 
-                headers = {}
-                if check_url in etags:
-                    headers["If-None-Match"] = etags[check_url]["etag"]
+                for m_file in manifest_files:
+                    check_url = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{subfolder}/{m_file}".replace(f"//{m_file}", f"/{m_file}")
+                    
+                    headers = {}
+                    if check_url in etags:
+                        headers["If-None-Match"] = etags[check_url]["etag"]
 
-                try:
-                    resp = req_mgr.get(check_url, headers=headers, timeout=10)
-                    if resp.status_code == 304:
-                        logger.debug(f"Manifest not modified (304) for {check_url}")
-                        plugins = etags[check_url].get("plugins", [])
-                    elif resp.status_code == 200:
-                        manifest_data = resp.json()
-                        plugins = manifest_data.get("plugins", [])
+                    try:
+                        resp = req_mgr.get(check_url, headers=headers, timeout=10)
+                        if resp.status_code == 304:
+                            logger.debug(f"Manifest not modified (304) for {check_url}")
+                            plugins = etags[check_url].get("plugins", [])
+                            break
+                        elif resp.status_code == 200:
+                            manifest_data = resp.json()
+                            if "plugins" in manifest_data:
+                                plugins = manifest_data["plugins"]
+                            else:
+                                plugins = manifest_data if isinstance(manifest_data, list) else [manifest_data]
 
-                        if "ETag" in resp.headers:
-                            etags[check_url] = {"etag": resp.headers["ETag"], "plugins": plugins}
-                            with open(etags_file, "w") as f:
-                                json.dump(etags, f)
-                    else:
-                        return []
+                            if "ETag" in resp.headers:
+                                etags[check_url] = {"etag": resp.headers["ETag"], "plugins": plugins}
+                                with open(etags_file, "w") as f:
+                                    json.dump(etags, f)
+                            break
+                    except Exception as e:
+                        logger.debug(f"Could not fetch {check_url}: {e}")
+                
+                if not plugins:
+                    return self._scan_github_api(user, repo, branch, subfolder, repo_url)
 
-                    filtered_plugins = []
-                    for p in plugins:
-                        p["_source_repo"] = repo_url
-                        plugin_id = p.get("id", "")
-                        if plugin_id:
-                            p["_folder_path"] = f"{subfolder}/{plugin_id}" if subfolder else plugin_id
+                filtered_plugins = []
+                for p in plugins:
+                    p["_source_repo"] = repo_url
+                    plugin_id = p.get("id", "")
+                    if not plugin_id:
+                        continue
+                        
+                    # Calculate subfolder path within the repo
+                    folder_name = p.get("path") or plugin_id.split(".")[-1]
+                    p["_folder_path"] = f"{subfolder}/{folder_name}" if subfolder else folder_name
 
-                        # Apply application bounds
-                        p["privileged_mode"] = p.get("privileged_mode", False)
+                    # Construct default artifact URLs if not provided by the manifest
+                    repo_raw_base = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{p['_folder_path']}"
+                    
+                    if "download_url" not in p:
+                        v = p.get("version", "1.0.0")
+                        p["download_url"] = f"{repo_raw_base}/releases/v{v}.zip"
+                    
+                    if "beta_url" not in p:
+                        p["beta_url"] = f"{repo_raw_base}/beta.zip"
 
-                        # Filter by channel
-                        channel = config_manager.get_plugin_channel(plugin_id)
-                        version_str = p.get("version", "1.0.0")
+                    filtered_plugins.append(p)
 
-                        base_dl_path = f"https://github.com/{user}/{repo}/raw/refs/heads/{branch}/{subfolder}"
-                        base_dl_path = base_dl_path.replace("//raw", "/raw").rstrip('/')
-
-                        if channel == "beta":
-                            p["_download_url"] = f"{base_dl_path}/beta.zip"
-                            if p.get("beta_version"):
-                                p["version"] = p.get("beta_version")
-                        else:
-                            p["_download_url"] = f"{base_dl_path}/releases/{version_str}.zip"
-
-                        filtered_plugins.append(p)
-
-                    return filtered_plugins
-                except Exception as e:
-                    logger.debug(f"Could not fetch {check_url}: {e}")
-
-                return self._scan_github_api(user, repo, branch, subfolder, repo_url)
-            except IndexError:
-                logger.error(f"Malformed GitHub URL: {repo_url}")
+                return filtered_plugins
+            except Exception as e:
+                logger.error(f"Error scanning repository {repo_url}: {e}")
         return []
+
     def _scan_github_api(self, user: str, repo: str, branch: str, subfolder: str, original_repo_url: str) -> List[Dict]:
         api_url = f"https://api.github.com/repos/{user}/{repo}/contents"
         if subfolder:
@@ -160,7 +166,12 @@ class PluginStore:
                                     if manifest_resp.status_code == 200:
                                         plugin_info = manifest_resp.json()
                                         plugin_info["_source_repo"] = original_repo_url
-                                        plugin_info["_download_url"] = f"https://github.com/{user}/{repo}/archive/refs/heads/{branch}.zip"
+                                        plugin_id = plugin_info.get("id", item.get("name"))
+                                        
+                                        # Use the archive for legacy API scan fallback
+                                        archive_url = f"https://github.com/{user}/{repo}/archive/refs/heads/{branch}.zip"
+                                        plugin_info["download_url"] = archive_url
+                                        plugin_info["beta_url"] = archive_url
                                         plugin_info["_folder_path"] = item.get("path")
                                         plugins.append(plugin_info)
         except Exception as e:
@@ -176,8 +187,9 @@ class PluginStore:
             
         for plugin in all_plugins:
             plugin_id = plugin.get("id", plugin.get("name", "unknown_plugin"))
-            plugin_id = plugin_id.split(".")[-1]
-            dest_dir = self.plugins_dir / plugin_id
+            # Clean up ID for dest dir
+            folder_id = plugin_id.split(".")[-1]
+            dest_dir = self.plugins_dir / folder_id
             manifest_file = dest_dir / "manifest.json"
             
             plugin["_installed"] = dest_dir.exists() and manifest_file.exists()
@@ -198,7 +210,6 @@ class PluginStore:
                         if version.parse(remote_version) > version.parse(local_version):
                             plugin["update_available"] = True
                     except Exception:
-                        # Fallback to simple comparison if semver parsing fails
                         if remote_version != local_version:
                             plugin["update_available"] = True
                 except Exception as e:
@@ -206,7 +217,11 @@ class PluginStore:
             
         return all_plugins
 
-    def download_plugin(self, plugin_info: Dict) -> bool:
+    def download_plugin(self, plugin_info: Dict, channel: str = "stable") -> bool:
+        """
+        Direct Artifact Downloader.
+        Downloads a cleanly packaged .zip artifact based on the selected channel.
+        """
         from core.settings import config_manager
         from core.state import system_state
         from core.event_bus import event_bus
@@ -214,123 +229,96 @@ class PluginStore:
         import tempfile
         import os
 
-        download_url = plugin_info.get("download_url") or plugin_info.get("_download_url")
+        # Task 1: Resolve Direct URL based on Channel
+        if channel == "beta":
+            download_url = plugin_info.get("beta_url") or plugin_info.get("download_url")
+        else:
+            download_url = plugin_info.get("download_url")
+
         if not download_url:
-            logger.error("No download URL provided for plugin.")
+            logger.error(f"No artifact URL found for plugin {plugin_info.get('id')} on channel {channel}")
             return False
 
+        plugin_id = plugin_info.get("id", plugin_info.get("name", "unknown_plugin"))
+        folder_id = plugin_id.split(".")[-1]
+        
+        tmp_dir = self.plugins_dir / f"tmp_{folder_id}"
+
         try:
-            plugin_id = plugin_info.get("id", plugin_info.get("name", "unknown_plugin"))
-            plugin_id = plugin_id.split(".")[-1]
-            logger.info(f"Downloading plugin {plugin_id} from {download_url}")
-            
+            logger.info(f"Direct downloading {plugin_id} ({channel}) from {download_url}")
             req_mgr = RequestManager(provider="system")
             resp = req_mgr.get(download_url, timeout=30)
-            resp.raise_for_status()
+            
+            if resp.status_code != 200:
+                logger.error(f"Artifact download failed with status {resp.status_code}")
+                return False
 
-            # Task 1: Temporary Extraction (Atomic Swap Preparation)
-            tmp_dir = self.plugins_dir / f"tmp_{plugin_id}"
-            if tmp_dir.exists():
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+            if tmp_dir.exists(): shutil.rmtree(tmp_dir, ignore_errors=True)
             tmp_dir.mkdir(parents=True, exist_ok=True)
 
-            # Create temp zip file for extraction
             with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
                 tmp_file.write(resp.content)
                 tmp_zip_path = tmp_file.name
 
             try:
+                # Task 2: Artifact Extraction (Direct Root Level)
                 with zipfile.ZipFile(tmp_zip_path, 'r') as z:
-                    zip_infos = z.infolist()
-                    if not zip_infos:
-                        logger.error("Empty zip file")
-                        return False
-
-                    uncompressed_size = 0
-                    for zi in zip_infos:
-                        if zi.filename.endswith('/'):
-                            continue
-
-                        rel_path = zi.filename
-                        if '..' in rel_path or rel_path.startswith('/'):
-                            logger.error(f"Malicious path detected in zip: {rel_path}")
+                    # Security: Zip Slip Check
+                    for zi in z.infolist():
+                        if '..' in zi.filename or zi.filename.startswith('/'):
+                            logger.error(f"Malicious path in artifact: {zi.filename}")
                             return False
+                    
+                    z.extractall(tmp_dir)
 
-                        target_file = (tmp_dir / rel_path).resolve()
-                        if not target_file.is_relative_to(tmp_dir.resolve()):
-                            logger.error(f"Zip Slip prevented for: {target_file}")
-                            raise ValueError("Path traversal attempt detected in zip")
-
-                        target_file.parent.mkdir(parents=True, exist_ok=True)
-
-                        uncompressed_size += zi.file_size
-                        if uncompressed_size > 100 * 1024 * 1024: # 100MB limit for plugin zips
-                            logger.error("Zip bomb detected: uncompressed size exceeds 100MB limit.")
-                            return False
-
-                        with target_file.open('wb') as out_f:
-                            out_f.write(z.read(zi))
-
-                # Task 2: Validation
+                # Validation: Direct check for manifest.json at root
                 manifest_file = tmp_dir / "manifest.json"
                 if not manifest_file.exists():
-                    logger.error(f"Validation failed: No manifest.json found in extracted package for {plugin_id}")
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    logger.error(f"Validation failed: Clean artifact missing manifest.json at root for {plugin_id}")
+                    # If this happens, we might be downloading a full repo zip by mistake
                     return False
 
                 # Task 3: Atomic Swap
-                dest_dir = self.plugins_dir / plugin_id
+                dest_dir = self.plugins_dir / folder_id
                 if dest_dir.exists():
-                    logger.info(f"Removing old plugin version at {dest_dir}")
                     shutil.rmtree(dest_dir, ignore_errors=True)
                 
                 os.rename(str(tmp_dir), str(dest_dir))
-                logger.info(f"Successfully performed atomic swap for {plugin_id}")
+                logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
 
-                # Watermark official plugins
-                if plugin_info.get("_source_repo") == self.default_repo:
-                    try:
-                        with open(manifest_file, "r") as f:
-                            local_manifest = json.load(f)
-                        local_manifest["verified_source"] = "official"
-                        with open(manifest_file, "w") as f:
-                            json.dump(local_manifest, f, indent=4)
-                    except Exception as e:
-                        logger.warning(f"Failed to watermark plugin: {e}")
-
-                # Task 4: Trigger Flag & Notify
+                # State Updates
                 system_state.restart_pending = True
                 event_bus.publish("SYSTEM", "PLUGIN_UPDATE_COMPLETE", {
                     "plugin_id": plugin_id,
                     "name": plugin_info.get("name"),
                     "version": plugin_info.get("version"),
+                    "channel": channel,
                     "restart_required": True
                 })
                 
                 return True
 
             finally:
-                if os.path.exists(tmp_zip_path):
-                    os.remove(tmp_zip_path)
-                if tmp_dir.exists():
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                if os.path.exists(tmp_zip_path): os.remove(tmp_zip_path)
+                if tmp_dir.exists(): shutil.rmtree(tmp_dir, ignore_errors=True)
 
         except Exception as e:
-            logger.error(f"Failed to download and extract plugin: {e}", exc_info=True)
+            logger.error(f"Fatal error during artifact installation: {e}", exc_info=True)
             return False
+
     def uninstall_plugin(self, plugin_id: str) -> bool:
         import re
         import shutil
-        dest_dir = self.plugins_dir / plugin_id
+        folder_id = plugin_id.split(".")[-1]
+        dest_dir = self.plugins_dir / folder_id
         if not dest_dir.exists():
             return False
         
-        # Drop associated tables
         try:
             from database.working_database import get_working_database
             from database.config_database import get_config_database
             
-            safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', plugin_id).lower()
+            safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', folder_id).lower()
             prefix = f"plugin_{safe_id}_%"
             
             for db_engine in [get_working_database().engine, get_config_database().engine]:
@@ -339,25 +327,13 @@ class PluginStore:
                         from sqlalchemy import text
                         tables = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :prefix"), {"prefix": prefix}).fetchall()
                         for (table_name,) in tables:
-                            if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
-                                logger.warning(f"Skipping drop table due to invalid name: {table_name}")
-                                continue
                             conn.execute(text(f"DROP TABLE IF EXISTS \"{table_name}\""))
-                            try:
-                                conn.commit()
-                            except Exception:
-                                pass
-                    except ImportError:
-                        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?", (prefix,)).fetchall()
-                        for (table_name,) in tables:
-                            if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
-                                logger.warning(f"Skipping drop table due to invalid name: {table_name}")
-                                continue
-                            conn.execute(f"DROP TABLE IF EXISTS \"{table_name}\"")
+                        conn.commit()
+                    except Exception:
+                        pass
         except Exception as e:
             logger.error(f"Failed to drop tables for {plugin_id}: {e}")
             
-        # Delete directory
         shutil.rmtree(dest_dir, ignore_errors=True)
         return True
 
