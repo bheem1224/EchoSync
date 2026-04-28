@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
 import apiClient from '../api/client';
 
 function createPreferencesStore() {
@@ -108,7 +108,90 @@ function createPreferencesStore() {
     }
   }
 
-  return { subscribe, load, saveProfiles, saveProfile, setLocalProfiles, updateLocalProfile };
+  return { subscribe, load, saveProfiles, saveProfile, setLocalProfiles, updateLocalProfile, getUiPreference, setUiPreference };
 }
 
 export const preferences = createPreferencesStore();
+
+// ── Sidebar customization preferences ────────────────────────────────────
+// Stored inside the same localStorage key as other UI prefs.
+// Shape: { hiddenRoutes: string[], pinnedViews: string[] }
+
+const SIDEBAR_HIDDEN_KEY  = 'sidebar.hiddenRoutes';
+const SIDEBAR_PINNED_KEY  = 'sidebar.pinnedViews';
+
+/** Locked routes that are NEVER allowed to be hidden (hard guarantee). */
+export const LOCKED_ROUTES = new Set(['/settings', '/sync', '/library']);
+
+function _loadSidebarRaw() {
+  try {
+    const raw = localStorage.getItem('soulsync.ui.prefs');
+    const obj = raw ? JSON.parse(raw) : {};
+    return {
+      hiddenRoutes: Array.isArray(obj[SIDEBAR_HIDDEN_KEY]) ? obj[SIDEBAR_HIDDEN_KEY] : [],
+      pinnedViews:  Array.isArray(obj[SIDEBAR_PINNED_KEY])  ? obj[SIDEBAR_PINNED_KEY]  : [],
+    };
+  } catch {
+    return { hiddenRoutes: [], pinnedViews: [] };
+  }
+}
+
+function _saveSidebarRaw(hiddenRoutes, pinnedViews) {
+  try {
+    const raw = localStorage.getItem('soulsync.ui.prefs');
+    const obj = raw ? JSON.parse(raw) : {};
+    obj[SIDEBAR_HIDDEN_KEY] = hiddenRoutes.filter(r => !LOCKED_ROUTES.has(r));
+    obj[SIDEBAR_PINNED_KEY] = pinnedViews;
+    localStorage.setItem('soulsync.ui.prefs', JSON.stringify(obj));
+  } catch (e) {
+    console.warn('[sidebarPrefs] Failed to persist:', e);
+  }
+}
+
+function createSidebarPrefsStore() {
+  const initial = typeof localStorage !== 'undefined' ? _loadSidebarRaw() : { hiddenRoutes: [], pinnedViews: [] };
+  const { subscribe, set, update } = writable(initial);
+
+  /** Toggle visibility of a route href (locked routes are silently ignored). */
+  function toggleHidden(href) {
+    if (LOCKED_ROUTES.has(href)) return; // locked — no-op
+    update(s => {
+      const set  = new Set(s.hiddenRoutes);
+      set.has(href) ? set.delete(href) : set.add(href);
+      const next = { ...s, hiddenRoutes: [...set] };
+      _saveSidebarRaw(next.hiddenRoutes, next.pinnedViews);
+      return next;
+    });
+  }
+
+  /** Toggle pin state of a plugin view id. */
+  function togglePinned(viewId) {
+    update(s => {
+      const arr = s.pinnedViews.includes(viewId)
+        ? s.pinnedViews.filter(id => id !== viewId)
+        : [...s.pinnedViews, viewId];
+      const next = { ...s, pinnedViews: arr };
+      _saveSidebarRaw(next.hiddenRoutes, next.pinnedViews);
+      return next;
+    });
+  }
+
+  /** Move a pinned view up/down in order. */
+  function reorderPinned(viewId, direction) {
+    update(s => {
+      const arr = [...s.pinnedViews];
+      const idx = arr.indexOf(viewId);
+      if (idx === -1) return s;
+      const target = idx + (direction === 'up' ? -1 : 1);
+      if (target < 0 || target >= arr.length) return s;
+      [arr[idx], arr[target]] = [arr[target], arr[idx]];
+      const next = { ...s, pinnedViews: arr };
+      _saveSidebarRaw(next.hiddenRoutes, next.pinnedViews);
+      return next;
+    });
+  }
+
+  return { subscribe, toggleHidden, togglePinned, reorderPinned };
+}
+
+export const sidebarPrefs = createSidebarPrefsStore();

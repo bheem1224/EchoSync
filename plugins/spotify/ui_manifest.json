@@ -1,9 +1,27 @@
 {
   "components": {
-    "dashboard_card": "spotify-dashboard-card",
-    "settings_panel": "spotify-settings-panel"
+    "music_service": {
+      "element_tag": "echosync-spotify-card",
+      "bundle_url": "/api/system/plugins/spotify/ui/bundle.js"
+    },
+    "settings_panel": {
+      "element_tag": "echosync-spotify-settings",
+      "bundle_url": "/api/system/plugins/spotify/ui/bundle.js"
+    },
+    "dashboard_card": {
+      "element_tag": "echosync-spotify-dashboard-card",
+      "bundle_url": "/api/system/plugins/spotify/ui/bundle.js"
+    }
   },
   "assets": {
-    "js": "/api/plugins/spotify/static/bundle.js"
-  }
+    "js": "/api/system/plugins/spotify/ui/bundle.js"
+  },
+  "views": [
+    {
+      "id": "spotify_analytics",
+      "title": "Spotify Stats",
+      "icon": "♫",
+      "yaml_path": "/api/plugins/spotify/static/dashboard.yaml"
+    }
+  ]
 }

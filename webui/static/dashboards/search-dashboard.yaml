@@ -1,0 +1,43 @@
+# EchoSync Search Dashboard — Default Configuration
+# ─────────────────────────────────────────────────
+# Loaded by the /search route via YamlDashboardRenderer.
+# Frozen route: this file must NOT be modified by plugins.
+# Plugin-provided search addons attach to the 'search_addons' section.
+
+title: Unified Search
+
+views:
+  - id: search
+    title: Search
+    icon: 🔍
+    sections:
+      # ── Main search interface ──────────────────────────────────────────
+      - title: null
+        cards:
+          - type: echosync-search-bar
+            bundle_url: null
+            placeholder: "Search tracks, albums, artists…"
+            autofocus: true
+            show_shortcut_tip: true
+            shortcut: Ctrl+K
+
+      # ── Live results area ─────────────────────────────────────────────
+      - title: null
+        cards:
+          - type: echosync-search-results
+            bundle_url: null
+            group_by_type: true
+            show_provider_badge: true
+
+      # ── Discovery / typing animation ──────────────────────────────────
+      # This section is rendered when no query has been submitted yet.
+      - title: null
+        cards:
+          - type: echosync-search-hero
+            bundle_url: null
+            animation: typing
+            phrases:
+              - "Find your next obsession…"
+              - "Search 50M+ tracks across all providers"
+              - "Your library. Every service. One place."
+              - "Press Ctrl+K anywhere to search"

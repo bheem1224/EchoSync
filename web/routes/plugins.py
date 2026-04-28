@@ -18,6 +18,32 @@ def list_plugins():
 @bp.route('/ui-manifest', methods=['GET'])
 @require_auth
 def get_ui_manifest():
+    """Return active plugin UI manifests.
+
+    Manifest shape per plugin
+    ─────────────────────────
+    {
+      "id":         "spotify",          // folder_name
+      "api_base":   "/api/plugins/spotify",
+      "components": {                   // category → { element_tag, bundle_url }
+        "music_service": {
+          "element_tag": "echosync-spotify-card",
+          "bundle_url":  "/api/system/plugins/spotify/ui/bundle.js"
+        }
+      },
+      "assets": {                       // legacy flat asset map (preserved)
+        "js": "/api/system/plugins/spotify/ui/bundle.js"
+      },
+      "views": [                        // plugin-declared dashboard views
+        {
+          "id":        "spotify_analytics",
+          "title":     "Spotify Stats",
+          "icon":      "mdi-spotify",
+          "yaml_path": "/api/plugins/spotify/static/dashboard.yaml"
+        }
+      ]
+    }
+    """
     plugins = get_all_plugins()
     ui_plugins = []
 
@@ -33,14 +59,61 @@ def get_ui_manifest():
         if not folder_name:
             folder_name = plugin.get('id', '').replace('plugin.', '').replace('core.', '')
 
+        # ── Normalize components ──────────────────────────────────────
+        # Old shape: { "dashboard_card": "tag-name" }
+        # New shape: { "category": { "element_tag": "tag-name", "bundle_url": "..." } }
+        raw_components = ui_manifest.get('components', {})
+        raw_assets     = ui_manifest.get('assets', {})
+
+        # Derive the canonical bundle URL from assets (fallback: legacy js key)
+        def _default_bundle_url(folder):
+            return f'/api/system/plugins/{folder}/ui/bundle.js'
+
+        bundle_url = (
+            raw_assets.get('js')
+            or raw_assets.get('bundle.js')
+            or raw_assets.get('main')
+            or _default_bundle_url(folder_name)
+        )
+
+        normalized_components = {}
+        for category, value in raw_components.items():
+            if isinstance(value, str):
+                # Legacy: value is just the element tag name
+                normalized_components[category] = {
+                    'element_tag': value,
+                    'bundle_url':  bundle_url,
+                }
+            elif isinstance(value, dict):
+                # New schema: already a structured object
+                normalized_components[category] = {
+                    'element_tag': value.get('element_tag', ''),
+                    'bundle_url':  value.get('bundle_url', bundle_url),
+                }
+
+        # ── Normalize views ───────────────────────────────────────────
+        raw_views = ui_manifest.get('views', [])
+        normalized_views = []
+        for view in raw_views:
+            if not isinstance(view, dict):
+                continue
+            normalized_views.append({
+                'id':        view.get('id', ''),
+                'title':     view.get('title', ''),
+                'icon':      view.get('icon', None),
+                'yaml_path': view.get('yaml_path', ''),
+            })
+
         ui_plugins.append({
-            'id': folder_name,
-            'api_base': f'/api/plugins/{folder_name}',
-            'components': ui_manifest.get('components', {}),
-            'assets': ui_manifest.get('assets', {})
+            'id':         folder_name,
+            'api_base':   f'/api/plugins/{folder_name}',
+            'components': normalized_components,
+            'assets':     raw_assets,
+            'views':      normalized_views,
         })
 
     return jsonify({'plugins': ui_plugins})
+
 
 @bp.route('/config', methods=['POST'])
 @require_auth
