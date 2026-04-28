@@ -37,14 +37,14 @@
   async function loadAccounts() {
     try {
       const response = await fetch(`${apiBase}/accounts/tidal`);
-      if (response.data) {
-        accounts = response.data.accounts || [];
-        redirectUri = response.data.redirect_uri || '';
+      const data = await response.json();
+      if (data) {
+        accounts = data.accounts || [];
+        redirectUri = data.redirect_uri || '';
         redirectCollapsed = Boolean(redirectUri);
       }
     } catch (error) {
       console.error('Failed to load Tidal accounts:', error);
-      console.error('Failed to load Tidal accounts');
     }
   }
 
@@ -56,13 +56,16 @@
 
     try {
       savingRedirectUri = true;
-      await fetch(`${apiBase}/accounts/tidal/redirect-uri`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        redirect_uri: redirectUri
-      }) });
+      await fetch(`${apiBase}/accounts/tidal/redirect-uri`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({
+          redirect_uri: redirectUri
+        }) 
+      });
       console.log('Redirect URI saved');
     } catch (error) {
       console.error('Failed to save redirect URI:', error);
-      console.error('Failed to save redirect URI');
     } finally {
       savingRedirectUri = false;
     }
@@ -76,7 +79,7 @@
       client_id: '',
       client_secret: ''
     };
-    secretChanged = true; // New accounts always need secret
+    secretChanged = true;
     showSecret = false;
     showCredentialsModal = true;
   }
@@ -84,22 +87,21 @@
   async function openEditModal(account) {
     modalMode = 'edit';
     try {
-      // Fetch account with credentials
       const response = await fetch(`${apiBase}/accounts/tidal/${account.id}`);
-      if (response.data?.account) {
+      const data = await response.json();
+      if (data?.account) {
         modalAccount = {
-          id: response.data.account.id,
-          account_name: response.data.account.account_name,
-          client_id: response.data.account.client_id || '',
-          client_secret: response.data.account.client_secret || '' // Load actual value
+          id: data.account.id,
+          account_name: data.account.account_name,
+          client_id: data.account.client_id || '',
+          client_secret: data.account.client_secret || ''
         };
-        secretChanged = false; // Only send if user types something
-        showSecret = false; // Start hidden
+        secretChanged = false;
+        showSecret = false;
         showCredentialsModal = true;
       }
     } catch (error) {
       console.error('Failed to load account credentials:', error);
-      console.error('Failed to load account');
     }
   }
 
@@ -126,11 +128,6 @@
       return;
     }
 
-    if (modalMode === 'add' && accounts.length >= MAX_ACCOUNTS) {
-      console.error(`Maximum ${MAX_ACCOUNTS} accounts allowed`);
-      return;
-    }
-
     try {
       const accountData = {
         account_name: modalAccount.account_name,
@@ -139,50 +136,56 @@
       };
       
       if (modalMode === 'add') {
-        await fetch(`${apiBase}/accounts/tidal`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(accountData) });
-        console.log('Account added');
+        await fetch(`${apiBase}/accounts/tidal`, { 
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify(accountData) 
+        });
       } else {
-        await fetch(`${apiBase}/accounts/tidal/${modalAccount.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(accountData) });
-        console.log('Account updated');
+        await fetch(`${apiBase}/accounts/tidal/${modalAccount.id}`, { 
+          method: 'PUT', 
+          headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify(accountData) 
+        });
       }
       closeModal();
       await loadAccounts();
     } catch (error) {
       console.error('Failed to save account:', error);
-      console.error('Failed to save account');
     }
   }
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await fetch(`${apiBase}/accounts/tidal/${accountId}/activate`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        is_active: !currentlyActive
-      }) });
-      console.log(currentlyActive ? 'Account deactivated' : 'Account activated');
+      await fetch(`${apiBase}/accounts/tidal/${accountId}/activate`, { 
+        method: 'PUT', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({
+          is_active: !currentlyActive
+        }) 
+      });
       await loadAccounts();
     } catch (error) {
       console.error('Failed to toggle account:', error);
-      console.error('Failed to update account');
     }
   }
 
   async function deleteAccount(accountId, accountName) {
-    if (!confirm(`Delete account "${accountName}"? This will also delete its credentials.`)) return;
+    if (!confirm(`Delete account "${accountName}"?`)) return;
 
     try {
       await fetch(`${apiBase}/accounts/tidal/${accountId}`, { method: 'DELETE' });
-      console.log('Account deleted');
       await loadAccounts();
     } catch (error) {
       console.error('Failed to delete account:', error);
-      console.error('Failed to delete account');
     }
   }
 
   async function authenticate(accountId) {
     try {
       const resp = await fetch(`${apiBase}/tidal/auth?account_id=${accountId}`);
-      const url = resp.data?.auth_url;
+      const data = await resp.json();
+      const url = data?.auth_url;
       if (url) {
         window.location.href = url;
       } else {
@@ -190,99 +193,89 @@
       }
     } catch (err) {
       console.error('Failed to start OAuth:', err);
-      const msg = err?.response?.data?.error || 'Failed to start OAuth';
-      console.error(msg);
     }
   }
 </script>
 
-<section class="p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global mb-4">
-  <div class="flex justify-between items-center mb-5 pb-3 border-b border-glass-border">
-    <div class="flex items-center gap-3">
-      <h2 class="m-0 text-xl font-semibold">Tidal</h2>
-      <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ba6415]/20 text-[#ba6415]">Streaming Service</span>
+<section class="plugin-card">
+  <div class="card-header">
+    <div class="header-left">
+      <h2 class="card-title">Tidal</h2>
+      <span class="type-badge">Streaming Service</span>
     </div>
   </div>
 
   {#if loading}
-    <div class="p-5 text-center text-secondary">Loading...</div>
+    <div class="loading-state">Loading...</div>
   {:else}
     <!-- Global Redirect URI -->
-    <div class="mb-6">
-      <div class="mb-3">
-        <h3 class="m-0 mb-4 text-base font-semibold">Global Redirect URI (Auto-generated & Immutable)</h3>
-        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => redirectCollapsed = !redirectCollapsed}>
+    <div class="settings-section">
+      <div class="section-header">
+        <h3 class="section-title">Global Redirect URI (Immutable)</h3>
+        <button class="btn-ghost" on:click={() => redirectCollapsed = !redirectCollapsed}>
           {redirectCollapsed ? 'Expand' : 'Collapse'}
         </button>
       </div>
       {#if !redirectCollapsed}
-        <div class="redirect-uri-group">
+        <div class="form-grid">
           <input
             type="text"
             bind:value={redirectUri}
-            placeholder="Loading dynamic redirect URI..."
-            class="px-3 py-2 bg-background/50 border border-border rounded-global text-sm text-primary w-full box-border opacity-70 cursor-not-allowed select-all"
-            readonly={true}
-            disabled={true}
+            class="input-field readonly"
+            readonly
+            disabled
           />
+          <p class="helper-text">This auto-generated URI must be registered in your Tidal Developer Applications.</p>
         </div>
-        <p class="text-xs text-secondary mt-1" style="margin-top: 8px;">This auto-generated URI must be registered in all of your Tidal Developer Applications.</p>
       {/if}
     </div>
 
     <!-- Accounts -->
-    <div class="mb-6">
-      <div class="mb-3">
-        <h3 class="m-0 mb-4 text-base font-semibold">Accounts ({accounts.length}/{MAX_ACCOUNTS})</h3>
-        <p class="text-xs text-secondary mt-1">Tidal requires per-account Client ID and Secret.</p>
+    <div class="settings-section">
+      <div class="section-header">
+        <h3 class="section-title">Accounts ({accounts.length}/{MAX_ACCOUNTS})</h3>
         {#if accounts.length < MAX_ACCOUNTS}
-          <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={openAddModal}>
+          <button class="btn-ghost" on:click={openAddModal}>
             + Add Account
           </button>
         {/if}
       </div>
 
-      <div class="flex flex-col gap-2">
+      <div class="accounts-list">
         {#each accounts as account}
-          <div class="flex justify-between items-center p-3 bg-white/5 border border-white/10 rounded-global">
-            <div class="flex flex-col gap-1">
-              <div class="font-medium text-[14px]">{account.display_name || account.account_name}</div>
-              <div class="flex gap-[6px] flex-wrap">
+          <div class="account-item">
+            <div class="account-info">
+              <div class="account-name">{account.display_name || account.account_name}</div>
+              <div class="account-badges">
                 {#if account.is_authenticated}
-                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#00e676]/20 text-[#00e676]">✓ Authenticated</span>
+                  <span class="status-badge success">✓ Authenticated</span>
                 {:else}
-                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-yellow-500/20 text-yellow-500">⚠ Not Authenticated</span>
+                  <span class="status-badge warning">⚠ Not Authenticated</span>
                 {/if}
                 {#if account.is_active}
-                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ba6415]/20 text-[#ba6415]">● Active</span>
-                {/if}
-                {#if account.client_secret_configured}
-                  <span class="status-badge configured">🔒 Configured</span>
+                  <span class="status-badge active">● Active</span>
                 {/if}
               </div>
             </div>
-            <div class="flex gap-2 items-center flex-wrap">
-              <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => openEditModal(account)} title="Edit credentials">
-                ⚙️ Edit
-              </button>
-              <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => authenticate(account.id)}>
+            <div class="account-actions">
+              <button class="link-btn" on:click={() => openEditModal(account)}>⚙️ Edit</button>
+              <button class="link-btn" on:click={() => authenticate(account.id)}>
                 {account.is_authenticated ? 'Reauthenticate' : 'Authenticate'}
               </button>
               <button 
-                class="px-4 py-2 bg-white/10 text-primary border-none rounded-global transition-colors hover:bg-white/15 active:scale-95"
+                class="btn-ghost"
                 class:active={account.is_active}
                 on:click={() => toggleAccount(account.id, account.is_active)}
-                title={account.is_active ? 'Deactivate' : 'Activate'}
               >
                 {account.is_active ? 'Deactivate' : 'Activate'}
               </button>
-              <button class="px-4 py-2 bg-red-500/20 text-red-500 border-none rounded-global transition-colors hover:bg-red-500/30 active:scale-95" on:click={() => deleteAccount(account.id, account.display_name || account.account_name)}>
+              <button class="btn-danger" on:click={() => deleteAccount(account.id, account.display_name || account.account_name)}>
                 ✕
               </button>
             </div>
           </div>
         {:else}
-          <div class="p-4 text-center text-secondary text-sm">No accounts added yet. Click "Add Account" to get started.</div>
+          <div class="empty-accounts">No accounts added yet. Click "Add Account" to get started.</div>
         {/each}
       </div>
     </div>
@@ -291,56 +284,54 @@
 
 <!-- Credentials Modal -->
 {#if showCredentialsModal}
-  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]" on:click={closeModal}>
-    <div class="bg-[#1e1e2e] rounded-[10px] p-0 min-w-[420px] max-w-[90vw] border border-white/15" on:click|stopPropagation>
-      <div class="flex justify-between items-center px-5 py-4 border-b border-white/10">
-        <h3 class="m-0 mb-4 text-base font-semibold">{modalMode === 'add' ? 'Add Tidal Account' : 'Edit Tidal Account'}</h3>
-        <button class="bg-transparent border-none text-[18px] cursor-pointer text-secondary p-0 leading-none active:scale-95 transition-all duration-200" on:click={closeModal}>✕</button>
+  <div class="modal-overlay" on:click={closeModal}>
+    <div class="modal-content" on:click|stopPropagation>
+      <div class="modal-header">
+        <h3 class="modal-title">{modalMode === 'add' ? 'Add Tidal Account' : 'Edit Tidal Account'}</h3>
+        <button class="close-btn" on:click={closeModal}>✕</button>
       </div>
-      <div class="p-5 flex flex-col gap-[14px]">
-        <label class="flex flex-col gap-[6px]">
-          <span class="text-[13px] font-medium text-primary">Account Name</span>
+      <div class="modal-body">
+        <label class="form-field">
+          <span class="field-label">Account Name</span>
           <input
             type="text"
             bind:value={modalAccount.account_name}
             placeholder="My Tidal Account"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+            class="input-field"
           />
         </label>
-        <label class="flex flex-col gap-[6px]">
-          <span class="text-[13px] font-medium text-primary">Client ID</span>
+        <label class="form-field">
+          <span class="field-label">Client ID</span>
           <input
             type="text"
             bind:value={modalAccount.client_id}
             placeholder="Enter Tidal Client ID"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+            class="input-field"
           />
         </label>
-        <label class="flex flex-col gap-[6px]">
-          <span class="text-[13px] font-medium text-primary">Client Secret</span>
-          <div class="relative flex items-center">
+        <label class="form-field">
+          <span class="field-label">Client Secret</span>
+          <div class="password-wrapper">
             <input
               type={showSecret ? 'text' : 'password'}
               bind:value={modalAccount.client_secret}
               on:input={() => secretChanged = true}
               placeholder="Enter Tidal Client Secret"
-              class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+              class="input-field"
             />
             <button 
               type="button" 
-              class="absolute right-2 bg-transparent border-none cursor-pointer text-lg p-1 opacity-60 hover:opacity-100 transition-opacity active:scale-95"
+              class="toggle-visibility"
               on:click={() => showSecret = !showSecret}
-              title={showSecret ? 'Hide' : 'Show'}
             >
-              {showSecret ? '👁️' : '👁️‍🗨️'}
+              {showSecret ? '🙈' : '👁️'}
             </button>
           </div>
         </label>
-        <p class="text-[12px] text-secondary m-0">Each Tidal account requires its own Client ID and Client Secret from the Tidal Developer Portal.</p>
       </div>
-      <div class="flex justify-end gap-[10px] px-5 py-4 border-t border-white/10">
-        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={closeModal}>Cancel</button>
-        <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={saveAccount}>
+      <div class="modal-footer">
+        <button class="btn-ghost" on:click={closeModal}>Cancel</button>
+        <button class="btn-primary" on:click={saveAccount}>
           {modalMode === 'add' ? 'Add Account' : 'Save Changes'}
         </button>
       </div>
@@ -348,4 +339,280 @@
   </div>
 {/if}
 
+<style>
+  .plugin-card {
+    background: var(--glass, rgba(20, 24, 31, 0.7));
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+    border-radius: var(--radius, 12px);
+    padding: 24px;
+    margin-bottom: 24px;
+    color: var(--text-main, #fff);
+  }
 
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .card-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .type-badge {
+    font-size: 11px;
+    padding: 4px 8px;
+    background: rgba(20, 184, 166, 0.15);
+    color: var(--color-primary, #14b8a6);
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .loading-state {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted, #64748b);
+  }
+
+  .settings-section {
+    margin-bottom: 24px;
+  }
+
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+
+  .section-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-main, #fff);
+  }
+
+  .form-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .input-field {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-input, #08080a);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    border-radius: 8px;
+    color: var(--text-main, #fff);
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+
+  .input-field:focus {
+    outline: none;
+    border-color: var(--color-primary, #14b8a6);
+    box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
+  }
+
+  .input-field.readonly {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .helper-text {
+    font-size: 11px;
+    color: var(--text-muted, #64748b);
+    margin-top: 4px;
+  }
+
+  .accounts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .account-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 8px;
+  }
+
+  .account-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .account-name {
+    font-weight: 600;
+    font-size: 14px;
+  }
+
+  .account-badges {
+    display: flex;
+    gap: 8px;
+  }
+
+  .status-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 700;
+  }
+
+  .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+  .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+  .status-badge.active { background: rgba(20, 184, 166, 0.15); color: var(--color-primary, #14b8a6); }
+
+  .account-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .link-btn {
+    background: none;
+    border: none;
+    color: var(--color-primary, #14b8a6);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .link-btn:hover {
+    text-decoration: underline;
+  }
+
+  .btn-ghost {
+    padding: 8px 16px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text-main, #fff);
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-ghost:hover {
+    background: rgba(255,255,255,0.1);
+  }
+
+  .btn-primary {
+    padding: 10px 20px;
+    background: var(--color-primary, #14b8a6);
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal-content {
+    background: #0f1216;
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    border-radius: 12px;
+    width: 100%;
+    max-width: 440px;
+    box-shadow: 0 24px 48px rgba(0,0,0,0.5);
+  }
+
+  .modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .modal-title { margin: 0; font-size: 16px; font-weight: 700; }
+  .close-btn { background: none; border: none; color: var(--text-muted, #64748b); font-size: 20px; cursor: pointer; }
+
+  .modal-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .modal-footer {
+    padding: 16px 20px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+  }
+
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field-label { font-size: 13px; color: var(--text-muted, #64748b); }
+
+  .password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .toggle-visibility {
+    position: absolute;
+    right: 12px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    opacity: 0.6;
+    color: #fff;
+  }
+
+  .empty-accounts {
+    text-align: center;
+    padding: 16px;
+    color: var(--text-muted, #64748b);
+    font-size: 13px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 8px;
+    border: 1px dashed rgba(255,255,255,0.1);
+  }
+</style>

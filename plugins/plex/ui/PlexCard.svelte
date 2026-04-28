@@ -6,7 +6,6 @@
   export let apiBase = '';
   import { onMount } from 'svelte';
 
-
   let baseUrl = '';
   let serverName = '';
   let pathMappings = [];
@@ -31,11 +30,9 @@
     try {
       activating = true;
       await fetch(`${apiBase}/plex/activate`, { method: 'POST' });
-      console.log('Plex activated as media server');
-      await loadSettings(); // Reload to get updated is_active
+      await loadSettings();
     } catch (error) {
       console.error('Failed to activate server:', error);
-      console.error('Failed to activate server');
     } finally {
       activating = false;
     }
@@ -44,17 +41,17 @@
   async function loadSettings() {
     try {
       const response = await fetch(`${apiBase}/plex/settings`);
-      if (response.data?.settings) {
-        baseUrl = response.data.settings.base_url || '';
-        serverName = response.data.settings.server_name || '';
-        pathMappings = response.data.settings.path_mappings || [];
-        hasToken = response.data.settings.has_token || false;
-        connected = response.data.settings.connected || false;
-        isActive = response.data.settings.is_active || false;
+      const data = await response.json();
+      if (data?.settings) {
+        baseUrl = data.settings.base_url || '';
+        serverName = data.settings.server_name || '';
+        pathMappings = data.settings.path_mappings || [];
+        hasToken = data.settings.has_token || false;
+        connected = data.settings.connected || false;
+        isActive = data.settings.is_active || false;
       }
     } catch (error) {
       console.error('Failed to load Plex settings:', error);
-      console.error('Failed to load Plex settings');
     }
   }
 
@@ -66,16 +63,18 @@
 
     try {
       saving = true;
-      await fetch(`${apiBase}/plex/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        base_url: baseUrl,
-        server_name: serverName,
-        path_mappings: pathMappings
-      }) });
-      console.log('Plex settings saved');
+      await fetch(`${apiBase}/plex/settings`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({
+          base_url: baseUrl,
+          server_name: serverName,
+          path_mappings: pathMappings
+        }) 
+      });
       await loadSettings();
     } catch (error) {
       console.error('Failed to save Plex settings:', error);
-      console.error('Failed to save settings');
     } finally {
       saving = false;
     }
@@ -85,59 +84,36 @@
     try {
       authenticating = true;
       const response = await fetch(`${apiBase}/plex/auth/start`, { method: 'POST' });
+      const data = await response.json();
       
-      if (response.data?.oauth_url && response.data?.session_id) {
-        oauthSession = response.data.session_id;
+      if (data?.oauth_url && data?.session_id) {
+        oauthSession = data.session_id;
+        window.open(data.oauth_url, 'PlexOAuth', 'width=600,height=700');
         
-        // Open Plex OAuth page in new window
-        window.open(response.data.oauth_url, 'PlexOAuth', 'width=600,height=700');
-        
-        // Start polling for completion
         pollInterval = setInterval(async () => {
           try {
             const pollResp = await fetch(`${apiBase}/plex/auth/poll/${oauthSession}`);
-            if (pollResp.data?.completed) {
-              // OAuth completed (backend already saved token to account_tokens)
+            const pollData = await pollResp.json();
+            if (pollData?.completed) {
               clearInterval(pollInterval);
               pollInterval = null;
-              
-              console.log('Plex authentication successful');
               authenticating = false;
               oauthSession = null;
-
-              // Remove old localStorage stale PIN (if it was used by a previous version)
-              localStorage.removeItem('plex_oauth_session');
-
               await loadSettings();
             }
           } catch (pollError) {
             console.error('OAuth poll error:', pollError);
-            // If the session is missing or server restarted (404 Not Found), stop zombie polling
-            if (pollError.response && pollError.response.status === 404) {
+            if (pollError.status === 404) {
               clearInterval(pollInterval);
               pollInterval = null;
               authenticating = false;
               oauthSession = null;
-              localStorage.removeItem('plex_oauth_session');
-              console.error('Authentication session expired or server restarted');
             }
           }
-        }, 2000); // Poll every 2 seconds
-        
-        // Stop polling after 10 minutes
-        setTimeout(() => {
-          if (pollInterval) {
-            clearInterval(pollInterval);
-            pollInterval = null;
-            authenticating = false;
-            oauthSession = null;
-            console.error('OAuth timeout - please try again');
-          }
-        }, 600000);
+        }, 2000);
       }
     } catch (error) {
       console.error('Failed to start Plex OAuth:', error);
-      console.error('Failed to start authentication');
       authenticating = false;
     }
   }
@@ -146,97 +122,94 @@
     if (oauthSession && pollInterval) {
       clearInterval(pollInterval);
       pollInterval = null;
-      
       try {
         await fetch(`${apiBase}/plex/auth/cancel/${oauthSession}`, { method: 'DELETE' });
       } catch (error) {
         console.error('Failed to cancel OAuth:', error);
       }
-      
       oauthSession = null;
       authenticating = false;
-      console.log('Authentication cancelled');
     }
   }
 
   async function testConnection() {
     try {
       testing = true;
-      const response = await fetch(`${apiBase}/plex/test-connection`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        base_url: baseUrl
-      }) });
-      
-      if (response.data?.connected) {
-        console.log(`Connected to ${response.data.server_name}`);
+      const response = await fetch(`${apiBase}/plex/test-connection`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ base_url: baseUrl }) 
+      });
+      const data = await response.json();
+      if (data?.connected) {
         await loadSettings();
       }
     } catch (error) {
       console.error('Connection test failed:', error);
-      const msg = error?.response?.data?.error || 'Connection failed';
-      console.error(msg);
     } finally {
       testing = false;
     }
   }
 </script>
 
-<section class="p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global mb-4">
-  <div class="flex justify-between items-center mb-5 pb-3 border-b border-glass-border">
-    <div class="flex items-center gap-3">
-      <h2 class="m-0 text-xl font-semibold">Plex</h2>
-      {#if isActive}
-        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#3b82f6]/20 text-[#3b82f6] font-semibold">● Active</span>
-      {/if}
-      {#if hasToken}
-        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#00e676]/20 text-[#00e676]">✓ Authenticated</span>
-      {/if}
-      {#if connected}
-        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#00e676]/20 text-[#00e676]">● Connected</span>
-      {:else if hasToken}
-        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ff9800]/20 text-[#ff9800]">⚠ Disconnected</span>
-      {/if}
+<section class="plugin-card">
+  <div class="card-header">
+    <div class="header-left">
+      <h2 class="card-title">Plex</h2>
+      <div class="badges">
+        {#if isActive}
+          <span class="status-badge active">● Active</span>
+        {/if}
+        {#if hasToken}
+          <span class="status-badge success">✓ Authenticated</span>
+        {/if}
+        {#if connected}
+          <span class="status-badge success">● Connected</span>
+        {:else if hasToken}
+          <span class="status-badge warning">⚠ Disconnected</span>
+        {/if}
+      </div>
     </div>
-    <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => collapsed = !collapsed}>
+    <button class="btn-ghost" on:click={() => collapsed = !collapsed}>
       {collapsed ? 'Expand' : 'Collapse'}
     </button>
   </div>
 
   {#if loading}
-    <div class="p-5 text-center text-secondary">Loading...</div>
+    <div class="loading-state">Loading...</div>
   {:else if !collapsed}
-    <div class="mb-6">
-      <h3 class="m-0 mb-4 text-base font-semibold">Server Configuration</h3>
+    <div class="settings-section">
+      <h3 class="section-title">Server Configuration</h3>
       
-      <div class="flex flex-col gap-4">
-        <label class="flex flex-col gap-[6px]">
-          <span class="text-[13px] font-medium text-primary">Server URL</span>
+      <div class="form-grid">
+        <label class="form-field">
+          <span class="field-label">Server URL</span>
           <input
             type="text"
             bind:value={baseUrl}
             placeholder="http://192.168.1.100:32400"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+            class="input-field"
           />
-          <span class="text-xs text-secondary mt-1">Enter your Plex server IP address or URL (include port, typically :32400)</span>
+          <span class="helper-text">Enter your Plex server IP address or URL (include port, typically :32400)</span>
         </label>
 
-        <label class="flex flex-col gap-[6px]">
-          <span class="text-[13px] font-medium text-primary">Server Name (Optional)</span>
+        <label class="form-field">
+          <span class="field-label">Server Name (Optional)</span>
           <input
             type="text"
             bind:value={serverName}
             placeholder="My Plex Server"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+            class="input-field"
           />
-          <span class="text-xs text-secondary mt-1">Preferred server if you have multiple</span>
         </label>
 
-        <div class="border-t border-gray-700 my-4 pt-4">
-            <echosync-path-mapping-editor mappings={JSON.stringify(pathMappings)} on:es-path-update={(e) => pathMappings = e.detail} />
+        <div class="path-mappings">
+          <echosync-path-mapping-editor mappings={JSON.stringify(pathMappings)} on:es-path-update={(e) => pathMappings = e.detail} />
         </div>
 
-        <div class="flex gap-3 flex-wrap">
+        <div class="actions-row">
           <button
-            class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
+            class="btn-primary"
             on:click={saveSettings}
             disabled={saving}
           >
@@ -245,7 +218,7 @@
           
           {#if hasToken}
             <button
-              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
+              class="btn-ghost"
               on:click={testConnection}
               disabled={testing || !baseUrl.trim()}
             >
@@ -255,7 +228,7 @@
 
           {#if !isActive}
             <button
-              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
+              class="btn-ghost"
               on:click={activateServer}
               disabled={activating}
             >
@@ -264,13 +237,13 @@
           {/if}
 
           {#if authenticating}
-            <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={cancelOAuth} disabled>
+            <button class="btn-ghost" on:click={cancelOAuth} disabled>
               Waiting for authorization...
             </button>
           {:else if hasToken}
-            <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={startOAuth}>Reauthenticate</button>
+            <button class="btn-primary" on:click={startOAuth}>Reauthenticate</button>
           {:else}
-            <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={startOAuth}>
+            <button class="btn-primary" on:click={startOAuth}>
               Login with Plex
             </button>
           {/if}
@@ -280,4 +253,144 @@
   {/if}
 </section>
 
+<style>
+  .plugin-card {
+    background: var(--glass, rgba(20, 24, 31, 0.7));
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+    border-radius: var(--radius, 12px);
+    padding: 24px;
+    margin-bottom: 24px;
+    color: var(--text-main, #fff);
+  }
 
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .card-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .badges {
+    display: flex;
+    gap: 8px;
+  }
+
+  .status-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 700;
+  }
+
+  .status-badge.active { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+  .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+  .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+
+  .btn-ghost {
+    padding: 8px 16px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text-main, #fff);
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-ghost:hover {
+    background: rgba(255,255,255,0.1);
+  }
+
+  .btn-primary {
+    padding: 10px 20px;
+    background: var(--color-primary, #14b8a6);
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .loading-state {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted, #64748b);
+  }
+
+  .settings-section {
+    margin-top: 16px;
+  }
+
+  .section-title {
+    margin: 0 0 16px 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .form-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field-label {
+    font-size: 13px;
+    color: var(--text-muted, #64748b);
+  }
+
+  .input-field {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-input, #08080a);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    border-radius: 8px;
+    color: var(--text-main, #fff);
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+
+  .input-field:focus {
+    outline: none;
+    border-color: var(--color-primary, #14b8a6);
+    box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
+  }
+
+  .helper-text {
+    font-size: 11px;
+    color: var(--text-muted, #64748b);
+  }
+
+  .path-mappings {
+    padding: 16px 0;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+
+  .actions-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+</style>

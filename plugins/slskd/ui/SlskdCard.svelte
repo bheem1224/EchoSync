@@ -28,7 +28,8 @@
   async function checkActiveStatus() {
     try {
       const response = await fetch(`${apiBase}/providers/download-clients/active`);
-      isActive = response.data.active_client === 'slskd';
+      const data = await response.json();
+      isActive = data.active_client === 'slskd';
     } catch (error) {
       console.error('Failed to check active status:', error);
     }
@@ -36,28 +37,30 @@
 
   async function activateClient() {
     try {
-      await fetch(`${apiBase}/providers/download-clients/activate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client: 'slskd' }) });
+      await fetch(`${apiBase}/providers/download-clients/activate`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ client: 'slskd' }) 
+      });
       isActive = true;
-      console.log('Slskd activated as download client');
     } catch (error) {
       console.error('Failed to activate client:', error);
-      console.error('Failed to activate client');
     }
   }
 
   async function loadSettings() {
     try {
       const response = await fetch(`${apiBase}/providers/soulseek/settings`);
-      if (response.data) {
-        slskdUrl = response.data.slskd_url || '';
-        serverName = response.data.server_name || '';
-        apiKey = response.data.api_key || '';
-        hasApiKeyInDb = response.data.has_api_key || false;
-        connected = response.data.configured || false;
+      const data = await response.json();
+      if (data) {
+        slskdUrl = data.slskd_url || '';
+        serverName = data.server_name || '';
+        apiKey = data.api_key || '';
+        hasApiKeyInDb = data.has_api_key || false;
+        connected = data.configured || false;
       }
     } catch (error) {
       console.error('Failed to load slskd settings:', error);
-      console.error('Failed to load slskd settings');
     }
   }
 
@@ -74,47 +77,39 @@
         server_name: serverName
       };
       
-      // Only include API key if it's not the masked placeholder
       if (apiKey && apiKey !== '****') {
         payload.api_key = apiKey;
       }
       
-      await fetch(`${apiBase}/providers/soulseek/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      console.log('slskd settings saved');
+      await fetch(`${apiBase}/providers/soulseek/settings`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify(payload) 
+      });
       await loadSettings();
     } catch (error) {
       console.error('Failed to save slskd settings:', error);
-      console.error('Failed to save settings');
     } finally {
       saving = false;
     }
   }
 
   async function testConnection() {
-    if (!slskdUrl.trim()) {
-      console.error('Server URL is required');
-      return;
-    }
-
-    if (!hasApiKeyInDb && !apiKey.trim()) {
-      console.error('API Key is required');
-      return;
-    }
+    if (!slskdUrl.trim()) return;
 
     try {
       testing = true;
       const response = await fetch(`${apiBase}/providers/soulseek/connection/test`, { method: 'POST' });
+      const data = await response.json();
       
-      if (response.data?.success) {
-        console.log('slskd connection successful!');
+      if (data?.success) {
         connected = true;
+        await loadSettings();
       } else {
-        console.error(response.data?.error || 'Connection failed');
         connected = false;
       }
     } catch (error) {
       console.error('Failed to test slskd connection:', error);
-      console.error('Connection test failed');
       connected = false;
     } finally {
       testing = false;
@@ -122,30 +117,24 @@
   }
 
   async function toggleApiKeyVisibility() {
-    // Toggle UI state
     const willShow = !showApiKey;
     showApiKey = willShow;
 
-    // If revealing and the key is stored (masked), fetch the real key
     if (willShow && hasApiKeyInDb && apiKey === '****' && !dbApiKeyRevealed) {
       try {
         const resp = await fetch(`${apiBase}/providers/soulseek/settings/key`);
-        if (resp.data && resp.data.api_key) {
-          apiKey = resp.data.api_key;
+        const data = await resp.json();
+        if (data && data.api_key) {
+          apiKey = data.api_key;
           dbApiKeyRevealed = true;
         } else {
-          console.error('Failed to reveal API key');
-          // revert UI
           showApiKey = false;
         }
       } catch (err) {
-        console.error('Failed to fetch API key:', err);
-        console.error('Unable to reveal API key');
         showApiKey = false;
       }
     }
 
-    // If hiding and key was revealed from DB, re-mask it
     if (!willShow && dbApiKeyRevealed) {
       apiKey = '****';
       dbApiKeyRevealed = false;
@@ -153,83 +142,83 @@
   }
 </script>
 
-<section class="p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global mb-4">
-  <div class="flex justify-between items-center mb-5 pb-3 border-b border-glass-border">
-    <div class="flex items-center gap-3">
-      <h2 class="m-0 text-xl font-semibold">slskd</h2>
-      <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ba6415]/20 text-[#ba6415]">Download Client</span>
-      {#if connected}
-        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#00e676]/20 text-[#00e676]">● Connected</span>
-      {:else if slskdUrl}
-        <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ff9800]/20 text-[#ff9800]">⚠ Disconnected</span>
-      {/if}
-      {#if isActive}
-        <span class="status-badge active-client">● Active</span>
-      {/if}
+<section class="plugin-card">
+  <div class="card-header">
+    <div class="header-left">
+      <h2 class="card-title">Slskd</h2>
+      <div class="badges">
+        <span class="type-badge">Download Client</span>
+        {#if connected}
+          <span class="status-badge success">● Connected</span>
+        {:else if slskdUrl}
+          <span class="status-badge warning">⚠ Disconnected</span>
+        {/if}
+        {#if isActive}
+          <span class="status-badge active">● Active</span>
+        {/if}
+      </div>
     </div>
     <div class="header-right">
       {#if !isActive && connected}
-        <button class="btn-sm btn-secondary active:scale-95 transition-all duration-200" on:click={activateClient}>Activate</button>
+        <button class="btn-ghost small" on:click={activateClient}>Activate</button>
       {/if}
-      <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => collapsed = !collapsed}>
+      <button class="btn-ghost" on:click={() => collapsed = !collapsed}>
         {collapsed ? 'Expand' : 'Collapse'}
       </button>
     </div>
   </div>
 
   {#if loading}
-    <div class="p-5 text-center text-secondary">Loading...</div>
+    <div class="loading-state">Loading...</div>
   {:else if !collapsed}
-    <div class="mb-6">
-      <h3 class="m-0 mb-4 text-base font-semibold">Server Configuration</h3>
+    <div class="settings-section">
+      <h3 class="section-title">Server Configuration</h3>
       
-      <div class="flex flex-col gap-4">
-        <label class="flex flex-col gap-[6px]">
-          <span class="text-[13px] font-medium text-primary">Server URL</span>
+      <div class="form-grid">
+        <label class="form-field">
+          <span class="field-label">Server URL</span>
           <input
             type="text"
             bind:value={slskdUrl}
             placeholder="http://192.168.1.100:5030"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+            class="input-field"
           />
-          <span class="text-xs text-secondary mt-1">Enter your slskd server address (include port, default :5030)</span>
+          <span class="helper-text">Enter your slskd server address (include port, default :5030)</span>
         </label>
 
-        <label class="flex flex-col gap-[6px]">
-          <span class="text-[13px] font-medium text-primary">Server Name (Optional)</span>
+        <label class="form-field">
+          <span class="field-label">Server Name (Optional)</span>
           <input
             type="text"
             bind:value={serverName}
             placeholder="My slskd Server"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+            class="input-field"
           />
-          <span class="text-xs text-secondary mt-1">Friendly name for this server</span>
         </label>
 
-        <label class="flex flex-col gap-[6px]">
-          <span class="text-[13px] font-medium text-primary">API Key</span>
-          <div class="input-with-toggle">
+        <label class="form-field">
+          <span class="field-label">API Key</span>
+          <div class="password-wrapper">
             <input
               type={showApiKey ? 'text' : 'password'}
               bind:value={apiKey}
               placeholder="Enter API key"
-              class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+              class="input-field"
             />
             <button 
               type="button" 
-              class="toggle-btn active:scale-95 transition-all duration-200"
+              class="toggle-visibility"
               on:click={toggleApiKeyVisibility}
-              title={showApiKey ? 'Hide' : 'Show'}
             >
-              {showApiKey ? '👁️' : '👁️‍🗨️'}
+              {showApiKey ? '🙈' : '👁️'}
             </button>
           </div>
-          <span class="text-xs text-secondary mt-1">API key from slskd settings (Options → Security → API Keys)</span>
+          <span class="helper-text">API key from slskd settings (Options → Security → API Keys)</span>
         </label>
 
-        <div class="flex gap-3 flex-wrap">
+        <div class="actions-row">
           <button
-            class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
+            class="btn-primary"
             on:click={saveSettings}
             disabled={saving}
           >
@@ -238,7 +227,7 @@
           
           {#if slskdUrl && (hasApiKeyInDb || apiKey)}
             <button
-              class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
+              class="btn-ghost"
               on:click={testConnection}
               disabled={testing}
             >
@@ -251,4 +240,179 @@
   {/if}
 </section>
 
+<style>
+  .plugin-card {
+    background: var(--glass, rgba(20, 24, 31, 0.7));
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+    border-radius: var(--radius, 12px);
+    padding: 24px;
+    margin-bottom: 24px;
+    color: var(--text-main, #fff);
+  }
 
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .card-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .badges {
+    display: flex;
+    gap: 8px;
+  }
+
+  .type-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    background: rgba(186, 100, 21, 0.15);
+    color: #ba6415;
+    border-radius: 4px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .status-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 700;
+  }
+
+  .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+  .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+  .status-badge.active { background: rgba(20, 184, 166, 0.15); color: var(--color-primary, #14b8a6); }
+
+  .header-right {
+    display: flex;
+    gap: 8px;
+  }
+
+  .btn-ghost {
+    padding: 8px 16px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text-main, #fff);
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-ghost.small {
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--color-primary, #14b8a6);
+    color: #000;
+    border: none;
+  }
+
+  .btn-ghost:hover {
+    background: rgba(255,255,255,0.1);
+  }
+
+  .btn-primary {
+    padding: 10px 20px;
+    background: var(--color-primary, #14b8a6);
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .loading-state {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted, #64748b);
+  }
+
+  .settings-section {
+    margin-top: 16px;
+  }
+
+  .section-title {
+    margin: 0 0 16px 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .form-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field-label {
+    font-size: 13px;
+    color: var(--text-muted, #64748b);
+  }
+
+  .input-field {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-input, #08080a);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    border-radius: 8px;
+    color: var(--text-main, #fff);
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+
+  .input-field:focus {
+    outline: none;
+    border-color: var(--color-primary, #14b8a6);
+    box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
+  }
+
+  .password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .toggle-visibility {
+    position: absolute;
+    right: 12px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    opacity: 0.6;
+    color: #fff;
+  }
+
+  .helper-text {
+    font-size: 11px;
+    color: var(--text-muted, #64748b);
+  }
+
+  .actions-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+</style>

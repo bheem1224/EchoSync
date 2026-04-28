@@ -10,7 +10,7 @@
   let providerCapabilities = $state([]);
 
   onMount(() => {
-    metadataQueue.fetchCount();
+    // metadataQueue.fetchCount();
   });
 
   // Sync provider capabilities reactively
