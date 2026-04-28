@@ -24,7 +24,7 @@ no Mutagen operation races with a concurrent safe_move or safe_delete.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, Tuple
 
 from core.tiered_logger import get_logger
 from .jail import file_jail, lock_manager
