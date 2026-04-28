@@ -2347,7 +2347,7 @@ function bi(e, t) {
 	});
 	async function f() {
 		try {
-			let e = await (await fetch(`${n()}/providers/spotify/settings`)).json();
+			let e = await (await fetch(`${n()}/settings`)).json();
 			e?.settings && (P(r, e.settings.client_id || ""), P(i, e.settings.client_secret || ""), P(a, e.settings.redirect_uri || ""));
 		} catch (e) {
 			console.error("Failed to load Spotify settings:", e);
@@ -2359,7 +2359,7 @@ function bi(e, t) {
 			return;
 		}
 		try {
-			P(u, !0), await fetch(`${n()}/providers/spotify/settings`, {
+			P(u, !0), await fetch(`${n()}/settings`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -2432,7 +2432,7 @@ function bi(e, t) {
 			return;
 		}
 		try {
-			let t = (await (await fetch(`${n()}/spotify/auth?account_id=${e}`)).json())?.auth_url;
+			let t = (await (await fetch(`${n()}/auth?account_id=${e}`)).json())?.auth_url;
 			t ? window.location.href = t : console.error("Failed to get Spotify auth URL");
 		} catch (e) {
 			console.error("Failed to start OAuth:", e);
