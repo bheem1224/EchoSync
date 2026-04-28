@@ -28,7 +28,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "verified_source": "official",
-      "beta_version": "2.4.2-beta.2",
+      "beta_version": "2.4.2-beta.3",
       "plugin_id": "spotify",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/spotify",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/spotify/releases/v2.4.1.zip",
