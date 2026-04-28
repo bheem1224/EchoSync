@@ -228,7 +228,26 @@ class PluginStore:
         all_plugins = []
         for repo in self.get_repositories():
             all_plugins.extend(self.scan_repository(repo))
-            
+
+        # Deduplicate plugins by ID so the store does not expose duplicate entries
+        # when the same plugin appears from multiple repositories or fallback manifests.
+        unique_plugins = {}
+        for plugin in all_plugins:
+            plugin_id = plugin.get("id", plugin.get("name", "unknown_plugin"))
+            if plugin_id in unique_plugins:
+                existing = unique_plugins[plugin_id]
+                # Prefer official source and preserve any populated fields from either entry.
+                if plugin.get("verified_source") == "official":
+                    existing["verified_source"] = "official"
+                if plugin.get("_source_repo") == self.default_repo:
+                    existing["_source_repo"] = plugin.get("_source_repo")
+                for key in ["beta_url", "download_url", "beta_version", "version", "description", "name"]:
+                    if not existing.get(key) and plugin.get(key):
+                        existing[key] = plugin.get(key)
+                continue
+            unique_plugins[plugin_id] = plugin
+        all_plugins = list(unique_plugins.values())
+
         for plugin in all_plugins:
             plugin_id = plugin.get("id", plugin.get("name", "unknown_plugin"))
             

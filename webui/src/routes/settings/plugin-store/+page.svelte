@@ -254,7 +254,7 @@
     </div>
   {:else}
     <div class="plugin-grid">
-      {#each plugins as plugin (plugin.id || plugin.name)}
+      {#each plugins as plugin, index (plugin.id || plugin.name || index)}
         <PluginCard 
           {plugin} 
           globalBetaEnabled={betaOpt} 

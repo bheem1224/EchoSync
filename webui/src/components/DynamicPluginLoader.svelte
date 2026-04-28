@@ -121,7 +121,10 @@
       // 4. Collect successfully loaded plugins
       resolvedPlugins = loadResults
         .filter(r => r.status === 'fulfilled' && r.value != null && r.value.tag)
-        .map(r => r.value);
+        .map(r => r.value)
+        .filter((value, index, self) =>
+          self.findIndex(item => item.plugin.id === value.plugin.id && item.tag === value.tag) === index
+        );
 
       // Log any failures but don't crash the page
       loadResults
@@ -149,7 +152,7 @@
 {:else if resolvedPlugins.length > 0}
   <!-- One element per resolved Web Component -->
   <div class="plugin-loader-grid" data-category={category}>
-    {#each resolvedPlugins as { tag, apiBase, plugin } (tag)}
+    {#each resolvedPlugins as { tag, apiBase, plugin } (plugin.id || `${tag}-${apiBase}`)}
       <svelte:element
         this={tag}
         api-base={apiBase}
