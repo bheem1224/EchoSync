@@ -2368,7 +2368,7 @@ function Ci(e, t) {
 	});
 	async function f() {
 		try {
-			let e = await (await fetch(`${n()}/accounts/tidal`)).json();
+			let e = await (await fetch(`${n()}`)).json();
 			e && (P(r, e.accounts || []), P(i, e.redirect_uri || ""), P(a, !!Y(i)));
 		} catch (e) {
 			console.error("Failed to load Tidal accounts:", e);
@@ -2385,7 +2385,7 @@ function Ci(e, t) {
 	async function m(e) {
 		P(c, "edit");
 		try {
-			let t = await (await fetch(`${n()}/accounts/tidal/${e.id}`)).json();
+			let t = await (await fetch(`${n()}/${e.id}`)).json();
 			t?.account && (P(l, {
 				id: t.account.id,
 				account_name: t.account.account_name,
@@ -2419,11 +2419,11 @@ function Ci(e, t) {
 				client_id: Y(l).client_id,
 				client_secret: Y(l).client_secret
 			};
-			Y(c) === "add" ? await fetch(`${n()}/accounts/tidal`, {
+			Y(c) === "add" ? await fetch(`${n()}`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(e)
-			}) : await fetch(`${n()}/accounts/tidal/${Y(l).id}`, {
+			}) : await fetch(`${n()}/${Y(l).id}`, {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(e)
@@ -2434,7 +2434,7 @@ function Ci(e, t) {
 	}
 	async function _(e, t) {
 		try {
-			await fetch(`${n()}/accounts/tidal/${e}/activate`, {
+			await fetch(`${n()}/${e}/activate`, {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ is_active: !t })
@@ -2445,14 +2445,14 @@ function Ci(e, t) {
 	}
 	async function v(e, t) {
 		if (confirm(`Delete account "${t}"?`)) try {
-			await fetch(`${n()}/accounts/tidal/${e}`, { method: "DELETE" }), await f();
+			await fetch(`${n()}/${e}`, { method: "DELETE" }), await f();
 		} catch (e) {
 			console.error("Failed to delete account:", e);
 		}
 	}
 	async function y(e) {
 		try {
-			let t = (await (await fetch(`${n()}/tidal/auth?account_id=${e}`)).json())?.auth_url;
+			let t = (await (await fetch(`${n()}/auth?account_id=${e}`)).json())?.auth_url;
 			t ? window.location.href = t : console.error("Failed to get Tidal auth URL");
 		} catch (e) {
 			console.error("Failed to start OAuth:", e);
