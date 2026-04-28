@@ -248,6 +248,7 @@ class PluginStore:
             
             plugin["_installed"] = False
             plugin["installed_version"] = None
+            plugin["installed_channel"] = config_manager.get_plugin_channel(folder_id)
             
             # Check community first (updates/overrides)
             if comm_dir.exists():
@@ -266,8 +267,6 @@ class PluginStore:
                 active_manifest_path = core_manifest
             else:
                 active_manifest_path = None
-
-            plugin["installed_channel"] = config_manager.get_plugin_channel(folder_id)
             plugin["update_available"] = False
 
             if plugin["_installed"] and active_manifest_path:
