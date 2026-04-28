@@ -29,16 +29,29 @@
 
   // Version Comparison Helper
   const isNewer = (v1, v2) => {
-    if (!v1 || v1 === 'Unknown') return false;
-    if (!v2 || v2 === 'Unknown' || v2 === '0.0.0') return true;
-    if (v1 === v2) return false;
+    // Clean versions of common prefixes
+    const clean = (v) => (v || '').replace(/^v/, '').trim();
+    const cv1 = clean(v1);
+    const cv2 = clean(v2);
+
+    if (!cv1 || cv1 === 'Unknown' || cv1 === '0.0.0') return false;
+    if (!cv2 || cv2 === 'Unknown' || cv2 === '0.0.0') return true;
+    if (cv1 === cv2) return false;
     
-    // Simple semver-lite comparison using localeCompare with numeric: true
-    // This handles most cases like 1.2.1 vs 1.2.0
     try {
-      return v1.localeCompare(v2, undefined, { numeric: true, sensitivity: 'base' }) > 0;
+      // Use numeric comparison for semver-like strings
+      const parts1 = cv1.split(/[.-]/).map(p => isNaN(p) ? p : parseInt(p));
+      const parts2 = cv2.split(/[.-]/).map(p => isNaN(p) ? p : parseInt(p));
+      
+      for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+        const p1 = parts1[i] ?? 0;
+        const p2 = parts2[i] ?? 0;
+        if (p1 > p2) return true;
+        if (p1 < p2) return false;
+      }
+      return false;
     } catch (e) {
-      return v1 > v2;
+      return cv1.localeCompare(cv2, undefined, { numeric: true }) > 0;
     }
   };
 
@@ -48,24 +61,25 @@
 
   // Action Handlers
   function handleMainAction() {
-    console.log(`[PluginCard] handleMainAction called. globalBetaEnabled: ${globalBetaEnabled}, installedChannel: ${installedChannel}, hasStableUpdate: ${hasStableUpdate}, hasBetaUpdate: ${hasBetaUpdate}`);
+    console.log(`[PluginCard] handleMainAction for ${plugin.id}. Channel: ${installedChannel}, StableUpdate: ${hasStableUpdate}, BetaUpdate: ${hasBetaUpdate}`);
     if (downloading) return;
     
     if (globalBetaEnabled && installedChannel === 'beta') {
-      console.log(`[PluginCard] Dispatching beta install for ${plugin.id}`);
+      console.log(`[PluginCard] Forcing beta install dispatch for ${plugin.id}`);
       dispatch('install', { ...plugin, channel: 'beta', version: latestBeta });
     } else {
       if (hasStableUpdate || !isInstalled) {
-        console.log(`[PluginCard] Dispatching release install for ${plugin.id}`);
+        console.log(`[PluginCard] Dispatching release install dispatch for ${plugin.id}`);
         dispatch('install', { ...plugin, channel: 'release', version: latestRelease });
       } else {
-        console.log(`[PluginCard] No update needed for release channel.`);
+        console.log(`[PluginCard] No stable update needed, but user clicked. Re-installing stable.`);
+        dispatch('install', { ...plugin, channel: 'release', version: latestRelease });
       }
     }
   }
 
   function handleSwitch(targetChannel) {
-    console.log(`[PluginCard] handleSwitch called. targetChannel: ${targetChannel}`);
+    console.log(`[PluginCard] handleSwitch to ${targetChannel} for ${plugin.id}`);
     showDropdown = false;
     dispatch('install', { ...plugin, channel: targetChannel, version: targetChannel === 'beta' ? latestBeta : latestRelease });
   }
@@ -117,7 +131,7 @@
         {#if isInstalled}
           <div class="relative">
             <button 
-              class="text-white opacity-40 hover:opacity-100 p-1 px-2 rounded-lg transition-all"
+              class="text-white opacity-40 hover:opacity-100 p-1 px-2 rounded-lg transition-all border-none bg-transparent cursor-pointer"
               on:click={() => openMenuId = (openMenuId === plugin.id ? null : plugin.id)}
             >
               ⋮
@@ -168,8 +182,8 @@
       {#if !globalBetaEnabled}
         <!-- Rule 1: Standard Single Button -->
         <button 
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-slate-500 disabled:border-white/10 text-white text-xs font-bold rounded-lg transition-all border-none flex items-center gap-2"
-          disabled={downloading || (isInstalled && !hasStableUpdate)}
+          class="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-slate-500 disabled:border-white/10 text-white text-xs font-bold rounded-lg transition-all border-none flex items-center gap-2 cursor-pointer"
+          disabled={downloading}
           on:click={handleMainAction}
         >
           {#if downloading}
@@ -184,8 +198,8 @@
         <div class="flex rounded-lg overflow-hidden shadow-lg shadow-blue-900/20">
           <!-- Main Action -->
           <button 
-            class="pl-4 pr-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-bold border-none transition-all flex items-center gap-2 whitespace-nowrap"
-            disabled={downloading || (installedChannel === 'release' ? (isInstalled && !hasStableUpdate) : !hasBetaUpdate)}
+            class="pl-4 pr-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-bold border-none transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer"
+            disabled={downloading}
             on:click={handleMainAction}
           >
             {#if downloading}
@@ -198,7 +212,7 @@
 
           <!-- Dropdown Arrow -->
           <button 
-            class="px-2 py-2 bg-blue-700 hover:bg-blue-600 border-l border-white/10 text-white text-xs transition-all outline-none"
+            class="px-2 py-2 bg-blue-700 hover:bg-blue-600 border-l border-white/10 text-white text-xs transition-all outline-none cursor-pointer"
             on:click={toggleDropdown}
           >
             <span class="inline-block transition-transform duration-200 {showDropdown ? 'rotate-180' : ''}">▼</span>
