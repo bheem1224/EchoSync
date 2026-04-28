@@ -189,7 +189,8 @@ def get_plugin_store():
 def install_plugin():
     data = request.json or {}
     plugin_info = data.get('plugin')
-    channel = data.get('channel', 'stable')
+    channel = data.get('channel') or (plugin_info.get('channel') if plugin_info else 'stable')
+    if channel == 'release': channel = 'stable' # Normalize internal naming
     
     if not plugin_info:
         return jsonify({"error": "Plugin info required"}), 400

@@ -99,7 +99,11 @@
     downloading = plugin.id || plugin.name;
 
     try {
-      await apiClient.post('/system/plugins/install', { plugin });
+      await apiClient.post('/system/plugins/install', { 
+        plugin, 
+        channel: plugin.channel || 'release',
+        version: plugin.version
+      });
       feedback.addToast(`Successfully ${isUpdate ? 'updated' : 'installed'} ${plugin.name}. Restart required.`, 'success');
       // Mark as installed locally so UI updates
       plugins = plugins.map(p =>
