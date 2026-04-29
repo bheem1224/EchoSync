@@ -169,6 +169,54 @@ def set_active_download_client():
         logger.error(f"Error setting active download client: {e}")
         return jsonify({'error': str(e)}), 500
 
+@bp.post("/<provider_name>/toggle")
+@require_auth
+def toggle_provider(provider_name):
+    """Toggle a provider's enabled/disabled status.
+    
+    Updates both persistent config and in-memory registry state.
+    """
+    try:
+        from core.settings import config_manager
+        from core.provider import ProviderRegistry
+        
+        data = request.get_json(silent=True) or {}
+        # If enabled is provided in payload, use it, otherwise flip current state
+        enabled = data.get('enabled')
+        
+        current_disabled = config_manager.get_disabled_providers()
+        is_currently_disabled = provider_name.lower() in [d.lower() for d in current_disabled]
+        
+        if enabled is None:
+            new_enabled = is_currently_disabled
+        else:
+            new_enabled = enabled
+            
+        if new_enabled:
+            # Enable: remove from disabled list
+            new_disabled = [d for d in current_disabled if d.lower() != provider_name.lower()]
+            ProviderRegistry.enable_provider(provider_name)
+        else:
+            # Disable: add to disabled list
+            if not is_currently_disabled:
+                new_disabled = current_disabled + [provider_name]
+            else:
+                new_disabled = current_disabled
+            ProviderRegistry.disable_provider(provider_name)
+            
+        config_manager.set_disabled_providers(new_disabled)
+        
+        return jsonify({
+            'success': True, 
+            'enabled': new_enabled,
+            'provider': provider_name,
+            'restart_required': True
+        }), 200
+    except Exception as e:
+        logger.error(f"Error toggling provider {provider_name}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @bp.get("/<provider_name>/playlists")
 def get_provider_playlists(provider_name):
     """Fetch playlists from a specific provider."""

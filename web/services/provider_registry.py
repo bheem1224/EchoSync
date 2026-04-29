@@ -30,7 +30,9 @@ def list_providers() -> List[Dict]:
                 'category': getattr(cls, 'category', 'provider'),
                 'service_type': getattr(cls, 'service_type', None),  # Add service_type
                 'disabled': is_disabled,
+                'version': getattr(cls, 'version', 'Unknown'),
                 'supports_downloads': getattr(cls, 'supports_downloads', False)
+
             }
             
             # Only instantiate if the provider is not disabled; this avoids

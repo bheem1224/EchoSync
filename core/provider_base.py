@@ -118,6 +118,8 @@ class ProviderBase(ABC):
     category: str = 'provider'  # 'provider' (bundled, stable) or 'plugin' (community, unstable)
     supports_downloads: bool = False  # Indicates if provider supports downloads
     enabled: bool = True  # Flag to enable/disable provider without deleting files
+    version: str = "Unknown"  # Version string for the provider/plugin
+
 
     # Set to True in providers that can resolve metadata by ISRC code.
     # Providers that set this to True MUST implement search_by_isrc().

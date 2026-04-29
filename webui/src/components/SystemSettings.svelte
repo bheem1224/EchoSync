@@ -38,6 +38,7 @@
           name: provider.display_name || provider.name || provider.id,
           configured: provider.is_configured || false,
           disabled: provider.disabled || false,
+          version: provider.version || '0.0.0',
           category: provider.category || 'provider'
         }));
       }
@@ -97,6 +98,26 @@
       feedback.addToast('Failed to rebuild database: ' + (error.message || 'Unknown error'), 'error');
     } finally {
       isRebuildingDatabase = false;
+    }
+  }
+
+  async function handleToggleProvider(provider) {
+    try {
+      const targetEnabled = provider.disabled; // If currently disabled, target is enabled (true)
+      const response = await apiClient.post(`/plugins/${provider.id}/toggle`, {
+        enabled: targetEnabled
+      });
+      
+      if (response.data && response.data.success) {
+        provider.disabled = !targetEnabled;
+        feedback.addToast(
+          `${provider.name} ${targetEnabled ? 'enabled' : 'disabled'}. Restart required to finalize changes.`, 
+          'success'
+        );
+      }
+    } catch (error) {
+      console.error('Failed to toggle provider:', error);
+      feedback.addToast(`Failed to toggle ${provider.name}: ${error.message}`, 'error');
     }
   }
 </script>
@@ -206,17 +227,38 @@
         <div class="space-y-3">
           {#each providerStates as provider (provider.id)}
             <div class="flex items-center justify-between bg-gray-900/60 border border-gray-700/40 rounded-lg px-4 py-3">
-              <div>
-                <p class="font-medium text-gray-100">{provider.name}</p>
-                <p class="text-xs text-gray-400">
-                  {#if provider.disabled}
-                    <span class="text-red-400">Disabled</span>
-                  {:else if provider.configured}
-                    <span class="text-emerald-400">Configured</span>
-                  {:else}
-                    <span class="text-amber-400">Not Configured</span>
-                  {/if}
-                </p>
+              <div class="flex items-center gap-4">
+                <!-- Toggle Switch -->
+                <button 
+                  on:click={() => handleToggleProvider(provider)}
+                  class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none active:scale-90"
+                  class:bg-emerald-600={!provider.disabled}
+                  class:bg-gray-700={provider.disabled}
+                >
+                  <span
+                    class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform duration-200 shadow-sm"
+                    class:translate-x-5={!provider.disabled}
+                    class:translate-x-1={provider.disabled}
+                  />
+                </button>
+
+                <div>
+                  <div class="flex items-center gap-2">
+                    <p class="font-medium text-gray-100">{provider.name}</p>
+                    <span class="text-[10px] text-gray-500 font-mono bg-gray-800/80 px-1.5 py-0.5 rounded border border-gray-700/50">
+                      v{provider.version}
+                    </span>
+                  </div>
+                  <p class="text-xs text-gray-400">
+                    {#if provider.disabled}
+                      <span class="text-red-400">Disabled</span>
+                    {:else if provider.configured}
+                      <span class="text-emerald-400">Configured</span>
+                    {:else}
+                      <span class="text-amber-400">Not Configured</span>
+                    {/if}
+                  </p>
+                </div>
               </div>
 
               <div class="flex items-center gap-3">
@@ -224,12 +266,12 @@
                   {provider.category}
                 </span>
                 <div class="relative">
-                  {#if provider.configured}
-                    <div class="w-3 h-3 bg-emerald-500 rounded-full"></div>
+                  {#if provider.configured && !provider.disabled}
+                    <div class="w-2.5 h-2.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.4)]"></div>
                   {:else if provider.disabled}
-                    <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+                    <div class="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.4)]"></div>
                   {:else}
-                    <div class="w-3 h-3 bg-amber-500 rounded-full"></div>
+                    <div class="w-2.5 h-2.5 bg-amber-500 rounded-full shadow-[0_0_8px_rgba(245,158,11,0.4)]"></div>
                   {/if}
                 </div>
               </div>

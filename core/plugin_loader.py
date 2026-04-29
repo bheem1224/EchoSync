@@ -355,12 +355,27 @@ class PluginLoader:
         else:
             module_path = f"{parent_dir_name}.{name}"
         try:
+            # 0. Try to extract version from manifest before loading class
+            version = "Unknown"
+            package_dir = self.app_root / parent_dir_name / name
+            if is_beta:
+                package_dir = package_dir / "beta"
+            
+            manifest_file = package_dir / "manifest.json"
+            if manifest_file.exists():
+                try:
+                    manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                    version = manifest_data.get("version", "Unknown")
+                except Exception:
+                    pass
+
             # Dynamic import
             module = importlib.import_module(module_path)
 
             # 1. Register Provider Class
             provider_class = getattr(module, 'ProviderClass', None)
             if provider_class and issubclass(provider_class, ProviderBase):
+                provider_class.version = version
                 # Check for registry conflicts or disabling logic if needed
                 ProviderRegistry.register(provider_class, source_type=source_type)
             else:
@@ -369,6 +384,7 @@ class PluginLoader:
                 for attr_name in dir(module):
                     attr = getattr(module, attr_name)
                     if isinstance(attr, type) and issubclass(attr, ProviderBase) and attr is not ProviderBase:
+                        attr.version = version
                         ProviderRegistry.register(attr, source_type=source_type)
                         found = True
                         break
@@ -376,6 +392,7 @@ class PluginLoader:
                     logger.debug(f"No ProviderClass found in {module_path}")
 
             # 2. Collect Route Blueprints (primary + optional extras: RouteBlueprint2, RouteBlueprint3 …)
+
             for bp_attr in ('RouteBlueprint', 'RouteBlueprint2', 'RouteBlueprint3'):
                 blueprint = getattr(module, bp_attr, None)
                 if blueprint is None:
