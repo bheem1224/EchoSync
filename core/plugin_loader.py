@@ -363,6 +363,7 @@ class PluginLoader:
         try:
             # 0. Try to extract metadata from manifest before loading class
             version = "Unknown"
+            author = "Unknown"
             category = "provider"
             package_dir = self.app_root / parent_dir_name / name
             if is_beta:
@@ -373,6 +374,7 @@ class PluginLoader:
                 try:
                     manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
                     version = manifest_data.get("version", "Unknown")
+                    author = manifest_data.get("author", "Unknown")
                     category = manifest_data.get("category", "provider")
                 except Exception:
                     pass
@@ -386,6 +388,7 @@ class PluginLoader:
                 class specific_disabled(DisabledProvider):
                     pass
                 specific_disabled.version = version
+                specific_disabled.author = author
                 specific_disabled.category = category
                 
                 ProviderRegistry.register(specific_disabled, name=provider_id, source_type=source_type)
@@ -412,7 +415,8 @@ class PluginLoader:
                     attr = getattr(module, attr_name)
                     if isinstance(attr, type) and issubclass(attr, ProviderBase) and attr is not ProviderBase:
                         attr.version = version
-                        ProviderRegistry.register(attr, source_type=source_type)
+                        attr.author = author
+                        ProviderRegistry.register(attr, name=provider_id, source_type=source_type)
                         found = True
                         break
                 if not found:
@@ -524,9 +528,7 @@ def get_all_plugins() -> list:
     # Determine enabled status based on config
     disabled = config_manager.get_disabled_providers()
     for p in plugins:
-        # Standardize check: remove 'plugin.' from ID if present
-        pid = p["id"].replace('plugin.', '').lower()
-        short_name = p.get('folder_name', '').lower()
-        p["enabled"] = pid not in disabled and short_name not in disabled
+        # Check against full ID (e.g. plugin.plex or plex)
+        p["enabled"] = p["id"].lower() not in [d.lower() for d in disabled]
 
     return plugins

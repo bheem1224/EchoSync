@@ -932,16 +932,15 @@ class ConfigManager:
         if disabled_list is None:
             disabled_list = []
         
-        # Normalize: remove 'plugin.' prefix and keep unique values
-        normalized = []
+        # Keep unique values, preserve full ID (e.g. plugin.plex vs plex)
+        unique_disabled = []
         for d in disabled_list:
             if not d: continue
-            short_name = d.replace('plugin.', '').lower()
-            if short_name not in normalized:
-                normalized.append(short_name)
+            if d.lower() not in [ud.lower() for ud in unique_disabled]:
+                unique_disabled.append(d)
         
-        self.set('providers.disabled', normalized)
-        self.set('disabled_providers', normalized)
+        self.set('providers.disabled', unique_disabled)
+        self.set('disabled_providers', unique_disabled)
 
     def disable_provider(self, name: str) -> None:
         """Disable a provider/plugin by adding it to the disabled list"""
