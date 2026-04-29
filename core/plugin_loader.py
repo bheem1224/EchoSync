@@ -171,7 +171,7 @@ class PluginLoader:
                     if channel == 'beta' and (item / 'beta').exists():
                         item = item / 'beta'
 
-                manifest_file = item / "manifest.json"
+                manifest_file = current_item / "manifest.json"
                 if manifest_file.exists():
                     try:
                         manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
@@ -230,10 +230,12 @@ class PluginLoader:
             
             # Channel logic for community plugins
             current_item = item
+            is_beta = False
             if source_type == 'community':
                 channel = config_manager.get_plugin_channel(provider_name)
                 if channel == 'beta' and (item / 'beta').exists():
                     current_item = item / 'beta'
+                    is_beta = True
                     # We still use the original provider_name for registration, 
                     # but we need to adjust how we import it if it's in a subfolder.
                     # However, Echosync's current architecture prefers atomic root overwrite.
@@ -254,7 +256,7 @@ class PluginLoader:
                 bypass_security = False
 
 
-                manifest_file = item / "manifest.json"
+                manifest_file = current_item / "manifest.json"
 
 
                 if manifest_file.exists():
@@ -285,7 +287,7 @@ class PluginLoader:
 
 
                 privileged = manifest_data.get("privileged") is True if 'manifest_data' in locals() else False
-                if not bypass_security and not self._security_scan_package(item, provider_name, privileged=privileged):
+                if not bypass_security and not self._security_scan_package(current_item, provider_name, privileged=privileged):
 
 
                     logger.warning(
@@ -299,7 +301,7 @@ class PluginLoader:
 
                     continue
 
-            self._load_provider_package(provider_name, directory.name, source_type)
+            self._load_provider_package(provider_name, directory.name, source_type, is_beta=is_beta)
 
     def _security_scan_package(self, package_dir: Path, plugin_name: str, privileged: bool = False) -> bool:
         """
@@ -343,7 +345,7 @@ class PluginLoader:
 
         return clean
 
-    def _load_provider_package(self, name: str, parent_dir_name: str, source_type: str):
+    def _load_provider_package(self, name: str, parent_dir_name: str, source_type: str, is_beta: bool = False):
         """
         Dynamically import a provider package and register its exports.
 
@@ -352,7 +354,10 @@ class PluginLoader:
             parent_dir_name: The parent directory name (e.g., 'providers' or 'plugins').
             source_type: 'core' or 'community'.
         """
-        module_path = f"{parent_dir_name}.{name}"
+        if is_beta:
+            module_path = f"{parent_dir_name}.{name}.beta"
+        else:
+            module_path = f"{parent_dir_name}.{name}"
         try:
             # Dynamic import
             module = importlib.import_module(module_path)
@@ -455,6 +460,11 @@ def get_all_plugins() -> list:
     if plugins_dir.exists():
         for item in plugins_dir.iterdir():
             if item.is_dir() and not item.name.startswith('_'):
+                current_item = item
+                channel = config_manager.get_plugin_channel(item.name)
+                if channel == 'beta' and (item / 'beta').exists():
+                    current_item = item / 'beta'
+
                 plugin_info = {
                     "id": f"plugin.{item.name}",
                     "name": item.name,
@@ -462,7 +472,7 @@ def get_all_plugins() -> list:
                     "type": "community"
                 }
 
-                json_file = item / "manifest.json"
+                json_file = current_item / "manifest.json"
                 if json_file.exists():
                     try:
                         data = json.loads(json_file.read_text(encoding="utf-8"))
@@ -477,7 +487,7 @@ def get_all_plugins() -> list:
                         pass
 
                 plugin_info["folder_name"] = item.name
-                ui_manifest_file = item / "ui_manifest.json"
+                ui_manifest_file = current_item / "ui_manifest.json"
                 if ui_manifest_file.exists():
                     try:
                         plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
