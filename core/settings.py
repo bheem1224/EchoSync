@@ -783,8 +783,6 @@ class ConfigManager:
 
     def get_plugin_channel(self, plugin_id: str) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
-        if not self.get('ui.beta_plugin_ui', False):
-            return 'stable'
         return self.get(f'plugins.{plugin_id}.channel', 'stable')
 
     def get_settings(self) -> Dict[str, Any]:
@@ -933,8 +931,16 @@ class ConfigManager:
         """Set list of disabled providers/plugins"""
         if disabled_list is None:
             disabled_list = []
-        self.set('providers.disabled', disabled_list)
-        self.set('disabled_providers', disabled_list)
+        
+        # Keep unique values, preserve full ID (e.g. plugin.plex vs plex)
+        unique_disabled = []
+        for d in disabled_list:
+            if not d: continue
+            if d.lower() not in [ud.lower() for ud in unique_disabled]:
+                unique_disabled.append(d)
+        
+        self.set('providers.disabled', unique_disabled)
+        self.set('disabled_providers', unique_disabled)
 
     def disable_provider(self, name: str) -> None:
         """Disable a provider/plugin by adding it to the disabled list"""

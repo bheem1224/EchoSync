@@ -229,6 +229,10 @@ class PluginLoader:
 
             provider_name = item.name
             
+            # Check if disabled in config
+            disabled = config_manager.get_disabled_providers()
+            is_disabled = f"plugin.{provider_name}" in disabled or provider_name in disabled
+
             # Channel logic for all plugins
             current_item = item
             is_beta = False
@@ -297,7 +301,7 @@ class PluginLoader:
 
                     continue
 
-            self._load_provider_package(provider_name, directory.name, source_type, is_beta=is_beta)
+            self._load_provider_package(provider_name, directory.name, source_type, is_beta=is_beta, is_disabled=is_disabled)
 
     def _security_scan_package(self, package_dir: Path, plugin_name: str, privileged: bool = False) -> bool:
         """
@@ -341,7 +345,7 @@ class PluginLoader:
 
         return clean
 
-    def _load_provider_package(self, name: str, parent_dir_name: str, source_type: str, is_beta: bool = False):
+    def _load_provider_package(self, name: str, parent_dir_name: str, source_type: str, is_beta: bool = False, is_disabled: bool = False):
         """
         Dynamically import a provider package and register its exports.
 
@@ -349,14 +353,18 @@ class PluginLoader:
             name: The package name (e.g., 'plex').
             parent_dir_name: The parent directory name (e.g., 'providers' or 'plugins').
             source_type: 'core' or 'community'.
+            is_beta: True if loading from the 'beta' subfolder.
+            is_disabled: True if the plugin is marked as disabled in config.
         """
         if is_beta:
             module_path = f"{parent_dir_name}.{name}.beta"
         else:
             module_path = f"{parent_dir_name}.{name}"
         try:
-            # 0. Try to extract version from manifest before loading class
+            # 0. Try to extract metadata from manifest before loading class
             version = "Unknown"
+            author = "Unknown"
+            category = "provider"
             package_dir = self.app_root / parent_dir_name / name
             if is_beta:
                 package_dir = package_dir / "beta"
@@ -366,18 +374,40 @@ class PluginLoader:
                 try:
                     manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
                     version = manifest_data.get("version", "Unknown")
+                    author = manifest_data.get("author", "Unknown")
+                    category = manifest_data.get("category", "provider")
                 except Exception:
                     pass
 
+            # If disabled, register a placeholder and return early
+            if is_disabled:
+                from core.provider import DisabledProvider
+                provider_id = f"plugin.{name}" if source_type == 'community' else name
+                
+                # Create a specific subclass for this disabled provider to hold its metadata
+                class specific_disabled(DisabledProvider):
+                    pass
+                specific_disabled.version = version
+                specific_disabled.author = author
+                specific_disabled.category = category
+                
+                ProviderRegistry.register(specific_disabled, name=provider_id, source_type=source_type)
+                logger.info(f"Registered disabled provider: {provider_id} (v{version})")
+                return
+
             # Dynamic import
             module = importlib.import_module(module_path)
+            
+            # 1. Register Provider Class (if present)
+            if source_type == 'community':
+                provider_id = f"plugin.{name}"
+            else:
+                provider_id = name
 
-            # 1. Register Provider Class
-            provider_class = getattr(module, 'ProviderClass', None)
-            if provider_class and issubclass(provider_class, ProviderBase):
-                provider_class.version = version
-                # Check for registry conflicts or disabling logic if needed
-                ProviderRegistry.register(provider_class, source_type=source_type)
+            if hasattr(module, 'ProviderClass'):
+                provider_cls = getattr(module, 'ProviderClass')
+                ProviderRegistry.register(provider_cls, name=provider_id, source_type=source_type)
+                logger.debug(f"Registered ProviderClass for {provider_id} (v{version})")
             else:
                 # Fallback: Look for any ProviderBase subclass if not explicitly exported
                 found = False
@@ -385,7 +415,8 @@ class PluginLoader:
                     attr = getattr(module, attr_name)
                     if isinstance(attr, type) and issubclass(attr, ProviderBase) and attr is not ProviderBase:
                         attr.version = version
-                        ProviderRegistry.register(attr, source_type=source_type)
+                        attr.author = author
+                        ProviderRegistry.register(attr, name=provider_id, source_type=source_type)
                         found = True
                         break
                 if not found:
@@ -458,6 +489,7 @@ def get_all_plugins() -> list:
                 continue
 
             current_item = item
+            # Use the folder name for channel check, same as _scan_directory
             channel = config_manager.get_plugin_channel(item.name)
             if channel == 'beta' and (item / 'beta').exists():
                 current_item = item / 'beta'
@@ -496,6 +528,7 @@ def get_all_plugins() -> list:
     # Determine enabled status based on config
     disabled = config_manager.get_disabled_providers()
     for p in plugins:
-        p["enabled"] = p["id"] not in disabled
+        # Check against full ID (e.g. plugin.plex or plex)
+        p["enabled"] = p["id"].lower() not in [d.lower() for d in disabled]
 
     return plugins

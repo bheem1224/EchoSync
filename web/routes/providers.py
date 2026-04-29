@@ -185,6 +185,7 @@ def toggle_provider(provider_name):
         enabled = data.get('enabled')
         
         current_disabled = config_manager.get_disabled_providers()
+        # Use full ID (provider_name) to distinguish between core and community plugins
         is_currently_disabled = provider_name.lower() in [d.lower() for d in current_disabled]
         
         if enabled is None:

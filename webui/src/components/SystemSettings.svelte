@@ -35,12 +35,14 @@
       if (response.data && Array.isArray(response.data)) {
         providerStates = response.data.map(provider => ({
           id: provider.id,
-          name: provider.display_name || provider.name || provider.id,
+          name: provider.name,
+          display_name: provider.display_name || provider.name || provider.id,
           configured: provider.is_configured || false,
           disabled: provider.disabled || false,
           version: provider.version || '0.0.0',
-          channel: provider.channel || 'stable',
-          category: provider.category || 'provider'
+          author: provider.author || 'Unknown',
+          category: provider.category || 'provider',
+          source_type: provider.source_type || 'community'
         }));
       }
     } catch (error) {
@@ -245,7 +247,12 @@
 
                 <div>
                   <div class="flex items-center gap-2">
-                    <p class="font-medium text-gray-100">{provider.name}</p>
+                    <p class="font-medium text-gray-100">{provider.display_name || provider.name}</p>
+                    {#if provider.source_type === 'core'}
+                      <span class="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase tracking-tight">Official</span>
+                    {:else}
+                      <span class="text-[9px] text-purple-400 font-bold bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20 uppercase tracking-tight">{provider.author}</span>
+                    {/if}
                     <span class="text-[10px] text-gray-500 font-mono bg-gray-800/80 px-1.5 py-0.5 rounded border border-gray-700/50">
                       v{provider.version}
                       {#if provider.channel === 'beta'}

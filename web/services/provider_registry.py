@@ -23,16 +23,20 @@ def list_providers() -> List[Dict]:
         cls = CoreProviderRegistry.get_provider_class(name)
         if cls:
             is_disabled = CoreProviderRegistry.is_provider_disabled(name)
+            display_name = name.replace('plugin.', '').title()
+            source_type = CoreProviderRegistry.get_provider_source(name) or 'core'
+            
             provider_dict = {
-                'id': name,  # Add id field for frontend
+                'id': name,  # Unique ID (e.g. plugin.plex)
                 'name': name,
-                'display_name': name.title(),  # Add display name
+                'display_name': display_name,  # Friendly name (e.g. Plex)
+                'source_type': source_type,    # 'core' or 'community'
                 'category': getattr(cls, 'category', 'provider'),
-                'service_type': getattr(cls, 'service_type', None),  # Add service_type
+                'service_type': getattr(cls, 'service_type', None),
                 'disabled': is_disabled,
                 'version': getattr(cls, 'version', 'Unknown'),
+                'author': getattr(cls, 'author', 'Official' if source_type == 'core' else 'Unknown'),
                 'supports_downloads': getattr(cls, 'supports_downloads', False)
-
             }
             
             # Only instantiate if the provider is not disabled; this avoids
