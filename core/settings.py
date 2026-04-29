@@ -783,8 +783,6 @@ class ConfigManager:
 
     def get_plugin_channel(self, plugin_id: str) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
-        if not self.get('ui.beta_plugin_ui', False):
-            return 'stable'
         return self.get(f'plugins.{plugin_id}.channel', 'stable')
 
     def get_settings(self) -> Dict[str, Any]:

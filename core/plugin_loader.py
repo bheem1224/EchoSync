@@ -229,6 +229,12 @@ class PluginLoader:
 
             provider_name = item.name
             
+            # Skip if disabled in config
+            disabled = config_manager.get_disabled_providers()
+            if f"plugin.{provider_name}" in disabled or provider_name in disabled:
+                logger.info(f"Skipping disabled plugin: {provider_name}")
+                continue
+
             # Channel logic for all plugins
             current_item = item
             is_beta = False
@@ -458,6 +464,7 @@ def get_all_plugins() -> list:
                 continue
 
             current_item = item
+            # Use the folder name for channel check, same as _scan_directory
             channel = config_manager.get_plugin_channel(item.name)
             if channel == 'beta' and (item / 'beta').exists():
                 current_item = item / 'beta'
@@ -496,6 +503,8 @@ def get_all_plugins() -> list:
     # Determine enabled status based on config
     disabled = config_manager.get_disabled_providers()
     for p in plugins:
-        p["enabled"] = p["id"] not in disabled
+        # Check both the full ID (plugin.name) and the short name (name)
+        short_name = p.get('folder_name', '')
+        p["enabled"] = p["id"] not in disabled and short_name not in disabled
 
     return plugins
