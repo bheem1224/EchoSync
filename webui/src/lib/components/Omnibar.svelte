@@ -306,13 +306,13 @@
   }
 
   onMount(() => {
-    window.addEventListener('keydown', handleGlobalKeydown);
-    window.addEventListener('es-omnibar-toggle', openModal);
+    if (typeof window !== 'undefined') window.addEventListener('keydown', handleGlobalKeydown);
+    if (typeof window !== 'undefined') window.addEventListener('es-omnibar-toggle', openModal);
   });
 
   onDestroy(() => {
-    window.removeEventListener('keydown', handleGlobalKeydown);
-    window.removeEventListener('es-omnibar-toggle', openModal);
+    if (typeof window !== 'undefined') window.removeEventListener('keydown', handleGlobalKeydown);
+    if (typeof window !== 'undefined') window.removeEventListener('es-omnibar-toggle', openModal);
   });
 </script>
 
