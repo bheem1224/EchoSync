@@ -39,6 +39,7 @@
           configured: provider.is_configured || false,
           disabled: provider.disabled || false,
           version: provider.version || '0.0.0',
+          channel: provider.channel || 'stable',
           category: provider.category || 'provider'
         }));
       }
@@ -226,7 +227,7 @@
       {:else}
         <div class="space-y-3">
           {#each providerStates as provider (provider.id)}
-            <div class="flex items-center justify-between bg-gray-900/60 border border-gray-700/40 rounded-lg px-4 py-3">
+            <div class="flex items-center justify-between bg-gray-900/60 border border-gray-700/40 rounded-lg px-4 py-3 transition-all {provider.disabled ? 'opacity-50 grayscale' : ''}">
               <div class="flex items-center gap-4">
                 <!-- Toggle Switch -->
                 <button 
@@ -247,6 +248,9 @@
                     <p class="font-medium text-gray-100">{provider.name}</p>
                     <span class="text-[10px] text-gray-500 font-mono bg-gray-800/80 px-1.5 py-0.5 rounded border border-gray-700/50">
                       v{provider.version}
+                      {#if provider.channel === 'beta'}
+                        <span class="ml-1 text-blue-400 font-bold uppercase tracking-wider">Beta</span>
+                      {/if}
                     </span>
                   </div>
                   <p class="text-xs text-gray-400">
