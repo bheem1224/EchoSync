@@ -1,17 +1,20 @@
-<svelte:options customElement={{
-  tag: 'spotify-dashboard-card',
-  shadow: 'none'
-}} />
-<script>
-  export let apiBase = '';
-  import { onMount } from 'svelte';
+<svelte:options
+  customElement={{
+    tag: "spotify-dashboard-card",
+    shadow: "none",
+  }}
+/>
 
-  let clientId = '';
-  let clientSecret = '';
-  let redirectUri = '';
+<script>
+  export let apiBase = "";
+  import { onMount } from "svelte";
+
+  let clientId = "";
+  let clientSecret = "";
+  let redirectUri = "";
   let accounts = [];
   let showAddAccount = false;
-  let newAccountName = '';
+  let newAccountName = "";
   let loading = true;
   let savingGlobal = false;
   let credsCollapsed = false;
@@ -23,49 +26,54 @@
     await loadAccounts();
 
     // Auto-populate redirect URI if empty
-    if (!redirectUri && typeof window !== 'undefined') {
+    if (!redirectUri && typeof window !== "undefined") {
       redirectUri = `${window.location.protocol}//${window.location.host}/api/spotify/callback`;
     }
 
     // Collapse credentials by default when all globals are present and at least one account is authenticated
-    credsCollapsed = Boolean(clientId && clientSecret && redirectUri && accounts.some(a => a.is_authenticated));
+    credsCollapsed = Boolean(
+      clientId &&
+        clientSecret &&
+        redirectUri &&
+        accounts.some((a) => a.is_authenticated),
+    );
     loading = false;
   });
 
   async function loadGlobalSettings() {
     try {
-      const response = await fetch(`${apiBase}/settings`);
+      const response = await fetch(`/api/providers/spotify/settings`);
       const data = await response.json();
       if (data?.settings) {
-        clientId = data.settings.client_id || '';
-        clientSecret = data.settings.client_secret || '';
-        redirectUri = data.settings.redirect_uri || '';
+        clientId = data.settings.client_id || "";
+        clientSecret = data.settings.client_secret || "";
+        redirectUri = data.settings.redirect_uri || "";
       }
     } catch (error) {
-      console.error('Failed to load Spotify settings:', error);
+      console.error("Failed to load Spotify settings:", error);
     }
   }
 
   async function saveGlobalSettings() {
     if (!clientId || !clientSecret) {
-      console.error('Client ID and Secret are required');
+      console.error("Client ID and Secret are required");
       return;
     }
 
     try {
       savingGlobal = true;
-      await fetch(`${apiBase}/settings`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
+      await fetch(`/api/providers/spotify/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           client_id: clientId,
           client_secret: clientSecret,
-          redirect_uri: redirectUri
-        }) 
+          redirect_uri: redirectUri,
+        }),
       });
-      console.log('Spotify credentials saved');
+      console.log("Spotify credentials saved");
     } catch (error) {
-      console.error('Failed to save Spotify settings:', error);
+      console.error("Failed to save Spotify settings:", error);
       throw error;
     } finally {
       savingGlobal = false;
@@ -74,18 +82,18 @@
 
   async function loadAccounts() {
     try {
-      const response = await fetch(`${apiBase}/accounts/spotify`);
+      const response = await fetch(`/api/accounts/spotify`);
       const data = await response.json();
       accounts = data?.accounts || [];
     } catch (error) {
-      console.error('Failed to load Spotify accounts:', error);
+      console.error("Failed to load Spotify accounts:", error);
       accounts = [];
     }
   }
 
   async function addAccount() {
     if (!newAccountName.trim()) {
-      console.error('Account name is required');
+      console.error("Account name is required");
       return;
     }
 
@@ -95,36 +103,38 @@
     }
 
     try {
-      await fetch(`${apiBase}/accounts/spotify`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
+      await fetch(`${apiBase}/accounts/spotify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           account_name: newAccountName,
-          display_name: newAccountName
-        }) 
+          display_name: newAccountName,
+        }),
       });
-      console.log('Account added');
-      newAccountName = '';
+      console.log("Account added");
+      newAccountName = "";
       showAddAccount = false;
       await loadAccounts();
     } catch (error) {
-      console.error('Failed to add account:', error);
+      console.error("Failed to add account:", error);
     }
   }
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await fetch(`${apiBase}/accounts/spotify/${accountId}/activate`, { 
-        method: 'PUT', 
-        headers: { 'Content-Type': 'application/json' }, 
+      await fetch(`${apiBase}/accounts/spotify/${accountId}/activate`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          is_active: !currentlyActive
-        }) 
+          is_active: !currentlyActive,
+        }),
       });
-      console.log(currentlyActive ? 'Account deactivated' : 'Account activated');
+      console.log(
+        currentlyActive ? "Account deactivated" : "Account activated",
+      );
       await loadAccounts();
     } catch (error) {
-      console.error('Failed to toggle account:', error);
+      console.error("Failed to toggle account:", error);
     }
   }
 
@@ -132,24 +142,28 @@
     if (!confirm(`Delete account "${accountName}"?`)) return;
 
     try {
-      await fetch(`${apiBase}/accounts/spotify/${accountId}`, { method: 'DELETE' });
-      console.log('Account deleted');
+      await fetch(`${apiBase}/accounts/spotify/${accountId}`, {
+        method: "DELETE",
+      });
+      console.log("Account deleted");
       await loadAccounts();
     } catch (error) {
-      console.error('Failed to delete account:', error);
+      console.error("Failed to delete account:", error);
     }
   }
 
   async function authenticate(accountId) {
     if (!clientId || !clientSecret) {
-      console.error('Please save Spotify Client ID and Client Secret before authenticating an account');
+      console.error(
+        "Please save Spotify Client ID and Client Secret before authenticating an account",
+      );
       return;
     }
 
     try {
-        await saveGlobalSettings();
+      await saveGlobalSettings();
     } catch (e) {
-        return;
+      return;
     }
 
     try {
@@ -159,10 +173,10 @@
       if (url) {
         window.location.href = url;
       } else {
-        console.error('Failed to get Spotify auth URL');
+        console.error("Failed to get Spotify auth URL");
       }
     } catch (err) {
-      console.error('Failed to start OAuth:', err);
+      console.error("Failed to start OAuth:", err);
     }
   }
 </script>
@@ -182,8 +196,11 @@
     <div class="settings-section">
       <div class="section-header">
         <h3 class="section-title">Global Credentials</h3>
-        <button class="btn-ghost" on:click={() => credsCollapsed = !credsCollapsed}>
-          {credsCollapsed ? 'Expand' : 'Collapse'}
+        <button
+          class="btn-ghost"
+          on:click={() => (credsCollapsed = !credsCollapsed)}
+        >
+          {credsCollapsed ? "Expand" : "Collapse"}
         </button>
       </div>
 
@@ -191,18 +208,18 @@
         <div class="form-grid">
           <label class="form-field">
             <span class="field-label">Client ID</span>
-            <input 
-              type="text" 
-              bind:value={clientId} 
+            <input
+              type="text"
+              bind:value={clientId}
               placeholder="Enter Spotify Client ID"
               class="input-field"
             />
           </label>
           <label class="form-field">
             <span class="field-label">Client Secret</span>
-            <input 
-              type="password" 
-              bind:value={clientSecret} 
+            <input
+              type="password"
+              bind:value={clientSecret}
               placeholder="Enter Spotify Client Secret"
               class="input-field"
             />
@@ -217,12 +234,12 @@
               disabled
             />
           </label>
-          <button 
+          <button
             class="btn-primary"
             on:click={saveGlobalSettings}
             disabled={savingGlobal}
           >
-            {savingGlobal ? 'Saving...' : 'Save Credentials'}
+            {savingGlobal ? "Saving..." : "Save Credentials"}
           </button>
         </div>
       {/if}
@@ -231,9 +248,14 @@
     <!-- Accounts -->
     <div class="settings-section">
       <div class="section-header">
-        <h3 class="section-title">Accounts ({accounts.length}/{MAX_ACCOUNTS})</h3>
+        <h3 class="section-title">
+          Accounts ({accounts.length}/{MAX_ACCOUNTS})
+        </h3>
         {#if accounts.length < MAX_ACCOUNTS}
-          <button class="btn-ghost" on:click={() => showAddAccount = !showAddAccount}>
+          <button
+            class="btn-ghost"
+            on:click={() => (showAddAccount = !showAddAccount)}
+          >
             + Add Account
           </button>
         {/if}
@@ -241,16 +263,18 @@
 
       {#if showAddAccount}
         <div class="add-account-form">
-          <input 
-            type="text" 
-            bind:value={newAccountName} 
-            placeholder="Account name" 
+          <input
+            type="text"
+            bind:value={newAccountName}
+            placeholder="Account name"
             class="input-field"
-            on:keydown={(e) => e.key === 'Enter' && addAccount()}
+            on:keydown={(e) => e.key === "Enter" && addAccount()}
           />
           <div class="form-actions">
             <button class="btn-primary" on:click={addAccount}>Add</button>
-            <button class="btn-ghost" on:click={() => showAddAccount = false}>Cancel</button>
+            <button class="btn-ghost" on:click={() => (showAddAccount = false)}
+              >Cancel</button
+            >
           </div>
         </div>
       {/if}
@@ -259,7 +283,9 @@
         {#each accounts as account}
           <div class="account-item">
             <div class="account-info">
-              <div class="account-name">{account.display_name || account.account_name}</div>
+              <div class="account-name">
+                {account.display_name || account.account_name}
+              </div>
               <div class="account-badges">
                 {#if account.is_authenticated}
                   <span class="status-badge success">✓ Authenticated</span>
@@ -272,17 +298,27 @@
               </div>
             </div>
             <div class="account-actions">
-                <button class="link-btn" on:click={() => authenticate(account.id)}>
-                  {account.is_authenticated ? 'Reauthenticate' : 'Authenticate'}
-                </button>
-              <button 
+              <button
+                class="link-btn"
+                on:click={() => authenticate(account.id)}
+              >
+                {account.is_authenticated ? "Reauthenticate" : "Authenticate"}
+              </button>
+              <button
                 class="btn-ghost"
                 class:active={account.is_active}
                 on:click={() => toggleAccount(account.id, account.is_active)}
               >
-                {account.is_active ? 'Deactivate' : 'Activate'}
+                {account.is_active ? "Deactivate" : "Activate"}
               </button>
-              <button class="btn-danger" on:click={() => deleteAccount(account.id, account.display_name || account.account_name)}>
+              <button
+                class="btn-danger"
+                on:click={() =>
+                  deleteAccount(
+                    account.id,
+                    account.display_name || account.account_name,
+                  )}
+              >
                 ✕
               </button>
             </div>
@@ -299,7 +335,7 @@
   .plugin-card {
     background: var(--glass, rgba(20, 24, 31, 0.7));
     backdrop-filter: blur(12px);
-    border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
     border-radius: var(--radius, 12px);
     padding: 24px;
     margin-bottom: 24px;
@@ -312,7 +348,7 @@
     align-items: center;
     margin-bottom: 24px;
     padding-bottom: 16px;
-    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
   }
 
   .header-left {
@@ -383,7 +419,7 @@
     width: 100%;
     padding: 10px 14px;
     background: var(--bg-input, #08080a);
-    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
     border-radius: 8px;
     color: var(--text-main, #fff);
     font-size: 14px;
@@ -418,8 +454,8 @@
 
   .btn-ghost {
     padding: 8px 16px;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--text-main, #fff);
     border-radius: 8px;
     font-size: 13px;
@@ -428,11 +464,11 @@
   }
 
   .btn-ghost:hover {
-    background: rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.1);
   }
 
   .add-account-form {
-    background: rgba(255,255,255,0.03);
+    background: rgba(255, 255, 255, 0.03);
     padding: 16px;
     border-radius: 8px;
     display: flex;
@@ -457,8 +493,8 @@
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.05);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 8px;
   }
 
@@ -485,9 +521,18 @@
     font-weight: 700;
   }
 
-  .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-  .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
-  .status-badge.active { background: rgba(20, 184, 166, 0.15); color: var(--color-primary, #14b8a6); }
+  .status-badge.success {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+  }
+  .status-badge.warning {
+    background: rgba(234, 179, 8, 0.15);
+    color: #eab308;
+  }
+  .status-badge.active {
+    background: rgba(20, 184, 166, 0.15);
+    color: var(--color-primary, #14b8a6);
+  }
 
   .account-actions {
     display: flex;
@@ -522,8 +567,8 @@
     padding: 16px;
     color: var(--text-muted, #64748b);
     font-size: 13px;
-    background: rgba(255,255,255,0.02);
+    background: rgba(255, 255, 255, 0.02);
     border-radius: 8px;
-    border: 1px dashed rgba(255,255,255,0.1);
+    border: 1px dashed rgba(255, 255, 255, 0.1);
   }
 </style>

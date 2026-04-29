@@ -2,7 +2,7 @@
 
 import ast
 import importlib
-import importlib.util
+#import importlib.util
 import os
 import sys
 import json
@@ -229,19 +229,14 @@ class PluginLoader:
 
             provider_name = item.name
             
-            # Channel logic for community plugins
+            # Channel logic for all plugins
             current_item = item
             is_beta = False
 
-            if source_type == 'community':
-                channel = config_manager.get_plugin_channel(provider_name)
-                if channel == 'beta' and (item / 'beta').exists():
-                    current_item = item / 'beta'
-                    is_beta = True
-                    # We still use the original provider_name for registration, 
-                    # but we need to adjust how we import it if it's in a subfolder.
-                    # However, Echosync's current architecture prefers atomic root overwrite.
-                    # This subfolder check is for legacy/side-by-side support.
+            channel = config_manager.get_plugin_channel(provider_name)
+            if channel == 'beta' and (item / 'beta').exists():
+                current_item = item / 'beta'
+                is_beta = True
 
             init_file = current_item / "__init__.py"
 
@@ -256,8 +251,7 @@ class PluginLoader:
 
 
                 bypass_security = False
-
-
+                manifest_data = None
                 manifest_file = current_item / "manifest.json"
 
 
@@ -288,7 +282,7 @@ class PluginLoader:
 
 
 
-                privileged = manifest_data.get("privileged") is True if 'manifest_data' in locals() else False
+                privileged = manifest_data.get("privileged") is True if manifest_data else False
                 if not bypass_security and not self._security_scan_package(current_item, provider_name, privileged=privileged):
 
 
@@ -434,69 +428,53 @@ def get_all_plugins() -> list:
     from core.settings import config_manager
 
     plugins = []
+    
+    core_dir = Path(__file__).parent.parent / "plugins"
+    community_dir = config_manager.get_plugins_dir()
 
-    # Get Bundled/Official Plugins
-    providers_dir = Path(__file__).parent.parent / "plugins"
-    if providers_dir.exists():
-        for item in providers_dir.iterdir():
-            if item.is_dir() and not item.name.startswith('_'):
-                plugin_info = {
-                    "id": f"core.{item.name}",
-                    "name": item.name.capitalize(),
-                    "description": f"Core provider for {item.name}",
-                    "type": "core",
-                    "folder_name": item.name
-                }
+    for source_type, directory in [('core', core_dir), ('community', community_dir)]:
+        if not directory.exists():
+            continue
 
-                ui_manifest_file = item / "ui_manifest.json"
-                if ui_manifest_file.exists():
-                    try:
-                        plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
-                    except Exception:
-                        pass
+        for item in directory.iterdir():
+            if not item.is_dir() or item.name.startswith('_'):
+                continue
 
-                plugins.append(plugin_info)
+            current_item = item
+            channel = config_manager.get_plugin_channel(item.name)
+            if channel == 'beta' and (item / 'beta').exists():
+                current_item = item / 'beta'
 
-    # Get Community Plugins
-    plugins_dir = config_manager.get_plugins_dir()
-    if plugins_dir.exists():
-        for item in plugins_dir.iterdir():
-            if item.is_dir() and not item.name.startswith('_'):
-                current_item = item
-                channel = config_manager.get_plugin_channel(item.name)
-                if channel == 'beta' and (item / 'beta').exists():
-                    current_item = item / 'beta'
+            plugin_info = {
+                "id": f"{source_type}.{item.name}" if source_type == 'core' else f"plugin.{item.name}",
+                "name": item.name.capitalize() if source_type == 'core' else item.name,
+                "description": f"Core provider for {item.name}" if source_type == 'core' else "Community plugin",
+                "type": source_type,
+                "folder_name": item.name
+            }
 
-                plugin_info = {
-                    "id": f"plugin.{item.name}",
-                    "name": item.name,
-                    "description": "Community plugin",
-                    "type": "community"
-                }
+            json_file = current_item / "manifest.json"
+            if json_file.exists():
+                try:
+                    data = json.loads(json_file.read_text(encoding="utf-8"))
+                    plugin_info.update({
+                        "name": data.get("name", plugin_info["name"]),
+                        "description": data.get("description", plugin_info["description"]),
+                        "version": data.get("version", "Unknown"),
+                        "author": data.get("author", "Unknown"),
+                        "id": data.get("id", plugin_info["id"])
+                    })
+                except Exception:
+                    pass
 
-                json_file = current_item / "manifest.json"
-                if json_file.exists():
-                    try:
-                        data = json.loads(json_file.read_text(encoding="utf-8"))
-                        plugin_info.update({
-                            "name": data.get("name", item.name),
-                            "description": data.get("description", plugin_info["description"]),
-                            "version": data.get("version", "Unknown"),
-                            "author": data.get("author", "Unknown"),
-                            "id": data.get("id", plugin_info["id"])
-                        })
-                    except Exception:
-                        pass
+            ui_manifest_file = current_item / "ui_manifest.json"
+            if ui_manifest_file.exists():
+                try:
+                    plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
 
-                plugin_info["folder_name"] = item.name
-                ui_manifest_file = current_item / "ui_manifest.json"
-                if ui_manifest_file.exists():
-                    try:
-                        plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
-                    except Exception:
-                        pass
-
-                plugins.append(plugin_info)
+            plugins.append(plugin_info)
 
     # Determine enabled status based on config
     disabled = config_manager.get_disabled_providers()
