@@ -391,7 +391,8 @@ class ConfigManager:
                 "plugins_dir": str(self.plugins_path)
             },
             # Provider/Plugin management
-            "disabled_providers": []  # List of provider/plugin names to disable (e.g., ["spotify", "tidal"])
+            "disabled_providers": [],  # List of provider/plugin names to disable (e.g., ["spotify", "tidal"])
+            "custom_plugin_repos": []   # Custom repository URLs for plugin discovery
         }
         return cfg
 
@@ -787,7 +788,17 @@ class ConfigManager:
         return self.get(f'plugins.{plugin_id}.channel', 'stable')
 
     def get_settings(self) -> Dict[str, Any]:
-        return self.get('settings', {})
+        """Return the full non-secret configuration (alias for get_all)."""
+        return self.get_all()
+
+    def save_settings(self, config: Dict[str, Any]) -> bool:
+        """Save a full non-secret configuration dictionary."""
+        try:
+            self.config_data = self._deep_merge(self.config_data, config)
+            return self._save_non_secrets_to_json()
+        except Exception as e:
+            logger.error(f"Failed to save settings: {e}")
+            return False
 
     def get_all(self) -> Dict[str, Any]:
         """Return the full non-secret configuration suitable for the UI.

@@ -163,13 +163,14 @@ class PluginLoader:
                     disabled = config_manager.get_disabled_providers()
                     if f"plugin.{item.name}" in disabled or item.name in disabled:
                         continue
-
+                                
+                current_item = item
                 if source_type == 'community':
                     # Support Side-by-Side Architecture or Root Overwrite
                     channel = config_manager.get_plugin_channel(item.name)
                     # If we have a beta subfolder, use it, otherwise the root contains the swapped artifact
                     if channel == 'beta' and (item / 'beta').exists():
-                        item = item / 'beta'
+                        current_item = item / 'beta'
 
                 manifest_file = current_item / "manifest.json"
                 if manifest_file.exists():
@@ -231,6 +232,7 @@ class PluginLoader:
             # Channel logic for community plugins
             current_item = item
             is_beta = False
+
             if source_type == 'community':
                 channel = config_manager.get_plugin_channel(provider_name)
                 if channel == 'beta' and (item / 'beta').exists():
