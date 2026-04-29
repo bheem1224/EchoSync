@@ -202,5 +202,3 @@ jobs:
           commit_message: "chore(plugins): sync versions, package artifacts, and update store [skip ci]"
           file_pattern: 'plugins/'
 
-      - name: Clean up Docker Build Cache
-        run: docker builder prune -a -f

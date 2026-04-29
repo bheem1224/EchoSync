@@ -97,3 +97,5 @@ jobs:
           body: ${{ steps.extract_tags.outputs.body }}   # 👈 Injects Line 3+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smart Clean Docker Build Cache
+        run: docker builder prune --keep-storage 5GB -f
