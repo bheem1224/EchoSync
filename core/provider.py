@@ -28,6 +28,21 @@ from core.tiered_logger import get_logger
 logger = get_logger("core.provider")
 
 
+class DisabledProvider(ProviderBase):
+    """
+    Placeholder class for disabled providers.
+    Used to keep metadata in the registry without loading the actual module.
+    """
+    def __init__(self, name: str, version: str = "Unknown", category: str = "provider"):
+        self.name = name
+        self.version = version
+        self.category = category
+        self.is_disabled = True
+
+    def is_configured(self) -> bool:
+        return False
+
+
 # ==============================================================================
 # 1. The Provider Protocol (Contract)
 # ==============================================================================
@@ -336,17 +351,21 @@ class ProviderRegistry:
         return instances
 
     @classmethod
-    def register(cls, provider_cls: Type[ProviderBase], source_type: str = 'core'):
+    def register(cls, provider_cls: Type[ProviderBase], name: Optional[str] = None, source_type: str = 'core'):
         """
         Register a provider class.
 
         Args:
             provider_cls: The class implementing ProviderBase.
+            name: Optional explicit name override.
             source_type: 'core' for bundled providers, 'community' for plugins.
         """
-        name = getattr(provider_cls, 'name', None)
         if not name:
-            raise ValueError("Provider class must have a 'name' attribute")
+            name = getattr(provider_cls, 'name', None)
+            
+        if not name:
+            raise ValueError("Provider class must have a 'name' attribute or explicit name provided")
+            
         cls._providers[name.lower()] = provider_cls
         cls._provider_sources[name.lower()] = source_type
         logger.debug(f"Registered provider '{name}' (source: {source_type})")

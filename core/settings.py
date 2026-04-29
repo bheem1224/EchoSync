@@ -931,8 +931,17 @@ class ConfigManager:
         """Set list of disabled providers/plugins"""
         if disabled_list is None:
             disabled_list = []
-        self.set('providers.disabled', disabled_list)
-        self.set('disabled_providers', disabled_list)
+        
+        # Normalize: remove 'plugin.' prefix and keep unique values
+        normalized = []
+        for d in disabled_list:
+            if not d: continue
+            short_name = d.replace('plugin.', '').lower()
+            if short_name not in normalized:
+                normalized.append(short_name)
+        
+        self.set('providers.disabled', normalized)
+        self.set('disabled_providers', normalized)
 
     def disable_provider(self, name: str) -> None:
         """Disable a provider/plugin by adding it to the disabled list"""
