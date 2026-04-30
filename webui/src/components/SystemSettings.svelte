@@ -42,8 +42,7 @@
           version: provider.version || '0.0.0',
           author: provider.author || 'Unknown',
           category: provider.category || 'provider',
-          source_type: provider.source_type || 'community',
-          channel: provider.channel || 'stable'
+          source_type: provider.source_type || 'community'
         }));
       }
     } catch (error) {
@@ -108,7 +107,7 @@
   async function handleToggleProvider(provider) {
     try {
       const targetEnabled = provider.disabled; // If currently disabled, target is enabled (true)
-      const response = await apiClient.post(`/system/plugins/${provider.id}/toggle`, {
+      const response = await apiClient.post(`/plugins/${provider.id}/toggle`, {
         enabled: targetEnabled
       });
       

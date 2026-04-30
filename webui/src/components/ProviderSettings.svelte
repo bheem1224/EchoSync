@@ -16,7 +16,7 @@
     loading = true;
     error = '';
     try {
-      const response = await apiClient.get(`/plugins/${providerId}/config`);
+      const response = await apiClient.get(`/plugins/${providerId}/settings`);
       settings = response.data.settings || {};
       schema = response.data.schema || [];
       
@@ -38,7 +38,7 @@
     error = '';
     success = '';
     try {
-      await apiClient.post(`/plugins/${providerId}/config`, settings);
+      await apiClient.post(`/plugins/${providerId}/settings`, settings);
       success = 'Settings saved successfully!';
       setTimeout(() => success = '', 3000);
     } catch (err) {

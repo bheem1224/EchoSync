@@ -6,7 +6,7 @@ Simplified implementation using EchosyncTrack and new core features.
 from core.plugin_SDK import PluginBase
 from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.echo_sync_track import EchosyncTrack
-from core.settings import config_manager
+
 from core.file_handling.path_mapper import PathMapper
 from core.health_check import register_health_check_job, HealthCheckResult
 from plexapi.server import PlexServer
@@ -55,6 +55,7 @@ class PlexClient(PluginBase):
     def __init__(self, account_id: Optional[int] = None):
         """Initialize Plex provider."""
         super().__init__()
+        pass
         self.server: Optional[PlexServer] = None
         self.music_library: Optional[MusicSection] = None
         self.path_mapper: Optional[PathMapper] = None
@@ -120,7 +121,7 @@ class PlexClient(PluginBase):
             return False
 
         from core.file_handling.storage import get_storage_service
-        from core.settings import config_manager
+
         storage = get_storage_service()
 
         # Check token existence (Secure SQLite DB)
@@ -128,12 +129,12 @@ class PlexClient(PluginBase):
         token = token_data.get('access_token') if token_data else None
 
         # Check base_url existence from config.json (Hybrid approach)
-        plex_config = config_manager.get('plex', {})
+        plex_config = {}
         base_url = plex_config.get('base_url') or plex_config.get('server_url')
 
         # Fallback to older config format just in case
         if not base_url:
-            base_url = config_manager.get('plex.base_url') or config_manager.get('plex.server_url')
+            base_url = getattr(self, 'kvs', None) and (self.kvs.get('base_url') or self.kvs.get('server_url'))
 
         return bool(base_url and token)
     
@@ -1134,15 +1135,15 @@ class PlexClient(PluginBase):
             return
         token = decrypt_string(token_data.get('access_token'))
 
-        from core.settings import config_manager
+
 
         # Fetch Settings from JSON (Hybrid Config approach)
-        plex_config = config_manager.get('plex', {})
+        plex_config = {}
 
         base_url = plex_config.get('base_url') or plex_config.get('server_url')
         if not base_url:
             # Fallback to explicit dot-notation just in case
-            base_url = config_manager.get('plex.base_url') or config_manager.get('plex.server_url')
+            base_url = getattr(self, 'kvs', None) and (self.kvs.get('base_url') or self.kvs.get('server_url'))
 
         if not base_url:
             logger.warning("Plex server URL not configured")
