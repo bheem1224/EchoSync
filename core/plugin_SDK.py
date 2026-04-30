@@ -103,6 +103,31 @@ class _PluginModelFacade:
         from database.working_database import PlaybackHistory
         return PlaybackHistory
 
+class _AccountsFacade:
+    def get_token(self, account_id: int) -> Optional[Dict[str, Any]]:
+        from core.file_handling.storage import get_storage_service
+        return get_storage_service().get_account_token(account_id)
+        
+    def save_token(self, account_id: int, access_token: str, refresh_token: str, expires_at: int) -> bool:
+        from core.file_handling.storage import get_storage_service
+        return get_storage_service().save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at)
+
+class _SDK:
+    def __init__(self):
+        self.config = _PluginConfig("global")
+        self.secrets = _PluginSecrets("global")
+        self.accounts = _AccountsFacade()
+        self.models = _PluginModelFacade()
+
+    def schedule(self, interval_minutes: int):
+        def decorator(func):
+            func._schedule_interval = interval_minutes
+            return func
+        return decorator
+
+sdk = _SDK()
+
+
 
 class PluginBase(ABC):
     """
@@ -695,3 +720,52 @@ class MediaServerProvider(PluginBase):
         Enables incremental syncs by detecting only new/modified content.
         """
         pass
+
+class WasmPluginWrapper(PluginBase):
+    """
+    Lightweight wrapper to load and execute WASM-compiled plugins (Rust/C/Zig)
+    via wasmtime-py. WASM operates within a secure sandbox by default.
+    """
+    def __init__(self, plugin_id: str, wasm_path: str):
+        self.name = plugin_id
+        self.category = 'plugin'
+        self.wasm_path = wasm_path
+        super().__init__()
+        
+        try:
+            import wasmtime
+            self.engine = wasmtime.Engine()
+            self.store = wasmtime.Store(self.engine)
+            self.module = wasmtime.Module.from_file(self.engine, self.wasm_path)
+            self.instance = wasmtime.Instance(self.store, self.module, [])
+        except ImportError:
+            pass
+
+    def search(self, query: str, type: str = "track", limit: int = 10, **kwargs) -> List[EchosyncTrack]:
+        # Minimal stub - in a real implementation we would call WASM exports
+        return []
+
+    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
+        return None
+
+    def authenticate(self, **kwargs) -> bool:
+        return True
+
+    def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        return []
+
+    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
+        return []
+
+    def is_configured(self) -> bool:
+        return True
+
+    def get_logo_url(self) -> str:
+        return ""
+

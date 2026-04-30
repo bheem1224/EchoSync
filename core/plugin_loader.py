@@ -82,7 +82,7 @@ class PluginSecurityScanner(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             base_module = alias.name.split('.')[0]
-            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
+            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins", "threading", "requests", "urllib", "socket", "http"):
                 if base_module == "subprocess" and self.privileged:
                     continue
                 self.violations.append((node.lineno, f"forbidden import '{alias.name}'"))
@@ -91,7 +91,7 @@ class PluginSecurityScanner(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.module:
             base_module = node.module.split('.')[0]
-            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
+            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins", "threading", "requests", "urllib", "socket", "http"):
                 if not (base_module == "subprocess" and self.privileged):
                     self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
         self.generic_visit(node)
@@ -253,6 +253,12 @@ class PluginLoader:
 
             module_path = item / "__init__.py"
             if not module_path.exists():
+                # WASM BYPASS: Check for compiled WebAssembly plugins
+                wasm_path = item / "plugin.wasm"
+                if wasm_path.exists():
+                    self._load_wasm_plugin(plugin_id, wasm_path)
+                    continue
+
                 logger.debug(f"Skipping {item.name}: No __init__.py found")
                 continue
 
@@ -319,6 +325,24 @@ class PluginLoader:
 
     def get_all_blueprints(self) -> List[Blueprint]:
         return self.loaded_blueprints
+
+    def _load_wasm_plugin(self, plugin_id: str, wasm_path: Path):
+        """Lightweight WASM Integration using wasmtime-py"""
+        try:
+            import wasmtime
+            from core.plugin_SDK import WasmPluginWrapper
+            
+            # Create a sandboxed wrapper for the WASM module
+            # Binaries are executed inside the Wasmtime VM
+            provider_instance = WasmPluginWrapper(plugin_id, str(wasm_path))
+            
+            # Register just like a Python PluginBase
+            PluginRegistry.register_provider(provider_instance)
+            logger.info(f"Loaded WASM Plugin: {plugin_id}")
+        except ImportError:
+            logger.error("wasmtime-py is not installed. Cannot load WASM plugins.")
+        except Exception as e:
+            logger.error(f"Failed to load WASM plugin {plugin_id}: {e}", exc_info=True)
 
     def get_provider(self, capability: Capability) -> Optional[PluginBase]:
         """
