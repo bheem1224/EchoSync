@@ -22,7 +22,7 @@ from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
-from core.provider import ServiceRegistry
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from database.working_database import get_working_database, ReviewTask
@@ -156,7 +156,7 @@ class MetadataEnhancerService:
         from core.matching_engine.fingerprinting import FingerprintGenerator
         from core.matching_engine.echo_sync_track import EchosyncTrack
         from core.matching_engine.matching_engine import WeightedMatchingEngine
-        from core.provider import ServiceRegistry
+        from core.plugin_loader import PluginRegistry, ServiceRegistry
         from pathlib import Path
 
         MAX_REATTEMPTS = 5
@@ -253,9 +253,9 @@ class MetadataEnhancerService:
 
             # ── Chunked Concurrency for Text Fallback (Step 5) ──
             import asyncio
-            from core.provider import ProviderRegistry
+            from core.plugin_loader import PluginRegistry, ServiceRegistry
 
-            mb_client = ProviderRegistry.get_provider("musicbrainz")
+            mb_client = PluginRegistry.get_provider("musicbrainz")
             CHUNK_SIZE = 50
 
             for chunk_start in range(0, len(track_data_list), CHUNK_SIZE):
@@ -765,14 +765,14 @@ class MetadataEnhancerService:
     def _filename_to_track(self, file_path: Path, duration_ms: Optional[int]) -> EchosyncTrack:
         """Convert filename to EchosyncTrack for matching using provider_base helper."""
         from core.track_parser import TrackParser
-        from core.provider_base import ProviderBase
+        from core.plugin_SDK import PluginBase
         
         # Use TrackParser to extract artist/title from filename
         parser = TrackParser()
         parsed = parser.parse_filename(file_path.stem)
         
-        # Use the standard factory method from ProviderBase
-        return ProviderBase.create_echo_sync_track(
+        # Use the standard factory method from PluginBase
+        return PluginBase.create_echo_sync_track(
             title=(parsed.title if parsed else None) or file_path.stem,
             artist=(parsed.artist_name if parsed else None) or 'Unknown Artist',
             album=(parsed.album_title if parsed else None) or '',
@@ -783,10 +783,10 @@ class MetadataEnhancerService:
     
     def _search_result_to_track(self, result: Dict[str, Any]) -> Optional[EchosyncTrack]:
         """Convert MusicBrainz search result to EchosyncTrack using provider_base helper."""
-        from core.provider_base import ProviderBase
+        from core.plugin_SDK import PluginBase
         
         try:
-            return ProviderBase.create_echo_sync_track(
+            return PluginBase.create_echo_sync_track(
                 title=result.get('title', ''),
                 artist=result.get('artist', ''),
                 album=result.get('album', ''),

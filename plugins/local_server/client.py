@@ -2,8 +2,8 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Generator
 
-from core.provider_base import ProviderBase
-from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import PluginBase
+from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
@@ -12,7 +12,7 @@ from core.tiered_logger import get_logger
 
 logger = get_logger("local_server_provider")
 
-class LocalServerProvider(ProviderBase):
+class LocalServerProvider(PluginBase):
     name = 'local_server'
     category = 'provider'
     supports_downloads = False

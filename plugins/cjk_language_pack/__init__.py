@@ -888,7 +888,7 @@ initialize_plugin()
 
 
 # ── Registry Override (WeightedMatchingEngine subclass) ───────────────────────
-from core.provider import ServiceRegistry
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 
 

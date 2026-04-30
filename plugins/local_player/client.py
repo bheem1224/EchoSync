@@ -1,10 +1,10 @@
 from typing import Any, Dict, List, Optional
-from core.provider_base import ProviderBase
-from core.provider import ProviderCapabilities
+from core.plugin_SDK import PluginBase
+from core.plugin_SDK import ProviderCapabilities
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
-class LocalPlayerProvider(ProviderBase):
+class LocalPlayerProvider(PluginBase):
     name = 'local_player'
     category = 'provider'
     supports_downloads = False

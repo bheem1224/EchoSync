@@ -7,7 +7,7 @@ import json
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
-from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from time_utils import utc_now
 
 
@@ -148,7 +148,7 @@ class NavidromeTrack:
             return self._client.get_album_by_id(self._album_id)
         return None
 
-from core.provider import MediaServerProvider
+from core.plugin_SDK import MediaServerProvider
 
 class NavidromeClient(MediaServerProvider):
     name = "navidrome"
@@ -239,7 +239,7 @@ class NavidromeClient(MediaServerProvider):
 
         self._register_health_check()
         
-        # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration
+        # Legacy plugin_system registration removed - now uses PluginRegistry for auto-registration
     
     def _register_health_check(self):
         """Register periodic health check for Navidrome server."""

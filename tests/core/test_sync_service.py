@@ -34,11 +34,11 @@ def patch_spotify_client(monkeypatch):
             return FakeSpotifyClient(account_id=account_id)
         return MagicMock()
 
-    # patch ProviderRegistry.create_instance used by sync_service
-    monkeypatch.setattr('core.provider.ProviderRegistry.create_instance', factory)
+    # patch PluginRegistry.create_instance used by sync_service
+    monkeypatch.setattr('core.plugin_loader.PluginRegistry.create_instance', factory)
 
     # disable provider registry registration which isn't needed for these fakes
-    monkeypatch.setattr('core.provider.ProviderRegistry.register', lambda *args, **kwargs: None)
+    monkeypatch.setattr('core.provider.PluginRegistry.register', lambda *args, **kwargs: None)
 
     # also patch storage service to return two accounts
     fake_storage = MagicMock()
@@ -70,7 +70,7 @@ def test_get_spotify_playlist_respects_account_id(monkeypatch):
 
 def test_get_all_spotify_playlists_filters_active(monkeypatch):
     # monkeypatch config manager to return account configs including active flag
-    monkeypatch.setattr('core.settings.config_manager.get_spotify_accounts', 
+    monkeypatch.setattr('core.settings.config_manager.get_spotify_accounts',
                         lambda: [
                             {'id': 1, 'name': 'First', 'is_active': True},
                             {'id': 2, 'name': 'Second', 'is_active': False},
@@ -80,14 +80,14 @@ def test_get_all_spotify_playlists_filters_active(monkeypatch):
     # run the async helper
     import asyncio
 
-    # We need to mock ProviderRegistry.create_instance so it doesn't fail trying to instantiate
+    # We need to mock PluginRegistry.create_instance so it doesn't fail trying to instantiate
     def mock_create_instance(name, account_id=None, **kwargs):
         class MockClient:
             def is_configured(self): return True
             def get_user_playlists(self):
                 return [{'id': f'pl{account_id}', 'name': f'Playlist {account_id}'}]
         return MockClient()
-    monkeypatch.setattr('core.provider.ProviderRegistry.create_instance', mock_create_instance)
+    monkeypatch.setattr('core.plugin_loader.PluginRegistry.create_instance', mock_create_instance)
 
     playlists = asyncio.run(service._get_all_spotify_playlists())
     # The name no longer contains the account name, so we check account_name instead

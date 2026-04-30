@@ -1,4 +1,7 @@
 from abc import ABC, abstractmethod
+from enum import Enum, auto
+from dataclasses import dataclass
+from typing import Protocol
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from core.enums import Capability
@@ -101,7 +104,7 @@ class _PluginModelFacade:
         return PlaybackHistory
 
 
-class ProviderBase(ABC):
+class PluginBase(ABC):
     """
     Abstract base class for all music providers (Spotify, Tidal, Plex, Jellyfin, etc.).
     
@@ -493,3 +496,202 @@ class ProviderBase(ABC):
         clean_id = text_utils.clean_guid_id(guid_id)
         return clean_id
 
+
+class SyncServiceProvider(PluginBase):
+    """
+    Interface for sync service providers (Spotify, Tidal).
+    """
+    @abstractmethod
+    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Any]:
+        pass
+
+    @abstractmethod
+    def get_playlist_tracks(self, playlist_id: str) -> List[Any]:
+        pass
+
+@dataclass(frozen=True)
+class SearchCapabilities:
+    tracks: bool = False
+    artists: bool = False
+    albums: bool = False
+    playlists: bool = False
+
+@dataclass(frozen=True)
+class ProviderCapabilities:
+    name: str
+    supports_playlists: 'PlaylistSupport'
+    search: SearchCapabilities
+    metadata: 'MetadataRichness'
+    supports_cover_art: bool = False
+    supports_lyrics: bool = False
+    supports_user_auth: bool = False
+    supports_library_scan: bool = False
+    supports_streaming: bool = False
+    supports_downloads: bool = False
+    supports_pre_filtering: bool = False
+    playlist_algorithms: list = None  # List of algorithm IDs (e.g., ['spotify_mood'])
+    supports_fingerprinting: bool = False  # Audio fingerprinting (AcoustID)
+    supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
+
+    def to_enum_list(self) -> List['Capability']:
+        """Adapter pattern to translate ProviderCapabilities dataclass back to legacy Enums."""
+        caps = []
+        if getattr(self, 'supports_fingerprinting', False):
+            caps.append(Capability.RESOLVE_FINGERPRINT)
+        if getattr(self, 'supports_metadata_fetch', False):
+            caps.append(Capability.FETCH_METADATA)
+        return caps
+
+class PlaylistSupport(Enum):
+    NONE = auto()
+    READ = auto()
+    READ_WRITE = auto()
+
+
+class MetadataRichness(Enum):
+    LOW = auto()
+    MEDIUM = auto()
+    HIGH = auto()
+
+class DisabledProvider(PluginBase):
+    """
+    Placeholder class for disabled providers.
+    Used to keep metadata in the registry without loading the actual module.
+    """
+    def __init__(self, name: str, version: str = "Unknown", category: str = "provider"):
+        self.name = name
+        self.version = version
+        self.category = category
+        self.is_disabled = True
+
+    def is_configured(self) -> bool:
+        return False
+
+class Provider(Protocol):
+    """
+    Strict Contract that all future providers (Python or Rust) must adhere to.
+    """
+
+    def search_tracks(self, query: str) -> List[EchosyncTrack]:
+        """
+        Search for tracks based on a query string.
+        """
+        ...
+
+    def get_track_by_id(self, item_id: str) -> Optional[EchosyncTrack]:
+        """
+        Retrieve a specific track by its ID.
+        """
+        ...
+
+    def get_artist_details(self, artist_id: str) -> Dict[str, Any]:
+        """
+        Retrieve details about an artist.
+        """
+        ...
+
+
+class DownloaderProvider(PluginBase):
+    """
+    Interface for downloader-style providers (Soulseek/slskd).
+    """
+    @abstractmethod
+    def search(self, query: str, limit: int = 10) -> List[Any]:
+        pass
+
+    @abstractmethod
+    def download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
+        pass
+
+    @abstractmethod
+    def get_download_status(self, download_id: str) -> Optional[Dict[str, Any]]:
+        pass
+
+class MediaServerProvider(PluginBase):
+    """
+    Base interface for media server providers (Plex, Jellyfin, Navidrome).
+    Provides shared library scan polling logic; subclasses implement server-specific API calls.
+    """
+    def __init__(self):
+        super().__init__()
+        self._scan_state = {
+            'scanning': False,
+            'progress': 0.0,
+            'eta_seconds': None,
+            'error': None
+        }
+
+    @abstractmethod
+    def get_library_stats(self) -> Dict[str, int]:
+        pass
+
+    @abstractmethod
+    def get_all_artists(self) -> List[Any]:
+        pass
+
+    @abstractmethod
+    def get_all_albums(self) -> List[Any]:
+        pass
+
+    @abstractmethod
+    def get_all_tracks(self) -> List[Any]:
+        pass
+
+    def trigger_library_scan(self, path: Optional[str] = None) -> bool:
+        """
+        Public method: Trigger a library refresh/scan on the media server.
+        Calls server-specific _trigger_scan_api() implementation.
+        """
+        from core.tiered_logger import get_logger
+        logger = get_logger("MediaServerProvider")
+        try:
+            success = self._trigger_scan_api(path)
+            if success:
+                self._scan_state['scanning'] = True
+                self._scan_state['error'] = None
+                logger.info(f"{self.name} library scan initiated")
+            return success
+        except Exception as e:
+            logger.error(f"Error triggering {self.name} scan: {e}", exc_info=True)
+            self._scan_state['error'] = str(e)
+            return False
+
+    @abstractmethod
+    def _trigger_scan_api(self, path: Optional[str] = None) -> bool:
+        """
+        Server-specific: Trigger scan on the media server API.
+        Returns: True if API call succeeded.
+        """
+        pass
+
+    def get_scan_status(self) -> Dict[str, Any]:
+        """
+        Public method: Get current scan status. Calls server-specific _get_scan_status_api().
+        """
+        from core.tiered_logger import get_logger
+        logger = get_logger("MediaServerProvider")
+        try:
+            api_status = self._get_scan_status_api()
+            # Merge API status into cached state
+            self._scan_state.update(api_status)
+            return self._scan_state.copy()
+        except Exception as e:
+            logger.error(f"Error getting {self.name} scan status: {e}", exc_info=True)
+            self._scan_state['error'] = str(e)
+            return self._scan_state.copy()
+
+    @abstractmethod
+    def _get_scan_status_api(self) -> Dict[str, Any]:
+        """
+        Server-specific: Poll scan status from the media server API.
+        Returns: partial dict with 'scanning', 'progress', 'eta_seconds', 'error' keys.
+        """
+        pass
+
+    @abstractmethod
+    def get_content_changes_since(self, last_update: Optional[Any] = None) -> Any:
+        """
+        Get content changes since the last update timestamp.
+        Enables incremental syncs by detecting only new/modified content.
+        """
+        pass

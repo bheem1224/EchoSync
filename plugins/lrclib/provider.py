@@ -1,18 +1,18 @@
 """
 LRClib Metadata Provider
-Inherits from ProviderBase with enable/disable support
+Inherits from PluginBase with enable/disable support
 """
 
 from typing import List, Dict, Optional, Any
 from core.tiered_logger import get_logger
-from core.provider_base import ProviderBase
+from core.plugin_SDK import PluginBase
 from core.settings import get_setting, set_setting
 from .client import LRCLibClient
 
 logger = get_logger("lrclib_provider")
 
 
-class LRCLibProvider(ProviderBase):
+class LRCLibProvider(PluginBase):
     """
     LRClib lyrics provider for creating .lrc sidecar files.
     Can be enabled/disabled via configuration.
@@ -48,7 +48,7 @@ class LRCLibProvider(ProviderBase):
             return True
 
     # ========================================================================
-    # ProviderBase Required Methods
+    # PluginBase Required Methods
     # ========================================================================
 
     def authenticate(self, **kwargs) -> bool:

@@ -4,10 +4,10 @@ Verification test for Provider Rate Limiting logic.
 import pytest
 from unittest.mock import MagicMock, patch
 import time
-from core.provider_base import ProviderBase
+from core.plugin_SDK import PluginBase
 from core.request_manager import RequestManager, RateLimitConfig
 
-class MockRateLimitedProvider(ProviderBase):
+class MockRateLimitedProvider(PluginBase):
     name = "test_fast"
     rate_limit = 10.0 # 10 req/s = 0.1s interval
 
@@ -22,7 +22,7 @@ class MockRateLimitedProvider(ProviderBase):
     def is_configured(self): return True
     def get_logo_url(self): return ""
 
-class MockSlowProvider(ProviderBase):
+class MockSlowProvider(PluginBase):
     name = "test_slow"
     rate_limit = 1.0 # 1 req/s = 1.0s interval
 

@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Any
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
-from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 import time
 
 logger = get_logger("listenbrainz_client")
@@ -37,7 +37,7 @@ class ListenBrainzClient:
             'User-Agent': 'Echosync/1.0'
         })
 
-        # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration
+        # Legacy plugin_system registration removed - now uses PluginRegistry for auto-registration
 
         if self.token:
             # Validate token and get username

@@ -64,7 +64,7 @@ def save_config():
         token = storage.get_service_config("musicbrainz", "user_token")
         auto_contribute = storage.get_service_config("musicbrainz", "auto_contribute")
         return jsonify({
-            "success": True, 
+            "success": True,
             "token_configured": bool(token),
             "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute)
         }), 200
@@ -86,8 +86,8 @@ _SCOPES = "profile email submit_isrc tag rating collection"
 def list_accounts():
     """List all MusicBrainz accounts with authentication status."""
     try:
-        from core.provider import ProviderRegistry
-        if ProviderRegistry.is_provider_disabled("musicbrainz"):
+        from core.plugin_loader import PluginRegistry, ServiceRegistry
+        if PluginRegistry.is_provider_disabled("musicbrainz"):
             return jsonify({"accounts": [], "redirect_uri": ""}), 200
 
         storage = get_storage_service()
@@ -235,7 +235,7 @@ def begin_auth():
         if not storage.get_service_config("musicbrainz", "client_secret"):
             return jsonify({"error": "MusicBrainz client_secret is not configured."}), 400
 
-        # Derive redirect URI from centralized ProviderBase helper (OAuth sidecar)
+        # Derive redirect URI from centralized PluginBase helper (OAuth sidecar)
         from plugins.musicbrainz.client import MusicBrainzClient
         redirect_uri = MusicBrainzClient().get_oauth_redirect_uri()
 

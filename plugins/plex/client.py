@@ -3,8 +3,8 @@ Plex Music Provider - Refactored
 Simplified implementation using EchosyncTrack and new core features.
 """
 
-from core.plugin_SDK import ProviderBase
-from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import PluginBase
+from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
 from core.file_handling.path_mapper import PathMapper
@@ -33,7 +33,7 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     return default
 
 
-class PlexClient(ProviderBase):
+class PlexClient(PluginBase):
     """Plex music provider - streams music from Plex media server."""
     
     name = "plex"
@@ -311,7 +311,7 @@ class PlexClient(ProviderBase):
         }
 
         try:
-            # Use self.http as mandated by ProviderBase
+            # Use self.http as mandated by PluginBase
             response = self.http.delete(url, headers=headers)
 
             if response.status_code == 200:

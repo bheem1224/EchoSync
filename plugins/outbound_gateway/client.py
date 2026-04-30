@@ -1,9 +1,9 @@
 from typing import Any, Dict, List, Optional
-from core.provider_base import ProviderBase
+from core.plugin_SDK import PluginBase
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
-class OutboundGatewayProvider(ProviderBase):
+class OutboundGatewayProvider(PluginBase):
     """
     Outbound Gateway Provider acts as the translator to convert internal
     EchosyncTrack models into standard, external-friendly JSON schemas for
@@ -74,7 +74,7 @@ class OutboundGatewayProvider(ProviderBase):
         return payload
 
     # ==========================================
-    # Stubs for ProviderBase abstract methods
+    # Stubs for PluginBase abstract methods
     # ==========================================
 
     def search(

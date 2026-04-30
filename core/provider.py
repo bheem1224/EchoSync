@@ -5,10 +5,10 @@ This module consolidates the internal machinery for the provider system, includi
 1. The `Provider` Protocol (Contract).
 2. Specialized Provider Types (ABCs like `MediaServerProvider`).
 3. Provider Capabilities (Metadata about what a provider can do).
-4. The `ProviderRegistry` (Central registry for loaded plugins).
+4. The `PluginRegistry` (Central registry for loaded plugins).
 
 Developer SDK:
-    For building new providers, inherit from `core.provider_base.ProviderBase`.
+    For building new providers, inherit from `core.provider_base.PluginBase`.
     Do not modify this file unless you are changing the internal plugin architecture.
 """
 
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from core.enums import Capability
-from core.plugin_SDK import ProviderBase
+from core.plugin_SDK import PluginBase
 from core.content_models import ContentChanges
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger
@@ -28,7 +28,7 @@ from core.tiered_logger import get_logger
 logger = get_logger("core.provider")
 
 
-class DisabledProvider(ProviderBase):
+class DisabledProvider(PluginBase):
     """
     Placeholder class for disabled providers.
     Used to keep metadata in the registry without loading the actual module.
@@ -75,7 +75,7 @@ class Provider(Protocol):
 # 2. Specialized Provider Types
 # ==============================================================================
 
-class DownloaderProvider(ProviderBase):
+class DownloaderProvider(PluginBase):
     """
     Interface for downloader-style providers (Soulseek/slskd).
     """
@@ -92,7 +92,7 @@ class DownloaderProvider(ProviderBase):
         pass
 
 
-class MediaServerProvider(ProviderBase):
+class MediaServerProvider(PluginBase):
     """
     Base interface for media server providers (Plex, Jellyfin, Navidrome).
     Provides shared library scan polling logic; subclasses implement server-specific API calls.
@@ -178,7 +178,7 @@ class MediaServerProvider(ProviderBase):
         pass
 
 
-class SyncServiceProvider(ProviderBase):
+class SyncServiceProvider(PluginBase):
     """
     Interface for sync service providers (Spotify, Tidal).
     """
@@ -251,7 +251,7 @@ def get_provider_capabilities(provider: str) -> ProviderCapabilities:
     Return capabilities for a provider by looking up the provider class dynamically.
     Gracefully handles providers that don't declare explicit capabilities.
     """
-    provider_cls = ProviderRegistry.get_provider_class(provider)
+    provider_cls = PluginRegistry.get_provider_class(provider)
     if not provider_cls:
         import logging
         logging.getLogger(__name__).warning(f"Provider '{provider}' not found in registry, defaulting to empty capabilities.")
@@ -274,17 +274,17 @@ def get_provider_capabilities(provider: str) -> ProviderCapabilities:
 # 4. The Provider Registry
 # ==============================================================================
 
-class ProviderRegistry:
+class PluginRegistry:
     """
     Central registry for all provider classes. Allows registration, lookup, and listing.
     Supports both bundled providers and community plugins with enable/disable functionality.
     """
-    _providers: Dict[str, Type[ProviderBase]] = {}
+    _providers: Dict[str, Type[PluginBase]] = {}
     _provider_sources: Dict[str, str] = {}  # metadata: provider_name -> source_type
     _disabled_providers: set = set()
 
     @classmethod
-    def get_providers_with_capability(cls, capability: Capability, exclude_disabled: bool = True) -> List[ProviderBase]:
+    def get_providers_with_capability(cls, capability: Capability, exclude_disabled: bool = True) -> List[PluginBase]:
         """
         Return a list of instantiated providers that support the given capability.
         """
@@ -337,7 +337,7 @@ class ProviderRegistry:
         return providers
 
     @classmethod
-    def create_instance_by_type(cls, provider_type: str, *args, **kwargs) -> List[ProviderBase]:
+    def create_instance_by_type(cls, provider_type: str, *args, **kwargs) -> List[PluginBase]:
         """
         Instantiate all providers of a given type (excluding disabled ones).
         """
@@ -351,12 +351,12 @@ class ProviderRegistry:
         return instances
 
     @classmethod
-    def register(cls, provider_cls: Type[ProviderBase], name: Optional[str] = None, source_type: str = 'core'):
+    def register(cls, provider_cls: Type[PluginBase], name: Optional[str] = None, source_type: str = 'core'):
         """
         Register a provider class.
 
         Args:
-            provider_cls: The class implementing ProviderBase.
+            provider_cls: The class implementing PluginBase.
             name: Optional explicit name override.
             source_type: 'core' for bundled providers, 'community' for plugins.
         """
@@ -371,7 +371,7 @@ class ProviderRegistry:
         logger.debug(f"Registered provider '{name}' (source: {source_type})")
 
     @classmethod
-    def get_provider_class(cls, name: str) -> Optional[Type[ProviderBase]]:
+    def get_provider_class(cls, name: str) -> Optional[Type[PluginBase]]:
         return cls._providers.get(name.lower())
 
     @classmethod
@@ -383,7 +383,7 @@ class ProviderRegistry:
         return cls._provider_sources.get(name.lower())
 
     @classmethod
-    def create_instance(cls, name: str, *args, **kwargs) -> ProviderBase:
+    def create_instance(cls, name: str, *args, **kwargs) -> PluginBase:
         # Double check against config manager to ensure latest state
         # (The set_disabled_providers might be stale if config reloaded)
         from core.settings import config_manager

@@ -1,6 +1,9 @@
 from flask import Blueprint, jsonify
 from core.tiered_logger import get_logger
-from core.provider import ProviderRegistry, get_provider_capabilities, PlaylistSupport
+from core.plugin_loader import get_provider_capabilities
+from core.plugin_SDK import PlaylistSupport
+
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 
 logger = get_logger("sync_route")
 bp = Blueprint("sync", __name__, url_prefix="/api/sync")
@@ -38,8 +41,8 @@ def build_sync_options():
     provider_targets = []
     library_targets = []
 
-    for provider_name in ProviderRegistry.list_providers():
-        if ProviderRegistry.is_provider_disabled(provider_name):
+    for provider_name in PluginRegistry.list_providers():
+        if PluginRegistry.is_provider_disabled(provider_name):
             continue
 
         try:
@@ -83,8 +86,8 @@ def build_sync_status():
 
         # Count active playlist providers
         active_sync_providers = 0
-        for name in ProviderRegistry.list_providers():
-            if not ProviderRegistry.is_provider_disabled(name):
+        for name in PluginRegistry.list_providers():
+            if not PluginRegistry.is_provider_disabled(name):
                 try:
                     caps = get_provider_capabilities(name)
                     if caps.supports_playlists in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):

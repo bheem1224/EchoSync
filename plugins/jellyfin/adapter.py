@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
 from core.file_handling.storage import get_storage_service
-from core.plugin_SDK import ProviderBase
+from core.plugin_SDK import PluginBase
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
 
@@ -128,8 +128,8 @@ def convert_jellyfin_track_to_echosync(jellyfin_track) -> Optional[EchosyncTrack
         else:
             year = _safe_getattr(jellyfin_track, 'year', None)
         
-        # Use ProviderBase factory method for normalization
-        return ProviderBase.create_echo_sync_track(
+        # Use PluginBase factory method for normalization
+        return PluginBase.create_echo_sync_track(
             title=title,
             artist=artist,
             album=album,

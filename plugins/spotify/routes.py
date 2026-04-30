@@ -43,9 +43,9 @@ def begin_auth():
     """Start OAuth flow for Spotify. Returns an auth URL to redirect the user to.
     Query params: account_id (required)
     """
-    from core.provider import ProviderRegistry
+    from core.plugin_loader import PluginRegistry, ServiceRegistry
     from plugins.spotify.client import SpotifyClient
-    if ProviderRegistry.is_provider_disabled('spotify'):
+    if PluginRegistry.is_provider_disabled('spotify'):
         return jsonify({'error': 'Spotify provider is disabled'}), 403
     try:
         account_id = request.args.get('account_id')
@@ -63,7 +63,7 @@ def begin_auth():
         client_secret = storage.get_service_config('spotify', 'client_secret')
 
         # We now use the sidecar's redirect URI systematically, ignoring what is in config
-        sp_client = ProviderRegistry.create_instance('spotify') or SpotifyClient(account_id=int(account_id))
+        sp_client = PluginRegistry.create_instance('spotify') or SpotifyClient(account_id=int(account_id))
         redirect_uri = sp_client.get_oauth_redirect_uri()
 
         # Seed into storage if we have app credentials
@@ -100,8 +100,8 @@ def oauth_callback():
     """Handle Spotify OAuth callback and exchange code for tokens.
     Expects query params: code, state
     """
-    from core.provider import ProviderRegistry
-    if ProviderRegistry.is_provider_disabled('spotify'):
+    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    if PluginRegistry.is_provider_disabled('spotify'):
         return jsonify({'error': 'Spotify provider is disabled'}), 403
     try:
         code = request.args.get('code')

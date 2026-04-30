@@ -22,7 +22,7 @@ def client():
 
 
 def test_provider_settings_route_uses_service_config(client, monkeypatch):
-    """GET /api/providers/<provider>/settings should surface database credentials.
+    """GET /api/plugins/<provider>/settings should surface database credentials.
 
     This test exercises the end-to-end path used by the web UI.  We patch
     ``ConfigDatabase`` such that the "database" value differs from the
@@ -38,7 +38,7 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
             return None
 
     with patch('database.config_database.get_config_database', return_value=FakeConfigDB()):
-        resp = client.get('/api/providers/spotify/settings')
+        resp = client.get('/api/plugins/spotify/settings')
         assert resp.status_code == 200
         data = resp.get_json()
         settings = data.get('settings', {})
@@ -86,7 +86,7 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
 
     monkeypatch.setattr('plugins.spotify.client.SpotifyClient', FakeSpotifyClient)
 
-    resp = client.get('/api/providers/spotify/playlists')
+    resp = client.get('/api/plugins/spotify/playlists')
     assert resp.status_code == 200
     data = resp.get_json()
     assert data['provider'] == 'spotify'
@@ -112,7 +112,7 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
 
     class FakeSpotifyClient:
         # Add capabilities to bypass strict capability check in analyze route
-        from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+        from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
         capabilities = ProviderCapabilities(
             name='spotify',
             supports_playlists=PlaylistSupport.READ_WRITE,

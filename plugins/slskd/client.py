@@ -6,7 +6,9 @@ import time
 from pathlib import Path
 from core.tiered_logger import get_logger
 from core.settings import config_manager
-from core.provider import DownloaderProvider, ProviderRegistry, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import DownloaderProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.request_manager import RequestManager, RateLimitConfig, HttpError
 
@@ -303,7 +305,7 @@ class SlskdProvider(DownloaderProvider):
                 logger.debug(f"Payload: {kwargs.get('json')}")
 
             # RequestManager.request is synchronous, so run in executor to avoid blocking
-            # This respects the ProviderBase rate limit configuration
+            # This respects the PluginBase rate limit configuration
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
@@ -922,4 +924,4 @@ class SlskdProvider(DownloaderProvider):
 
 
 # Register the provider
-ProviderRegistry.register(SlskdProvider)
+PluginRegistry.register(SlskdProvider)

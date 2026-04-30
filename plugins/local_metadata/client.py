@@ -1,11 +1,11 @@
 from typing import Any, Dict, List, Optional
-from core.provider_base import ProviderBase
-from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import PluginBase
+from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
 
-class LocalMetadataProvider(ProviderBase):
+class LocalMetadataProvider(PluginBase):
     name = 'local_metadata'
     category = 'provider'
     supports_downloads = False

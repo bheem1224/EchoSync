@@ -9,8 +9,11 @@ from typing import Dict, List, Optional, Any, Union, Iterator
 import time
 from dataclasses import dataclass
 from core.tiered_logger import get_logger
-from core.plugin_SDK import ProviderBase
-from core.provider import SyncServiceProvider, get_provider_capabilities, ProviderRegistry, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import PluginBase
+from core.plugin_loader import get_provider_capabilities
+from core.plugin_SDK import SyncServiceProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 from core.caching.provider_cache import provider_cache
@@ -158,7 +161,7 @@ class SpotifyClient(SyncServiceProvider):
     )
 
     def __init__(self, account_id: Optional[int] = None):
-        super().__init__()  # Initialize ProviderBase which sets up rate-limited HTTP client
+        super().__init__()  # Initialize PluginBase which sets up rate-limited HTTP client
         self.sp: Optional[spotipy.Spotify] = None
         self.user_id: Optional[str] = None
 
@@ -191,7 +194,7 @@ class SpotifyClient(SyncServiceProvider):
             self.cache_manager = None
 
         self._setup_client()
-        ProviderRegistry.register(SpotifyClient)
+        PluginRegistry.register(SpotifyClient)
         self._register_health_check()
     
     def _register_health_check(self):
@@ -570,7 +573,7 @@ class SpotifyClient(SyncServiceProvider):
             return None
 
     # ==========================================
-    # ProviderBase Implementations
+    # PluginBase Implementations
     # ==========================================
 
     def search(self, query: str, type: str = "track", limit: int = 10) -> List[EchosyncTrack]:
@@ -593,7 +596,7 @@ class SpotifyClient(SyncServiceProvider):
             return []
 
     def search_by_isrc(self, isrc: str) -> Optional[EchosyncTrack]:
-        """Implement ProviderBase.search_by_isrc via Spotify's ISRC filter query.
+        """Implement PluginBase.search_by_isrc via Spotify's ISRC filter query.
 
         Uses the ``isrc:<code>`` qualifier supported by the Spotify search endpoint.
         Returns a single ``EchosyncTrack`` on an exact match, ``None`` otherwise.
@@ -628,7 +631,7 @@ class SpotifyClient(SyncServiceProvider):
         return self._convert_track(raw) if raw else None
 
     # Alias for Provider protocol compatibility if needed,
-    # though ProviderBase uses get_track
+    # though PluginBase uses get_track
     def get_track_by_id(self, item_id: str) -> Optional[EchosyncTrack]:
         return self.get_track(item_id)
 
@@ -753,8 +756,8 @@ class SpotifyClient(SyncServiceProvider):
         # usually handles the orchestration. If the provider itself must do it:
 
         try:
-            from core.provider import ProviderRegistry
-            target = ProviderRegistry.create_instance(target_provider)
+            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            target = PluginRegistry.create_instance(target_provider)
             if not target:
                 logger.error(f"Target provider {target_provider} not found")
                 return False

@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from core.tiered_logger import get_logger
-from core.provider import ProviderRegistry
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 from services.download_manager import get_download_manager
 from services.match_service import MatchService, MatchContext
 from core.matching_engine import EchosyncTrack
@@ -78,7 +78,7 @@ class PlaylistSyncService:
             self.spotify_clients = [spotify_client]
             self.spotify_client = spotify_client
         else:
-            # Use ProviderRegistry to load all spotify clients
+            # Use PluginRegistry to load all spotify clients
             try:
                 from core.file_handling.storage import get_storage_service
                 storage = get_storage_service()
@@ -90,7 +90,7 @@ class PlaylistSyncService:
                             logger.debug(f"Skipping disabled spotify account {acc.get('id')}")
                             continue
                         # Instantiate via Registry
-                        client = ProviderRegistry.create_instance('spotify', account_id=acc.get('id'))
+                        client = PluginRegistry.create_instance('spotify', account_id=acc.get('id'))
                         if client.is_configured():
                             self.spotify_clients.append(client)
                     except Exception as e:
@@ -103,14 +103,14 @@ class PlaylistSyncService:
                 else:
                     # fallback to generic auto-detect client via Registry
                     try:
-                        self.spotify_client = ProviderRegistry.create_instance('spotify')
+                        self.spotify_client = PluginRegistry.create_instance('spotify')
                         self.spotify_clients = [self.spotify_client]
                     except Exception as e:
                         logger.error(f"Failed to create default spotify client: {e}")
             except Exception as e:
                 # if storage service not available, just create a generic client
                 try:
-                    self.spotify_client = ProviderRegistry.create_instance('spotify')
+                    self.spotify_client = PluginRegistry.create_instance('spotify')
                     self.spotify_clients = [self.spotify_client]
                 except Exception as create_err:
                     logger.error(f"Critical failure creating spotify client: {create_err}")
@@ -123,19 +123,19 @@ class PlaylistSyncService:
         # Lazy load clients if not injected
         if not self.plex_client:
             try:
-                self.plex_client = ProviderRegistry.create_instance('plex')
+                self.plex_client = PluginRegistry.create_instance('plex')
             except Exception as e:
                 logger.warning(f"Plex client unavailable at SyncService init: {e}")
 
         if not self.jellyfin_client:
             try:
-                self.jellyfin_client = ProviderRegistry.create_instance('jellyfin')
+                self.jellyfin_client = PluginRegistry.create_instance('jellyfin')
             except Exception as e:
                 logger.warning(f"Jellyfin client unavailable at SyncService init: {e}")
 
         if not self.navidrome_client:
             try:
-                self.navidrome_client = ProviderRegistry.create_instance('navidrome')
+                self.navidrome_client = PluginRegistry.create_instance('navidrome')
             except Exception as e:
                 logger.warning(f"Navidrome client unavailable at SyncService init: {e}")
 
@@ -192,7 +192,7 @@ class PlaylistSyncService:
         self._cancelled = True
         self.is_syncing = False
     
-    def _update_progress(self, playlist_name: str, step: str, track: str, progress: float, total_steps: int, current_step: int, 
+    def _update_progress(self, playlist_name: str, step: str, track: str, progress: float, total_steps: int, current_step: int,
                         total_tracks: int = 0, matched_tracks: int = 0, failed_tracks: int = 0):
         # Send progress update to the specific playlist's callback
         callback = self.progress_callbacks.get(playlist_name)
@@ -264,7 +264,7 @@ class PlaylistSyncService:
                 else:
                     current_track_name = track.title
 
-                self._update_progress(playlist.name, "Matching tracks", current_track_name, progress_percent, 5, 2, 
+                self._update_progress(playlist.name, "Matching tracks", current_track_name, progress_percent, 5, 2,
                                     total_tracks=total_tracks,
                                     matched_tracks=len([r for r in match_results if r.is_match]),
                                     failed_tracks=len([r for r in match_results if not r.is_match]))
@@ -289,16 +289,16 @@ class PlaylistSyncService:
                 return self._create_error_result(playlist.name, ["Sync cancelled"])
             
             # Update progress with match results
-            self._update_progress(playlist.name, "Matching completed", "", 60, 5, 3, 
-                                total_tracks=total_tracks, 
-                                matched_tracks=len(matched_tracks), 
+            self._update_progress(playlist.name, "Matching completed", "", 60, 5, 3,
+                                total_tracks=total_tracks,
+                                matched_tracks=len(matched_tracks),
                                 failed_tracks=len(unmatched_tracks))
             
             downloaded_tracks = 0
             if download_missing and unmatched_tracks:
                 if self._cancelled:
                     return self._create_error_result(playlist.name, ["Sync cancelled"])
-                self._update_progress(playlist.name, "Publishing download intents", "", 70, 5, 4, 
+                self._update_progress(playlist.name, "Publishing download intents", "", 70, 5, 4,
                                     total_tracks=total_tracks,
                                     matched_tracks=len(matched_tracks),
                                     failed_tracks=len(unmatched_tracks))
@@ -466,7 +466,7 @@ class PlaylistSyncService:
                         )
                         return None, 0.0
 
-                    # Validate the ID is live on the server via the uniform ProviderBase
+                    # Validate the ID is live on the server via the uniform PluginBase
                     # interface.  Each provider handles any internal casting (e.g. int() for
                     # Plex ratingKeys) inside its own get_track() implementation.
                     validated = media_client.get_track(provider_item_id)
@@ -703,7 +703,7 @@ class PlaylistSyncService:
 
                     # Instantiate client for this account
                     # We create a temporary client just for this fetch
-                    client = ProviderRegistry.create_instance('spotify', account_id=account_id)
+                    client = PluginRegistry.create_instance('spotify', account_id=account_id)
 
                     if not client.is_configured():
                         continue
@@ -753,7 +753,7 @@ class PlaylistSyncService:
         Returns a summary dict with counts for monitoring.
         """
         from core.settings import config_manager
-        from core.provider import ProviderRegistry
+        from core.plugin_loader import PluginRegistry, ServiceRegistry
 
         summary = {
             "total": 0,
@@ -782,7 +782,7 @@ class PlaylistSyncService:
             account_name = account.get('name', f"Account {account_id}")
 
             try:
-                client = ProviderRegistry.create_instance('spotify', account_id=account_id)
+                client = PluginRegistry.create_instance('spotify', account_id=account_id)
                 if not client.is_configured():
                     continue
 
@@ -885,7 +885,7 @@ class PlaylistSyncService:
                         if 'is_active' in account and not account['is_active']:
                              continue
 
-                        client = ProviderRegistry.create_instance('spotify', account_id=account.get('id'))
+                        client = PluginRegistry.create_instance('spotify', account_id=account.get('id'))
                         if client.is_configured():
                              # Consume generator
                              for p in client.get_user_playlists() or []:
@@ -1004,8 +1004,8 @@ class PlaylistSyncService:
         client = getattr(self, "provider", None) or getattr(self, "provider_client", None) or getattr(self, "active_provider", None) or getattr(self, "source_provider", None)
 
         if not client:
-            from core.provider import ProviderRegistry
-            client = ProviderRegistry.create_instance(provider_name, account_id=account_id)
+            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            client = PluginRegistry.create_instance(provider_name, account_id=account_id)
 
         if not client:
             logger.error(f"Cannot fetch missing tracks: Provider {provider_name} not configured.")

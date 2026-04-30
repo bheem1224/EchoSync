@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from core.tiered_logger import get_logger
-from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
 from core.file_handling.base_io import safe_write_text
 from typing import Any

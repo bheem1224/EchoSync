@@ -5,7 +5,7 @@ import json
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
-from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from time_utils import ensure_utc, utc_now
 
 
@@ -145,7 +145,7 @@ class JellyfinTrack:
             return self._client.get_album_by_id(self._album_id)
         return None
 
-from core.provider import MediaServerProvider
+from core.plugin_SDK import MediaServerProvider
 
 class JellyfinClient(MediaServerProvider):
     name = "jellyfin"
@@ -337,7 +337,7 @@ class JellyfinClient(MediaServerProvider):
             retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
             rate=RateLimitConfig(requests_per_second=10.0)
         )
-        # Legacy plugin_system registration removed - now uses ProviderRegistry for auto-registration
+        # Legacy plugin_system registration removed - now uses PluginRegistry for auto-registration
     
     def set_progress_callback(self, callback):
         """Set callback function for cache progress updates: callback(message)"""
@@ -963,7 +963,7 @@ class JellyfinClient(MediaServerProvider):
         try:
             params = {
                 'ParentId': self.music_library_id,
-                'IncludeItemTypes': 'MusicAlbum', 
+                'IncludeItemTypes': 'MusicAlbum',
                 'Recursive': True,
                 'SortBy': 'DateLastMediaAdded',
                 'SortOrder': 'Descending',
@@ -996,7 +996,7 @@ class JellyfinClient(MediaServerProvider):
                 'IncludeItemTypes': 'Audio',
                 'Recursive': True,
                 'SortBy': 'DateCreated',
-                'SortOrder': 'Descending', 
+                'SortOrder': 'Descending',
                 'Fields': 'AlbumId,ArtistItems',
                 'Limit': max_results
             }

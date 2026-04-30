@@ -317,7 +317,7 @@ class AutoImportService:
             # ── Phase 3: per-file decision logic (Chunked Concurrency) ─────────
             import asyncio
             from core.matching_engine.track_parser import parse_file
-            from core.provider import ProviderRegistry
+            from core.plugin_loader import PluginRegistry, ServiceRegistry
             from core.matching_engine.matching_engine import WeightedMatchingEngine
             from core.matching_engine.scoring_profile import PROFILE_AUTO_IMPORT_STRICT
 
@@ -340,7 +340,7 @@ class AutoImportService:
                         local_tracks[file_path] = track
 
                 # Step C: Dispatch Async MusicBrainz Searches
-                mb_client = ProviderRegistry.get_provider("musicbrainz")
+                mb_client = PluginRegistry.get_provider("musicbrainz")
 
                 async def fetch_fallbacks(tracks_dict):
                     if not mb_client:

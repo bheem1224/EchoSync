@@ -7,7 +7,7 @@ import json
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from core.tiered_logger import get_logger
-from core.provider_base import ProviderBase
+from core.plugin_SDK import PluginBase
 from core.job_queue import register_job
 from core.file_handling.storage import get_storage_service
 from core.request_manager import RequestManager, RateLimitConfig, RetryConfig
@@ -16,12 +16,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 logger = get_logger("listenbrainz_metadata_provider")
 
 
-class ListenBrainzMetadataProvider(ProviderBase):
+class ListenBrainzMetadataProvider(PluginBase):
     """
     ListenBrainz metadata provider for caching playlists and enriching track metadata.
     Registered as a metadata provider in the plugin system.
     
-    Properly inherits from ProviderBase and uses job_queue for periodic syncs.
+    Properly inherits from PluginBase and uses job_queue for periodic syncs.
     All database access goes through get_database() wrapper.
     """
     
@@ -67,7 +67,7 @@ class ListenBrainzMetadataProvider(ProviderBase):
         logger.info("✅ ListenBrainz metadata provider initialized")
     
     # ========================================================================
-    # ProviderBase Required Methods
+    # PluginBase Required Methods
     # ========================================================================
     
     def authenticate(self, **kwargs) -> bool:

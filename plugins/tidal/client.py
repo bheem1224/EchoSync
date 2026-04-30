@@ -9,7 +9,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Optional, Any
 from core.tiered_logger import get_logger
 from core.settings import config_manager
-from core.provider import SyncServiceProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import SyncServiceProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 
 logger = get_logger("tidal_client")

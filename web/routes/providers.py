@@ -95,18 +95,18 @@ def list_download_clients():
     annotated with 'active' status.
     """
     try:
-        from core.provider import ProviderRegistry
+        from core.plugin_loader import PluginRegistry, ServiceRegistry
         from core.settings import config_manager
         
         active_client = config_manager.get_active_download_client()
         download_clients = []
         
         # Get all registered providers
-        clients = ProviderRegistry.get_download_clients()
+        clients = PluginRegistry.get_download_clients()
         
         for provider_name in clients:
             try:
-                provider_class = ProviderRegistry.get_provider_class(provider_name)
+                provider_class = PluginRegistry.get_provider_class(provider_name)
                 if provider_class:
                     download_clients.append({
                         'name': provider_name,
@@ -142,7 +142,7 @@ def set_active_download_client():
     """Set the active download client."""
     try:
         from core.settings import config_manager
-        from core.provider import ProviderRegistry
+        from core.plugin_loader import PluginRegistry, ServiceRegistry
 
         data = request.get_json(silent=True) or {}
         client_name = data.get('client')
@@ -151,7 +151,7 @@ def set_active_download_client():
             return jsonify({'error': 'Client name is required'}), 400
 
         # Validate client exists and is a download provider
-        provider_class = ProviderRegistry.get_provider_class(client_name)
+        provider_class = PluginRegistry.get_provider_class(client_name)
         if not provider_class:
             return jsonify({'error': f'Provider {client_name} not found'}), 404
 
@@ -178,7 +178,7 @@ def toggle_provider(provider_name):
     """
     try:
         from core.settings import config_manager
-        from core.provider import ProviderRegistry
+        from core.plugin_loader import PluginRegistry, ServiceRegistry
         
         data = request.get_json(silent=True) or {}
         # If enabled is provided in payload, use it, otherwise flip current state
@@ -196,19 +196,19 @@ def toggle_provider(provider_name):
         if new_enabled:
             # Enable: remove from disabled list
             new_disabled = [d for d in current_disabled if d.lower() != provider_name.lower()]
-            ProviderRegistry.enable_provider(provider_name)
+            PluginRegistry.enable_provider(provider_name)
         else:
             # Disable: add to disabled list
             if not is_currently_disabled:
                 new_disabled = current_disabled + [provider_name]
             else:
                 new_disabled = current_disabled
-            ProviderRegistry.disable_provider(provider_name)
+            PluginRegistry.disable_provider(provider_name)
             
         config_manager.set_disabled_providers(new_disabled)
         
         return jsonify({
-            'success': True, 
+            'success': True,
             'enabled': new_enabled,
             'provider': provider_name,
             'restart_required': True
@@ -223,19 +223,19 @@ def get_provider_playlists(provider_name):
     """Fetch playlists from a specific provider."""
     try:
         # Get provider via registry
-        from core.provider import ProviderRegistry
+        from core.plugin_loader import PluginRegistry, ServiceRegistry
         
-        provider_cls = ProviderRegistry.get_provider_class(provider_name)
+        provider_cls = PluginRegistry.get_provider_class(provider_name)
         if not provider_cls:
             return jsonify({'error': f'Provider {provider_name} not found or not installed'}), 404
         
         # Check disabled state before instantiating
-        if ProviderRegistry.is_provider_disabled(provider_name):
+        if PluginRegistry.is_provider_disabled(provider_name):
             return jsonify({'error': f'Provider {provider_name} is disabled'}), 403
         
         # Instantiate provider
         try:
-            plugin = ProviderRegistry.create_instance(provider_name)
+            plugin = PluginRegistry.create_instance(provider_name)
         except Exception as e:
             logger.error(f"Error instantiating provider {provider_name}: {e}")
             return jsonify({'error': f'Provider {provider_name} could not be initialized'}), 500
@@ -496,7 +496,7 @@ def _enrich_provider_capabilities(provider_dict, provider_name=None):
     Returns the provider dict with added capability fields.
     """
     try:
-        from core.provider import get_provider_capabilities as fetch_capabilities
+        from core.plugin_SDK import get_provider_capabilities as fetch_capabilities
         name = provider_name or provider_dict.get('name') or provider_dict.get('id')
         
         caps = fetch_capabilities(name)

@@ -56,7 +56,7 @@ class RequestManager:
     service config (e.g. service_config keys under `<provider>.rate_limit.*`).
     
     Usage by providers:
-        In ProviderBase subclass:
+        In PluginBase subclass:
         response = self.http.get(url)
         response = self.http.post(url, json=data)
     """

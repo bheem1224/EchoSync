@@ -128,6 +128,7 @@ class ConfigDatabase:
                         code_verifier TEXT NOT NULL,
                         code_challenge TEXT NOT NULL,
                         redirect_uri TEXT NOT NULL,
+
                         client_id TEXT NOT NULL,
                         created_at INTEGER NOT NULL,
                         expires_at INTEGER NOT NULL,
@@ -819,3 +820,15 @@ def get_config_database() -> ConfigDatabase:
     if _config_db is None:
         _config_db = ConfigDatabase()
     return _config_db
+
+from sqlalchemy import Column, String, Boolean
+from sqlalchemy.orm import declarative_base
+
+ConfigBase = declarative_base()
+
+class ConfigKVS(ConfigBase):
+    __tablename__ = "config_kvs"
+    namespace = Column(String, primary_key=True)
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=True)
+    is_sensitive = Column(Boolean, default=False, nullable=False)

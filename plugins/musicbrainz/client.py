@@ -2,14 +2,11 @@ from typing import List, Optional, Dict, Any
 import re
 
 from core.caching.provider_cache import provider_cache
-from core.provider_base import ProviderBase
-from core.provider import (
+from core.plugin_SDK import PluginBase
+from core.plugin_SDK import (
     ProviderCapabilities,
     PlaylistSupport,
     SearchCapabilities,
-    MetadataRichness,
-    ProviderRegistry,
-)
 from core.request_manager import RateLimitConfig
 import asyncio
 import hashlib
@@ -32,7 +29,7 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
 logger = get_logger("provider.musicbrainz")
 
 
-class MusicBrainzClient(ProviderBase):
+class MusicBrainzClient(PluginBase):
     """Dedicated metadata provider used by discovery and enrichment flows."""
 
     name = "musicbrainz"
@@ -532,7 +529,7 @@ class MusicBrainzClient(ProviderBase):
                     future.set_result([])
 
     def search_by_isrc(self, isrc: str) -> Optional[EchosyncTrack]:
-        """Implement ProviderBase.search_by_isrc via the MusicBrainz ISRC endpoint."""
+        """Implement PluginBase.search_by_isrc via the MusicBrainz ISRC endpoint."""
         isrc = str(isrc or "").strip().upper()
         if not isrc:
             return None
@@ -736,7 +733,7 @@ class MusicBrainzClient(ProviderBase):
         # and does not consume bandwidth on redirected image HEAD requests.
         return None
 
-    # ProviderBase abstract methods
+    # PluginBase abstract methods
     def authenticate(self, **kwargs) -> bool:
         return True
 
@@ -887,4 +884,4 @@ class MusicBrainzClient(ProviderBase):
 MusicBrainzProvider = MusicBrainzClient
 
 # Ensure plugin loader/runtime registry can resolve this provider class.
-ProviderRegistry.register(MusicBrainzClient)
+PluginRegistry.register(MusicBrainzClient)

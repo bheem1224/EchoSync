@@ -3,7 +3,10 @@
 import asyncio
 from typing import List, Dict, Optional
 
-from core.provider import ProviderRegistry, get_provider_capabilities, MediaServerProvider
+from core.plugin_loader import get_provider_capabilities
+from core.plugin_SDK import MediaServerProvider
+
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 
@@ -29,9 +32,9 @@ class SearchAdapter:
 
         # Discover search-capable providers from the central registry.
         search_providers = []
-        for provider_name in ProviderRegistry.list_providers():
+        for provider_name in PluginRegistry.list_providers():
             try:
-                provider = ProviderRegistry.create_instance(provider_name)
+                provider = PluginRegistry.create_instance(provider_name)
                 caps = get_provider_capabilities(provider.name)
             except Exception:
                 continue
@@ -83,12 +86,12 @@ class SearchAdapter:
         """Async federated discovery utilizing all search providers."""
         
         search_providers = []
-        for provider_name in ProviderRegistry.list_providers():
+        for provider_name in PluginRegistry.list_providers():
             if enabled_providers is not None and provider_name not in enabled_providers:
                 continue
                 
             try:
-                provider = ProviderRegistry.create_instance(provider_name)
+                provider = PluginRegistry.create_instance(provider_name)
                 caps = get_provider_capabilities(provider.name)
                 if getattr(caps.search, 'tracks', False):
                     search_providers.append(provider)
@@ -144,7 +147,7 @@ class SearchAdapter:
                     cover_art = i_dict.get("cover_art_url") or i_dict.get("cover") or ""
                     
                     try:
-                        prov_instance = ProviderRegistry.create_instance(provider_name)
+                        prov_instance = PluginRegistry.create_instance(provider_name)
                         is_local = isinstance(prov_instance, MediaServerProvider) or provider_name in ['local_metadata', 'local_server']
                     except Exception:
                         is_local = False

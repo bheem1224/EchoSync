@@ -79,8 +79,8 @@ class UserHistoryService:
             
             # Get Plex provider to call fetch_user_history()
             try:
-                from core.provider import ProviderRegistry
-                plex_provider = ProviderRegistry.create_instance('plex')
+                from core.plugin_loader import PluginRegistry, ServiceRegistry
+                plex_provider = PluginRegistry.create_instance('plex')
             except Exception as e:
                 error_msg = f"Failed to create Plex provider instance: {e}"
                 self.logger.error(error_msg)
@@ -126,7 +126,7 @@ class UserHistoryService:
                     
                     # Get or create user in working_db
                     working_user = self._get_or_create_working_user(
-                        account_id, 
+                        account_id,
                         account_name,
                         account.get('user_id'),
                         account.get('account_email')

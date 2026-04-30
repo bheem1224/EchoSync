@@ -203,7 +203,7 @@ class TestAllowedInternalEchosyncImports:
         assert _scan("from core.hook_manager import hook_manager") == []
 
     def test_allows_from_core_provider_base(self):
-        assert _scan("from core.provider_base import ProviderBase") == []
+        assert _scan("from core.plugin_SDK import PluginBase") == []
 
     def test_allows_from_core_enums(self):
         assert _scan("from core.enums import Capability") == []

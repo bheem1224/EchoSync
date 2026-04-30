@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any
 from core.caching.provider_cache import provider_cache
-from core.provider_base import ProviderBase
-from core.provider import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.plugin_SDK import PluginBase
+from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.settings import config_manager
 from core.file_handling.storage import get_storage_service
@@ -10,7 +10,7 @@ from core.tiered_logger import get_logger
 
 logger = get_logger("provider.acoustid")
 
-class AcoustIDProvider(ProviderBase):
+class AcoustIDProvider(PluginBase):
     name = "acoustid"
     service_type = "metadata"
     capabilities = ProviderCapabilities(
