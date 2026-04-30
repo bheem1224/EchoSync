@@ -147,10 +147,7 @@ Plugins have no standardized way to save user settings or generic state. `config
 
 - Expose an `@sdk.schedule(interval="X")` decorator in the new SDK.
 - The SDK must parse the decorator at load time and push a `ScheduledJob` into `JobQueue` tagging it with the `plugin_id`.
-
-**API Contract Changes:**
-
-- None.
+- **Managed Threads:** For plugins requiring long-running background loops not suitable for simple cron-like scheduling, the SDK must expose a `sdk.threads.spawn(name, target, *args)` wrapper. This wrapper must register the thread ID with the `PluginLoader` so it can be gracefully terminated or joined during a plugin reload/disable event.
 
 ## 9. Scoped Logging
 
@@ -236,12 +233,10 @@ Plugins use `ProviderStorageBox` for `working.db`. However, `_PluginModelFacade`
 **The Gap:**
 
 - The SDK must provide Read-Only proxy objects or specific accessor methods (e.g., `sdk.library.get_track()`) for `music_library.db`.
-- Write operations must go through the EventBus or specific core API requests, never direct DB manipulation.
-- Plugins can only write to their specific table or the KVS in `working.db`.
-
-**API Contract Changes:**
-
-- None.
+- Write operations to the main library must go through the EventBus or specific core API requests, never direct DB manipulation.
+- **Relational Plugin Storage:** Plugins are granted the ability to create and manage their own relational tables within the central `working.db` file. The SDK must enforce a strict naming convention (e.g., `{plugin_id}__tablename`) and use a database jail to prevent plugins from accessing or modifying tables belonging to other plugins or the core system.
+- **KVS Access:** In addition to relational tables, the standard KVS table remains available for simple settings, keyed by namespace.
+- **Privileged Mode:** Direct database connections or breakout from these jails is strictly forbidden unless the plugin is running in **Privileged Mode**, which requires explicit, high-level user consent via the UI.
 
 ## 14. Secrets Scoping & The Hybrid Config Vault
 
@@ -263,7 +258,31 @@ Plugins use `ProviderStorageBox` for `working.db`. However, `_PluginModelFacade`
 
 - Token lookup logic is unified internally, simplifying the backend, though the frontend OAuth routes remain largely unchanged.
 
-## 15. Deprecation
+## 15. Deprecation & The Great "Provider" Migration
+
+**Current State:**
+The concept of "Providers" is deeply embedded. `core/provider.py` acts as a monolithic hub containing the `ProviderRegistry`, Enums (`ProviderCapabilities`), and specialized interfaces (`MediaServerProvider`, `DownloaderProvider`, etc.). It is imported by over 40 core files.
+
+**Legacy Debt / Dead Code:**
+- `ProviderRegistry` is completely obsolete (state is now handled by `config.db` and `plugin_loader`).
+- The term "Provider" is deprecated in favor of "Plugin".
+- Hardcoded references in `core/settings.py` (e.g., `"active_media_server"`, `"spotify": {...}`) must be removed.
+- All built-in plugins in the source code repository (`providers/` directory) are dead weight.
+
+**The Gap:**
+- **Phase A (Separation of Concerns):** 
+    - Move `ProviderRegistry` and all runtime plugin management logic into `core/plugin_loader.py`. It will be renamed to `PluginRegistry`. This ensures the registry is a "loader function" and prevents circular dependencies.
+    - Extract Enums, Capabilities, and base Interfaces (e.g., `MediaServerPlugin`, `DownloaderPlugin`) into `core/plugin_sdk.py`.
+- **Phase B (SDK Isolation):** The SDK becomes a standalone package with ZERO imports from the core engine. All plugins import from the SDK; the Loader imports both the SDK and the Core.
+- **Phase C (Import Refactoring):** Surgically update all ~40 downstream files to pull interfaces from the SDK and registration/lookup from the Loader's `PluginRegistry`.
+- **Phase D (Execution):** **DELETE ENTIRELY:** `core/provider_base.py` and `core/provider.py`.
+
+**API Contract Changes:**
+- Endpoint nomenclature must change from `/providers` to `/plugins`.
+- App configuration payloads will no longer contain hardcoded `spotify_accounts` or `plex` configuration keys; these become dynamic plugin configuration payloads.
+- **Note:** `active_media_server` remains in `config.json` as it is a global user preference, not a plugin-internal setting.
+
+## 15.5 Deprecation
 
 **Current State:**
 The concept of "Providers" is deeply embedded. `core/provider_base.py`, `ProviderRegistry`, and monolithic integrations (Spotify, Plex, Tidal, Jellyfin) are hardcoded into settings and routes.
@@ -306,3 +325,17 @@ EchoSync relies on an in-memory `PluginLoader` list and an insecure array in `co
 **API Contract Changes:**
 
 - Add `POST /api/system/plugins/{plugin_id}/toggle` to accept `{"enabled": true/false}` and update the `services` table directly.
+- **Database Migration:** A specific migration script must be authored to transform existing `config.db` structures and `config.json` data into the new `services` table schema.
+
+## 17. Frontend & UI Migration (Frontend Scope)
+
+**Current State:**
+The frontend relies on `/api/providers` and hardcoded UI components for "Official" services.
+
+**The Gap:**
+
+- **Static Asset Serving:** Implement a backend route `/api/plugins/{plugin_id}/static/<path:filename>` that maps to the `static/` directory of the plugin. The frontend must use this to fetch icons, custom CSS, or logo assets.
+- **Nomenclature Update:** All "Music Services" or "Providers" UI labels must be renamed to "Plugins".
+- **Dynamic Config UI:** The Settings page must move from hardcoded forms (Spotify Client ID, etc.) to a dynamic form generator that renders input fields based on the schema returned by `GET /api/plugins/{plugin_id}/config`.
+- **Endpoint Sync:** Update all API calls from `/api/providers/...` to `/api/plugins/...`.
+- **Source Attribution:** Update the UI to handle the new `{source}.{author}.{plugin_name}` ID format, potentially showing pills for "Verified" or "Official" sources based on the new `plugin_store` verification logic.

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from core.enums import Capability
-from core.provider_base import ProviderBase
+from core.plugin_SDK import ProviderBase
 from core.content_models import ContentChanges
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger

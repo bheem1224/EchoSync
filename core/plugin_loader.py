@@ -15,7 +15,7 @@ from flask import Blueprint
 
 from core.enums import Capability
 from core.provider import ProviderRegistry
-from core.provider_base import ProviderBase
+from core.plugin_SDK import ProviderBase
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 

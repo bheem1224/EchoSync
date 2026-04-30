@@ -29,7 +29,7 @@ from core.matching_engine.text_utils import normalize_artist, normalize_title
 from core.settings import config_manager
 from time_utils import utc_now
 from core.provider import ProviderRegistry
-from core.provider_base import ProviderBase
+from core.plugin_SDK import ProviderBase
 from database.music_database import get_database, Track, Artist, Album
 from database.working_database import get_working_database, Download
 

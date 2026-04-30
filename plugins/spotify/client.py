@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any, Union, Iterator
 import time
 from dataclasses import dataclass
 from core.tiered_logger import get_logger
-from core.provider_base import ProviderBase
+from core.plugin_SDK import ProviderBase
 from core.provider import SyncServiceProvider, get_provider_capabilities, ProviderRegistry, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
