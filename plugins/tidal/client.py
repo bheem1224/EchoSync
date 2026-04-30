@@ -8,7 +8,7 @@ import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Optional, Any
 from core.tiered_logger import get_logger
-from core.settings import config_manager
+
 from core.plugin_SDK import SyncServiceProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 
@@ -59,9 +59,9 @@ class TidalClient(SyncServiceProvider):
         return "/static/img/tidal_logo.png"
 
     def __init__(self, account_id: Optional[str] = None):
-        # Auto-detect active account if not provided
+        super().__init__()
         if account_id is None:
-            account_id = config_manager.get('active_tidal_account_id')
+            account_id = self.kvs.get('active_tidal_account_id')
 
         self.account_id = account_id
         self.client_id = None
@@ -74,9 +74,7 @@ class TidalClient(SyncServiceProvider):
         self.token_url = "https://auth.tidal.com/v1/oauth2/token"
         self.redirect_uri = "http://127.0.0.1:8008/tidal/callback"
         # Initialize centralized RequestManager for Tidal (2 requests/second rate limit)
-        self._http = RequestManager(
-            provider='tidal',
-            retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
+        pass # Let PluginBase handle HTTP,
             rate=RateLimitConfig(requests_per_second=2.0)
         )
 
@@ -101,7 +99,7 @@ class TidalClient(SyncServiceProvider):
             'client_id': self.client_id
         }
         try:
-            response = self._http.post(self.token_url, data=data)
+            response = self.http.post(self.token_url, data=data)
             if response.status_code == 200:
                 token_data = response.json()
                 self.access_token = token_data.get('access_token')
@@ -161,7 +159,7 @@ class TidalClient(SyncServiceProvider):
             try:
                 print(f"🔵 [TIDAL] Fetching user info from {user_url}")
                 logger.info(f"[TIDAL] Fetching user info from {user_url}")
-                user_response = self._http.get(user_url, headers=headers)
+                user_response = self.http.get(user_url, headers=headers)
                 print(f"🔵 [TIDAL] User info response status: {user_response.status_code}")
                 user_response.raise_for_status()
                 user_data = user_response.json().get("data", {})
@@ -187,7 +185,7 @@ class TidalClient(SyncServiceProvider):
         logger.info(f"[TIDAL] Fetching playlists from URL: {url}")
 
         try:
-            response = self._http.get(url, headers=headers)
+            response = self.http.get(url, headers=headers)
             print(f"🔵 [TIDAL] Playlists response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
@@ -409,7 +407,7 @@ class TidalClient(SyncServiceProvider):
             logger.info(f"Token exchange: client_id={client_id_safe[:8]}... redirect={self.redirect_uri} verifier_len={len(self.code_verifier) if self.code_verifier else 0}")
             
             time.sleep(0.1)
-            response = self._http.post(
+            response = self.http.post(
                 self.token_url,
                 data=data
             )
@@ -515,7 +513,7 @@ class TidalClient(SyncServiceProvider):
                     }
                     params = {}
                     
-                    response = self._http.get(endpoint, headers=headers, params=params)
+                    response = self.http.get(endpoint, headers=headers, params=params)
                     logger.info(f"User ID response: {response.status_code}")
                     
                     if response.status_code == 200:
@@ -564,7 +562,7 @@ class TidalClient(SyncServiceProvider):
         url = f"{self.base_url}/searchresults"
         params = {'query': query, 'type': 'tracks', 'limit': limit, 'countryCode': 'US'}
         headers = {'Authorization': f'Bearer {self.access_token}', 'User-Agent': 'Echosync/1.0'}
-        response = self._http.get(url, params=params, headers=headers)
+        response = self.http.get(url, params=params, headers=headers)
         if response.status_code != 200:
             return []
         data = response.json()
@@ -589,11 +587,11 @@ class TidalClient(SyncServiceProvider):
         url_tracks = f"{self.base_url}/playlists/{playlist_id}/items"
         
         headers = {'Authorization': f'Bearer {self.access_token}'}
-        meta_resp = self._http.get(url_meta, headers=headers)
+        meta_resp = self.http.get(url_meta, headers=headers)
         if meta_resp.status_code != 200:
             return None
         meta = meta_resp.json().get('data', {})
-        tracks_resp = self._http.get(url_tracks, headers=headers)
+        tracks_resp = self.http.get(url_tracks, headers=headers)
         if tracks_resp.status_code != 200:
             return None
         tracks_data = tracks_resp.json()
@@ -630,7 +628,7 @@ class TidalClient(SyncServiceProvider):
         }
 
         try:
-            response = self._http.get(url, headers=headers)
+            response = self.http.get(url, headers=headers)
             if response.status_code == 200:
                 return response.json()
             else:
@@ -652,7 +650,7 @@ class TidalClient(SyncServiceProvider):
         }
 
         try:
-            response = self._http.get(url, headers=headers)
+            response = self.http.get(url, headers=headers)
             if response.status_code == 200:
                 return response.json().get('items', [])
             else:

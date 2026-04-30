@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 
-class _PluginSecrets:
+class KVS:
     def __init__(self, plugin_id: str):
         self.plugin_id = plugin_id
 
@@ -23,50 +23,61 @@ class _PluginSecrets:
         from database.config_database import get_config_database
         from core.security import decrypt_string
         db = get_config_database()
-        service_id = db.get_or_create_service_id(f"plugin_{self.plugin_id}")
-        val = db.get_service_config(service_id, key)
-        if val is None:
-            return default
-        return decrypt_string(val) if str(val).startswith('enc:') else val
+        val = None
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT value, is_sensitive FROM config_kvs WHERE namespace=? AND key=?", (self.plugin_id, key))
+            row = c.fetchone()
+            if row:
+                val, is_sensitive = row[0], row[1]
+                if is_sensitive and val:
+                    try:
+                        val = decrypt_string(val)
+                    except Exception:
+                        pass
+        return val if val is not None else default
 
-    def set(self, key: str, value: str) -> None:
+    def set(self, key: str, value: str, is_sensitive: bool = False) -> None:
         from database.config_database import get_config_database
         from core.security import encrypt_string
         db = get_config_database()
-        service_id = db.get_or_create_service_id(f"plugin_{self.plugin_id}")
-        enc_val = encrypt_string(value) if value else None
-        db.set_service_config(service_id, key, enc_val, is_sensitive=True)
+        if is_sensitive and value:
+            value = encrypt_string(value)
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("INSERT OR REPLACE INTO config_kvs (namespace, key, value, is_sensitive) VALUES (?, ?, ?, ?)", (self.plugin_id, key, value, is_sensitive))
+            conn.commit()
 
-class _PluginConfig:
+class StateKVS:
     def __init__(self, plugin_id: str):
         self.plugin_id = plugin_id
 
-    def get(self, key: str, default=None) -> Any:
-        from core.settings import config_manager
-        return config_manager.get(f"plugins.{self.plugin_id}.{key}", default)
+    def get(self, key: str, default=None) -> str:
+        from database.working_database import get_working_database
+        from core.security import decrypt_string
+        db = get_working_database()
+        val = None
+        with db.session_scope() as session:
+            from sqlalchemy.sql import text
+            res = session.execute(text("SELECT value, is_sensitive FROM plugin_state_kvs WHERE namespace=:ns AND key=:k"), {"ns": self.plugin_id, "k": key}).fetchone()
+            if res:
+                val, is_sensitive = res[0], res[1]
+                if is_sensitive and val:
+                    try:
+                        val = decrypt_string(val)
+                    except Exception:
+                        pass
+        return val if val is not None else default
 
-    def set(self, key: str, value: Any) -> None:
-        from core.settings import config_manager
-        config_manager.set(f"plugins.{self.plugin_id}.{key}", value)
-
-class _PluginCoreSystemFacade:
-    def __init__(self, plugin_id: str):
-        self.plugin_id = plugin_id
-
-    def toggle_feature(self, feature_key: str, enabled: bool) -> None:
-        from core.settings import config_manager
-        from core.event_bus import event_bus
-        config_manager.set(feature_key, enabled)
-        event_bus.publish({
-            "event": "FEATURE_TOGGLED",
-            "plugin_id": self.plugin_id,
-            "feature": feature_key,
-            "enabled": enabled
-        })
-
-    def get_setting(self, feature_key: str, default=None) -> Any:
-        from core.settings import config_manager
-        return config_manager.get(feature_key, default)
+    def set(self, key: str, value: str, is_sensitive: bool = False) -> None:
+        from database.working_database import get_working_database
+        from core.security import encrypt_string
+        db = get_working_database()
+        if is_sensitive and value:
+            value = encrypt_string(value)
+        with db.session_scope() as session:
+            from sqlalchemy.sql import text
+            session.execute(text("INSERT OR REPLACE INTO plugin_state_kvs (namespace, key, value, is_sensitive) VALUES (:ns, :k, :v, :sens)"), {"ns": self.plugin_id, "k": key, "v": value, "sens": is_sensitive})
 
 class _PluginModelFacade:
     def __init__(self):
@@ -102,31 +113,6 @@ class _PluginModelFacade:
     def PlaybackHistory(self):
         from database.working_database import PlaybackHistory
         return PlaybackHistory
-
-class _AccountsFacade:
-    def get_token(self, account_id: int) -> Optional[Dict[str, Any]]:
-        from core.file_handling.storage import get_storage_service
-        return get_storage_service().get_account_token(account_id)
-        
-    def save_token(self, account_id: int, access_token: str, refresh_token: str, expires_at: int) -> bool:
-        from core.file_handling.storage import get_storage_service
-        return get_storage_service().save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at)
-
-class _SDK:
-    def __init__(self):
-        self.config = _PluginConfig("global")
-        self.secrets = _PluginSecrets("global")
-        self.accounts = _AccountsFacade()
-        self.models = _PluginModelFacade()
-
-    def schedule(self, interval_minutes: int):
-        def decorator(func):
-            func._schedule_interval = interval_minutes
-            return func
-        return decorator
-
-sdk = _SDK()
-
 
 
 class PluginBase(ABC):
@@ -173,9 +159,9 @@ class PluginBase(ABC):
 
         # Sandbox API facades for Plugin Architecture
         self._name = self.name
-        self.secrets = _PluginSecrets(self._name)
-        self.config = _PluginConfig(self._name)
-        self.core_system = _PluginCoreSystemFacade(self._name)
+
+
+
         self.models = _PluginModelFacade()
 
     @property
@@ -720,52 +706,3 @@ class MediaServerProvider(PluginBase):
         Enables incremental syncs by detecting only new/modified content.
         """
         pass
-
-class WasmPluginWrapper(PluginBase):
-    """
-    Lightweight wrapper to load and execute WASM-compiled plugins (Rust/C/Zig)
-    via wasmtime-py. WASM operates within a secure sandbox by default.
-    """
-    def __init__(self, plugin_id: str, wasm_path: str):
-        self.name = plugin_id
-        self.category = 'plugin'
-        self.wasm_path = wasm_path
-        super().__init__()
-        
-        try:
-            import wasmtime
-            self.engine = wasmtime.Engine()
-            self.store = wasmtime.Store(self.engine)
-            self.module = wasmtime.Module.from_file(self.engine, self.wasm_path)
-            self.instance = wasmtime.Instance(self.store, self.module, [])
-        except ImportError:
-            pass
-
-    def search(self, query: str, type: str = "track", limit: int = 10, **kwargs) -> List[EchosyncTrack]:
-        # Minimal stub - in a real implementation we would call WASM exports
-        return []
-
-    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
-        return None
-
-    def authenticate(self, **kwargs) -> bool:
-        return True
-
-    def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
-        return None
-
-    def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
-        return None
-
-    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        return []
-
-    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
-        return []
-
-    def is_configured(self) -> bool:
-        return True
-
-    def get_logo_url(self) -> str:
-        return ""
-

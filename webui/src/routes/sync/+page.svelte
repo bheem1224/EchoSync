@@ -114,7 +114,7 @@
 
     try {
       console.log(`[Sync] Loading playlists for provider: ${sourceProvider}`);
-      const response = await apiClient.get(`/plugins/${sourceProvider}/playlists`);
+      const response = await apiClient.get(`/providers/${sourceProvider}/playlists`);
       console.log('[Sync] Full response object:', response);
       console.log('[Sync] Response data:', response.data);
       console.log('[Sync] Response data type:', typeof response.data);

@@ -1,13 +1,13 @@
 from typing import Dict, List, Optional, Any
 from core.tiered_logger import get_logger
-from core.settings import config_manager
+
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 import time
 
 logger = get_logger("listenbrainz_client")
 
-class ListenBrainzClient:
+class ListenBrainzClient(PluginBase):
     """Client for interacting with ListenBrainz API"""
     capabilities = ProviderCapabilities(
         name='listenbrainz',
@@ -23,17 +23,16 @@ class ListenBrainzClient:
     )
 
     def __init__(self):
+        super().__init__()
         self.base_url = "https://api.listenbrainz.org/1"
-        self.token = config_manager.get("listenbrainz.token", "")
+        self.token = self.kvs.get("token", "", is_sensitive=True)
         self.username = None
 
         # Create RequestManager with rate limiting
-        self._http = RequestManager(
-            provider='listenbrainz',
-            retry=RetryConfig(max_retries=3, base_backoff=0.5),
+        pass # Let PluginBase handle HTTP,
             rate=RateLimitConfig(requests_per_second=2.0)
         )
-        self._http._session.headers.update({
+        self.http._session.headers.update({
             'User-Agent': 'Echosync/1.0'
         })
 
@@ -48,12 +47,12 @@ class ListenBrainzClient:
         # RequestManager already handles retries, so this is just a wrapper
         try:
             if method.lower() == 'get':
-                response = self._http.get(url, **kwargs)
+                response = self.http.get(url, **kwargs)
             elif method.lower() == 'post':
-                response = self._http.post(url, **kwargs)
+                response = self.http.post(url, **kwargs)
             else:
                 # For other methods, use the request method directly
-                response = self._http.request(method, url, **kwargs)
+                response = self.http.request(method, url, **kwargs)
             return response
         except Exception as e:
             logger.error(f"Request failed: {e}")
@@ -253,7 +252,7 @@ class ListenBrainzClient:
             if self.token:
                 headers['Authorization'] = f'Token {self.token}'
 
-            response = self._http.get(url, headers=headers, params=params)
+            response = self.http.get(url, headers=headers, params=params)
 
             if response.status_code == 200:
                 data = response.json()

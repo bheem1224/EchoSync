@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import time
 from pathlib import Path
 from core.tiered_logger import get_logger
-from core.settings import config_manager
+
 from core.plugin_SDK import DownloaderProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
 from core.plugin_loader import PluginRegistry, ServiceRegistry

@@ -6,7 +6,8 @@ from core.user_history import UserTrackInteraction
 
 @pytest.fixture
 def plex_client():
-    with patch('plugins.plex.client.config_manager') as mock_cm:
+    mock_cm = MagicMock()
+    with patch.object(PlexClient, 'kvs', mock_cm, create=True):
         mock_cm.get_plex_config.return_value = {}
         client = PlexClient()
         return client
@@ -38,7 +39,8 @@ def test_is_configured_true(plex_client):
                 return {'base_url': 'http://plex'}
             return default
 
-        mock_config_get.side_effect = mock_config
+        plex_client.kvs = MagicMock()
+        plex_client.kvs.get.side_effect = lambda k, **kwargs: 'http://plex' if k in ['base_url', 'server_url'] else None
 
         assert plex_client.is_configured() is True
 
