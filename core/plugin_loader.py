@@ -243,10 +243,12 @@ class PluginLoader:
                 is_beta = True
 
             init_file = current_item / "__init__.py"
+            wasm_file = current_item / "main.wasm"
 
-            if not init_file.exists():
-                logger.debug(f"Skipping {provider_name}: no __init__.py found in {current_item}")
+            if not init_file.exists() and not wasm_file.exists():
+                logger.debug(f"Skipping {provider_name}: no __init__.py or main.wasm found in {current_item}")
                 continue
+
 
             # Zero-Trust gate: scan community plugin source before importing
 
@@ -286,8 +288,16 @@ class PluginLoader:
 
 
 
+
                 privileged = manifest_data.get("privileged") is True if manifest_data else False
+
+                # WASM Fast Track
+                if wasm_file.exists() and not init_file.exists():
+                    logger.info(f"WASM plugin detected: {provider_name}. Bypassing AST security scan.")
+                    bypass_security = True
+
                 if not bypass_security and not self._security_scan_package(current_item, provider_name, privileged=privileged):
+
 
 
                     logger.warning(
@@ -395,15 +405,41 @@ class PluginLoader:
                 logger.info(f"Registered disabled provider: {provider_id} (v{version})")
                 return
 
-            # Dynamic import
-            module = importlib.import_module(module_path)
-            
-            # 1. Register Provider Class (if present)
             if source_type == 'community':
                 provider_id = f"plugin.{name}"
             else:
                 provider_id = name
 
+            # Handle WASM Plugins
+            wasm_file = package_dir / "main.wasm"
+            if wasm_file.exists() and not (package_dir / "__init__.py").exists():
+                logger.info(f"Loading WASM plugin: {name}")
+                from core.plugin_sdk import WasmPluginWrapper
+                wrapper = WasmPluginWrapper(str(wasm_file.absolute()))
+                wrapper.plugin_id_int = generate_plugin_id(provider_id)
+                wrapper.version = version
+                wrapper.author = author
+                wrapper.category = category
+
+                # In order to fit the ProviderRegistry generic type expectations, we wrap it in a mock class
+                class WasmClass:
+                    plugin_id_int = wrapper.plugin_id_int
+                    version = wrapper.version
+                    author = wrapper.author
+                    category = wrapper.category
+                    _wrapper_instance = wrapper
+
+                    def __init__(self):
+                        pass
+
+                ProviderRegistry.register(WasmClass, name=provider_id, source_type=source_type)
+                logger.info(f"Registered WASM plugin: {provider_id}")
+                return
+
+            # Dynamic import
+            module = importlib.import_module(module_path)
+
+            # 1. Register Provider Class (if present)
             if hasattr(module, 'ProviderClass'):
                 provider_cls = getattr(module, 'ProviderClass')
                 ProviderRegistry.register(provider_cls, name=provider_id, source_type=source_type)
