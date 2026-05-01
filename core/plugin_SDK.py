@@ -9,8 +9,6 @@ from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine import text_utils
 from core.request_manager import RequestManager
 
-if TYPE_CHECKING:
-    from core.provider import ProviderCapabilities
 
 
 
