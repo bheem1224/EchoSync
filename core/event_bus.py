@@ -45,6 +45,13 @@ class EventBus:
                     pass
 
     def publish_lightweight(self, payload: dict):
+        import inspect
+        frame = inspect.currentframe()
+        try:
+            caller_module = inspect.getmodule(frame.f_back)
+            payload["_origin"] = caller_module.__name__ if caller_module else "unknown"
+        finally:
+            del frame
         event_name = payload.get("event", "UNKNOWN")
 
         with self._lock:

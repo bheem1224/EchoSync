@@ -429,6 +429,18 @@ class JobQueue:
         self._is_running[job.name] = True
 
         def worker():
+            try:
+                import resource
+                plugin_id = getattr(job, 'plugin_id', None) or getattr(job, 'plugin', None)
+                if plugin_id and plugin_id != "core":
+                    from core.plugin_loader import plugin_store
+                    plugin = plugin_store.get_plugin(plugin_id)
+                    if plugin and getattr(plugin, 'manifest', None):
+                        limit_mb = plugin.manifest.get('permissions', {}).get('memory_limit_mb', 100)
+                        limit_bytes = limit_mb * 1024 * 1024
+                        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
+            except (ImportError, ValueError, OSError):
+                pass
             attempt = 0
             try:
                 while True:
