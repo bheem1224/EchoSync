@@ -1,0 +1,287 @@
+from typing import Dict, List, Optional, Any
+from core.tiered_logger import get_logger
+
+from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
+from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+import time
+
+logger = get_logger("listenbrainz_client")
+
+class ListenBrainzClient(PluginBase):
+    """Client for interacting with ListenBrainz API"""
+    capabilities = ProviderCapabilities(
+        name='listenbrainz',
+        supports_playlists=PlaylistSupport.READ,
+        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=True),
+        metadata=MetadataRichness.MEDIUM,
+        supports_cover_art=False,
+        supports_lyrics=False,
+        supports_user_auth=False,
+        supports_library_scan=False,
+        supports_streaming=False,
+        supports_downloads=False,
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.base_url = "https://api.listenbrainz.org/1"
+        self.token = self.kvs.get("token", "", is_sensitive=True)
+        self.username = None
+
+        # Create RequestManager with rate limiting
+        pass # Let PluginBase handle HTTP,
+            rate=RateLimitConfig(requests_per_second=2.0)
+        )
+        self.http._session.headers.update({
+            'User-Agent': 'Echosync/1.0'
+        })
+
+        # Legacy plugin_system registration removed - now uses PluginRegistry for auto-registration
+
+        if self.token:
+            # Validate token and get username
+            self._validate_and_get_username()
+
+    def _make_request_with_retry(self, method: str, url: str, max_retries: int = 3, **kwargs):
+        """Make HTTP request with retry logic - now delegated to RequestManager"""
+        # RequestManager already handles retries, so this is just a wrapper
+        try:
+            if method.lower() == 'get':
+                response = self.http.get(url, **kwargs)
+            elif method.lower() == 'post':
+                response = self.http.post(url, **kwargs)
+            else:
+                # For other methods, use the request method directly
+                response = self.http.request(method, url, **kwargs)
+            return response
+        except Exception as e:
+            logger.error(f"Request failed: {e}")
+            raise
+
+    def _validate_and_get_username(self):
+        """Validate token and retrieve username"""
+        try:
+            url = f"{self.base_url}/validate-token"
+            headers = {'Authorization': f'Token {self.token}'}
+            response = self._make_request_with_retry('get', url, headers=headers)
+
+            if response and response.status_code == 200:
+                data = response.json()
+                if data.get('valid'):
+                    self.username = data.get('user_name')
+                    logger.info(f"✅ ListenBrainz authenticated as: {self.username}")
+                    return True
+
+            logger.warning("❌ Invalid ListenBrainz token")
+            return False
+        except Exception as e:
+            logger.error(f"Error validating ListenBrainz token: {e}")
+            return False
+
+    def is_authenticated(self):
+        """Check if client is authenticated"""
+        return bool(self.token and self.username)
+
+    def get_playlists_created_for_user(self, count: int = 25, offset: int = 0) -> List[Dict]:
+        """
+        Fetch playlists created FOR the user (recommendations, personalized playlists)
+        These are all public and don't require authentication
+        """
+        if not self.username:
+            logger.warning("No username available for ListenBrainz")
+            return []
+
+        try:
+            url = f"{self.base_url}/user/{self.username}/playlists/createdfor"
+            params = {
+                'count': count,
+                'offset': offset
+            }
+
+            response = self._make_request_with_retry('get', url, params=params, timeout=15)
+
+            if response and response.status_code == 200:
+                data = response.json()
+                playlists = data.get('playlists', [])
+                logger.info(f"📋 Fetched {len(playlists)} playlists created for {self.username}")
+                return playlists
+            elif response and response.status_code == 404:
+                logger.warning(f"User {self.username} not found")
+                return []
+            else:
+                status = response.status_code if response else 'No response'
+                logger.error(f"Failed to fetch created-for playlists: {status}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Error fetching created-for playlists: {e}")
+            return []
+
+    def get_user_playlists(self, count: int = 25, offset: int = 0) -> List[Dict]:
+        """
+        Fetch user's own playlists (both public and private)
+        Requires authentication
+        """
+        if not self.is_authenticated():
+            logger.warning("Not authenticated for ListenBrainz")
+            return []
+
+        try:
+            url = f"{self.base_url}/user/{self.username}/playlists"
+            headers = {'Authorization': f'Token {self.token}'}
+            params = {
+                'count': count,
+                'offset': offset
+            }
+
+            response = self._make_request_with_retry('get', url, headers=headers, params=params, timeout=15)
+
+            if response and response.status_code == 200:
+                data = response.json()
+                playlists = data.get('playlists', [])
+                logger.info(f"📋 Fetched {len(playlists)} user playlists for {self.username}")
+                return playlists
+            elif response and response.status_code == 404:
+                logger.warning(f"User {self.username} not found")
+                return []
+            else:
+                status = response.status_code if response else 'No response'
+                logger.error(f"Failed to fetch user playlists: {status}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Error fetching user playlists: {e}")
+            return []
+
+    def get_collaborative_playlists(self, count: int = 25, offset: int = 0) -> List[Dict]:
+        """
+        Fetch playlists where user is a collaborator
+        Requires authentication for private playlists
+        """
+        if not self.is_authenticated():
+            logger.warning("Not authenticated for ListenBrainz")
+            return []
+
+        try:
+            url = f"{self.base_url}/user/{self.username}/playlists/collaborator"
+            headers = {'Authorization': f'Token {self.token}'}
+            params = {
+                'count': count,
+                'offset': offset
+            }
+
+            response = self._make_request_with_retry('get', url, headers=headers, params=params, timeout=15)
+
+            if response and response.status_code == 200:
+                data = response.json()
+                playlists = data.get('playlists', [])
+                logger.info(f"📋 Fetched {len(playlists)} collaborative playlists for {self.username}")
+                return playlists
+            elif response and response.status_code == 404:
+                logger.warning(f"User {self.username} not found")
+                return []
+            else:
+                status = response.status_code if response else 'No response'
+                logger.error(f"Failed to fetch collaborative playlists: {status}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Error fetching collaborative playlists: {e}")
+            return []
+
+    def get_playlist_details(self, playlist_mbid: str, fetch_metadata: bool = True) -> Optional[Dict]:
+        """
+        Fetch full playlist details including tracks
+
+        Args:
+            playlist_mbid: The MusicBrainz ID of the playlist
+            fetch_metadata: Whether to fetch recording metadata (default True)
+        """
+        try:
+            url = f"{self.base_url}/playlist/{playlist_mbid}"
+            params = {}
+
+            if not fetch_metadata:
+                params['fetch_metadata'] = 'false'
+
+            # Add auth header if we have a token (for private playlists)
+            headers = {}
+            if self.token:
+                headers['Authorization'] = f'Token {self.token}'
+
+            response = self._make_request_with_retry('get', url, headers=headers, params=params, timeout=20)
+
+            if response and response.status_code == 200:
+                data = response.json()
+                playlist = data.get('playlist', {})
+                track_count = len(playlist.get('track', []))
+                logger.info(f"📋 Fetched playlist '{playlist.get('title')}' with {track_count} tracks")
+                return data
+            elif response and response.status_code == 404:
+                logger.warning(f"Playlist {playlist_mbid} not found")
+                return None
+            elif response and response.status_code == 401:
+                logger.warning(f"Unauthorized to access playlist {playlist_mbid}")
+                return None
+            else:
+                status = response.status_code if response else 'No response'
+                logger.error(f"Failed to fetch playlist: {status}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error fetching playlist details: {e}")
+            return None
+
+    def search_playlists(self, query: str) -> List[Dict]:
+        """
+        Search for playlists by name or description
+
+        Args:
+            query: Search query (minimum 3 characters)
+        """
+        if len(query) < 3:
+            logger.warning("Search query must be at least 3 characters")
+            return []
+
+        try:
+            url = f"{self.base_url}/playlist/search"
+            params = {'query': query}
+
+            # Add auth header if we have a token
+            headers = {}
+            if self.token:
+                headers['Authorization'] = f'Token {self.token}'
+
+            response = self.http.get(url, headers=headers, params=params)
+
+            if response.status_code == 200:
+                data = response.json()
+                playlists = data.get('playlists', [])
+                logger.info(f"🔍 Found {len(playlists)} playlists matching '{query}'")
+                return playlists
+            else:
+                logger.error(f"Failed to search playlists: {response.status_code}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Error searching playlists: {e}")
+            return []
+
+    def get_similar_artists(self, artists: List[str]) -> List[Dict]:
+        """
+        Stub method to fetch similar artists/top tracks by those artists.
+        For now, returns a mock list of dictionary track objects.
+        """
+        logger.info(f"Stub get_similar_artists called for: {artists}")
+        return [
+            {
+                "title": "Mock Track 1",
+                "artist_name": "Mock Similar Artist A",
+                "musicbrainz_id": "mock-mbid-1"
+            },
+            {
+                "title": "Mock Track 2",
+                "artist_name": "Mock Similar Artist B",
+                "musicbrainz_id": "mock-mbid-2"
+            }
+        ]

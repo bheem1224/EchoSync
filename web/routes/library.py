@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request, send_file
 from web.services.library_service import LibraryAdapter
 from services.media_manager import MediaManagerService
 from core.settings import config_manager
-from core.provider import ProviderRegistry
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 from core.tiered_logger import get_logger
 import threading
 
@@ -33,7 +33,7 @@ def trigger_library_scan():
             return jsonify({"error": "No active media server configured"}), 400
 
         try:
-            provider = ProviderRegistry.create_instance(active_server)
+            provider = PluginRegistry.create_instance(active_server)
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}")
             return jsonify({"error": f"Media server '{active_server}' not available"}), 500
@@ -85,7 +85,7 @@ def get_library_scan_status():
             return jsonify({"error": "No active media server configured"}), 400
 
         try:
-            provider = ProviderRegistry.create_instance(active_server)
+            provider = PluginRegistry.create_instance(active_server)
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}")
             return jsonify({"error": f"Media server '{active_server}' not available"}), 500
@@ -165,8 +165,8 @@ def update_database():
         # Get provider instance
         provider = None
         try:
-            from core.provider import ProviderRegistry
-            provider = ProviderRegistry.create_instance(active_server)
+            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            provider = PluginRegistry.create_instance(active_server)
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
             return jsonify({"error": f"Media server '{active_server}' not available: {str(e)}"}), 500

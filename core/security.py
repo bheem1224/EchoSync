@@ -73,3 +73,10 @@ def verify_user_credentials(username, password):
     Stub for native user authentication (coming in v2.6.0).
     """
     raise NotImplementedError("Native authentication is disabled/coming in v2.6.0")
+
+
+def is_privileged_or_verified(manifest: dict) -> bool:
+    source = manifest.get('verified_source')
+    if source == 'official': return True
+    if manifest.get('privileged', False): return True
+    return False

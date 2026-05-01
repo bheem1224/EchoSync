@@ -66,7 +66,7 @@ class TestSyncServiceConsumption:
     def test_get_all_spotify_playlists_consumes_generator(self):
         """Verify SyncService correctly consumes the generator."""
         # Mock dependencies during initialization
-        with patch('services.sync_service.ProviderRegistry') as mock_registry:
+        with patch('services.sync_service.PluginRegistry') as mock_registry:
             # Mock default client creation
             mock_client = MagicMock()
             mock_registry.create_instance.return_value = mock_client
@@ -88,7 +88,7 @@ class TestSyncServiceConsumption:
 
             # Mock config to return one account
             with patch('core.settings.config_manager.get_spotify_accounts', return_value=[{'id': 1, 'name': 'Test', 'is_active': True}]):
-                # The service uses ProviderRegistry.create_instance inside _get_all_spotify_playlists too
+                # The service uses PluginRegistry.create_instance inside _get_all_spotify_playlists too
                 mock_registry.create_instance.return_value = mock_client
                 playlists = asyncio_run(service._get_all_spotify_playlists())
 

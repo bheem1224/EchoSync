@@ -4,7 +4,10 @@ from typing import Dict, List
 import os
 from pathlib import Path
 from core.settings import config_manager
-from core.provider import ProviderRegistry, get_provider_capabilities, MetadataRichness
+from core.plugin_loader import get_provider_capabilities
+from core.plugin_SDK import MetadataRichness
+
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 from database.music_database import get_database
 from core.tiered_logger import get_logger
 
@@ -50,12 +53,12 @@ class LibraryAdapter:
         active_server = config_manager.get('active_media_server', 'plex')
         
         # Get all media server providers
-        provider_names = ProviderRegistry.list_providers()
+        provider_names = PluginRegistry.list_providers()
         
         for provider_name in provider_names:
             # skip disabled providers entirely; they shouldn't count toward
             # servers or be instantiated for stats
-            if ProviderRegistry.is_provider_disabled(provider_name):
+            if PluginRegistry.is_provider_disabled(provider_name):
                 logger.debug(f"Skipping disabled provider in library overview: {provider_name}")
                 continue
 
@@ -77,7 +80,7 @@ class LibraryAdapter:
                 if is_active:
                     try:
                         # only instantiate active provider (and it's not disabled)
-                        provider = ProviderRegistry.create_instance(provider_name)
+                        provider = PluginRegistry.create_instance(provider_name)
                         if provider and hasattr(provider, 'ensure_connection') and hasattr(provider, 'get_library_stats'):
                             if provider.ensure_connection():
                                 stats = provider.get_library_stats()

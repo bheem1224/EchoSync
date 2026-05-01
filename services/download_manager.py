@@ -28,8 +28,8 @@ from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 from core.matching_engine.text_utils import normalize_artist, normalize_title
 from core.settings import config_manager
 from time_utils import utc_now
-from core.provider import ProviderRegistry
-from core.plugin_SDK import ProviderBase
+from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.plugin_SDK import PluginBase
 from database.music_database import get_database, Track, Artist, Album
 from database.working_database import get_working_database, Download
 
@@ -50,8 +50,8 @@ class DownloadManager:
         self._shutdown = False
         self._loop_task = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._provider: Optional[ProviderBase] = None
-        self._active_providers: Dict[str, ProviderBase] = {}
+        self._provider: Optional[PluginBase] = None
+        self._active_providers: Dict[str, PluginBase] = {}
         self._quality_profile_cache = None
 
         from core.event_bus import event_bus
@@ -126,7 +126,7 @@ class DownloadManager:
                     cls._instance = DownloadManager()
         return cls._instance
 
-    def _get_provider(self) -> Optional[ProviderBase]:
+    def _get_provider(self) -> Optional[PluginBase]:
         """Lazy load the active download provider (legacy single-provider support)"""
         if self._provider:
             return self._provider
@@ -139,18 +139,18 @@ class DownloadManager:
                 return None
 
             # Check if provider is enabled and registered
-            if ProviderRegistry.is_provider_disabled(active_client):
+            if PluginRegistry.is_provider_disabled(active_client):
                 logger.warning(f"Active download provider '{active_client}' is disabled")
                 return None
 
-            self._provider = ProviderRegistry.create_instance(active_client)
+            self._provider = PluginRegistry.create_instance(active_client)
             return self._provider
         except Exception as e:
             logger.error(f"Failed to load download provider: {e}")
             return None
     async def _invoke_provider_search(
         self,
-        provider: ProviderBase,
+        provider: PluginBase,
         query: str,
         strategy_filters: Dict[str, Any],
         quality_profile: Optional[Dict[str, Any]],
@@ -238,7 +238,7 @@ class DownloadManager:
 
     async def _invoke_provider_search_single(
         self,
-        provider: ProviderBase,
+        provider: PluginBase,
         query: str,
         strategy_filters: Dict[str, Any],
         quality_profile: Optional[Dict[str, Any]],
@@ -290,7 +290,7 @@ class DownloadManager:
             # Final fallback for providers that do not expose slskd-style search kwargs.
             return await loop.run_in_executor(None, search_fn, query, strategy_filters)
 
-    def _get_active_download_providers(self) -> List[ProviderBase]:
+    def _get_active_download_providers(self) -> List[PluginBase]:
         """
         Get all active download providers sorted by user's defined priority.
         
@@ -303,7 +303,7 @@ class DownloadManager:
             config_db = get_config_database()
             
             # Get all providers that support downloads
-            available_providers = ProviderRegistry.get_download_clients()
+            available_providers = PluginRegistry.get_download_clients()
             if not available_providers:
                 logger.warning("No download providers available in registry")
                 return []
@@ -339,7 +339,7 @@ class DownloadManager:
             for provider_name in sorted_names:
                 try:
                     if provider_name not in self._active_providers:
-                        self._active_providers[provider_name] = ProviderRegistry.create_instance(provider_name)
+                        self._active_providers[provider_name] = PluginRegistry.create_instance(provider_name)
                     instances.append(self._active_providers[provider_name])
                 except Exception as e:
                     logger.warning(f"Failed to instantiate provider '{provider_name}': {e}")
@@ -527,7 +527,7 @@ class DownloadManager:
             if failed > 0:
                 logger.warning(f"Completed {len(tasks)} searches with {failed} errors")
 
-    async def _execute_waterfall_search_and_download(self, download_id: int, providers: List[ProviderBase]):
+    async def _execute_waterfall_search_and_download(self, download_id: int, providers: List[PluginBase]):
         """
         Perform Waterfall Search -> Match -> Download for a single item.
         

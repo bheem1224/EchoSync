@@ -24,7 +24,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.provider import ServiceRegistry
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 
 
 # ---------------------------------------------------------------------------

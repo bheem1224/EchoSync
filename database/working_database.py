@@ -611,3 +611,11 @@ __all__ = [
 ]
 
 
+
+class PluginStateKVS(WorkingBase):
+    __tablename__ = "plugin_state_kvs"
+
+    namespace: Mapped[str] = mapped_column(String, primary_key=True)
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

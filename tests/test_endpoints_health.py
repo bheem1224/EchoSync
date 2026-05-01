@@ -18,7 +18,7 @@ def test_all_critical_endpoints(monkeypatch):
         '/api/activity/toasts',
         '/api/activity/feed',
         '/api/plugins',
-        '/api/providers/',
+        '/api/plugins/',
         '/api/jobs/',
         '/api/jobs/summary',
         '/api/sync/status',

@@ -1244,5 +1244,5 @@ def create_matcher(profile: ScoringProfile) -> WeightedMatchingEngine:
     return WeightedMatchingEngine(profile)
 
 
-from core.provider import ServiceRegistry
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 ServiceRegistry.register_default('matching_engine', WeightedMatchingEngine)

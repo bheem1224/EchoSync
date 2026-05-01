@@ -1,6 +1,6 @@
 """ISRC metadata lookup service.
 
-Dispatches ISRC lookups through the ProviderRegistry rather than hardcoding
+Dispatches ISRC lookups through the PluginRegistry rather than hardcoding
 provider-specific HTTP calls.  Any provider that sets ``supports_isrc_lookup =
 True`` and implements ``search_by_isrc(isrc)`` participates automatically —
 no changes to this module are required when new providers are added.
@@ -66,12 +66,12 @@ def _dispatch_isrc_via_providers(
     the best-quality source wins.  The ``tried`` list records every provider
     that was attempted regardless of outcome.
     """
-    from core.provider import ProviderRegistry
+    from core.plugin_loader import PluginRegistry, ServiceRegistry
     from core.enums import Capability
 
     tried: List[str] = []
 
-    candidates = ProviderRegistry.get_providers_with_capability(Capability.FETCH_METADATA)
+    candidates = PluginRegistry.get_providers_with_capability(Capability.FETCH_METADATA)
     isrc_providers = [p for p in candidates if getattr(p, "supports_isrc_lookup", False)]
 
     # Sort descending by metadata richness so the richest source goes first.

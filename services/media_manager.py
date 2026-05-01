@@ -5,7 +5,7 @@ from typing import Dict, Optional, List, Any
 from sqlalchemy import func
 
 from core.settings import config_manager
-from core.provider import ProviderRegistry
+from core.plugin_loader import PluginRegistry, ServiceRegistry
 from core.file_handling.path_mapper import PathMapper
 from core.event_bus import event_bus
 from database.music_database import get_database, Track, Artist
@@ -91,7 +91,7 @@ class MediaManagerService:
                 logger.warning(f"No external identifier for track {track_id} on provider {active_server}")
                 return
 
-            provider = ProviderRegistry.create_instance(active_server)
+            provider = PluginRegistry.create_instance(active_server)
             if not hasattr(provider, "remove_tracks_from_playlist"):
                 logger.warning(f"Provider {active_server} does not support remove_tracks_from_playlist")
                 return
@@ -253,7 +253,7 @@ class MediaManagerService:
 
                 if provider_item_id:
                     try:
-                        provider = ProviderRegistry.create_instance(active_server)
+                        provider = PluginRegistry.create_instance(active_server)
                         if hasattr(provider, 'delete_track'):
                             success = provider.delete_track(provider_item_id)
                             if not success:

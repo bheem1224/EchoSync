@@ -120,8 +120,8 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             # Get provider instance
             provider = None
             try:
-                from core.provider import ProviderRegistry
-                provider = ProviderRegistry.create_instance(active_server)
+                from core.plugin_loader import PluginRegistry, ServiceRegistry
+                provider = PluginRegistry.create_instance(active_server)
             except Exception as e:
                 logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
                 return
@@ -208,14 +208,14 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
         try:
             logger.info("Starting scheduled media server scan job")
 
-            from core.provider import ProviderRegistry
+            from core.plugin_loader import PluginRegistry, ServiceRegistry
 
             active_server = config_manager.get_active_media_server()
             if not active_server:
                 logger.warning("No active media server configured, skipping media scan")
                 return
 
-            provider = ProviderRegistry.create_instance(active_server)
+            provider = PluginRegistry.create_instance(active_server)
             if not provider:
                 logger.error(f"Could not create provider instance for active server '{active_server}'")
                 return
@@ -599,8 +599,8 @@ def register_acoustid_submission_job(fingerprint: str, duration: int, mbid: str)
     """
     def submit_fingerprint():
         try:
-            from core.provider import ProviderRegistry
-            client = ProviderRegistry.get_provider("acoustid")
+            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            client = PluginRegistry.get_provider("acoustid")
             if client and hasattr(client, "submit_fingerprint"):
                 logger.info(f"Submitting AcoustID fingerprint for MBID: {mbid}")
                 client.submit_fingerprint(fingerprint, duration, mbid)
