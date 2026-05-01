@@ -429,8 +429,17 @@ class PluginLoader:
                 if blueprint is None:
                     continue
                 if isinstance(blueprint, Blueprint):
+                    # Enforce blueprint namespace and URL prefix to avoid collisions
+                    plugin_id = name
+                    if bp_attr != 'RouteBlueprint':
+                        # Append the suffix for secondary blueprints
+                        plugin_id += f"_{bp_attr.lower().replace('routeblueprint', '')}"
+
+                    blueprint.name = plugin_id
+                    blueprint.url_prefix = f"/api/plugins/{name}"
+
                     self.loaded_blueprints.append(blueprint)
-                    logger.debug(f"Collected {bp_attr} for {name}")
+                    logger.debug(f"Collected {bp_attr} for {name} with namespace {plugin_id}")
                 else:
                     logger.warning(f"Invalid {bp_attr} in {name}: expected flask.Blueprint, got {type(blueprint)}")
 
