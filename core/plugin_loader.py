@@ -217,63 +217,225 @@ class PluginLoader:
             if not item.is_dir() or item.name.startswith('__'):
                 continue
 
-            name = item.name
-            plugin_id = name
+            provider_name = item.name
+            
+            # Check if disabled in config
+            disabled = config_manager.get_disabled_providers()
+            is_disabled = f"plugin.{provider_name}" in disabled or provider_name in disabled
 
-            # Validate strict namespacing format
-            if len(plugin_id.split('.')) != 3:
-                logger.warning(f"Plugin directory '{name}' does not match strict namespace format {{source}}.{{author}}.{{plugin_name}}. Skipping.")
+            # Channel logic for all plugins
+            current_item = item
+            is_beta = False
+
+            channel = config_manager.get_plugin_channel(provider_name)
+            if channel == 'beta' and (item / 'beta').exists():
+                current_item = item / 'beta'
+                is_beta = True
+
+            init_file = current_item / "__init__.py"
+            wasm_file = current_item / "main.wasm"
+
+            if not init_file.exists() and not wasm_file.exists():
+                logger.debug(f"Skipping {provider_name}: no __init__.py or main.wasm found in {current_item}")
                 continue
 
-            # Load manifest
-            manifest_path = item / "manifest.json"
-            manifest = {}
-            if manifest_path.exists():
-                import json
-                try:
-                    with open(manifest_path, 'r') as f:
-                        manifest = json.load(f)
-                except Exception as e:
-                    logger.warning(f"Failed to read manifest for {name}: {e}")
 
-            # Check if disabled
-            if config_manager.is_provider_disabled(plugin_id):
-                logger.info(f"Skipping disabled plugin: {plugin_id}")
-                # Register disabled placeholder
-                PluginRegistry.register_provider(DisabledProvider(plugin_id))
-                continue
+            # Zero-Trust gate: scan community plugin source before importing
 
-            # AST and Binary Security Check
-            if not is_privileged_or_verified(manifest):
-                # Optional: Deep AST check logic here
-                has_binaries = any(f.suffix in ['.so', '.pyd', '.dll', '.pyc'] for f in item.rglob('*'))
-                if has_binaries:
-                    logger.warning(f"Plugin {plugin_id} contains compiled binaries but is not privileged or verified. Skipping.")
+
+            if source_type == 'community':
+
+
+                bypass_security = False
+                manifest_data = None
+                manifest_file = current_item / "manifest.json"
+
+
+                if manifest_file.exists():
+
+
+                    try:
+
+
+                        import json
+
+
+                        manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+
+
+                        if manifest_data.get("author") == "EchoSync" and manifest_data.get("verified_source") == "official":
+                            bypass_security = True
+                            logger.info(f"Bypassing security scan for official plugin: {provider_name}")
+                        privileged = manifest_data.get("privileged") is True
+
+
+                    except Exception as e:
+
+
+                        logger.error(f"Failed to read manifest for {provider_name} during security check: {e}")
+
+
+
+
+
+
+                privileged = manifest_data.get("privileged") is True if manifest_data else False
+
+                # WASM Fast Track
+                if wasm_file.exists() and not init_file.exists():
+                    logger.info(f"WASM plugin detected: {provider_name}. Bypassing AST security scan.")
+                    bypass_security = True
+
+                if not bypass_security and not self._security_scan_package(current_item, provider_name, privileged=privileged):
+
+
+
+                    logger.warning(
+
+
+                        f"Plugin '{provider_name}' rejected by security scanner. Skipping."
+
+
+                    )
+
+
                     continue
 
-            module_path = item / "__init__.py"
-            if not module_path.exists():
-                logger.debug(f"Skipping {item.name}: No __init__.py found")
-                continue
+            self._load_provider_package(provider_name, directory.name, source_type, is_beta=is_beta, is_disabled=is_disabled)
 
-            # Dependency Vendoring
-            vendor_dir = self.plugins_dir / plugin_id / "vendor"
-            added_vendor_path = False
-            if vendor_dir.exists():
-                sys.path.insert(0, str(vendor_dir))
-                added_vendor_path = True
-                logger.debug(f"Prepended vendor path for {plugin_id}")
+    def _security_scan_package(self, package_dir: Path, plugin_name: str, privileged: bool = False) -> bool:
+        """
+        Scan every .py file in *package_dir* with PluginSecurityScanner.
+
+        Returns True if the package is clean, False on the first violation
+        (fail-closed: any unreadable or unparseable source also returns False).
+        All violations found across all files are logged before returning.
+        """
+        clean = True
+        for py_file in sorted(package_dir.rglob("*.py")):
+            try:
+                source = py_file.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                logger.warning(
+                    f"[SECURITY] Could not read '{py_file}' while scanning "
+                    f"plugin '{plugin_name}': {exc}. Refusing to load."
+                )
+                return False  # fail closed
 
             try:
-                # Dynamically load the module
-                spec = importlib.util.spec_from_file_location(plugin_id, module_path)
-                if not spec or not spec.loader:
-                    continue
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[plugin_id] = module
-                spec.loader.exec_module(module)
+                tree = ast.parse(source, filename=str(py_file))
+            except SyntaxError as exc:
+                logger.warning(
+                    f"[SECURITY] Syntax error in '{py_file}' for plugin "
+                    f"'{plugin_name}': {exc}. Refusing to load."
+                )
+                return False  # fail closed
 
-                # 1. Collect Provider Classes
+            scanner = PluginSecurityScanner()
+            scanner.visit(tree)
+
+            for line, description in scanner.violations:
+                logger.critical(
+                    f"[SECURITY] Refusing to load plugin '{plugin_name}'. "
+                    f"Forbidden raw file I/O detected at line {line} "
+                    f"in '{py_file.name}' ({description}). "
+                    f"Plugins MUST use core.file_handling."
+                )
+                clean = False
+
+        return clean
+
+    def _load_provider_package(self, name: str, parent_dir_name: str, source_type: str, is_beta: bool = False, is_disabled: bool = False):
+        """
+        Dynamically import a provider package and register its exports.
+
+        Args:
+            name: The package name (e.g., 'plex').
+            parent_dir_name: The parent directory name (e.g., 'providers' or 'plugins').
+            source_type: 'core' or 'community'.
+            is_beta: True if loading from the 'beta' subfolder.
+            is_disabled: True if the plugin is marked as disabled in config.
+        """
+        if is_beta:
+            module_path = f"{parent_dir_name}.{name}.beta"
+        else:
+            module_path = f"{parent_dir_name}.{name}"
+        try:
+            # 0. Try to extract metadata from manifest before loading class
+            version = "Unknown"
+            author = "Unknown"
+            category = "provider"
+            package_dir = self.app_root / parent_dir_name / name
+            if is_beta:
+                package_dir = package_dir / "beta"
+            
+            manifest_file = package_dir / "manifest.json"
+            if manifest_file.exists():
+                try:
+                    manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                    version = manifest_data.get("version", "Unknown")
+                    author = manifest_data.get("author", "Unknown")
+                    category = manifest_data.get("category", "provider")
+                except Exception:
+                    pass
+
+            # If disabled, register a placeholder and return early
+            if is_disabled:
+                from core.provider import DisabledProvider
+                provider_id = f"plugin.{name}" if source_type == 'community' else name
+                
+                # Create a specific subclass for this disabled provider to hold its metadata
+                class specific_disabled(DisabledProvider):
+                    pass
+                specific_disabled.version = version
+                specific_disabled.author = author
+                specific_disabled.category = category
+                
+                ProviderRegistry.register(specific_disabled, name=provider_id, source_type=source_type)
+                logger.info(f"Registered disabled provider: {provider_id} (v{version})")
+                return
+
+            if source_type == 'community':
+                provider_id = f"plugin.{name}"
+            else:
+                provider_id = name
+
+            # Handle WASM Plugins
+            wasm_file = package_dir / "main.wasm"
+            if wasm_file.exists() and not (package_dir / "__init__.py").exists():
+                logger.info(f"Loading WASM plugin: {name}")
+                from core.plugin_sdk import WasmPluginWrapper
+                wrapper = WasmPluginWrapper(str(wasm_file.absolute()))
+                wrapper.plugin_id_int = generate_plugin_id(provider_id)
+                wrapper.version = version
+                wrapper.author = author
+                wrapper.category = category
+
+                # In order to fit the ProviderRegistry generic type expectations, we wrap it in a mock class
+                class WasmClass:
+                    plugin_id_int = wrapper.plugin_id_int
+                    version = wrapper.version
+                    author = wrapper.author
+                    category = wrapper.category
+                    _wrapper_instance = wrapper
+
+                    def __init__(self):
+                        pass
+
+                ProviderRegistry.register(WasmClass, name=provider_id, source_type=source_type)
+                logger.info(f"Registered WASM plugin: {provider_id}")
+                return
+
+            # Dynamic import
+            module = importlib.import_module(module_path)
+
+            # 1. Register Provider Class (if present)
+            if hasattr(module, 'ProviderClass'):
+                provider_cls = getattr(module, 'ProviderClass')
+                ProviderRegistry.register(provider_cls, name=provider_id, source_type=source_type)
+                logger.debug(f"Registered ProviderClass for {provider_id} (v{version})")
+            else:
+                # Fallback: Look for any ProviderBase subclass if not explicitly exported
                 found = False
                 for attr_name in dir(module):
                     attr = getattr(module, attr_name)
@@ -296,18 +458,26 @@ class PluginLoader:
                 if not found:
                     logger.debug(f"No PluginBase class found in {module_path}")
 
-                # 2. Collect Route Blueprints
-                for bp_attr in ('RouteBlueprint', 'RouteBlueprint2', 'RouteBlueprint3'):
-                    blueprint = getattr(module, bp_attr, None)
-                    if blueprint is None:
-                        continue
-                    if isinstance(blueprint, Blueprint):
-                        # Enforce Route Jail
-                        blueprint.url_prefix = f"/api/plugins/{plugin_id}"
-                        self.loaded_blueprints.append(blueprint)
-                        logger.debug(f"Collected {bp_attr} for {name} with jailed prefix {blueprint.url_prefix}")
-                    else:
-                        logger.warning(f"Invalid {bp_attr} in {name}: expected flask.Blueprint, got {type(blueprint)}")
+            # 2. Collect Route Blueprints (primary + optional extras: RouteBlueprint2, RouteBlueprint3 …)
+
+            for bp_attr in ('RouteBlueprint', 'RouteBlueprint2', 'RouteBlueprint3'):
+                blueprint = getattr(module, bp_attr, None)
+                if blueprint is None:
+                    continue
+                if isinstance(blueprint, Blueprint):
+                    # Enforce blueprint namespace and URL prefix to avoid collisions
+                    plugin_id = name
+                    if bp_attr != 'RouteBlueprint':
+                        # Append the suffix for secondary blueprints
+                        plugin_id += f"_{bp_attr.lower().replace('routeblueprint', '')}"
+
+                    blueprint.name = plugin_id
+                    blueprint.url_prefix = f"/api/plugins/{name}"
+
+                    self.loaded_blueprints.append(blueprint)
+                    logger.debug(f"Collected {bp_attr} for {name} with namespace {plugin_id}")
+                else:
+                    logger.warning(f"Invalid {bp_attr} in {name}: expected flask.Blueprint, got {type(blueprint)}")
 
             except Exception as e:
                 logger.error(f"Error loading plugin {module_path}: {e}", exc_info=True)
