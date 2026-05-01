@@ -85,10 +85,16 @@ def upgrade() -> None:
                         service_name = service_name_res[0]
                         plugin_id = LEGACY_MAPPING.get(service_name)
                         if plugin_id:
-                            conn.execute(
-                                text("INSERT INTO config_kvs (namespace, key, value, is_sensitive) VALUES (:namespace, :key, :value, :is_sensitive)"),
-                                {"namespace": plugin_id, "key": key, "value": value, "is_sensitive": is_sensitive}
-                            )
+                            if is_sensitive:
+                                conn.execute(
+                                    text("INSERT INTO account_metadata (account_id, metadata_key, metadata_value) VALUES (0, :key, :value)"),
+                                    {"key": f"{plugin_id}_{key}", "value": value}
+                                )
+                            else:
+                                conn.execute(
+                                    text("INSERT INTO config_kvs (namespace, key, value, is_sensitive) VALUES (:namespace, :key, :value, 0)"),
+                                    {"namespace": plugin_id, "key": key, "value": value}
+                                )
 
     # Migrate accounts
     if 'accounts' in tables:
@@ -117,8 +123,7 @@ def upgrade() -> None:
     # Drop legacy columns/tables
     if 'service_config' in tables:
         op.drop_table('service_config')
-    if 'account_metadata' in tables:
-        op.drop_table('account_metadata')
+    # Do NOT drop account_metadata as it contains active user secrets/tokens!
 
 def downgrade() -> None:
     pass

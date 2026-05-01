@@ -9,8 +9,46 @@ from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine import text_utils
 from core.request_manager import RequestManager
 
+class _ConfigFacade:
+    def __init__(self, plugin_id: str):
+        self.kvs = KVS(plugin_id)
+    def get(self, key: str, default=None): return self.kvs.get(key, default)
+    def set(self, key: str, value: str): self.kvs.set(key, value, is_sensitive=False)
 
+class _SecretsFacade:
+    def __init__(self, plugin_id: str):
+        self.plugin_id = plugin_id
+    def get(self, key: str, default=None):
+        from database.config_database import get_config_database
+        val = get_config_database().get_account_metadata(0, f"{self.plugin_id}_{key}")
+        return val if val is not None else default
+    def set(self, key: str, value: str):
+        from database.config_database import get_config_database
+        get_config_database().set_account_metadata(0, f"{self.plugin_id}_{key}", value, is_sensitive=True)
 
+class _AccountsSDKFacade:
+    def get_token(self, account_id: int):
+        from database.config_database import get_config_database
+        return get_config_database().get_account_token(account_id)
+    def save_token(self, account_id: int, access_token: str, refresh_token: str, expires_at: int):
+        from database.config_database import get_config_database
+        get_config_database().save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at)
+
+class _SDK:
+    def __init__(self):
+        self.accounts = _AccountsSDKFacade()
+    def schedule(self, interval_minutes: int):
+        def decorator(func):
+            func._schedule_interval = interval_minutes
+            return func
+        return decorator
+
+sdk = _SDK()
+
+class WasmPluginWrapper:
+    """Wrapper to safely execute .wasm plugins via wasmtime-py"""
+    def __init__(self, wasm_path: str):
+        self.wasm_path = wasm_path
 
 
 class KVS:
@@ -157,8 +195,8 @@ class PluginBase(ABC):
 
         # Sandbox API facades for Plugin Architecture
         self._name = self.name
-
-
+        self.config = _ConfigFacade(self.name)
+        self.secrets = _SecretsFacade(self.name)
 
         self.models = _PluginModelFacade()
 
