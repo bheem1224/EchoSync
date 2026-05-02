@@ -745,3 +745,21 @@ def rebuild_database():
             "success": False,
             "error": "Failed to rebuild database"
         }), 500
+
+@bp.post('/jobs/<job_name>/kill')
+@require_auth
+def kill_job(job_name):
+    """Stub route to kill a job."""
+    try:
+        from core.job_queue import job_queue
+        # Basic implementation: set running to false (not a real thread kill, just a soft stop request)
+        if job_queue._is_job_running(job_name):
+            job = job_queue._jobs.get(job_name)
+            if job:
+                job.running = False
+                job_queue._is_running[job_name] = False
+            return jsonify({'success': True, 'message': f'Kill signal sent to {job_name}'}), 200
+        return jsonify({'error': 'Job not running'}), 404
+    except Exception as e:
+        logger.error(f"Error killing job: {e}")
+        return jsonify({'error': 'Failed to kill job'}), 500

@@ -158,7 +158,35 @@ class StorageService:
         try:
             from database.config_database import get_config_database
             db = get_config_database()
-            return db.get_account_token(account_id)
+            token = db.get_account_token(account_id)
+            if not token:
+                return None
+
+            import inspect
+            frame = inspect.currentframe()
+            try:
+                caller_module = inspect.getmodule(frame.f_back)
+                caller_name = caller_module.__name__ if caller_module else "unknown"
+            finally:
+                del frame
+
+            # Retrieve owner service name
+            service_name = None
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT service_id FROM accounts WHERE id=?", (account_id,))
+                row = c.fetchone()
+                if row:
+                    service_name = db.get_service_name(row[0])
+
+            # If the caller does not match the service name (unless it's a core module), redact
+            if service_name and not caller_name.startswith("core."):
+                if not caller_name.startswith(f"plugins.{service_name}"):
+                    token['access_token'] = 'REDACTED'
+                    if 'refresh_token' in token and token['refresh_token']:
+                        token['refresh_token'] = 'REDACTED'
+
+            return token
         except Exception as e:  # pragma: no cover
             print(f"[ERROR] get_account_token failed: {e}")
             return None
