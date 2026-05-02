@@ -108,21 +108,43 @@ def safe_move(src: Union[str, Path], dest: Union[str, Path]) -> Path:
 
 def safe_delete(path: Union[str, Path]) -> None:
     """
-    Securely delete the file at *path*.
+    Securely delete the file at *path*. (Soft Delete enforced)
 
+    - Instead of unlink/rmtree, moves file to .trash/ at the library root.
     - Path is jail-checked.
     - File lock is held during deletion.
-    - A missing file is logged as a warning rather than raised.
 
     Raises:
         SecurityError: If the path escapes its allowed root.
     """
+    from core.settings import config_manager
     resolved = resolve_path(path)
     file_jail.validate(resolved)
+
     with lock_manager.lock_for(resolved):
         if resolved.exists():
-            resolved.unlink()
-            logger.debug("safe_delete: %s", resolved)
+            try:
+                # Resolve the user's library mount
+                library_dir = config_manager.get('storage', {}).get('library_dir')
+                if not library_dir:
+                    logger.warning("No library_dir configured. Soft delete defaulting to current directory .trash")
+                    library_dir = "."
+
+                trash_dir = Path(library_dir) / ".trash"
+                trash_dir.mkdir(parents=True, exist_ok=True)
+
+                # Move to trash instead of permanent deletion
+                dest = trash_dir / resolved.name
+                # Ensure unique name in trash
+                counter = 1
+                while dest.exists():
+                    dest = trash_dir / f"{resolved.stem}_{counter}{resolved.suffix}"
+                    counter += 1
+
+                shutil.move(str(resolved), str(dest))
+                logger.debug("safe_delete (Soft Delete): %s -> %s", resolved, dest)
+            except Exception as e:
+                logger.error(f"Soft delete failed for {resolved}: {e}")
         else:
             logger.warning("safe_delete: file not found, skipping: %s", resolved)
 

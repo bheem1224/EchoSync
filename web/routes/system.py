@@ -749,17 +749,36 @@ def rebuild_database():
 @bp.post('/jobs/<job_name>/kill')
 @require_auth
 def kill_job(job_name):
-    """Stub route to kill a job."""
+    """Terminate a running job violently if it is a process, or softly if it is a thread."""
     try:
         from core.job_queue import job_queue
-        # Basic implementation: set running to false (not a real thread kill, just a soft stop request)
-        if job_queue._is_job_running(job_name):
+        import multiprocessing
+
+        with job_queue._lock:
+            val = job_queue._is_running.get(job_name)
             job = job_queue._jobs.get(job_name)
+
+            if not val and not (job and job.running):
+                return jsonify({'error': 'Job not running'}), 404
+
+            # If it's a multiprocessing Process, terminate it
+            if isinstance(val, multiprocessing.Process) and val.is_alive():
+                logger.warning(f"Violently terminating heavy job process: {job_name}")
+                val.terminate()
+                val.join(timeout=2.0)
+                if val.is_alive():
+                    val.kill() # Escalation
+                job_queue._is_running[job_name] = False
+                if job:
+                    job.running = False
+                return jsonify({'success': True, 'message': f'Process terminated for {job_name}'}), 200
+
+            # Otherwise, soft kill for threads
             if job:
                 job.running = False
-                job_queue._is_running[job_name] = False
-            return jsonify({'success': True, 'message': f'Kill signal sent to {job_name}'}), 200
-        return jsonify({'error': 'Job not running'}), 404
+            job_queue._is_running[job_name] = False
+            return jsonify({'success': True, 'message': f'Soft stop signal sent to thread for {job_name}'}), 200
+
     except Exception as e:
         logger.error(f"Error killing job: {e}")
         return jsonify({'error': 'Failed to kill job'}), 500

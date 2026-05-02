@@ -92,6 +92,13 @@ def create_app() -> Flask:
         if request.path.startswith('/api/'):
             if request.path in ('/api/auth/login', '/api/system/setup'):
                 return  # Bypass rate limiting
+
+            # Naked Port Defense: Strictly block unauthorized access pending v2.6.0 auth implementation
+            # Verify if user is logged in (session cookie)
+            from flask import session
+            if not session.get('user'):
+                return jsonify({'error': 'Unauthorized. Outbound Gateway Locked.'}), 401
+
             if not _api_rate_limiter.consume(1):
                 return jsonify({'error': 'Rate limit exceeded'}), 429
 

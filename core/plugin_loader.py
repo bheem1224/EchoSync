@@ -92,7 +92,7 @@ class PluginSecurityScanner(ast.NodeVisitor):
         for alias in node.names:
             base_module = alias.name.split('.')[0]
             if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
-                if base_module == "subprocess" and self.privileged:
+                if base_module in ("subprocess", "ctypes") and self.privileged:
                     continue
                 self.violations.append((node.lineno, f"forbidden import '{alias.name}'"))
         self.generic_visit(node)
@@ -101,7 +101,9 @@ class PluginSecurityScanner(ast.NodeVisitor):
         if node.module:
             base_module = node.module.split('.')[0]
             if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
-                if not (base_module == "subprocess" and self.privileged):
+                if base_module in ("subprocess", "ctypes") and self.privileged:
+                    pass
+                else:
                     self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
         self.generic_visit(node)
 

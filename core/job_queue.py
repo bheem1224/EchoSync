@@ -8,6 +8,7 @@ Lightweight job queue / task scheduler for Echosync.
 """
 
 import heapq
+import multiprocessing
 import threading
 import time
 from dataclasses import dataclass, field
@@ -374,7 +375,8 @@ class JobQueue:
     def _is_job_running(self, name: str) -> bool:
         """Check if a job is currently executing."""
         with self._lock:
-            return self._is_running.get(name, False) or self._jobs.get(name, ScheduledJob(time.time(), "_dummy", lambda: None)).running
+            val = self._is_running.get(name, False)
+            return bool(val) or self._jobs.get(name, ScheduledJob(time.time(), "_dummy", lambda: None)).running
 
     def _run_loop(self):
         from core.state import system_state
@@ -494,9 +496,16 @@ class JobQueue:
                 self._release_worker_resources()
 
         try:
-            threading.Thread(target=worker, daemon=True).start()
+            if is_heavy:
+                # Use multiprocessing for heavy jobs to bypass GIL and allow termination
+                p = multiprocessing.Process(target=worker, daemon=True)
+                # Store the process reference in _is_running dictionary for the kill route
+                self._is_running[job.name] = p
+                p.start()
+            else:
+                threading.Thread(target=worker, daemon=True).start()
         except Exception:
-            # Thread failed to start — release semaphore and lock so resources are not leaked
+            # Thread/Process failed to start — release semaphore and lock so resources are not leaked
             with self._lock:
                 self._is_running[job.name] = False
             worker_pool.release()
