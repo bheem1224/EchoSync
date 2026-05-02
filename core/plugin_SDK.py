@@ -53,6 +53,15 @@ class WasmPluginWrapper:
 
 class KVS:
     def __init__(self, plugin_id: str):
+        import inspect
+        frame = inspect.currentframe()
+        try:
+            caller_module = inspect.getmodule(frame.f_back)
+            if caller_module and not caller_module.__name__.startswith("core."):
+                if not caller_module.__name__.startswith(f"plugins.{plugin_id}"):
+                    raise PermissionError(f"Cross-namespace data access forbidden. Caller '{caller_module.__name__}' cannot access KVS for '{plugin_id}'.")
+        finally:
+            del frame
         self.plugin_id = plugin_id
 
     def get(self, key: str, default=None) -> str:
@@ -86,6 +95,15 @@ class KVS:
 
 class StateKVS:
     def __init__(self, plugin_id: str):
+        import inspect
+        frame = inspect.currentframe()
+        try:
+            caller_module = inspect.getmodule(frame.f_back)
+            if caller_module and not caller_module.__name__.startswith("core."):
+                if not caller_module.__name__.startswith(f"plugins.{plugin_id}"):
+                    raise PermissionError(f"Cross-namespace data access forbidden. Caller '{caller_module.__name__}' cannot access StateKVS for '{plugin_id}'.")
+        finally:
+            del frame
         self.plugin_id = plugin_id
 
     def get(self, key: str, default=None) -> str:

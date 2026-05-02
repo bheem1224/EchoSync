@@ -45,6 +45,20 @@ class EventBus:
                     pass
 
     def publish_lightweight(self, payload: dict):
+        import inspect
+        import zlib
+        frame = inspect.currentframe()
+        try:
+            caller_module = inspect.getmodule(frame.f_back)
+            caller_name = caller_module.__name__ if caller_module else "unknown"
+
+            payload["_origin"] = caller_name
+            if caller_name.startswith("core."):
+                payload["_passport"] = 0
+            else:
+                payload["_passport"] = zlib.crc32(caller_name.encode())
+        finally:
+            del frame
         event_name = payload.get("event", "UNKNOWN")
 
         with self._lock:

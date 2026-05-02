@@ -26,16 +26,25 @@ logger = get_logger("plugin_loader")
 # Zero-Trust Plugin Security Scanner
 # ---------------------------------------------------------------------------
 # Forbidden bare-name calls (Python builtins used for direct file I/O)
-_FORBIDDEN_BARE_CALLS: frozenset = frozenset({"open", "__import__", "eval", "exec", "getattr", "setattr", "globals", "locals"})
+_FORBIDDEN_BARE_CALLS: frozenset = frozenset({"open", "__import__", "eval", "exec", "getattr", "setattr", "globals", "locals", "compile", "delattr", "memoryview", "input"})
 
 # Forbidden module.method() patterns
 _FORBIDDEN_MODULE_CALLS: dict = {
-    "os":     frozenset({"remove", "unlink", "rename"}),
+    "os": frozenset({"system", "popen", "fdopen", "kill", "execve", "spawn", "remove", "unlink", "rename", "rmdir", "mkdir", "chmod", "chown", "symlink", "link", "environ"}),
     "shutil": frozenset({"move", "copy", "rmtree"}),
-    # M1: removed the dead "__import__" entry — importlib has no such attribute.
-    # The bare __import__('os') vector is already blocked by _FORBIDDEN_BARE_CALLS.
     "importlib": frozenset({"import_module", "reload"}),
-    "builtins": frozenset({"eval", "exec", "getattr", "setattr"}),
+    "builtins": frozenset({"eval", "exec", "getattr", "setattr", "delattr", "open", "compile", "__import__", "globals", "locals", "memoryview", "input"}),
+    "subprocess": frozenset({"*"}),
+    "sqlite3": frozenset({"*"}),
+    "urllib": frozenset({"*"}),
+    "pty": frozenset({"*"}),
+    "posix": frozenset({"*"}),
+    "tarfile": frozenset({"*"}),
+    "zipfile": frozenset({"*"}),
+    "codecs": frozenset({"*"}),
+    "io": frozenset({"*"}),
+    "dbm": frozenset({"*"}),
+    "sys": frozenset({"modules", "exit"}),
 }
 
 # Forbidden method names on *any* receiver.
@@ -83,7 +92,7 @@ class PluginSecurityScanner(ast.NodeVisitor):
         for alias in node.names:
             base_module = alias.name.split('.')[0]
             if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
-                if base_module == "subprocess" and self.privileged:
+                if base_module in ("subprocess", "ctypes") and self.privileged:
                     continue
                 self.violations.append((node.lineno, f"forbidden import '{alias.name}'"))
         self.generic_visit(node)
@@ -92,7 +101,9 @@ class PluginSecurityScanner(ast.NodeVisitor):
         if node.module:
             base_module = node.module.split('.')[0]
             if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
-                if not (base_module == "subprocess" and self.privileged):
+                if base_module in ("subprocess", "ctypes") and self.privileged:
+                    pass
+                else:
                     self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
         self.generic_visit(node)
 
@@ -114,7 +125,7 @@ class PluginSecurityScanner(ast.NodeVisitor):
             if isinstance(receiver, ast.Name):
                 module = receiver.id
                 forbidden_attrs = _FORBIDDEN_MODULE_CALLS.get(module)
-                if forbidden_attrs and attr in forbidden_attrs:
+                if forbidden_attrs and ("*" in forbidden_attrs or attr in forbidden_attrs):
                     self.violations.append(
                         (node.lineno, f"{module}.{attr}()")
                     )
@@ -479,13 +490,13 @@ class PluginLoader:
                 else:
                     logger.warning(f"Invalid {bp_attr} in {name}: expected flask.Blueprint, got {type(blueprint)}")
 
-            except Exception as e:
-                logger.error(f"Error loading plugin {module_path}: {e}", exc_info=True)
-                config_manager.disable_provider(plugin_id)
-            finally:
-                # Cleanup vendored path
-                if added_vendor_path and str(vendor_dir) in sys.path:
-                    sys.path.remove(str(vendor_dir))
+        except Exception as e:
+            logger.error(f"Error loading plugin {module_path}: {e}", exc_info=True)
+            config_manager.disable_provider(plugin_id)
+        finally:
+            # Cleanup vendored path
+            if added_vendor_path and str(vendor_dir) in sys.path:
+                sys.path.remove(str(vendor_dir))
 
     def get_all_blueprints(self) -> List[Blueprint]:
         return self.loaded_blueprints

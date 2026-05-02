@@ -227,6 +227,13 @@ class ConfigDatabase:
             return None
 
     # Accounts
+    def get_service_name(self, service_id: int) -> Optional[str]:
+        with self._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT name FROM services WHERE id=?", (service_id,))
+            row = c.fetchone()
+            return row[0] if row else None
+
     def get_accounts(self, service_id: Optional[int] = None, is_active: Optional[bool] = None) -> List[Dict[str, Any]]:
         try:
             import contextlib
