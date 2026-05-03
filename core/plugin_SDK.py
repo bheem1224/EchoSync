@@ -118,11 +118,80 @@ class _FileSDKFacade:
             logger.error(f"Failed to soft delete {file_path}: {e}")
             return False
 
+class _NetworkSDKFacade:
+    def __init__(self, plugin_id: str):
+        self.plugin_id = plugin_id
+        from core.request_manager import RequestManager
+        self._manager = RequestManager(provider=plugin_id)
+
+    def _check_allowlist(self, url: str):
+        from core.settings import config_manager
+        import json
+        from urllib.parse import urlparse
+        
+        try:
+            # Core always allowed
+            if self.plugin_id == "core" or self.plugin_id.startswith("core."):
+                return
+
+            manifest_path = config_manager.get_plugins_dir() / self.plugin_id.replace('plugin.', '') / "manifest.json"
+            if not manifest_path.exists():
+                raise PermissionError(f"Plugin manifest not found for {self.plugin_id}")
+
+            manifest = json.loads(manifest_path.read_text())
+            allowlist = manifest.get('network_domains', [])
+            
+            if "*" in allowlist:
+                return
+
+            parsed = urlparse(url)
+            domain = parsed.netloc.split(':')[0] # Remove port
+            
+            for pattern in allowlist:
+                if pattern.startswith("*."):
+                    suffix = pattern[1:] # ".example.com"
+                    if domain.endswith(suffix) or domain == suffix[1:]:
+                        return
+                elif domain == pattern:
+                    return
+            
+            raise PermissionError(f"Network access to '{domain}' blocked. Domain not in 'network_domains' allowlist.")
+        except Exception as e:
+            if isinstance(e, PermissionError): raise
+            # Fail closed on manifest errors for security
+            raise PermissionError(f"Security check failed for network request: {e}")
+
+    def get(self, url: str, **kwargs):
+        self._check_allowlist(url)
+        return self._manager.get(url, **kwargs)
+
+    def post(self, url: str, **kwargs):
+        self._check_allowlist(url)
+        return self._manager.post(url, **kwargs)
+
+    def put(self, url: str, **kwargs):
+        self._check_allowlist(url)
+        return self._manager.put(url, **kwargs)
+
+    def delete(self, url: str, **kwargs):
+        self._check_allowlist(url)
+        return self._manager.delete(url, **kwargs)
+
 class _SDK:
     def __init__(self):
+        # We don't know the plugin_id here yet as it's a global singleton,
+        # but facade methods will verify caller.
         self.accounts = _AccountsSDKFacade()
         self.plugins = _PluginsSDKFacade()
         self.file = _FileSDKFacade()
+        
+    def _get_plugin_id(self):
+        caller_mod = inspect.currentframe().f_back.f_back.f_globals.get('__name__', '')
+        return caller_mod.replace('plugins.', '').replace('core.', '')
+
+    @property
+    def network(self):
+        return _NetworkSDKFacade(self._get_plugin_id())
         
     @property
     def dry_run(self) -> bool:

@@ -11,6 +11,8 @@ import heapq
 import multiprocessing
 import threading
 import time
+import sys
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, List
 from database.working_database import get_working_database
@@ -280,70 +282,43 @@ class JobQueue:
                 logger.warning(f"Job '{name}' is already running, skipping duplicate execution")
                 return False
             
-            # Mark as running — will be cleared by _run_job_thread's finally block
-            self._is_running[name] = True
+        is_heavy = getattr(job, 'plugin', None) is not None or "sync" in job.name or "scan" in job.name
+        self._is_running[name] = True
         
-        # Execute in a background thread outside the lock
-        def _run_job_thread():
-            try:
-                logger.info(f"Starting manual execution of job '{name}'")
-                job.running = True
-                job.last_started = time.time()
-                
-                if job.plugin:
-                    import multiprocessing
-                    import sys
-                    
-                    def _jail_runner(f):
-                        if sys.platform != 'win32':
-                            try:
-                                import resource
-                                limit = 100 * 1024 * 1024
-                                resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-                            except Exception:
-                                pass
-                        f()
-                        
-                    p = multiprocessing.Process(target=_jail_runner, args=(job.func,))
-                    with self._lock:
-                        self._active_processes[job.name] = p
-                    p.start()
-                    p.join()
-                    with self._lock:
-                        self._active_processes.pop(job.name, None)
-                    if p.exitcode != 0:
-                        raise RuntimeError(f"Plugin worker process failed with exit code {p.exitcode}")
-                else:
-                    job.func()
-                
-                job.last_finished = time.time()
-                job.last_success = job.last_finished
-                job.total_successes += 1
-                job.current_retries = 0
-                job.last_error = None
-                logger.info(f"Manual execution of job '{name}' completed successfully")
-            except Exception as e:
-                job.last_finished = time.time()
-                job.last_error = str(e)
-                job.last_error_time = job.last_finished
-                job.total_failures += 1
-                logger.error(f"Error during manual execution of job '{name}': {e}")
-            finally:
+        if is_heavy:
+            p = multiprocessing.Process(
+                target=_multiprocess_worker_target,
+                args=(job.name, job.plugin, job.plugin_id),
+                daemon=True
+            )
+            with self._lock:
+                self._active_processes[name] = p
+                self._is_running[name] = p
+            p.start()
+            
+            def monitor():
+                p.join()
                 with self._lock:
                     self._finalize_job_after_run(job, time.time())
+                    self._active_processes.pop(name, None)
                 self._release_worker_resources()
+            
+            threading.Thread(target=monitor, daemon=True).start()
+        else:
+            def thread_worker():
+                try:
+                    _execute_job_logic(job)
+                finally:
+                    with self._lock:
+                        self._finalize_job_after_run(job, time.time())
+                    self._release_worker_resources()
+
+            t = threading.Thread(target=thread_worker, daemon=True)
+            with self._lock:
+                self._active_threads[name] = t
+            t.start()
         
-        try:
-            thread = threading.Thread(target=_run_job_thread, daemon=True)
-            with self._lock:
-                self._active_threads[name] = thread
-            thread.start()
-        except Exception:
-            # Thread failed to start — release the lock so the job is not permanently stuck
-            with self._lock:
-                self._is_running[name] = False
-            raise
-        logger.info(f"Spawned background thread for manual execution of job '{name}'")
+        logger.info(f"Spawned {'multiprocess' if is_heavy else 'thread'} worker for manual execution of job '{name}'")
         return True
 
     def kill_job(self, name: str) -> bool:
@@ -502,112 +477,131 @@ class JobQueue:
             logger.warning(f"No available workers in {'general' if is_heavy else 'core'} pool for job: {job.name}")
             return
 
-        # _is_running is set here; the worker's finally block clears it via _finalize_job_after_run.
-        # The try/except below ensures it is also cleared if Thread.start() itself fails.
         self._is_running[job.name] = True
 
-        def worker():
-            try:
-                import resource
-                plugin_id = getattr(job, 'plugin_id', None) or getattr(job, 'plugin', None)
-                if plugin_id and plugin_id != "core":
-                    from core.plugin_loader import plugin_store
-                    plugin = plugin_store.get_plugin(plugin_id)
-                    if plugin and getattr(plugin, 'manifest', None):
-                        limit_mb = plugin.manifest.get('permissions', {}).get('memory_limit_mb', 100)
-                        limit_bytes = limit_mb * 1024 * 1024
-                        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
-            except (ImportError, ValueError, OSError):
-                pass
-            attempt = 0
-            try:
-                while True:
-                    try:
-                        # Log health checks at DEBUG, other jobs at INFO
-                        log_level = logger.debug if 'health_check' in job.name else logger.info
-                        log_level(f"Starting job: {job.name} (attempt {attempt + 1})")
-                        job.running = True
-                        job.last_started = time.time()
-                        
-                        if job.plugin:
-                            import multiprocessing
-                            import sys
-                            
-                            def _jail_runner(f):
-                                if sys.platform != 'win32':
-                                    try:
-                                        import resource
-                                        limit = 100 * 1024 * 1024
-                                        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-                                    except Exception:
-                                        pass
-                                f()
-                                
-                            p = multiprocessing.Process(target=_jail_runner, args=(job.func,))
-                            with self._lock:
-                                self._active_processes[job.name] = p
-                            p.start()
-                            p.join()
-                            with self._lock:
-                                self._active_processes.pop(job.name, None)
-                            if p.exitcode != 0:
-                                raise RuntimeError(f"Plugin worker process failed with exit code {p.exitcode}")
-                        else:
-                            job.func()
-                            
-                        job.last_success = time.time()
-                        job.last_error = None
-                        job.last_error_time = None
-                        job.current_retries = 0
-                        job.total_successes += 1
-                        log_level(f"Completed job: {job.name}")
-                        break
-                    except Exception as e:
-                        error_msg = str(e)
-                        job.last_error = error_msg
-                        job.last_error_time = time.time()
-                        job.current_retries += 1
-                        job.total_failures += 1
-                        attempt += 1
-                        logger.error(f"Job failed: {job.name}, attempt {attempt}, error: {e}", exc_info=True)
-
-                        if job.current_retries >= job.max_retries:
-                            logger.error(
-                                f"Job '{job.name}' exceeded max retries ({job.max_retries}); giving up. "
-                                f"Total failures: {job.total_failures}"
-                            )
-                            try:
-                                from core.hook_manager import hook_manager
-                                hook_manager.apply_filters('ON_JOB_FAILED', None, job_name=job.name, error=error_msg, retries=job.current_retries)
-                            except Exception as hook_e:
-                                logger.error(f"Error in ON_JOB_FAILED hook: {hook_e}")
-                            break
-
-                        backoff = job.backoff_base * (job.backoff_factor ** (job.current_retries - 1))
-                        logger.info(f"Retrying job '{job.name}' in {backoff:.1f}s")
-                        time.sleep(backoff)
-                        continue
-            finally:
+        if is_heavy:
+            # Use multiprocessing for heavy jobs to bypass GIL and allow termination
+            p = multiprocessing.Process(
+                target=_multiprocess_worker_target,
+                args=(job.name, job.plugin, job.plugin_id),
+                daemon=True
+            )
+            with self._lock:
+                self._active_processes[job.name] = p
+                self._is_running[job.name] = p
+            
+            p.start()
+            
+            # Start a monitor thread in the parent process to wait for the worker
+            # and clean up state, since the child process cannot update parent memory.
+            def monitor():
+                p.join()
                 with self._lock:
                     self._finalize_job_after_run(job, time.time())
+                    self._active_processes.pop(job.name, None)
                 worker_pool.release()
                 self._release_worker_resources()
+            
+            threading.Thread(target=monitor, daemon=True).start()
+        else:
+            def thread_worker():
+                try:
+                    # Run the job function directly in the thread
+                    # Note: We reuse the same logic as the old worker here
+                    _execute_job_logic(job)
+                finally:
+                    with self._lock:
+                        self._finalize_job_after_run(job, time.time())
+                    worker_pool.release()
+                    self._release_worker_resources()
 
-        try:
-            if is_heavy:
-                # Use multiprocessing for heavy jobs to bypass GIL and allow termination
-                p = multiprocessing.Process(target=worker, daemon=True)
-                # Store the process reference in _is_running dictionary for the kill route
-                self._is_running[job.name] = p
-                p.start()
-            else:
-                threading.Thread(target=worker, daemon=True).start()
-        except Exception:
-            # Thread/Process failed to start — release semaphore and lock so resources are not leaked
+            t = threading.Thread(target=thread_worker, daemon=True)
             with self._lock:
-                self._is_running[job.name] = False
-            worker_pool.release()
-            raise
+                self._active_threads[job.name] = t
+            t.start()
+
+
+def _multiprocess_worker_target(job_name: str, plugin_id: Optional[str], owner_plugin_id: Optional[str]):
+    """Top-level function for multiprocessing worker target (fix for pickling errors)."""
+    try:
+        from core.job_queue import job_queue
+        with job_queue._lock:
+            job = job_queue._jobs.get(job_name)
+        
+        if not job:
+            return
+
+        # Apply memory limits (Memory Jail)
+        if sys.platform != 'win32':
+            try:
+                import resource
+                effective_plugin_id = owner_plugin_id or plugin_id
+                if effective_plugin_id and effective_plugin_id != "core":
+                    # Check manifest for custom limit
+                    from core.settings import config_manager
+                    import json
+                    limit_mb = 100
+                    manifest_path = config_manager.get_plugins_dir() / effective_plugin_id.replace('plugin.', '') / "manifest.json"
+                    if manifest_path.exists():
+                        manifest = json.loads(manifest_path.read_text())
+                        limit_mb = manifest.get('permissions', {}).get('memory_limit_mb', 100)
+                    
+                    limit_bytes = limit_mb * 1024 * 1024
+                    resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
+            except Exception:
+                pass
+
+        _execute_job_logic(job)
+    except Exception as e:
+        import logging
+        logging.getLogger("job_worker").error(f"Fatal error in multiprocess worker for {job_name}: {e}")
+
+def _execute_job_logic(job: ScheduledJob):
+    """Core logic for executing a job, shared between threads and processes."""
+    from core.tiered_logger import get_logger
+    logger = get_logger("job_queue")
+    
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            # Log health checks at DEBUG, other jobs at INFO
+            log_level = logger.debug if 'health_check' in job.name else logger.info
+            log_level(f"Starting job: {job.name} (attempt {attempt})")
+            
+            job.running = True
+            job.last_started = time.time()
+            
+            # Execute the actual function
+            job.func()
+            
+            job.last_success = time.time()
+            job.last_error = None
+            job.last_error_time = None
+            job.current_retries = 0
+            job.total_successes += 1
+            log_level(f"Completed job: {job.name}")
+            break
+        except Exception as e:
+            error_msg = str(e)
+            job.last_error = error_msg
+            job.last_error_time = time.time()
+            job.current_retries += 1
+            job.total_failures += 1
+            logger.error(f"Job failed: {job.name}, attempt {attempt}, error: {e}", exc_info=True)
+
+            if job.current_retries >= job.max_retries:
+                logger.error(f"Job '{job.name}' exceeded max retries ({job.max_retries}); giving up.")
+                try:
+                    from core.hook_manager import hook_manager
+                    hook_manager.apply_filters('ON_JOB_FAILED', None, job_name=job.name, error=error_msg, retries=job.current_retries)
+                except Exception:
+                    pass
+                break
+
+            backoff = job.backoff_base * (job.backoff_factor ** (job.current_retries - 1))
+            logger.info(f"Retrying job '{job.name}' in {backoff:.1f}s")
+            time.sleep(backoff)
 
 
 # Global singleton
