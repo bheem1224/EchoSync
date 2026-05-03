@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from core.state import system_state

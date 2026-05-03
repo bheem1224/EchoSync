@@ -68,17 +68,11 @@ from database.working_database import get_working_database
 from core.migrations import run_working_db_migrations
 run_working_db_migrations(get_working_database().engine)
 
-try:
-    from web.api_app import create_app
+from web.api_app import create_app
 
-    # Ensure SSL certs exist and start OAuth sidecar
-    from core.oauth.sidecar import start_oauth_sidecar
-    start_oauth_sidecar()
-except Exception as e:
-    import traceback
-    with open(r"data\logs\crash.log", "a") as f:
-        f.write("Crash during imports:\n" + traceback.format_exc())
-    raise
+# Ensure SSL certs exist and start OAuth sidecar
+from core.oauth.sidecar import start_oauth_sidecar
+start_oauth_sidecar()
 
 if __name__ == "__main__":
     if dev_mode:
@@ -88,13 +82,7 @@ if __name__ == "__main__":
 
     print(f"[API] Starting HTTP backend on http://0.0.0.0:5000/api")
 
-    try:
-        app = create_app()
-    except Exception as e:
-        import traceback
-        with open(r"data\logs\crash.log", "a") as f:
-            f.write("Crash during create_app:\n" + traceback.format_exc())
-        raise
+    app = create_app()
 
     # Initialization successful — clear the boot lock unconditionally so the next
     # boot starts clean.  Critically, this must also run when we booted into Safe
@@ -113,10 +101,4 @@ if __name__ == "__main__":
 
     # Run in standard HTTP mode
     # debug=True enables the reloader and debugger, which is only desired in DEV_MODE
-    try:
-        app.run(host="0.0.0.0", port=5000, debug=dev_mode)
-    except Exception as e:
-        import traceback
-        with open(r"data\logs\crash.log", "a") as f:
-            f.write("Crash during app.run:\n" + traceback.format_exc())
-        raise
+    app.run(host="0.0.0.0", port=5000, debug=dev_mode)
