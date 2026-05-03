@@ -31,13 +31,30 @@ export const API_BASE_URL = determinedBaseURL;
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000, // Request timeout (10 seconds)
+  withCredentials: true, // Ensure HttpOnly cookies are sent with every request
 });
+
+/**
+ * Utility to extract a cookie value by name
+ */
+function getCookie(name) {
+  if (typeof document === 'undefined') return null;
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return null;
+}
 
 // Add a request interceptor
 apiClient.interceptors.request.use(
   (config) => {
-    // Add authorization token or other headers if needed
-    // Example: config.headers.Authorization = `Bearer ${token}`;
+    // Inject Double-Submit CSRF Token from cookie into header
+    const csrfToken = getCookie('echo_csrf');
+    if (csrfToken) {
+      config.headers['X-Echo-CSRF'] = csrfToken;
+    }
+    
+    // Authorization: Bearer logic removed - handled by HttpOnly echo_auth cookie
     return config;
   },
   (error) => {
@@ -50,6 +67,10 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     // Handle global API errors
+    if (error.response?.status === 401) {
+       console.warn('[API] Unauthorized: Outbound Gateway Blocked.');
+       // Optional: Redirect to login or trigger auth store reset
+    }
     console.error('API Error:', error.message || error);
     return Promise.reject(error);
   }

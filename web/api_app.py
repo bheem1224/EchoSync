@@ -95,17 +95,28 @@ def create_app() -> Flask:
     _api_rate_limiter = TokenBucketRateLimiter(capacity=100, refill_rate=10.0)
 
     @app.before_request
-    def enforce_rate_limit():
+    def naked_port_defense():
         if request.path.startswith('/api/'):
-            if request.path in ('/api/auth/login', '/api/system/setup'):
-                return  # Bypass rate limiting
+            # 1. Exemptions
+            if request.path in ('/api/health', '/api/status', '/api/auth/login', '/api/system/setup'):
+                return
 
-            # Naked Port Defense: Strictly block unauthorized access pending v2.6.0 auth implementation
-            # Verify if user is logged in (session cookie)
-            from flask import session
-            if not session.get('user'):
-                return jsonify({'error': 'Unauthorized. Outbound Gateway Locked.'}), 401
+            # 2. Extract and verify JWT from HttpOnly cookie
+            from core.security import verify_auth_token
+            auth_cookie = request.cookies.get('echo_auth')
+            if not auth_cookie:
+                return jsonify({'error': 'Unauthorized. Missing outbound gateway credentials.'}), 401
+            
+            payload = verify_auth_token(auth_cookie)
+            if not payload:
+                return jsonify({'error': 'Unauthorized. Session expired or invalid.'}), 401
 
+            # 3. Double-Submit CSRF Verification
+            csrf_header = request.headers.get('X-Echo-CSRF')
+            if not csrf_header or csrf_header != payload.get('csrf'):
+                return jsonify({'error': 'Unauthorized. CSRF mismatch detected.'}), 401
+
+            # 4. Outbound Rate Limiting
             if not _api_rate_limiter.consume(1):
                 return jsonify({'error': 'Rate limit exceeded'}), 429
 

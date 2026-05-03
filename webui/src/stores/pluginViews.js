@@ -19,6 +19,7 @@
  */
 
 import { writable, derived, get } from 'svelte/store';
+import { apiFetch } from '../lib/api';
 
 // ── Internal writable ─────────────────────────────────────────────────────
 const _state = writable({
@@ -47,9 +48,7 @@ export async function loadPluginViews() {
 
   _loadPromise = (async () => {
     try {
-      const res = await fetch('/api/system/plugins/ui-manifest', {
-        credentials: 'include',
-      });
+      const res = await apiFetch('/api/system/plugins/ui-manifest');
 
       if (!res.ok) {
         if (res.status === 404) {

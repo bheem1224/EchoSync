@@ -80,3 +80,26 @@ def is_privileged_or_verified(manifest: dict) -> bool:
     if source == 'official': return True
     if manifest.get('privileged', False): return True
     return False
+
+def generate_auth_token(username: str, csrf: str) -> str:
+    """Generate a JWT token for the user with a CSRF claim."""
+    import jwt
+    from datetime import datetime, timedelta, timezone
+    
+    key = os.getenv("MASTER_KEY", "default-secret-key-change-me")
+    payload = {
+        "user": username,
+        "csrf": csrf,
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+        "iat": datetime.now(timezone.utc)
+    }
+    return jwt.encode(payload, key, algorithm="HS256")
+
+def verify_auth_token(token: str) -> Optional[dict]:
+    """Verify a JWT token and return the payload."""
+    import jwt
+    key = os.getenv("MASTER_KEY", "default-secret-key-change-me")
+    try:
+        return jwt.decode(token, key, algorithms=["HS256"])
+    except Exception:
+        return None
