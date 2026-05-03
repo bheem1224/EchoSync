@@ -5,6 +5,10 @@ from core.hook_manager import hook_manager
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # TODO (v2.6.0): Re-enable plugin-based authentication hooks.
+        # Temporarily disabled to allow frontend development.
+        return f(*args, **kwargs)
+        
         # Pass the request through the hook.
         user = hook_manager.apply_filters('AUTHENTICATE_USER', None, request)
 

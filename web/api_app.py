@@ -96,6 +96,10 @@ def create_app() -> Flask:
 
     @app.before_request
     def naked_port_defense():
+        # TODO (v2.6.0): Re-enable strict HttpOnly + CSRF authentication.
+        # Temporarily disabled to allow frontend development without a login screen.
+        return 
+
         if request.path.startswith('/api/'):
             # 1. Exemptions
             if request.path in ('/api/health', '/api/status', '/api/auth/login', '/api/system/setup'):
