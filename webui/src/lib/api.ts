@@ -24,7 +24,18 @@ export function getCookie(name: string): string | null {
  * 2. X-Echo-CSRF header (from echo_csrf cookie)
  */
 export async function apiFetch(endpoint: string, options: RequestInit = {}): Promise<Response> {
-    const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    // If endpoint already starts with the base URL (e.g. /api), don't prepend it again
+    let url = endpoint;
+    if (!endpoint.startsWith('http')) {
+        const base = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+        const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+        
+        if (path.startsWith(base + '/') || path === base) {
+            url = path;
+        } else {
+            url = `${base}${path}`;
+        }
+    }
     
     // Ensure credentials are sent for HttpOnly cookies
     options.credentials = options.credentials || 'same-origin';
