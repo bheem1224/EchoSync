@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { feedback } from '../stores/feedback';
   import apiClient from '../api/client';
+  import BackupSettings from './BackupSettings.svelte';
 
   let cpuUsage = $state(0);
   let systemCpuUsage = $state(0);
@@ -294,6 +295,10 @@
       <p class="mt-4 text-xs italic text-gray-300">
         Green: Configured • Amber: Available but not yet configured • Red: Disabled
       </p>
+    </article>
+
+    <article class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm">
+      <BackupSettings />
     </article>
 
     <article class="lg:col-span-2 bg-red-950/40 border border-red-900/60 rounded-xl p-5 shadow-sm">

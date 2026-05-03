@@ -187,7 +187,22 @@ class _SDK:
         
     def _get_plugin_id(self):
         caller_mod = inspect.currentframe().f_back.f_back.f_globals.get('__name__', '')
-        return caller_mod.replace('plugins.', '').replace('core.', '')
+        # Handle plugins.{author}.{plugin_name}
+        if caller_mod.startswith('plugins.'):
+            parts = caller_mod.split('.')
+            # parts[0] is 'plugins', parts[1] is author, parts[2] is plugin_name
+            if len(parts) >= 3:
+                base_id = f"{parts[1]}.{parts[2]}"
+                if '.beta' in caller_mod:
+                    return f"{base_id}@beta"
+                return base_id
+            return parts[1] # fallback for single-part names
+        
+        # Handle core.providers.{name}
+        if caller_mod.startswith('core.providers.'):
+            return caller_mod.split('.')[2]
+
+        return caller_mod.replace('plugins.', '').replace('core.', '').split('.')[0]
 
     @property
     def network(self):

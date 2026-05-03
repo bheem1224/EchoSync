@@ -1,13 +1,15 @@
 """System endpoints for status, settings, and logs."""
 
 from web.auth import require_auth
-from flask import Blueprint, jsonify, request, Response
+from flask import Blueprint, jsonify, request, Response, send_file
 import json
 import os
 import platform
 import psutil
 from core.tiered_logger import get_logger
 from core.settings import config_manager
+from core.backup_manager import backup_manager
+from pathlib import Path
 
 logger = get_logger("system_route")
 bp = Blueprint("system", __name__, url_prefix="/api")
@@ -71,6 +73,109 @@ def request_restart():
         "success": True, 
         "message": "Restarting EchoSync..."
     }), 200
+
+
+@bp.post("/system/backup")
+@require_auth
+def create_system_backup():
+    """Generates a full system backup and returns the path/status."""
+    try:
+        backup_path = backup_manager.create_backup()
+        return jsonify({
+            "success": True,
+            "backup_path": backup_path,
+            "filename": Path(backup_path).name
+        }), 200
+    except Exception as e:
+        logger.error(f"Backup failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@bp.get("/system/backups")
+@require_auth
+def list_system_backups():
+    """Returns a list of all available backup files."""
+    try:
+        backups = backup_manager.list_backups()
+        return jsonify({
+            "success": True,
+            "backups": backups
+        }), 200
+    except Exception as e:
+        logger.error(f"Failed to list backups: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@bp.get("/system/backups/<filename>/download")
+@require_auth
+def download_system_backup(filename):
+    """Downloads a specific backup file."""
+    try:
+        file_path = backup_manager.get_backup_path(filename)
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=filename
+        )
+    except FileNotFoundError:
+        return jsonify({"success": False, "error": "Backup not found"}), 404
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Download failed: {e}")
+        return jsonify({"success": False, "error": "Download failed"}), 500
+
+
+@bp.post("/system/restore")
+@require_auth
+def restore_system_backup():
+    """Restores the system from an uploaded zip OR a local filename."""
+    tmp_path = None
+    
+    try:
+        # Check if it's a file upload
+        if 'file' in request.files:
+            file = request.files['file']
+            if file.filename == '' or not file.filename.endswith('.zip'):
+                return jsonify({"success": False, "error": "Invalid file upload"}), 400
+            
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
+                file.save(tmp.name)
+                tmp_path = Path(tmp.name)
+                restore_file = tmp_path
+        
+        # Or a JSON payload with filename
+        elif request.is_json:
+            data = request.get_json()
+            filename = data.get("filename")
+            if not filename:
+                return jsonify({"success": False, "error": "Filename missing in JSON"}), 400
+            
+            restore_file = backup_manager.get_backup_path(filename)
+            
+        else:
+            return jsonify({"success": False, "error": "No restore source provided"}), 400
+
+        # Execute restore
+        success = backup_manager.restore_backup(restore_file)
+        if success:
+            request_restart() # Trigger reboot
+            return jsonify({
+                "success": True,
+                "message": f"Restore from {Path(restore_file).name} successful. Restarting..."
+            }), 200
+        else:
+            return jsonify({"success": False, "error": "Restore engine failed"}), 500
+
+    except FileNotFoundError:
+        return jsonify({"success": False, "error": "Local backup file not found"}), 404
+    except Exception as e:
+        logger.error(f"Restore failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        if tmp_path and tmp_path.exists():
+            os.remove(tmp_path)
 
 
 @bp.get("/stats")

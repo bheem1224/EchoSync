@@ -901,6 +901,12 @@ def get_config_database() -> ConfigDatabase:
         _config_db = ConfigDatabase()
     return _config_db
 
+def close_config_database() -> None:
+    global _config_db
+    if _config_db is not None:
+        # No explicit dispose on sqlite3 Connection, but we can set to None
+        _config_db = None
+
 from sqlalchemy import Column, String, Boolean
 from sqlalchemy.orm import declarative_base
 

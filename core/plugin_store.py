@@ -426,13 +426,19 @@ class PluginStore:
                 config_manager.set(f'plugins.{folder_id}.channel', channel)
                 logger.info(f"Persisted channel '{channel}' for plugin {folder_id}")
 
-                # Task 6: Grace Period Snapshot (if updating to beta)
+                # Task 6: Blue/Green Namespace Shifting
                 if channel == "beta":
                     try:
-                        self._create_grace_snapshot(plugin_id)
-                        logger.info(f"Created 24h grace snapshot for {plugin_id}")
+                        self._fork_namespace(plugin_id)
+                        logger.info(f"Forked data namespace for {plugin_id} (Blue/Green)")
                     except Exception as e:
-                        logger.error(f"Failed to create grace snapshot for {plugin_id}: {e}")
+                        logger.error(f"Failed to fork namespace for {plugin_id}: {e}")
+                elif channel == "stable":
+                    try:
+                        self._cutover_namespace(plugin_id)
+                        logger.info(f"Executed data cutover for {plugin_id} (Stable Promotion)")
+                    except Exception as e:
+                        logger.error(f"Failed to cutover namespace for {plugin_id}: {e}")
 
                 # State Updates
                 system_state.restart_pending = True
@@ -518,6 +524,8 @@ class PluginStore:
                         from sqlalchemy import text
                         tables = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :prefix"), {"prefix": prefix}).fetchall()
                         for (table_name,) in tables:
+                            if table_name in ("plugin_state_kvs", "config_kvs"):
+                                continue
                             conn.execute(text(f"DROP TABLE IF EXISTS \"{table_name}\""))
                         conn.commit()
                     except Exception:
@@ -528,77 +536,116 @@ class PluginStore:
         shutil.rmtree(dest_dir, ignore_errors=True)
         return True
 
-    def _create_grace_snapshot(self, plugin_id: str):
-        """Captures current KVS and StateKVS data for a plugin."""
+    def _fork_namespace(self, plugin_id: str):
+        """The Fork: Copies current stable data to a @beta side-car."""
         from database.config_database import get_config_database
         from database.working_database import get_working_database
-        import json
-
-        snapshot = {
-            "config_kvs": {},
-            "state_kvs": {}
-        }
-
-        # 1. Capture Config KVS
+        
+        beta_id = f"{plugin_id}@beta"
+        
+        # 1. Fork Config KVS
         db_config = get_config_database()
         with db_config._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT key, value, is_sensitive FROM config_kvs WHERE namespace=?", (plugin_id,))
-            for row in c.fetchall():
-                snapshot["config_kvs"][row[0]] = {"value": row[1], "is_sensitive": row[2]}
-
-        # 2. Capture State KVS
-        db_working = get_working_database()
-        with db_working.session_scope() as session:
-            from sqlalchemy import text
-            res = session.execute(text("SELECT key, value, is_sensitive FROM plugin_state_kvs WHERE namespace=:ns"), {"ns": plugin_id}).fetchall()
-            for row in res:
-                snapshot["state_kvs"][row[0]] = {"value": row[1], "is_sensitive": row[2]}
-
-        if snapshot["config_kvs"] or snapshot["state_kvs"]:
-            get_config_database().create_plugin_snapshot(plugin_id, json.dumps(snapshot))
-
-    def rollback_plugin(self, plugin_id: str) -> bool:
-        """Restores a plugin to its previous stable version and state."""
-        from database.config_database import get_config_database
-        from database.working_database import get_working_database
-        import shutil
-
-        snapshot_obj = get_config_database().get_plugin_snapshot(plugin_id)
-        if not snapshot_obj:
-            logger.error(f"No active snapshot found for rollback of {plugin_id}")
-            return False
-
-        snapshot = snapshot_obj["snapshot_data"]
-
-        # 1. Restore Config KVS
-        db_config = get_config_database()
-        with db_config._get_connection() as conn:
-            c = conn.cursor()
-            # Clear current state for this plugin
-            c.execute("DELETE FROM config_kvs WHERE namespace=?", (plugin_id,))
-            for key, data in snapshot.get("config_kvs", {}).items():
-                c.execute("INSERT INTO config_kvs (namespace, key, value, is_sensitive) VALUES (?, ?, ?, ?)", 
-                          (plugin_id, key, data["value"], data["is_sensitive"]))
+            # Clean first to avoid duplicates if re-forking
+            c.execute("DELETE FROM config_kvs WHERE namespace=?", (beta_id,))
+            c.execute("""
+                INSERT INTO config_kvs (namespace, key, value, is_sensitive) 
+                SELECT ?, key, value, is_sensitive FROM config_kvs WHERE namespace=?
+            """, (beta_id, plugin_id))
             conn.commit()
 
-        # 2. Restore Working State KVS
+        # 2. Fork Working State KVS
         db_working = get_working_database()
         with db_working.session_scope() as session:
             from sqlalchemy import text
-            # Clear current state for this plugin
-            session.execute(text("DELETE FROM plugin_state_kvs WHERE namespace=:ns"), {"ns": plugin_id})
-            for key, data in snapshot.get("state_kvs", {}).items():
-                session.execute(text("INSERT INTO plugin_state_kvs (namespace, key, value, is_sensitive) VALUES (:ns, :k, :v, :sens)"), 
-                                {"ns": plugin_id, "k": key, "v": data["value"], "sens": data["is_sensitive"]})
+            session.execute(text("DELETE FROM plugin_state_kvs WHERE namespace=:beta"), {"beta": beta_id})
+            session.execute(text("""
+                INSERT INTO plugin_state_kvs (namespace, key, value, is_sensitive)
+                SELECT :beta, key, value, is_sensitive FROM plugin_state_kvs WHERE namespace=:orig
+            """), {"beta": beta_id, "orig": plugin_id})
 
-        # 3. Switch Channel to Stable and cleanup beta
+    def _abort_namespace(self, plugin_id: str):
+        """The Abort: Physically deletes the @beta side-car."""
+        from database.config_database import get_config_database
+        from database.working_database import get_working_database
+        
+        beta_id = f"{plugin_id}@beta"
+        
+        # 1. Abort Config KVS
+        db_config = get_config_database()
+        with db_config._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM config_kvs WHERE namespace=?", (beta_id,))
+            conn.commit()
+
+        # 2. Abort Working State KVS
+        db_working = get_working_database()
+        with db_working.session_scope() as session:
+            from sqlalchemy import text
+            session.execute(text("DELETE FROM plugin_state_kvs WHERE namespace=:beta"), {"beta": beta_id})
+
+    def _cutover_namespace(self, plugin_id: str):
+        """The Cutover: Archives current stable and promotes @beta to active."""
+        from database.config_database import get_config_database
+        from database.working_database import get_working_database
+        
+        beta_id = f"{plugin_id}@beta"
+        archive_id = f"{plugin_id}@archive"
+        
+        # 1. Cutover Config KVS
+        db_config = get_config_database()
+        with db_config._get_connection() as conn:
+            c = conn.cursor()
+            # Cleanup old archive
+            c.execute("DELETE FROM config_kvs WHERE namespace=?", (archive_id,))
+            
+            # Check if beta exists
+            c.execute("SELECT 1 FROM config_kvs WHERE namespace=? LIMIT 1", (beta_id,))
+            has_beta = c.fetchone() is not None
+            
+            if has_beta:
+                # Beta -> Stable: Rename primary to archive, then beta to primary
+                c.execute("UPDATE config_kvs SET namespace=? WHERE namespace=?", (archive_id, plugin_id))
+                c.execute("UPDATE config_kvs SET namespace=? WHERE namespace=?", (plugin_id, beta_id))
+            else:
+                # Stable -> Stable: Copy primary to archive
+                c.execute("""
+                    INSERT INTO config_kvs (namespace, key, value, is_sensitive)
+                    SELECT ?, key, value, is_sensitive FROM config_kvs WHERE namespace=?
+                """, (archive_id, plugin_id))
+            conn.commit()
+
+        # 2. Cutover Working State KVS
+        db_working = get_working_database()
+        with db_working.session_scope() as session:
+            from sqlalchemy import text
+            session.execute(text("DELETE FROM plugin_state_kvs WHERE namespace=:arch"), {"arch": archive_id})
+            
+            res = session.execute(text("SELECT 1 FROM plugin_state_kvs WHERE namespace=:beta LIMIT 1"), {"beta": beta_id}).fetchone()
+            if res:
+                session.execute(text("UPDATE plugin_state_kvs SET namespace=:arch WHERE namespace=:orig"), {"arch": archive_id, "orig": plugin_id})
+                session.execute(text("UPDATE plugin_state_kvs SET namespace=:orig WHERE namespace=:beta"), {"orig": plugin_id, "beta": beta_id})
+            else:
+                session.execute(text("""
+                    INSERT INTO plugin_state_kvs (namespace, key, value, is_sensitive)
+                    SELECT :arch, key, value, is_sensitive FROM plugin_state_kvs WHERE namespace=:orig
+                """), {"arch": archive_id, "orig": plugin_id})
+
+    def rollback_plugin(self, plugin_id: str) -> bool:
+        """Restores a plugin to its previous stable version by aborting beta context."""
+        import shutil
+        
+        # 1. Abort side-car data
+        try:
+            self._abort_namespace(plugin_id)
+        except Exception as e:
+            logger.error(f"Failed to abort data namespace for {plugin_id}: {e}")
+
+        # 2. Switch Channel to Stable and cleanup beta files
         folder_id = plugin_id.split(".")[-1]
         config_manager.set(f'plugins.{folder_id}.channel', 'stable')
         self._cleanup_beta_subfolder(folder_id)
-
-        # 4. Cleanup snapshot
-        get_config_database().delete_plugin_snapshot(plugin_id)
 
         from core.state import system_state
         system_state.restart_pending = True
