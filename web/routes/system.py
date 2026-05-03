@@ -213,6 +213,7 @@ _SETTINGS_ALLOWLIST: frozenset = frozenset({
     "theme",
     "active_matching_engine",
     "account_mapping",
+    "custom_ui_path",
 })
 
 
@@ -399,9 +400,24 @@ def update_settings():
             except Exception:
                 pass
 
+        # Handle custom_ui_path validation
+        restart_warning = False
+        if "custom_ui_path" in payload:
+            ui_path = str(payload["custom_ui_path"]).strip()
+            if ui_path:
+                if not os.path.isdir(ui_path):
+                    return jsonify({"error": f"Custom UI directory does not exist: {ui_path}"}), 400
+            payload["custom_ui_path"] = ui_path
+            restart_warning = True
+
         for key, value in payload.items():
             config_manager.set(key, value)
-        return jsonify({"success": True}), 200
+
+        resp = {"success": True}
+        if restart_warning:
+            resp["warning"] = "Application restart is required to apply the Custom UI Path."
+
+        return jsonify(resp), 200
     except Exception as e:
         logger.error(f"Error updating settings: {e}")
         return jsonify({"error": "Failed to update settings"}), 500

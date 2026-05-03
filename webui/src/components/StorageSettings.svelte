@@ -8,7 +8,8 @@
     download_dir: '',
     library_dir: '',
     log_dir: '',
-    config_dir: ''
+    config_dir: '',
+    custom_ui_path: ''
   });
   let showBrowser = $state(false);
   let browserStart = $state('');
@@ -33,7 +34,8 @@
       download_dir: storage.download_dir || '',
       library_dir: storage.library_dir || '',
       log_dir: storage.log_dir || '',
-      config_dir: storage.config_dir || ''
+      config_dir: storage.config_dir || '',
+      custom_ui_path: $settings?.data?.custom_ui_path || ''
     };
   });
 
@@ -44,7 +46,8 @@
         library_dir: data.library_dir,
         log_dir: data.log_dir,
         config_dir: data.config_dir
-      }
+      },
+      custom_ui_path: data.custom_ui_path
     };
     await settings.save(patch);
   }
@@ -79,6 +82,15 @@
       <input class="dark-input input" type="text" bind:value={data.config_dir} placeholder="/app/config" />
       <button class="dark-btn active:scale-95 transition-all duration-200" aria-label="Browse config directory" on:click={() => { showConfigWarning = true; }}>Browse</button>
     </label>
+
+    <div class="field-group mt-4 pt-4 border-t border-white/5 flex flex-col gap-1">
+      <label class="field">
+        <span class="field-label">Custom WebUI Path</span>
+        <input class="dark-input input" type="text" bind:value={data.custom_ui_path} placeholder="/app/custom_ui" />
+        <button class="dark-btn active:scale-95 transition-all duration-200" aria-label="Browse UI directory" on:click={() => { browserField='custom_ui_path'; browserStart = data.custom_ui_path || '/app'; showBrowser = true; }}>Browse</button>
+      </label>
+      <div class="text-xs text-slate-500 ml-[176px]">Overrides the built-in EchoSync frontend. Requires an application restart to take effect.</div>
+    </div>
 
     <!-- Save moved to page header. Use exported `save()` from parent via component ref. -->
   </div>
