@@ -3,6 +3,7 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Protocol
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
+import inspect
 
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
@@ -11,12 +12,14 @@ from core.request_manager import RequestManager
 
 class _ConfigFacade:
     def __init__(self, plugin_id: str):
+        _verify_caller(plugin_id)
         self.kvs = KVS(plugin_id)
     def get(self, key: str, default=None): return self.kvs.get(key, default)
     def set(self, key: str, value: str): self.kvs.set(key, value, is_sensitive=False)
 
 class _SecretsFacade:
     def __init__(self, plugin_id: str):
+        _verify_caller(plugin_id)
         self.plugin_id = plugin_id
     def get(self, key: str, default=None):
         from database.config_database import get_config_database
@@ -29,14 +32,103 @@ class _SecretsFacade:
 class _AccountsSDKFacade:
     def get_token(self, account_id: int):
         from database.config_database import get_config_database
-        return get_config_database().get_account_token(account_id)
+        token = get_config_database().get_account_token(account_id)
+        if not token: return None
+        
+        caller_mod = inspect.currentframe().f_back.f_globals.get('__name__', '')
+        # Simple extraction of author.plugin_name from something like plugins.author_plugin_name
+        caller_plugin_id = caller_mod.split('.')[-1] if '.' in caller_mod else caller_mod
+        
+        account_owner_plugin_id = token.get('provider', '')
+        
+        # Determine if caller has privileged mode
+        from core.settings import config_manager
+        privileged = False
+        try:
+            import json
+            manifest_path = config_manager.get_plugins_dir() / caller_plugin_id / "manifest.json"
+            if manifest_path.exists():
+                manifest = json.loads(manifest_path.read_text())
+                privileged = manifest.get('privileged', False)
+        except Exception:
+            pass
+
+        if caller_plugin_id == account_owner_plugin_id or privileged:
+            return token
+            
+        # Redact lateral tokens
+        redacted = dict(token)
+        redacted['access_token'] = 'REDACTED'
+        redacted['refresh_token'] = 'REDACTED'
+        return redacted
+
     def save_token(self, account_id: int, access_token: str, refresh_token: str, expires_at: int):
         from database.config_database import get_config_database
         get_config_database().save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at)
 
+class _PluginsSDKFacade:
+    def invoke(self, target_plugin_id: str, action: str, payload: dict):
+        # Determine if target is enabled/exists
+        from core.plugin_loader import PluginRegistry
+        if PluginRegistry.is_provider_disabled(target_plugin_id):
+            raise Exception(f"Plugin {target_plugin_id} is disabled or not found")
+        
+        provider = PluginRegistry.get_provider_class(target_plugin_id)
+        if not provider:
+            raise Exception(f"Plugin {target_plugin_id} not found")
+            
+        instance = PluginRegistry.create_instance(target_plugin_id)
+        if hasattr(instance, 'handle_ipc'):
+            return instance.handle_ipc(action, payload)
+        return None
+
+class _FileSDKFacade:
+    def delete(self, file_path: str):
+        from core.settings import config_manager
+        import os
+        from pathlib import Path
+        import shutil
+        
+        # Check dry run mode
+        if config_manager.get('system.dry_run', False):
+            from core.tiered_logger import get_logger
+            logger = get_logger("plugin_SDK")
+            logger.info(f"DRY RUN: Intercepted deletion of {file_path}")
+            return True
+            
+        # Physical soft delete
+        try:
+            p = Path(file_path)
+            if not p.exists(): return False
+            
+            # Find root mount. For simplicity, we assume music_dir
+            music_dir = Path(config_manager.get('music_dir', ''))
+            
+            # Create hidden trash if needed
+            trash_dir = music_dir / ".trash"
+            trash_dir.mkdir(exist_ok=True)
+            
+            # Move instead of unlink
+            dest = trash_dir / p.name
+            shutil.move(str(p), str(dest))
+            return True
+        except Exception as e:
+            from core.tiered_logger import get_logger
+            logger = get_logger("plugin_SDK")
+            logger.error(f"Failed to soft delete {file_path}: {e}")
+            return False
+
 class _SDK:
     def __init__(self):
         self.accounts = _AccountsSDKFacade()
+        self.plugins = _PluginsSDKFacade()
+        self.file = _FileSDKFacade()
+        
+    @property
+    def dry_run(self) -> bool:
+        from core.settings import config_manager
+        return config_manager.get('system.dry_run', False)
+
     def schedule(self, interval_minutes: int):
         def decorator(func):
             func._schedule_interval = interval_minutes
@@ -49,10 +141,64 @@ class WasmPluginWrapper:
     """Wrapper to safely execute .wasm plugins via wasmtime-py"""
     def __init__(self, wasm_path: str):
         self.wasm_path = wasm_path
+        
+        try:
+            import wasmtime
+            
+            # Initialize rigid sandbox configuration
+            config = wasmtime.Config()
+            
+            # Prevent malicious compilation or infinite loops
+            config.consume_fuel = True
+            config.epoch_interruption = True
+            # Max memory usage for WASM is natively constrained by the module's memory limits,
+            # but we disable unsafe features.
+            config.wasm_simd = False
+            config.wasm_multi_memory = False
+            
+            self.engine = wasmtime.Engine(config)
+            
+            # The WASI config acts as our syscall interceptor.
+            # By providing a blank WasiConfig (no preopened directories, no network capabilities),
+            # any WASI syscall attempting I/O will instantly trap and fail.
+            self.wasi_config = wasmtime.WasiConfig()
+            
+            self.store = wasmtime.Store(self.engine)
+            self.store.set_wasi(self.wasi_config)
+            
+            # Limit execution cycles (fuel) to prevent CPU DoS
+            self.store.add_fuel(10_000_000)
+            
+            # Compile and validate the WASM binary
+            self.module = wasmtime.Module.from_file(self.engine, self.wasm_path)
+            
+        except ImportError:
+            # Non-fatal if wasmtime is not installed on the system
+            pass
+        except Exception as e:
+            from core.tiered_logger import get_logger
+            get_logger("wasm_sandbox").error(f"Failed to instantiate WASM runtime sandbox for {self.wasm_path}: {e}")
+
+
+def _verify_caller(expected_plugin_id: str):
+    caller = inspect.currentframe().f_back.f_back
+    if not caller: return
+    caller_mod = caller.f_globals.get('__name__', '')
+    # Bypass for core
+    if caller_mod.startswith('core.') or caller_mod.startswith('providers.'): return
+    # Validate community plugin format
+    caller_id = caller_mod.split('.')[-1] if '.' in caller_mod else caller_mod
+    
+    # expected_plugin_id is usually plugin.author.name or just name. Handle both
+    base_expected = expected_plugin_id.split('.')[-1]
+    
+    if caller_id != base_expected and caller_id != expected_plugin_id:
+         raise PermissionError(f"Namespace Isolation Violation: {caller_mod} attempted to access {expected_plugin_id}")
 
 
 class KVS:
     def __init__(self, plugin_id: str):
+        _verify_caller(plugin_id)
         self.plugin_id = plugin_id
 
     def get(self, key: str, default=None) -> str:
@@ -86,6 +232,7 @@ class KVS:
 
 class StateKVS:
     def __init__(self, plugin_id: str):
+        _verify_caller(plugin_id)
         self.plugin_id = plugin_id
 
     def get(self, key: str, default=None) -> str:

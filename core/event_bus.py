@@ -51,6 +51,21 @@ class EventBus:
             specific = list(self._subscribers.get(event_name, []))
             universal = list(self._subscribers.get("*", []))
 
+        # --- Passport Enforcement ---
+        import inspect
+        import zlib
+        caller_mod = inspect.currentframe().f_back.f_globals.get('__name__', 'unknown')
+        if caller_mod.startswith('core.'):
+            origin_passport = 0
+            origin_name = "core"
+        else:
+            origin_name = caller_mod.split('.')[-1] if '.' in caller_mod else caller_mod
+            origin_passport = zlib.crc32(origin_name.encode('utf-8'))
+            
+        payload['_origin'] = origin_name
+        payload['_passport'] = origin_passport
+        # ----------------------------
+
         # OPTIMIZATION: Serialize JSON once for all network subscribers to prevent
         # duplicate CPU work during fan-out broadcasts.
         # Pass serialized string via kwargs to avoid payload mutation.

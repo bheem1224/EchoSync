@@ -1,6 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte';
   import { slide } from 'svelte/transition';
+  import apiClient from '../../../api/client';
   
   const dispatch = createEventDispatcher();
 
@@ -107,6 +108,26 @@
       }
     };
   }
+
+  // Grace Period Logic
+  function getRemainingHours(expiryTimestamp) {
+    if (!expiryTimestamp) return 0;
+    const remainingMs = new Date(expiryTimestamp) - new Date();
+    return Math.max(0, Math.floor(remainingMs / (1000 * 60 * 60)));
+  }
+
+  async function handleUndoUpdate() {
+    if (confirm("Are you sure you want to restore the previous stable version? Your current beta settings and state will be replaced by the snapshot taken before the update.")) {
+      try {
+        await apiClient.post(`/plugins/${plugin.id}/rollback`);
+        window.location.reload();
+      } catch (err) {
+        console.error("Rollback failed:", err);
+        const errorMsg = err.response?.data?.error || "Failed to restore stable version. The snapshot might have expired.";
+        alert(`Rollback failed: ${errorMsg}`);
+      }
+    }
+  }
 </script>
 
 <div class="group relative flex flex-col p-5 bg-black/40 border border-white/10 rounded-2xl hover:border-blue-500/50 transition-all duration-300 shadow-xl backdrop-blur-md overflow-visible">
@@ -157,6 +178,23 @@
   <p class="text-sm text-slate-400 line-clamp-2 mb-6 h-10 leading-relaxed">
     {plugin.description || 'No description provided.'}
   </p>
+
+  <!-- Grace Period Block -->
+  {#if plugin.archive_expiry_date && getRemainingHours(plugin.archive_expiry_date) > 0}
+    <div class="mb-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-center justify-between" transition:slide>
+        <div class="pr-2">
+            <h4 class="text-yellow-400 font-bold text-sm">Grace Period Active</h4>
+            <p class="text-gray-300 text-[10px] mt-1 leading-tight">
+                Your previous data snapshot expires in {getRemainingHours(plugin.archive_expiry_date)} hours.
+            </p>
+        </div>
+        <button 
+            on:click={handleUndoUpdate}
+            class="px-3 py-1.5 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded text-[10px] uppercase tracking-wider transition-colors border-none cursor-pointer whitespace-nowrap">
+            Undo Update
+        </button>
+    </div>
+  {/if}
 
   <!-- Metadata Footer -->
   <div class="flex items-center justify-between mt-auto pt-4 border-t border-white/5">

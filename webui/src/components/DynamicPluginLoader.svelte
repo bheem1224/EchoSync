@@ -46,20 +46,28 @@
    * hasn't been injected in this session yet.  Returns a Promise that
    * resolves once the script has loaded (or immediately if already present).
    */
-  function injectScript(url) {
-    if (_injectedUrls.has(url)) return Promise.resolve();
+  function injectScript(url, version = null) {
+    const separator = url.includes('?') ? '&' : '?';
+    const finalUrl = version ? `${url}${separator}v=${version}` : url;
+
+    if (_injectedUrls.has(finalUrl)) return Promise.resolve();
 
     // Double-check the DOM to survive HMR / multiple mounts
-    if (document.querySelector(`script[src="${CSS.escape ? CSS.escape(url) : url}"]`)) {
-      _injectedUrls.add(url);
+    // We check for the base URL to see if any version of this script is already loaded, 
+    // or we can check for the exact finalUrl. 
+    // For cache busting, if the version changed, we might WANT a new script tag, 
+    // but browser might have already executed the old one. 
+    // Usually, one script per base URL is enough per session.
+    if (document.querySelector(`script[src^="${CSS.escape ? CSS.escape(url) : url}"]`)) {
+      _injectedUrls.add(finalUrl);
       return Promise.resolve();
     }
 
     return new Promise((resolve, reject) => {
       const el = document.createElement('script');
       el.type = 'module';
-      el.src = url;
-      el.onload  = () => { _injectedUrls.add(url); resolve(); };
+      el.src = finalUrl;
+      el.onload  = () => { _injectedUrls.add(finalUrl); resolve(); };
       el.onerror = () => reject(new Error(`Failed to load plugin bundle: ${url}`));
       document.head.appendChild(el);
     });
@@ -110,7 +118,7 @@
           const absoluteUrl = (bundleUrl.startsWith('http') || bundleUrl.startsWith('/'))
             ? bundleUrl
             : `/api/system/plugins/${plugin.id}/ui/${bundleUrl.replace(/^\//, '')}`;
-          return injectScript(absoluteUrl).then(() => ({
+          return injectScript(absoluteUrl, plugin.version).then(() => ({
             plugin,
             tag: plugin.components[category]?.element_tag,
             apiBase: plugin.api_base ?? `/api/plugins/${plugin.id}`,

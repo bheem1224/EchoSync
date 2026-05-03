@@ -218,6 +218,26 @@ def toggle_provider(provider_name):
         return jsonify({'error': str(e)}), 500
 
 
+@bp.post("/<provider_name>/rollback")
+@require_auth
+def rollback_provider(provider_name):
+    """Roll back a provider to its previous stable version and state."""
+    try:
+        from core.plugin_store import plugin_store
+        
+        # provider_name might be a full ID or just a folder name. 
+        # PluginStore needs the plugin_id.
+        success = plugin_store.rollback_plugin(provider_name)
+        
+        if success:
+            return jsonify({'success': True}), 200
+        else:
+            return jsonify({'error': 'Rollback failed or no snapshot found'}), 400
+    except Exception as e:
+        logger.error(f"Error rolling back provider {provider_name}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @bp.get("/<provider_name>/playlists")
 def get_provider_playlists(provider_name):
     """Fetch playlists from a specific provider."""

@@ -60,6 +60,8 @@ class JobQueue:
         self._workers = threading.BoundedSemaphore(worker_count)
         self._poll_interval = poll_interval
         self._is_running: Dict[str, bool] = {}  # Concurrency lock: job_name -> is_currently_running
+        self._active_threads: Dict[str, threading.Thread] = {}  # Tracking thread handles for kill switch
+        self._active_processes: Dict[str, Any] = {}  # Tracking multiprocessing.Process handles for kill switch
 
     def _release_worker_resources(self):
         """Return any working DB connections opened by background jobs to the engine."""
@@ -81,6 +83,7 @@ class JobQueue:
         job.last_finished = finished_at
         job.running = False
         self._is_running[job.name] = False
+        self._active_threads.pop(job.name, None)
 
         if job.interval_seconds is not None:
             if job.enabled:
@@ -284,7 +287,33 @@ class JobQueue:
                 logger.info(f"Starting manual execution of job '{name}'")
                 job.running = True
                 job.last_started = time.time()
-                job.func()
+                
+                if job.plugin:
+                    import multiprocessing
+                    import sys
+                    
+                    def _jail_runner(f):
+                        if sys.platform != 'win32':
+                            try:
+                                import resource
+                                limit = 100 * 1024 * 1024
+                                resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+                            except Exception:
+                                pass
+                        f()
+                        
+                    p = multiprocessing.Process(target=_jail_runner, args=(job.func,))
+                    with self._lock:
+                        self._active_processes[job.name] = p
+                    p.start()
+                    p.join()
+                    with self._lock:
+                        self._active_processes.pop(job.name, None)
+                    if p.exitcode != 0:
+                        raise RuntimeError(f"Plugin worker process failed with exit code {p.exitcode}")
+                else:
+                    job.func()
+                
                 job.last_finished = time.time()
                 job.last_success = job.last_finished
                 job.total_successes += 1
@@ -304,6 +333,8 @@ class JobQueue:
         
         try:
             thread = threading.Thread(target=_run_job_thread, daemon=True)
+            with self._lock:
+                self._active_threads[name] = thread
             thread.start()
         except Exception:
             # Thread failed to start — release the lock so the job is not permanently stuck
@@ -312,6 +343,47 @@ class JobQueue:
             raise
         logger.info(f"Spawned background thread for manual execution of job '{name}'")
         return True
+
+    def kill_job(self, name: str) -> bool:
+        """Forcefully terminate a running job thread or multiprocess worker."""
+        import ctypes
+        with self._lock:
+            # Check for OS-level escape hatch first
+            process = self._active_processes.get(name)
+            if process and process.is_alive():
+                logger.warning(f"Forcefully terminating multiprocess worker for job '{name}'")
+                process.terminate()
+                process.join(timeout=1.0)
+                if process.is_alive():
+                    process.kill()
+                return True
+
+            thread = self._active_threads.get(name)
+            if not thread or not thread.is_alive():
+                logger.warning(f"Job '{name}' is not currently running a tracked thread.")
+                return False
+                
+            thread_id = thread.ident
+            if not thread_id:
+                return False
+                
+        try:
+            # Raise SystemExit asynchronously in the target thread
+            res = ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(thread_id), ctypes.py_object(SystemExit))
+            if res == 0:
+                logger.error(f"Failed to kill job '{name}': invalid thread ID")
+                return False
+            elif res != 1:
+                # Revert if it failed
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(thread_id), None)
+                logger.error(f"Failed to kill job '{name}': internal ctypes error")
+                return False
+                
+            logger.info(f"Successfully sent kill signal to job '{name}'")
+            return True
+        except Exception as e:
+            logger.error(f"Exception while trying to kill job '{name}': {e}")
+            return False
 
     def schedule_in(self, name: str, delay_seconds: float):
         with self._lock:
@@ -438,7 +510,33 @@ class JobQueue:
                         log_level(f"Starting job: {job.name} (attempt {attempt + 1})")
                         job.running = True
                         job.last_started = time.time()
-                        job.func()
+                        
+                        if job.plugin:
+                            import multiprocessing
+                            import sys
+                            
+                            def _jail_runner(f):
+                                if sys.platform != 'win32':
+                                    try:
+                                        import resource
+                                        limit = 100 * 1024 * 1024
+                                        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+                                    except Exception:
+                                        pass
+                                f()
+                                
+                            p = multiprocessing.Process(target=_jail_runner, args=(job.func,))
+                            with self._lock:
+                                self._active_processes[job.name] = p
+                            p.start()
+                            p.join()
+                            with self._lock:
+                                self._active_processes.pop(job.name, None)
+                            if p.exitcode != 0:
+                                raise RuntimeError(f"Plugin worker process failed with exit code {p.exitcode}")
+                        else:
+                            job.func()
+                            
                         job.last_success = time.time()
                         job.last_error = None
                         job.last_error_time = None
@@ -478,7 +576,10 @@ class JobQueue:
                 self._release_worker_resources()
 
         try:
-            threading.Thread(target=worker, daemon=True).start()
+            thread = threading.Thread(target=worker, daemon=True)
+            with self._lock:
+                self._active_threads[job.name] = thread
+            thread.start()
         except Exception:
             # Thread failed to start — release semaphore and lock so resources are not leaked
             with self._lock:

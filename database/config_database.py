@@ -152,6 +152,18 @@ class ConfigDatabase:
                         UNIQUE(media_server_id, managed_user_id, provider_id, provider_account_id)
                     )
                 """)
+
+                # Plugin Snapshots (24h Grace Period)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS plugin_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        plugin_id TEXT NOT NULL UNIQUE,
+                        snapshot_data TEXT NOT NULL,
+                        expires_at INTEGER NOT NULL,
+                        created_at INTEGER DEFAULT (strftime('%s','now'))
+                    )
+                """)
+
                 # Indexes
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)")
@@ -159,6 +171,8 @@ class ConfigDatabase:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_user ON account_mappings(media_server_id, managed_user_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_provider ON account_mappings(provider_id, provider_account_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_plugin ON plugin_snapshots(plugin_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_expires ON plugin_snapshots(expires_at)")
 
             # Run schema creation on writer thread to avoid concurrent-writes
             execute_write(str(self.database_path), _schema)
@@ -811,6 +825,65 @@ class ConfigDatabase:
             logger.info(f"Purged account mappings for {provider_id}:{provider_account_id}")
         except Exception as e:
             logger.error(f"Error purging account mappings for {provider_id}:{provider_account_id}: {e}")
+
+    # ── Plugin Snapshot Helpers ──────────────────────────────────────────
+    def create_plugin_snapshot(self, plugin_id: str, snapshot_data: str, ttl_hours: int = 24) -> bool:
+        try:
+            expires_at = int(time.time()) + (ttl_hours * 3600)
+            execute_write_sql(
+                str(self.database_path),
+                """
+                    INSERT INTO plugin_snapshots(plugin_id, snapshot_data, expires_at)
+                    VALUES(?,?,?)
+                    ON CONFLICT(plugin_id) DO UPDATE SET
+                        snapshot_data = excluded.snapshot_data,
+                        expires_at = excluded.expires_at,
+                        created_at = strftime('%s','now')
+                """,
+                (plugin_id, snapshot_data, expires_at),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error creating plugin snapshot for {plugin_id}: {e}")
+            return False
+
+    def get_plugin_snapshot(self, plugin_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            import contextlib
+            import json
+            with contextlib.closing(self._get_connection()) as conn:
+                c = conn.cursor()
+                c.execute("SELECT snapshot_data, expires_at FROM plugin_snapshots WHERE plugin_id = ?", (plugin_id,))
+                row = c.fetchone()
+                if not row:
+                    return None
+                
+                # Check expiry
+                if row[1] < int(time.time()):
+                    self.delete_plugin_snapshot(plugin_id)
+                    return None
+
+                return {
+                    'snapshot_data': json.loads(row[0]),
+                    'expires_at': row[1]
+                }
+        except Exception as e:
+            logger.error(f"Error getting plugin snapshot for {plugin_id}: {e}")
+            return None
+
+    def delete_plugin_snapshot(self, plugin_id: str) -> bool:
+        try:
+            execute_write_sql(str(self.database_path), "DELETE FROM plugin_snapshots WHERE plugin_id = ?", (plugin_id,))
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting plugin snapshot for {plugin_id}: {e}")
+            return False
+
+    def cleanup_expired_snapshots(self) -> None:
+        try:
+            execute_write_sql(str(self.database_path), "DELETE FROM plugin_snapshots WHERE expires_at < ?", (int(time.time()),))
+        except Exception as e:
+            logger.error(f"Error cleaning expired plugin snapshots: {e}")
 
 
 _config_db: Optional[ConfigDatabase] = None

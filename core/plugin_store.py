@@ -314,6 +314,15 @@ class PluginStore:
                 except Exception as e:
                     logger.debug(f"Error checking local version for {plugin_id}: {e}")
             
+            # 2. Check for active Grace Period (Snapshots)
+            from database.config_database import get_config_database
+            snapshot = get_config_database().get_plugin_snapshot(plugin_id)
+            if snapshot:
+                # Convert unix timestamp to ISO format for frontend compatibility
+                import datetime
+                dt = datetime.datetime.fromtimestamp(snapshot['expires_at'], datetime.timezone.utc)
+                plugin["archive_expiry_date"] = dt.isoformat()
+            
         return all_plugins
 
     def download_plugin(self, plugin_info: Dict, channel: str = "stable") -> bool:
@@ -417,6 +426,14 @@ class PluginStore:
                 config_manager.set(f'plugins.{folder_id}.channel', channel)
                 logger.info(f"Persisted channel '{channel}' for plugin {folder_id}")
 
+                # Task 6: Grace Period Snapshot (if updating to beta)
+                if channel == "beta":
+                    try:
+                        self._create_grace_snapshot(plugin_id)
+                        logger.info(f"Created 24h grace snapshot for {plugin_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to create grace snapshot for {plugin_id}: {e}")
+
                 # State Updates
                 system_state.restart_pending = True
                 event_bus.publish("SYSTEM", "PLUGIN_UPDATE_COMPLETE", {
@@ -509,6 +526,82 @@ class PluginStore:
             logger.error(f"Failed to drop tables for {plugin_id}: {e}")
             
         shutil.rmtree(dest_dir, ignore_errors=True)
+        return True
+
+    def _create_grace_snapshot(self, plugin_id: str):
+        """Captures current KVS and StateKVS data for a plugin."""
+        from database.config_database import get_config_database
+        from database.working_database import get_working_database
+        import json
+
+        snapshot = {
+            "config_kvs": {},
+            "state_kvs": {}
+        }
+
+        # 1. Capture Config KVS
+        db_config = get_config_database()
+        with db_config._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT key, value, is_sensitive FROM config_kvs WHERE namespace=?", (plugin_id,))
+            for row in c.fetchall():
+                snapshot["config_kvs"][row[0]] = {"value": row[1], "is_sensitive": row[2]}
+
+        # 2. Capture State KVS
+        db_working = get_working_database()
+        with db_working.session_scope() as session:
+            from sqlalchemy import text
+            res = session.execute(text("SELECT key, value, is_sensitive FROM plugin_state_kvs WHERE namespace=:ns"), {"ns": plugin_id}).fetchall()
+            for row in res:
+                snapshot["state_kvs"][row[0]] = {"value": row[1], "is_sensitive": row[2]}
+
+        if snapshot["config_kvs"] or snapshot["state_kvs"]:
+            get_config_database().create_plugin_snapshot(plugin_id, json.dumps(snapshot))
+
+    def rollback_plugin(self, plugin_id: str) -> bool:
+        """Restores a plugin to its previous stable version and state."""
+        from database.config_database import get_config_database
+        from database.working_database import get_working_database
+        import shutil
+
+        snapshot_obj = get_config_database().get_plugin_snapshot(plugin_id)
+        if not snapshot_obj:
+            logger.error(f"No active snapshot found for rollback of {plugin_id}")
+            return False
+
+        snapshot = snapshot_obj["snapshot_data"]
+
+        # 1. Restore Config KVS
+        db_config = get_config_database()
+        with db_config._get_connection() as conn:
+            c = conn.cursor()
+            # Clear current state for this plugin
+            c.execute("DELETE FROM config_kvs WHERE namespace=?", (plugin_id,))
+            for key, data in snapshot.get("config_kvs", {}).items():
+                c.execute("INSERT INTO config_kvs (namespace, key, value, is_sensitive) VALUES (?, ?, ?, ?)", 
+                          (plugin_id, key, data["value"], data["is_sensitive"]))
+            conn.commit()
+
+        # 2. Restore Working State KVS
+        db_working = get_working_database()
+        with db_working.session_scope() as session:
+            from sqlalchemy import text
+            # Clear current state for this plugin
+            session.execute(text("DELETE FROM plugin_state_kvs WHERE namespace=:ns"), {"ns": plugin_id})
+            for key, data in snapshot.get("state_kvs", {}).items():
+                session.execute(text("INSERT INTO plugin_state_kvs (namespace, key, value, is_sensitive) VALUES (:ns, :k, :v, :sens)"), 
+                                {"ns": plugin_id, "k": key, "v": data["value"], "sens": data["is_sensitive"]})
+
+        # 3. Switch Channel to Stable and cleanup beta
+        folder_id = plugin_id.split(".")[-1]
+        config_manager.set(f'plugins.{folder_id}.channel', 'stable')
+        self._cleanup_beta_subfolder(folder_id)
+
+        # 4. Cleanup snapshot
+        get_config_database().delete_plugin_snapshot(plugin_id)
+
+        from core.state import system_state
+        system_state.restart_pending = True
         return True
 
 

@@ -132,3 +132,17 @@ def update_job_interval_route(job_name):
     except Exception as e:
         logger.error(f"Error updating job {job_name} interval: {e}")
         return Response(json.dumps({"error": str(e)}), status=500, mimetype="application/json")
+
+@bp.post("/<job_name>/kill")
+@require_auth
+def kill_job_route(job_name):
+    """OS-Level Escape Hatch to kill a hung worker process."""
+    try:
+        from core.job_queue import job_queue
+        success = job_queue.kill_job(job_name)
+        if not success:
+            return Response(json.dumps({"error": "job not running or could not be killed"}), status=404, mimetype="application/json")
+        return Response(json.dumps({"accepted": True, "job": job_name, "status": "killed"}), status=200, mimetype="application/json")
+    except Exception as e:
+        logger.error(f"Error killing job {job_name}: {e}")
+        return Response(json.dumps({"error": str(e)}), status=500, mimetype="application/json")

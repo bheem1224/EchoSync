@@ -57,7 +57,12 @@
           if (src) {
             const script = document.createElement('script');
             script.type = 'module';
-            script.src = src;
+            
+            // The Cache-Buster: Append version query param
+            const separator = src.includes('?') ? '&' : '?';
+            const version = plugin.version || '1.0.0';
+            script.src = `${src}${separator}v=${version}`;
+            
             document.head.appendChild(script);
           }
         }
