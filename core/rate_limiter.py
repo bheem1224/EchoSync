@@ -72,3 +72,26 @@ class RateLimiter:
             'window_seconds': self.window_seconds,
             'remaining_requests': max(0, self.max_requests - len(self.timestamps))
         }
+
+
+class TokenBucketRateLimiter:
+    """A standard thread-safe token bucket rate limiter for API requests."""
+    def __init__(self, capacity: int, refill_rate: float):
+        self.capacity = capacity
+        self.tokens = capacity
+        self.refill_rate = refill_rate
+        self.last_refill = time.time()
+        self._lock = threading.Lock()
+
+    def consume(self, tokens: int = 1) -> bool:
+        with self._lock:
+            now = time.time()
+            # Refill tokens based on elapsed time
+            elapsed = now - self.last_refill
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
+            self.last_refill = now
+
+            if self.tokens >= tokens:
+                self.tokens -= tokens
+                return True
+            return False

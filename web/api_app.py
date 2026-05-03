@@ -79,6 +79,29 @@ def create_app() -> Flask:
 
     dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
 
+
+    # -- Naked Port Defense (Rate Limiter) --
+    from core.rate_limiter import TokenBucketRateLimiter
+    from flask import request, jsonify
+
+    # Example: 100 requests capacity, refills 10 requests per second
+    _api_rate_limiter = TokenBucketRateLimiter(capacity=100, refill_rate=10.0)
+
+    @app.before_request
+    def enforce_rate_limit():
+        if request.path.startswith('/api/'):
+            if request.path in ('/api/auth/login', '/api/system/setup'):
+                return  # Bypass rate limiting
+
+            # Naked Port Defense: Strictly block unauthorized access pending v2.6.0 auth implementation
+            # Verify if user is logged in (session cookie)
+            from flask import session
+            if not session.get('user'):
+                return jsonify({'error': 'Unauthorized. Outbound Gateway Locked.'}), 401
+
+            if not _api_rate_limiter.consume(1):
+                return jsonify({'error': 'Rate limit exceeded'}), 429
+
     # In production suppress urllib3's per-connection debug chatter.
     # In DEV_MODE we leave it at NOTSET so connection failures show full detail.
     if not dev_mode:

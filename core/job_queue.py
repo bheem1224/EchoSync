@@ -8,6 +8,7 @@ Lightweight job queue / task scheduler for Echosync.
 """
 
 import heapq
+import multiprocessing
 import threading
 import time
 from dataclasses import dataclass, field
@@ -57,7 +58,8 @@ class JobQueue:
         self._heap: List[ScheduledJob] = []
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._workers = threading.BoundedSemaphore(worker_count)
+        self._core_workers = threading.BoundedSemaphore(2)
+        self._general_workers = threading.BoundedSemaphore(worker_count)
         self._poll_interval = poll_interval
         self._is_running: Dict[str, bool] = {}  # Concurrency lock: job_name -> is_currently_running
         self._active_threads: Dict[str, threading.Thread] = {}  # Tracking thread handles for kill switch
@@ -445,7 +447,8 @@ class JobQueue:
     def _is_job_running(self, name: str) -> bool:
         """Check if a job is currently executing."""
         with self._lock:
-            return self._is_running.get(name, False) or self._jobs.get(name, ScheduledJob(time.time(), "_dummy", lambda: None)).running
+            val = self._is_running.get(name, False)
+            return bool(val) or self._jobs.get(name, ScheduledJob(time.time(), "_dummy", lambda: None)).running
 
     def _run_loop(self):
         from core.state import system_state
@@ -492,8 +495,11 @@ class JobQueue:
                     )
                     return
         
-        if not self._workers.acquire(blocking=False):
-            logger.warning(f"No available workers for job: {job.name}")
+        is_heavy = getattr(job, 'plugin', None) is not None or "sync" in job.name or "scan" in job.name
+        worker_pool = self._general_workers if is_heavy else self._core_workers
+
+        if not worker_pool.acquire(blocking=False):
+            logger.warning(f"No available workers in {'general' if is_heavy else 'core'} pool for job: {job.name}")
             return
 
         # _is_running is set here; the worker's finally block clears it via _finalize_job_after_run.
@@ -501,6 +507,18 @@ class JobQueue:
         self._is_running[job.name] = True
 
         def worker():
+            try:
+                import resource
+                plugin_id = getattr(job, 'plugin_id', None) or getattr(job, 'plugin', None)
+                if plugin_id and plugin_id != "core":
+                    from core.plugin_loader import plugin_store
+                    plugin = plugin_store.get_plugin(plugin_id)
+                    if plugin and getattr(plugin, 'manifest', None):
+                        limit_mb = plugin.manifest.get('permissions', {}).get('memory_limit_mb', 100)
+                        limit_bytes = limit_mb * 1024 * 1024
+                        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
+            except (ImportError, ValueError, OSError):
+                pass
             attempt = 0
             try:
                 while True:
@@ -572,19 +590,23 @@ class JobQueue:
             finally:
                 with self._lock:
                     self._finalize_job_after_run(job, time.time())
-                self._workers.release()
+                worker_pool.release()
                 self._release_worker_resources()
 
         try:
-            thread = threading.Thread(target=worker, daemon=True)
-            with self._lock:
-                self._active_threads[job.name] = thread
-            thread.start()
+            if is_heavy:
+                # Use multiprocessing for heavy jobs to bypass GIL and allow termination
+                p = multiprocessing.Process(target=worker, daemon=True)
+                # Store the process reference in _is_running dictionary for the kill route
+                self._is_running[job.name] = p
+                p.start()
+            else:
+                threading.Thread(target=worker, daemon=True).start()
         except Exception:
-            # Thread failed to start — release semaphore and lock so resources are not leaked
+            # Thread/Process failed to start — release semaphore and lock so resources are not leaked
             with self._lock:
                 self._is_running[job.name] = False
-            self._workers.release()
+            worker_pool.release()
             raise
 
 
