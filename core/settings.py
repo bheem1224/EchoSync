@@ -333,6 +333,7 @@ class ConfigManager:
         """Get default configuration"""
         # Use container-friendly defaults when available, fall back to project-relative paths
         cfg = {
+            "custom_ui_path": "",
             "active_media_server": "plex",
             "spotify": {"client_id": "", "client_secret": "", "redirect_uri": "http://127.0.0.1:8008/api/spotify/callback"},
             # Multi-account Spotify support
@@ -429,7 +430,7 @@ class ConfigManager:
         self._apply_storage_paths_from_config()
         
         # If we have no JSON file yet, save current config to JSON for future edits
-        if not json_data:
+        if not json_data or "custom_ui_path" not in json_data:
             self._save_non_secrets_to_json()
         # Normalize certain config entries (e.g., database workers)
         self._normalize_database_workers()

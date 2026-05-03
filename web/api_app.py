@@ -65,11 +65,18 @@ mimetypes.add_type('image/svg+xml', '.svg')
 _backend_started = False
 
 def create_app() -> Flask:
+    # Check for custom UI path override
+    custom_ui_path = config_manager.get('custom_ui_path')
+    ui_path = os.path.join(os.path.dirname(__file__), '../webui/build')
+
+    if custom_ui_path and os.path.isdir(custom_ui_path) and os.path.exists(os.path.join(custom_ui_path, 'index.html')):
+        ui_path = custom_ui_path
+
     # configure static folder for the compiled Svelte frontend build
     # path is relative to this file; container working dir is /app
     app = Flask(
         __name__,
-        static_folder=os.path.join(os.path.dirname(__file__), '../webui/build'),
+        static_folder=ui_path,
         static_url_path='/static_assets_placeholder' # Avoid conflict with catch-all route at /
     )
     
