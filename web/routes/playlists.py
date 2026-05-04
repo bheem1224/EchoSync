@@ -1302,7 +1302,7 @@ def start_analyze_job():
             ANALYSIS_JOBS[job_id]['status'] = 'finished'
         except Exception as e:
             logger.error(f"Background analysis job {job_id} failed: {e}", exc_info=True)
-                                    ANALYSIS_JOBS[job_id]['error'] = str(e)
+            ANALYSIS_JOBS[job_id]['error'] = str(e)
             ANALYSIS_JOBS[job_id]['status'] = 'failed'
         finally:
             ANALYSIS_JOBS[job_id]['finished_at'] = time.time()
