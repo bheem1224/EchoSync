@@ -440,14 +440,25 @@ class PluginStore:
                     except Exception as e:
                         logger.error(f"Failed to cutover namespace for {plugin_id}: {e}")
 
-                # State Updates
-                system_state.restart_pending = True
+                # Hot-Swap Architecture: Perform Zero-Downtime Reload instead of setting restart_pending
+                try:
+                    from core.plugin_loader import PluginLoader
+                    app_root = Path(__file__).parent.parent
+                    loader = PluginLoader(app_root)
+                    loader.reload_plugin(plugin_id)
+                    restart_required = False
+                    logger.info(f"Live-swap successful for {plugin_id}. No restart required.")
+                except Exception as e:
+                    logger.warning(f"Hot-swap failed, falling back to restart requirement: {e}")
+                    system_state.restart_pending = True
+                    restart_required = True
+
                 event_bus.publish("SYSTEM", "PLUGIN_UPDATE_COMPLETE", {
                     "plugin_id": plugin_id,
                     "name": plugin_info.get("name"),
                     "version": plugin_info.get("version"),
                     "channel": channel,
-                    "restart_required": True
+                    "restart_required": restart_required
                 })
                 
                 return True

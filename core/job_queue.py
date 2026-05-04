@@ -362,6 +362,17 @@ class JobQueue:
             logger.error(f"Exception while trying to kill job '{name}': {e}")
             return False
 
+    def kill_jobs_by_plugin(self, plugin_id: str):
+        """Terminates all active jobs associated with a specific plugin."""
+        with self._lock:
+            jobs_to_kill = [name for name, job in self._jobs.items() if job.plugin == plugin_id]
+        
+        for name in jobs_to_kill:
+            self.kill_job(name)
+            self.unregister_job(name)
+        
+        logger.info(f"Terminated all jobs for plugin: {plugin_id}")
+
     def schedule_in(self, name: str, delay_seconds: float):
         with self._lock:
             job = self._jobs.get(name)

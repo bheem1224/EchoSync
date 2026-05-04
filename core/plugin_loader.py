@@ -153,6 +153,41 @@ class PluginLoader:
         self.plugins_dir = config_manager.get_plugins_dir()
         self.loaded_blueprints: List[Blueprint] = []
 
+    def reload_plugin(self, plugin_id: str):
+        """Perform a true Zero-Downtime hot reload of a plugin."""
+        logger.info(f"🔄 HOT-SWAP INITIATED: {plugin_id}")
+        
+        # 1. Kill Workers
+        try:
+            from core.job_queue import job_queue
+            job_queue.kill_jobs_by_plugin(plugin_id)
+        except Exception as e:
+            logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
+
+        # 2. Purge Memory
+        # Clear module from sys.modules so importlib.import_module grabs the fresh code
+        module_name = f"plugins.{plugin_id}"
+        if module_name in sys.modules:
+            logger.debug(f"Purging {module_name} from sys.modules")
+            # Also purge submodules
+            submodules = [m for m in sys.modules if m.startswith(module_name + ".")]
+            for m in submodules:
+                del sys.modules[m]
+            del sys.modules[module_name]
+
+        # 3. Reload Module
+        try:
+            # Re-run scanning for just this directory
+            plugin_path = self.plugins_dir / plugin_id
+            if plugin_path.exists():
+                self._load_provider_package(plugin_path, 'community')
+                logger.info(f"✅ Successfully live-swapped: {plugin_id}")
+            else:
+                logger.error(f"Cannot reload {plugin_id}: path does not exist")
+        except Exception as e:
+            logger.error(f"Live-swap failed for {plugin_id}: {e}")
+            raise
+
     def load_all(self):
         """Scan and load all providers and plugins."""
         logger.info("Starting plugin discovery...")

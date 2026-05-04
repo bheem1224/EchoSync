@@ -198,8 +198,6 @@ def install_plugin():
 
     success = plugin_store.download_plugin(plugin_info, channel=channel)
     if success:
-        from core.state import system_state
-        system_state.restart_pending = True
         return jsonify({"success": True})
     else:
         return jsonify({"error": f"Failed to install plugin on channel {channel}"}), 500
@@ -230,9 +228,17 @@ def toggle_plugin(plugin_id):
 
     config_manager.save_settings(config_manager.get_settings())
 
-    # Mark restart pending
-    from core.state import system_state
-    system_state.restart_pending = True
+    # Hot-Reload if enabled, otherwise restart pending
+    try:
+        from core.plugin_loader import PluginLoader
+        app_root = Path(__file__).parent.parent.parent
+        loader = PluginLoader(app_root)
+        loader.reload_plugin(plugin_id)
+        logger.info(f"Hot-reloaded plugin {plugin_id} after toggle")
+    except Exception as e:
+        logger.warning(f"Hot-reload failed for {plugin_id}, marking restart pending: {e}")
+        from core.state import system_state
+        system_state.restart_pending = True
 
     return jsonify({"success": True})
 
