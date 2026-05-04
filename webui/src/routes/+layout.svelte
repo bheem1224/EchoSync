@@ -66,7 +66,7 @@
 
 <svelte:window bind:innerWidth />
 
-<div class="h-screen w-full flex flex-col overflow-hidden bg-transparent text-white">
+<div class="h-screen w-full flex flex-col overflow-hidden" style="background-color: var(--bg-canvas); color: var(--text-primary);">
   <RestartBanner />
   <div class="flex-1 flex overflow-hidden min-h-0">
     {#if innerWidth >= 768}
@@ -80,10 +80,10 @@
       </main>
     {:else}
       <div class="flex-1 flex flex-col min-h-0">
-        <header class="flex justify-between items-center p-4 bg-surface border-b border-glass-border">
-          <div class="font-bold text-lg text-white tracking-tight">EchoSync</div>
+        <header class="flex justify-between items-center p-4 bg-surface border-b border-border-subtle">
+          <div class="font-bold text-lg text-text-primary tracking-tight">EchoSync</div>
           <button
-            class="p-2 bg-surface-hover rounded-global active:scale-95 transition-all text-white"
+            class="p-2 bg-surface-hover rounded-global active:scale-95 transition-all text-text-primary"
             on:click={() => window.dispatchEvent(new CustomEvent('es-omnibar-toggle'))}
           >
             🔍

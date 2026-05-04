@@ -255,13 +255,13 @@
 
 <style>
   .plugin-card {
-    background: var(--glass, rgba(20, 24, 31, 0.7));
+    background: var(--bg-surface);
     backdrop-filter: blur(12px);
-    border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius, 12px);
     padding: 24px;
     margin-bottom: 24px;
-    color: var(--text-main, #fff);
+    color: var(--text-primary);
   }
 
   .card-header {
@@ -270,7 +270,7 @@
     align-items: center;
     margin-bottom: 16px;
     padding-bottom: 12px;
-    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .header-left {
@@ -297,7 +297,7 @@
     font-weight: 700;
   }
 
-  .status-badge.active { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+  .status-badge.active { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); }
   .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
   .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
 
@@ -305,7 +305,7 @@
     padding: 8px 16px;
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.1);
-    color: var(--text-main, #fff);
+    color: var(--text-primary);
     border-radius: 8px;
     font-size: 13px;
     cursor: pointer;
@@ -318,8 +318,8 @@
 
   .btn-primary {
     padding: 10px 20px;
-    background: var(--color-primary, #14b8a6);
-    color: #000;
+    background: var(--color-primary);
+    color: var(--bg-canvas);
     border: none;
     border-radius: 8px;
     font-weight: 600;
@@ -330,7 +330,7 @@
   .loading-state {
     padding: 24px;
     text-align: center;
-    color: var(--text-muted, #64748b);
+    color: var(--text-muted);
   }
 
   .settings-section {
@@ -357,29 +357,29 @@
 
   .field-label {
     font-size: 13px;
-    color: var(--text-muted, #64748b);
+    color: var(--text-muted);
   }
 
   .input-field {
     width: 100%;
     padding: 10px 14px;
-    background: var(--bg-input, #08080a);
-    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
     border-radius: 8px;
-    color: var(--text-main, #fff);
+    color: var(--text-primary);
     font-size: 14px;
     transition: all 0.2s;
   }
 
   .input-field:focus {
     outline: none;
-    border-color: var(--color-primary, #14b8a6);
+    border-color: var(--color-primary);
     box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
   }
 
   .helper-text {
     font-size: 11px;
-    color: var(--text-muted, #64748b);
+    color: var(--text-muted);
   }
 
   .path-mappings {
@@ -394,3 +394,7 @@
     margin-top: 8px;
   }
 </style>
+
+
+
+

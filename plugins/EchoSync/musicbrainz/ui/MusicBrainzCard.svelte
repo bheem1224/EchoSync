@@ -192,33 +192,33 @@
   }
 </script>
 
-<section class="p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global mb-4">
-  <div class="flex justify-between items-center mb-5 pb-3 border-b border-glass-border">
+<section class="p-6 bg-[var(--bg-surface)] backdrop-blur-md border border-[var(--border-subtle)] rounded-global mb-4">
+  <div class="flex justify-between items-center mb-5 pb-3 border-b border-[var(--border-subtle)]">
     <div class="flex items-center gap-3">
       <h2 class="m-0 text-xl font-semibold">MusicBrainz</h2>
-      <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ba6415]/20 text-[#ba6415]">Metadata</span>
+      <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[var(--color-primary)]/20 text-[var(--color-primary)]">Metadata</span>
     </div>
   </div>
 
   {#if loading}
-    <div class="p-5 text-center text-secondary">Loading...</div>
+    <div class="p-5 text-center text-[var(--text-muted)]">Loading...</div>
   {:else}
 
 
     <!-- Custom API Base URL -->
     <div class="mb-6">
       <h3 class="m-0 mb-4 text-base font-semibold">Custom API Base URL</h3>
-      <p class="text-xs text-secondary mt-1">
+      <p class="text-xs text-[var(--text-muted)] mt-1">
         Point this to a local MusicBrainz Docker container to go 100% offline.
       </p>
 
       <div class="flex flex-col gap-3">
         <div class="flex flex-col gap-1">
-          <label class="text-[13px] font-medium text-primary" for="mb-api-base-url">API Base URL</label>
+          <label class="text-[13px] font-medium text-[var(--text-primary)]" for="mb-api-base-url">API Base URL</label>
           <input
             id="mb-api-base-url"
             type="text"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-[var(--text-primary)] w-full box-border focus:outline-none focus:border-accent"
             bind:value={customApiBaseUrl}
             placeholder="https://musicbrainz.org/ws/2"
           />
@@ -232,7 +232,7 @@
     <!-- Application Credentials -->
     <div class="mb-6">
       <h3 class="m-0 mb-4 text-base font-semibold">Application Credentials</h3>
-      <p class="text-xs text-secondary mt-1">
+      <p class="text-xs text-[var(--text-muted)] mt-1">
         Register an application at
         <a href="https://musicbrainz.org/account/applications" target="_blank" rel="noopener noreferrer">
           musicbrainz.org/account/applications
@@ -242,23 +242,23 @@
 
       <div class="flex flex-col gap-3">
         <div class="flex flex-col gap-1">
-          <label class="text-[13px] font-medium text-primary" for="mb-client-id">Client ID</label>
+          <label class="text-[13px] font-medium text-[var(--text-primary)]" for="mb-client-id">Client ID</label>
           <input
             id="mb-client-id"
             type="text"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-[var(--text-primary)] w-full box-border focus:outline-none focus:border-accent"
             bind:value={clientId}
             placeholder="Enter your MusicBrainz Client ID"
           />
         </div>
 
         <div class="flex flex-col gap-1">
-          <label class="text-[13px] font-medium text-primary" for="mb-client-secret">Client Secret</label>
+          <label class="text-[13px] font-medium text-[var(--text-primary)]" for="mb-client-secret">Client Secret</label>
           <div class="relative flex items-center">
             <input
               id="mb-client-secret"
               type={showSecret ? 'text' : 'password'}
-              class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+              class="px-3 py-2 bg-background border border-border rounded-global text-sm text-[var(--text-primary)] w-full box-border focus:outline-none focus:border-accent"
               bind:value={clientSecret}
               placeholder={clientSecretConfigured ? '••••••••  (leave blank to keep current)' : 'Enter your MusicBrainz Client Secret'}
             />
@@ -283,19 +283,19 @@
     <div class="mb-6">
       <div class="mb-3">
         <h3 class="m-0 mb-4 text-base font-semibold">OAuth Redirect URI (Auto-generated)</h3>
-        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => (redirectCollapsed = !redirectCollapsed)}>
+        <button class="px-4 py-2 bg-white/10 text-[var(--text-primary)] border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => (redirectCollapsed = !redirectCollapsed)}>
           {redirectCollapsed ? 'Expand' : 'Collapse'}
         </button>
       </div>
       {#if !redirectCollapsed}
         <input
           type="text"
-          class="px-3 py-2 bg-background/50 border border-border rounded-global text-sm text-primary w-full box-border opacity-70 cursor-not-allowed select-all"
+          class="px-3 py-2 bg-background/50 border border-border rounded-global text-sm text-[var(--text-primary)] w-full box-border opacity-70 cursor-not-allowed select-all"
           value={redirectUri}
           readonly
           disabled
         />
-        <p class="text-xs text-secondary mt-1" style="margin-top:6px;">
+        <p class="text-xs text-[var(--text-muted)] mt-1" style="margin-top:6px;">
           Add this URI as a callback URL in your MusicBrainz application settings.
         </p>
       {/if}
@@ -305,12 +305,12 @@
     <div class="mb-6">
       <div class="mb-3">
         <h3 class="m-0 mb-4 text-base font-semibold">Accounts ({accounts.length}/{MAX_ACCOUNTS})</h3>
-        <p class="text-xs text-secondary mt-1">
+        <p class="text-xs text-[var(--text-muted)] mt-1">
           Each account represents a MusicBrainz user that will authenticate via OAuth.
           Authenticated accounts can contribute ISRCs and metadata to MusicBrainz.
         </p>
         {#if accounts.length < MAX_ACCOUNTS}
-          <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={openAddModal}>
+          <button class="px-4 py-2 bg-white/10 text-[var(--text-primary)] border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={openAddModal}>
             + Add Account
           </button>
         {/if}
@@ -328,16 +328,16 @@
                   <span class="text-[12px] px-2 py-1 rounded-[4px] bg-yellow-500/20 text-yellow-500">⚠ Not Authenticated</span>
                 {/if}
                 {#if account.is_active}
-                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#ba6415]/20 text-[#ba6415]">● Active</span>
+                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[var(--color-primary)]/20 text-[var(--color-primary)]">● Active</span>
                 {/if}
               </div>
             </div>
             <div class="flex gap-2 items-center flex-wrap">
-              <button class="bg-transparent text-[#ba6415] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => authenticate(account.id)}>
+              <button class="bg-transparent text-[var(--color-primary)] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => authenticate(account.id)}>
                 {account.is_authenticated ? 'Reauthenticate' : 'Authenticate'}
               </button>
               <button
-                class="px-4 py-2 bg-white/10 text-primary border-none rounded-global transition-colors hover:bg-white/15 active:scale-95"
+                class="px-4 py-2 bg-white/10 text-[var(--text-primary)] border-none rounded-global transition-colors hover:bg-white/15 active:scale-95"
                 class:active={account.is_active}
                 on:click={() => toggleAccount(account.id, account.is_active)}
                 title={account.is_active ? 'Deactivate' : 'Activate'}
@@ -353,7 +353,7 @@
             </div>
           </div>
         {:else}
-          <div class="p-4 text-center text-secondary text-sm">
+          <div class="p-4 text-center text-[var(--text-muted)] text-sm">
             No accounts added yet. Click "Add Account" to get started.
           </div>
         {/each}
@@ -369,25 +369,25 @@
     <div class="bg-[#1e1e2e] rounded-[10px] p-0 min-w-[420px] max-w-[90vw] border border-white/15" on:click|stopPropagation>
       <div class="flex justify-between items-center px-5 py-4 border-b border-white/10">
         <h3 class="m-0 mb-4 text-base font-semibold">Add MusicBrainz Account</h3>
-        <button class="bg-transparent border-none text-[18px] cursor-pointer text-secondary p-0 leading-none active:scale-95 transition-all duration-200" on:click={closeAddModal}>✕</button>
+        <button class="bg-transparent border-none text-[18px] cursor-pointer text-[var(--text-muted)] p-0 leading-none active:scale-95 transition-all duration-200" on:click={closeAddModal}>✕</button>
       </div>
       <div class="p-5 flex flex-col gap-[14px]">
         <label class="flex flex-col gap-[6px]">
-          <span class="text-[13px] font-medium text-primary">Display Name</span>
+          <span class="text-[13px] font-medium text-[var(--text-primary)]">Display Name</span>
           <input
             type="text"
             bind:value={newAccountName}
             placeholder="e.g. My MusicBrainz Username"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-primary w-full box-border focus:outline-none focus:border-accent"
+            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-[var(--text-primary)] w-full box-border focus:outline-none focus:border-accent"
           />
         </label>
-        <p class="text-[12px] text-secondary m-0">
+        <p class="text-[12px] text-[var(--text-muted)] m-0">
           Give this slot a friendly name. After adding, click "Authenticate" to link it
           to a real MusicBrainz account via OAuth.
         </p>
       </div>
       <div class="flex justify-end gap-[10px] px-5 py-4 border-t border-white/10">
-        <button class="px-4 py-2 bg-white/10 text-primary border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={closeAddModal}>Cancel</button>
+        <button class="px-4 py-2 bg-white/10 text-[var(--text-primary)] border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={closeAddModal}>Cancel</button>
         <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={addAccount} disabled={savingAccount}>
           {savingAccount ? 'Adding…' : 'Add Account'}
         </button>
@@ -395,5 +395,9 @@
     </div>
   </div>
 {/if}
+
+
+
+
 
 

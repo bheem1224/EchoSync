@@ -2,43 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 
+  =============================================================================
+  EchoSync Design Token API (CSS Variables)
+  -----------------------------------------------------------------------------
+  Plugin authors MUST use these variables inside their Web Components to ensure
+  visual consistency and Shadow DOM compatibility. These variables "pierce" 
+  the Shadow DOM boundaries to inherit the global theme state.
+  
+  Example: 
+  .plugin-card { 
+    background-color: var(--bg-surface); 
+    color: var(--text-primary);
+  }
+  =============================================================================
+*/
+
 :root {
   color-scheme: dark;
-  /* Brand / Palette from rulebook */
-  --color-primary: #14b8a6; /* Subtle Teal */
-  --color-primary-hover: #0d9488;
 
-  --bg-main: #050508; /* very dark void */
-  --bg-sidebar: #0f1216;
-  --bg-card: #14181f;
-  --bg-input: #08080a;
-  --surface: rgba(10, 16, 30, 0.88);
-  --surface-hover: rgba(18, 32, 52, 0.92);
+  /* --- Design Tokens (The API) --- */
+  --bg-canvas: #020617;           /* Very dark slate/black (Tailwind slate-950) */
+  --bg-surface: #0f172a;          /* Cards and sidebars (Tailwind slate-900) */
+  --bg-surface-elevated: #1e293b; /* Modals, popovers, hover states (Tailwind slate-800) */
+  
+  --text-primary: #f8fafc;        /* High contrast text (Tailwind slate-50) */
+  --text-muted: #94a3b8;          /* De-emphasized text (Tailwind slate-400) */
+  
+  --color-primary: #6366f1;       /* Brand Accent (Tailwind indigo-500) */
+  --color-danger: #ef4444;        /* Danger/Action (Tailwind red-500) */
+  
+  --border-subtle: rgba(255, 255, 255, 0.06);
 
-  --text-main: #ffffff;
-  --text-muted: #64748b;
+  /* --- Internal Component Aliases --- */
+  --bg-main: var(--bg-canvas);
+  --bg-sidebar: var(--bg-surface);
+  --bg-card: var(--bg-surface);
+  --bg-input: #0b0f1a;
+  --surface: rgba(15, 23, 42, 0.85);
+  --surface-hover: var(--bg-surface-elevated);
+  --color-primary-hover: #4f46e5;
+  
+  --text-main: var(--text-primary);
+  --error: var(--color-danger);
+  --success: #10b981;
 
-  --border-subtle: rgba(255,255,255,0.08);
-  --error: #ff5252;
-  --success: var(--color-primary);
-
-  --shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  --shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
   --radius: 12px;
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: radial-gradient(circle at 20% 20%, rgba(15, 239, 136, 0.04), transparent 32%),
-              radial-gradient(circle at 80% 0%, rgba(14, 165, 233, 0.06), transparent 28%),
-              radial-gradient(circle at 68% 80%, rgba(56, 189, 248, 0.08), transparent 14%),
-              var(--bg-main);
-  color: var(--text-main);
+  background: radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.05), transparent 35%),
+              radial-gradient(circle at 80% 0%, rgba(14, 165, 233, 0.07), transparent 30%),
+              radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0), var(--bg-canvas));
+  color: var(--text-primary);
 
-  /* Component Aliases - Mapping legacy/component vars to global theme */
-  --card-bg: var(--bg-card);
+  /* Legacy Mappings (Keep for backward compatibility during cutover) */
+  --card-bg: var(--bg-surface);
   --input-bg: var(--bg-input);
-  --text: var(--text-main);
+  --text: var(--text-primary);
   --muted: var(--text-muted);
   --border-color: var(--border-subtle);
   --accent: var(--color-primary);
-  --glass: rgba(20, 24, 31, 0.7);
+  --glass: rgba(15, 23, 42, 0.7);
   --glass-border: var(--border-subtle);
 }
 
@@ -103,8 +127,10 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: transparent;
-  color: var(--text);
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
 a {

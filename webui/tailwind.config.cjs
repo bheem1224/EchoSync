@@ -7,32 +7,26 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // This maps 'bg-background' to your very dark void color
-        background: 'var(--bg-main)',
-
-        // This maps 'bg-surface' to your card background color
-        surface: 'var(--bg-card)',
-
-        // This maps 'bg-surface-hover' to the hover surface tone
-        'surface-hover': 'var(--surface-hover)',
-
-        // This maps 'bg-input' to input/field backgrounds
-        input: 'var(--bg-input)',
-
-        // This maps 'text-primary' or 'bg-primary' to your Teal brand color
+        // Design Token API Mappings
+        canvas: 'var(--bg-canvas)',
+        surface: 'var(--bg-surface)',
+        'surface-elevated': 'var(--bg-surface-elevated)',
+        'text-primary': 'var(--text-primary)',
+        'text-muted': 'var(--text-muted)',
         primary: 'var(--color-primary)',
+        danger: 'var(--color-danger)',
+        
+        // Legacy Mappings & Utilities
+        'surface-hover': 'var(--bg-surface-elevated)',
         'primary-hover': 'var(--color-primary-hover)',
-
-        // This maps 'text-secondary' to your muted slate color
-        secondary: 'var(--text-muted)',
-
-        // This maps 'border-glass-border' to your subtle white borders
         'glass-border': 'var(--border-subtle)',
-
-        // Supports glass-style surfaces where needed
         glass: 'var(--glass)',
-
-        error: 'var(--error)'
+        error: 'var(--color-danger)',
+        
+        // Tailwind class fallbacks
+        background: 'var(--bg-canvas)',
+        input: 'var(--bg-input)',
+        secondary: 'var(--text-muted)'
       },
       borderRadius: {
         // This maps 'rounded-global' to your 12px radius

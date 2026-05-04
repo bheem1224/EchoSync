@@ -90,52 +90,52 @@
   }
 </script>
 
-<section class="mb-4 p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global">
+<section class="plugin-card">
 
   <!-- Header -->
-  <div class="flex items-center gap-3 mb-5 pb-3 border-b border-glass-border">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-sky-400">
+  <div class="card-header">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="accent-icon">
       <path d="M2 12c.6.5 1.2 1 2.5 1s2.5-1 3.5-2c1-1 2.2-2 3.5-2s2.5 1 3.5 2c1 1 2.2 2 3.5 2s1.9-.5 2.5-1"/>
       <path d="M2 18c.6.5 1.2 1 2.5 1s2.5-1 3.5-2c1-1 2.2-2 3.5-2s2.5 1 3.5 2c1 1 2.2 2 3.5 2s1.9-.5 2.5-1"/>
       <path d="M2 6c.6.5 1.2 1 2.5 1s2.5-1 3.5-2c1-1 2.2-2 3.5-2s2.5 1 3.5 2c1 1 2.2 2 3.5 2s1.9-.5 2.5-1"/>
     </svg>
     <div>
-      <h2 class="m-0 text-xl font-semibold leading-tight">AcoustID Configuration</h2>
-      <p class="m-0 text-xs text-secondary mt-0.5">Audio fingerprinting service</p>
+      <h2 class="card-title">AcoustID Configuration</h2>
+      <p class="card-subtitle">Audio fingerprinting service</p>
     </div>
-    <span class="ml-auto text-[12px] px-2 py-1 rounded-[4px] bg-sky-500/20 text-sky-400">Fingerprinting</span>
+    <span class="type-badge">Fingerprinting</span>
   </div>
 
   {#if loading}
-    <div class="p-5 text-center text-secondary animate-pulse">Loading configuration…</div>
+    <div class="loading-state">Loading configuration…</div>
   {:else}
 
     <!-- API Key -->
-    <div class="mb-6">
-      <label class="block text-sm font-medium mb-1" for="acoustid-api-key">
+    <div class="form-section">
+      <label class="field-label" for="acoustid-api-key">
         AcoustID API Key
         {#if keyConfigured}
-          <span class="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">● Configured</span>
+          <span class="status-tag success">● Configured</span>
         {/if}
       </label>
-      <p class="text-xs text-secondary mb-2">
+      <p class="helper-text">
         Get your free API key from
-        <a href="https://acoustid.org/new-application" target="_blank" rel="noopener noreferrer" class="text-sky-400 hover:underline">
+        <a href="https://acoustid.org/new-application" target="_blank" rel="noopener noreferrer" class="link">
           acoustid.org/new-application
         </a>.
         Required to identify songs by their audio signature.
       </p>
-      <div class="relative flex items-center">
+      <div class="input-wrapper">
         <input
           id="acoustid-api-key"
           type={showKey ? 'text' : 'password'}
           bind:value={apiKey}
           placeholder={keyConfigured ? '••••••••  (leave blank to keep current)' : 'Enter your AcoustID API key'}
-          class="w-full px-3 py-2 pr-10 bg-black/30 border border-glass-border rounded-global text-sm text-primary box-border focus:outline-none focus:border-sky-400 transition-colors"
+          class="input-field"
         />
         <button
           type="button"
-          class="absolute right-2 bg-transparent border-none cursor-pointer text-base p-1 opacity-50 hover:opacity-100 transition-opacity"
+          class="toggle-btn"
           on:click={() => (showKey = !showKey)}
           title={showKey ? 'Hide key' : 'Show key'}
           aria-label={showKey ? 'Hide key' : 'Show key'}
@@ -146,55 +146,49 @@
     </div>
 
     <!-- Auto-Contribute Toggle -->
-    <div class="mb-6 p-4 rounded-global border border-glass-border bg-white/[0.03]">
-      <div class="flex items-center justify-between gap-4">
-        <div class="flex-1">
-          <p class="m-0 text-sm font-semibold">Auto-Contribute Fingerprints</p>
-        </div>
+    <div class="toggle-card">
+      <div class="toggle-header">
+        <p class="toggle-label">Auto-Contribute Fingerprints</p>
 
         <!-- Toggle Switch -->
         <button
           type="button"
           role="switch"
           aria-checked={autoContribute}
-          class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none
-            {autoContribute ? 'bg-sky-500' : 'bg-white/20'}"
+          class="switch {autoContribute ? 'active' : ''}"
           on:click={() => (autoContribute = !autoContribute)}
           aria-label="Toggle auto-contribute"
         >
-          <span
-            class="pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow ring-0 transition-transform duration-200 ease-in-out
-              {autoContribute ? 'translate-x-5' : 'translate-x-0'}"
-          ></span>
+          <span class="switch-thumb"></span>
         </button>
       </div>
-      <p class="mt-2 text-xs text-secondary leading-relaxed">
+      <p class="helper-text mt-2">
         When enabled, EchoSync will automatically submit acoustic fingerprints of your music to the 
         AcoustID database to help identify tracks for other community members.
       </p>
       {#if autoContribute}
-        <p class="mt-2 text-[11px] text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1.5">
+        <div class="warning-box">
           ⚠ Submissions are anonymous but require a valid API key. Fingerprints are generated locally and uploaded during background library enrichment.
-        </p>
+        </div>
       {/if}
     </div>
 
     <!-- Error / Success feedback -->
     {#if error}
-      <div class="mb-4 px-3 py-2 rounded-global bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+      <div class="feedback error">
         ⚠ {error}
       </div>
     {/if}
     {#if saved}
-      <div class="mb-4 px-3 py-2 rounded-global bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
+      <div class="feedback success">
         ✓ Configuration saved successfully.
       </div>
     {/if}
 
     <!-- Save Button -->
-    <div class="flex justify-end">
+    <div class="actions">
       <button
-        class="px-5 py-2 bg-sky-600 hover:bg-sky-500 text-white font-medium rounded-global transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+        class="btn-primary"
         on:click={saveConfig}
         disabled={saving}
       >
@@ -204,3 +198,243 @@
 
   {/if}
 </section>
+
+<style>
+  .plugin-card {
+    background: var(--bg-surface);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius, 12px);
+    padding: 24px;
+    margin-bottom: 16px;
+    color: var(--text-primary);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .accent-icon {
+    color: var(--color-primary);
+  }
+
+  .card-title {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .card-subtitle {
+    margin: 4px 0 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+
+  .type-badge {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 4px 8px;
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--color-primary);
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  .loading-state {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-muted);
+  }
+
+  .form-section {
+    margin-bottom: 24px;
+  }
+
+  .field-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+
+  .status-tag.success {
+    margin-left: 8px;
+    font-size: 11px;
+    padding: 2px 6px;
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border-radius: 4px;
+  }
+
+  .helper-text {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    line-height: 1.5;
+  }
+
+  .link {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .link:hover {
+    text-decoration: underline;
+  }
+
+  .input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .input-field {
+    width: 100%;
+    padding: 10px 14px;
+    padding-right: 40px;
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius, 12px);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    transition: border-color 0.2s;
+  }
+
+  .input-field:focus {
+    outline: none;
+    border-color: var(--color-primary);
+  }
+
+  .toggle-btn {
+    position: absolute;
+    right: 12px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+  }
+
+  .toggle-btn:hover {
+    opacity: 1;
+  }
+
+  .toggle-card {
+    margin-bottom: 24px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius, 12px);
+  }
+
+  .toggle-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .toggle-label {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .switch {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    border: none;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .switch.active {
+    background: var(--color-primary);
+  }
+
+  .switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+
+  .switch.active .switch-thumb {
+    transform: translateX(20px);
+  }
+
+  .warning-box {
+    margin-top: 8px;
+    padding: 6px 12px;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--color-primary);
+  }
+
+  .feedback {
+    margin-bottom: 16px;
+    padding: 8px 12px;
+    border-radius: var(--radius, 12px);
+    font-size: 0.875rem;
+  }
+
+  .feedback.error {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--color-danger);
+    color: var(--color-danger);
+  }
+
+  .feedback.success {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid #10b981;
+    color: #10b981;
+  }
+
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .btn-primary {
+    padding: 10px 20px;
+    background: var(--color-primary);
+    color: white;
+    font-weight: 500;
+    border: none;
+    border-radius: var(--radius, 12px);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+</style>
+
+
+
+

@@ -90,24 +90,24 @@
   }
 </script>
 
-<section class="mb-4 p-6 bg-surface backdrop-blur-md border border-glass-border rounded-global">
+<section class="mb-4 p-6 bg-[var(--bg-surface)] backdrop-blur-md border border-[var(--border-subtle)] rounded-global">
 
   <!-- Header -->
-  <div class="flex items-center gap-3 mb-5 pb-3 border-b border-glass-border">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-[#ba6415]">
+  <div class="flex items-center gap-3 mb-5 pb-3 border-b border-[var(--border-subtle)]">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-[var(--color-primary)]">
       <circle cx="12" cy="12" r="10"/>
       <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
       <line x1="12" y1="17" x2="12.01" y2="17"/>
     </svg>
     <div>
       <h2 class="m-0 text-xl font-semibold leading-tight">MusicBrainz Configuration</h2>
-      <p class="m-0 text-xs text-secondary mt-0.5">Contribution & API settings</p>
+      <p class="m-0 text-xs text-[var(--text-muted)] mt-0.5">Contribution & API settings</p>
     </div>
-    <span class="ml-auto text-[12px] px-2 py-1 rounded-[4px] bg-[#ba6415]/20 text-[#ba6415]">Metadata</span>
+    <span class="ml-auto text-[12px] px-2 py-1 rounded-[4px] bg-[var(--color-primary)]/20 text-[var(--color-primary)]">Metadata</span>
   </div>
 
   {#if loading}
-    <div class="p-5 text-center text-secondary animate-pulse">Loading configuration…</div>
+    <div class="p-5 text-center text-[var(--text-muted)] animate-pulse">Loading configuration…</div>
   {:else}
 
     <!-- User Token -->
@@ -115,12 +115,12 @@
       <label class="block text-sm font-medium mb-1" for="mb-user-token">
         User Token / API Key
         {#if tokenConfigured}
-          <span class="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">● Configured</span>
+          <span class="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-[rgba(16,185,129,0.15)] text-[#10b981]">● Configured</span>
         {/if}
       </label>
-      <p class="text-xs text-secondary mb-2">
+      <p class="text-xs text-[var(--text-muted)] mb-2">
         Obtain your personal access token from
-        <a href="https://musicbrainz.org/account/applications" target="_blank" rel="noopener noreferrer" class="text-[#ba6415] hover:underline">
+        <a href="https://musicbrainz.org/account/applications" target="_blank" rel="noopener noreferrer" class="text-[var(--color-primary)] hover:underline">
           musicbrainz.org/account/applications
         </a>.
         Required for community contributions and ISRC submissions.
@@ -131,7 +131,7 @@
           type={showToken ? 'text' : 'password'}
           bind:value={userToken}
           placeholder={tokenConfigured ? '••••••••  (leave blank to keep current)' : 'Enter your MusicBrainz user token'}
-          class="w-full px-3 py-2 pr-10 bg-black/30 border border-glass-border rounded-global text-sm text-primary box-border focus:outline-none focus:border-[#ba6415] transition-colors"
+          class="w-full px-3 py-2 pr-10 bg-black/30 border border-[var(--border-subtle)] rounded-global text-sm text-[var(--text-primary)] box-border focus:outline-none focus:border-[var(--color-primary)] transition-colors"
         />
         <button
           type="button"
@@ -146,7 +146,7 @@
     </div>
 
     <!-- Auto-Contribute Toggle -->
-    <div class="mb-6 p-4 rounded-global border border-glass-border bg-white/[0.03]">
+    <div class="mb-6 p-4 rounded-global border border-[var(--border-subtle)] bg-white/[0.03]">
       <div class="flex items-center justify-between gap-4">
         <div class="flex-1">
           <p class="m-0 text-sm font-semibold">Auto-Contribute Missing Data</p>
@@ -158,7 +158,7 @@
           role="switch"
           aria-checked={autoContribute}
           class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none
-            {autoContribute ? 'bg-[#ba6415]' : 'bg-white/20'}"
+            {autoContribute ? 'bg-[var(--color-primary)]' : 'bg-white/20'}"
           on:click={() => (autoContribute = !autoContribute)}
           aria-label="Toggle auto-contribute"
         >
@@ -168,7 +168,7 @@
           ></span>
         </button>
       </div>
-      <p class="mt-2 text-xs text-secondary leading-relaxed">
+      <p class="mt-2 text-xs text-[var(--text-muted)] leading-relaxed">
         When enabled, EchoSync will automatically submit missing acoustic fingerprints (AcoustID) and 
         metadata corrections back to the MusicBrainz database during imports.
       </p>
@@ -186,7 +186,7 @@
       </div>
     {/if}
     {#if saved}
-      <div class="mb-4 px-3 py-2 rounded-global bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
+      <div class="mb-4 px-3 py-2 rounded-global bg-emerald-500/10 border border-emerald-500/20 text-[#10b981] text-sm">
         ✓ Configuration saved successfully.
       </div>
     {/if}
@@ -194,7 +194,7 @@
     <!-- Save Button -->
     <div class="flex justify-end">
       <button
-        class="px-5 py-2 bg-[#ba6415] hover:bg-[#ba6415]/90 text-white font-medium rounded-global transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+        class="px-5 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white font-medium rounded-global transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
         on:click={saveConfig}
         disabled={saving}
       >
@@ -204,3 +204,7 @@
 
   {/if}
 </section>
+
+
+
+

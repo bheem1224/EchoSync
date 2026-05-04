@@ -341,13 +341,13 @@
 
 <style>
   .plugin-card {
-    background: var(--glass, rgba(20, 24, 31, 0.7));
+    background: var(--bg-surface);
     backdrop-filter: blur(12px);
-    border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius, 12px);
     padding: 24px;
     margin-bottom: 24px;
-    color: var(--text-main, #fff);
+    color: var(--text-primary);
   }
 
   .card-header {
@@ -356,7 +356,7 @@
     align-items: center;
     margin-bottom: 24px;
     padding-bottom: 16px;
-    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .header-left {
@@ -375,7 +375,7 @@
     font-size: 11px;
     padding: 4px 8px;
     background: rgba(20, 184, 166, 0.15);
-    color: var(--color-primary, #14b8a6);
+    color: var(--color-primary);
     border-radius: 4px;
     font-weight: 600;
     text-transform: uppercase;
@@ -384,7 +384,7 @@
   .loading-state {
     padding: 24px;
     text-align: center;
-    color: var(--text-muted, #64748b);
+    color: var(--text-muted);
   }
 
   .settings-section {
@@ -402,7 +402,7 @@
     margin: 0;
     font-size: 16px;
     font-weight: 600;
-    color: var(--text-main, #fff);
+    color: var(--text-primary);
   }
 
   .form-grid {
@@ -414,17 +414,17 @@
   .input-field {
     width: 100%;
     padding: 10px 14px;
-    background: var(--bg-input, #08080a);
-    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
     border-radius: 8px;
-    color: var(--text-main, #fff);
+    color: var(--text-primary);
     font-size: 14px;
     transition: all 0.2s;
   }
 
   .input-field:focus {
     outline: none;
-    border-color: var(--color-primary, #14b8a6);
+    border-color: var(--color-primary);
     box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
   }
 
@@ -435,7 +435,7 @@
 
   .helper-text {
     font-size: 11px;
-    color: var(--text-muted, #64748b);
+    color: var(--text-muted);
     margin-top: 4px;
   }
 
@@ -480,7 +480,7 @@
 
   .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
   .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
-  .status-badge.active { background: rgba(20, 184, 166, 0.15); color: var(--color-primary, #14b8a6); }
+  .status-badge.active { background: rgba(20, 184, 166, 0.15); color: var(--color-primary); }
 
   .account-actions {
     display: flex;
@@ -491,7 +491,7 @@
   .link-btn {
     background: none;
     border: none;
-    color: var(--color-primary, #14b8a6);
+    color: var(--color-primary);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -505,7 +505,7 @@
     padding: 8px 16px;
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.1);
-    color: var(--text-main, #fff);
+    color: var(--text-primary);
     border-radius: 8px;
     font-size: 13px;
     cursor: pointer;
@@ -518,8 +518,8 @@
 
   .btn-primary {
     padding: 10px 20px;
-    background: var(--color-primary, #14b8a6);
-    color: #000;
+    background: var(--color-primary);
+    color: var(--bg-canvas);
     border: none;
     border-radius: 8px;
     font-weight: 600;
@@ -529,7 +529,7 @@
 
   .btn-danger {
     background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    color: var(--color-danger);
     border: none;
     padding: 8px 12px;
     border-radius: 6px;
@@ -549,7 +549,7 @@
 
   .modal-content {
     background: #0f1216;
-    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    border: 1px solid var(--border-subtle);
     border-radius: 12px;
     width: 100%;
     max-width: 440px;
@@ -565,7 +565,7 @@
   }
 
   .modal-title { margin: 0; font-size: 16px; font-weight: 700; }
-  .close-btn { background: none; border: none; color: var(--text-muted, #64748b); font-size: 20px; cursor: pointer; }
+  .close-btn { background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer; }
 
   .modal-body {
     padding: 20px;
@@ -588,7 +588,7 @@
     gap: 6px;
   }
 
-  .field-label { font-size: 13px; color: var(--text-muted, #64748b); }
+  .field-label { font-size: 13px; color: var(--text-muted); }
 
   .password-wrapper {
     position: relative;
@@ -603,16 +603,20 @@
     border: none;
     cursor: pointer;
     opacity: 0.6;
-    color: #fff;
+    color: var(--text-primary);
   }
 
   .empty-accounts {
     text-align: center;
     padding: 16px;
-    color: var(--text-muted, #64748b);
+    color: var(--text-muted);
     font-size: 13px;
     background: rgba(255,255,255,0.02);
     border-radius: 8px;
     border: 1px dashed rgba(255,255,255,0.1);
   }
 </style>
+
+
+
+
