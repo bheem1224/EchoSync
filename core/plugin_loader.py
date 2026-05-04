@@ -216,180 +216,129 @@ class PluginLoader:
             logger.error(f"Live-swap failed for {plugin_id}: {e}", exc_info=True)
             # Clean abort: do not raise to prevent crashing the API thread
 
-
     def load_all(self):
-        """Scan and load all providers and plugins."""
+        """Scan and load all providers and plugins based on database definitions."""
         logger.info("Starting plugin discovery...")
         logger.debug(f"Using plugins directory: {self.plugins_dir}")
 
-        safe_mode = os.environ.get('ECHOSYNC_SAFE_MODE') == '1'
+        safe_mode = os.environ.get('ECHOSYNC_SAFE_MODE') == '1' or config_manager.get('safe_mode') == True
+        if safe_mode:
+            logger.critical("SAFE MODE is active. Skipping discovery of community plugins.")
+            return
 
-        # Collect requirements before loading
+        import sqlite3
+        import json
+        
+        try:
+            conn = sqlite3.connect(str(config_manager.database_path))
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            c.execute("SELECT namespace, plugin_id FROM services WHERE is_active = 1")
+            active_services = c.fetchall()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to query active services from database: {e}")
+            return
+
         all_requirements = set()
 
-        def _collect_requirements(directory: Path, source_type: str):
-            if not directory.exists() or safe_mode and source_type == 'community':
-                return
-            for item in directory.iterdir():
-                if not item.is_dir() or item.name.startswith('_'):
-                    continue
-                # Skip if disabled in config
-                if source_type == 'community':
-                    disabled = config_manager.get_disabled_providers()
-                    if f"plugin.{item.name}" in disabled or item.name in disabled:
-                        continue
-                                
-                current_item = item
-                if source_type == 'community':
-                    # Support Side-by-Side Architecture or Root Overwrite
-                    channel = config_manager.get_plugin_channel(item.name)
-                    # If we have a beta subfolder, use it, otherwise the root contains the swapped artifact
-                    if channel == 'beta' and (item / 'beta').exists():
-                        current_item = item / 'beta'
+        def _collect_requirements(manifest_file: Path):
+            if manifest_file.exists():
+                try:
+                    manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                    reqs = manifest_data.get("requirements", [])
+                    for req in reqs:
+                        all_requirements.add(req)
+                except Exception as e:
+                    logger.error(f"Failed to read manifest {manifest_file}: {e}")
 
-                manifest_file = current_item / "manifest.json"
-                if manifest_file.exists():
-                    try:
-                        manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                        reqs = manifest_data.get("requirements", [])
-                        for req in reqs:
-                            all_requirements.add(req)
-                    except Exception as e:
-                        logger.error(f"Failed to read manifest for {item.name} to collect requirements: {e}")
+        # List of plugins to load
+        plugins_to_load = []
+
+        for row in active_services:
+            namespace = row['namespace']
+            if not namespace:
+                continue
+            
+            # e.g., EchoSync.spotify@beta
+            parts = namespace.split('@')
+            base_ns = parts[0]
+            channel = parts[1] if len(parts) > 1 else 'stable'
+
+            ns_parts = base_ns.split('.')
+            if len(ns_parts) >= 2:
+                author = ns_parts[0]
+                plugin_name = ".".join(ns_parts[1:])
+            else:
+                author = "unknown"
+                plugin_name = base_ns
+
+            plugin_dir = self.plugins_dir / author / plugin_name
+            if channel == 'beta':
+                plugin_dir = plugin_dir / 'beta'
+
+            if not plugin_dir.exists():
+                logger.error(f"Plugin directory not found for {namespace}: {plugin_dir}")
+                continue
+
+            manifest_file = plugin_dir / "manifest.json"
+            _collect_requirements(manifest_file)
+
+            plugins_to_load.append({
+                'namespace': namespace,
+                'author': author,
+                'plugin_name': plugin_name,
+                'channel': channel,
+                'plugin_dir': plugin_dir,
+                'manifest_file': manifest_file
+            })
 
         # 0. Set up Plugin VENV and install dependencies
         try:
-            _collect_requirements(self.plugins_dir, source_type='community')
-            # Assuming core plugins could theoretically have requirements too
-
-            setup_plugin_venv(self.plugins_dir, all_requirements)
+            if all_requirements:
+                setup_plugin_venv(self.plugins_dir, all_requirements)
         except Exception as e:
             logger.critical(f"Failed to setup plugin virtual environment: {e}")
             sys.exit(1) # Fatal error if we can't setup venv
 
-        # 1. Load Core Providers
-
-        # 2. Load Community Plugins (if directory exists)
-        if safe_mode:
-            logger.critical("SAFE MODE is active. Skipping discovery of community plugins.")
-        elif self.plugins_dir.exists():
-            self._scan_directory(self.plugins_dir)
-        else:
-            logger.debug("No plugins/ directory found. Skipping community plugins.")
-
-        logger.info(f"Plugin discovery complete. Loaded {len(self.loaded_blueprints)} blueprints.")
-
-    def _scan_directory(self, directory: Path):
-        """
-        Scan a directory for plugin packages.
-        Enforces strict namespace formatting {source}.{author}.{plugin_name}.
-        Supports Nexus Framework nested structure: plugins/{author}/{plugin_name}
-        """
-        import sys
-        import importlib.util
-        from core.security import is_privileged_or_verified
-
-        source_type = 'community' if directory.name == 'plugins' else 'core'
-        
-        # 1. Identify all plugin candidates (including nested ones)
-        candidates = []
-        for item in directory.iterdir():
-            if not item.is_dir() or item.name.startswith('__'):
-                continue
+        # 1. Load Plugins from DB
+        for p in plugins_to_load:
+            provider_name = f"{p['author']}/{p['plugin_name']}"
+            is_beta = (p['channel'] == 'beta')
+            plugin_dir = p['plugin_dir']
+            manifest_file = p['manifest_file']
             
-            # Check if this is a plugin (has __init__.py or main.wasm)
-            if (item / "__init__.py").exists() or (item / "main.wasm").exists():
-                candidates.append((item, item.name))
-            else:
-                # Check 1 level deeper (Nexus Schema: plugins/{author}/{plugin})
-                for subitem in item.iterdir():
-                    if subitem.is_dir() and not subitem.name.startswith('__'):
-                        if (subitem / "__init__.py").exists() or (subitem / "main.wasm").exists():
-                            # Use {author}/{plugin} as the provider_name for loading
-                            candidates.append((subitem, f"{item.name}/{subitem.name}"))
-
-        for current_item, provider_name in candidates:
-            # Check if disabled in config
-            disabled = config_manager.get_disabled_providers()
-            is_disabled = f"plugin.{provider_name}" in disabled or provider_name in disabled
-
-            # Channel logic
-            actual_item = current_item
-            is_beta = False
-            channel = config_manager.get_plugin_channel(provider_name)
-            if channel == 'beta' and (current_item / 'beta').exists():
-                actual_item = current_item / 'beta'
-                is_beta = True
-
-            init_file = actual_item / "__init__.py"
-            wasm_file = actual_item / "main.wasm"
+            init_file = plugin_dir / "__init__.py"
+            wasm_file = plugin_dir / "main.wasm"
 
             if not init_file.exists() and not wasm_file.exists():
+                logger.error(f"No entry point (__init__.py or main.wasm) found in {plugin_dir}")
                 continue
 
+            # Security Scan
+            bypass_security = False
+            privileged = False
+            if manifest_file.exists():
+                try:
+                    manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                    if manifest_data.get("author") == "EchoSync" and manifest_data.get("verified_source") == "official":
+                        bypass_security = True
+                        logger.info(f"Bypassing security scan for official plugin: {provider_name}")
+                    privileged = manifest_data.get("privileged") is True
+                except Exception as e:
+                    logger.error(f"Failed to read manifest for {provider_name} during security check: {e}")
 
-            # Zero-Trust gate: scan community plugin source before importing
+            if wasm_file.exists() and not init_file.exists():
+                logger.info(f"WASM plugin detected: {provider_name}. Bypassing AST security scan.")
+                bypass_security = True
 
+            if not bypass_security and not self._security_scan_package(plugin_dir, provider_name, privileged=privileged):
+                logger.warning(f"Plugin '{provider_name}' rejected by security scanner. Skipping.")
+                continue
 
-            if source_type == 'community':
+            self._load_plugin_package(provider_name, 'plugins', 'community', is_beta=is_beta, is_disabled=False)
 
-
-                bypass_security = False
-                manifest_data = None
-                manifest_file = current_item / "manifest.json"
-
-
-                if manifest_file.exists():
-
-
-                    try:
-
-
-                        import json
-
-
-                        manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-
-
-                        if manifest_data.get("author") == "EchoSync" and manifest_data.get("verified_source") == "official":
-                            bypass_security = True
-                            logger.info(f"Bypassing security scan for official plugin: {provider_name}")
-                        privileged = manifest_data.get("privileged") is True
-
-
-                    except Exception as e:
-
-
-                        logger.error(f"Failed to read manifest for {provider_name} during security check: {e}")
-
-
-
-
-
-
-                privileged = manifest_data.get("privileged") is True if manifest_data else False
-
-                # WASM Fast Track
-                if wasm_file.exists() and not init_file.exists():
-                    logger.info(f"WASM plugin detected: {provider_name}. Bypassing AST security scan.")
-                    bypass_security = True
-
-                if not bypass_security and not self._security_scan_package(current_item, provider_name, privileged=privileged):
-
-
-
-                    logger.warning(
-
-
-                        f"Plugin '{provider_name}' rejected by security scanner. Skipping."
-
-
-                    )
-
-
-                    continue
-
-            self._load_plugin_package(provider_name, directory.name, source_type, is_beta=is_beta, is_disabled=is_disabled)
+        logger.info(f"Plugin discovery complete. Loaded {len(self.loaded_blueprints)} blueprints.")
 
     def _security_scan_package(self, package_dir: Path, plugin_name: str, privileged: bool = False) -> bool:
         """
