@@ -1302,12 +1302,20 @@ def start_analyze_job():
             ANALYSIS_JOBS[job_id]['status'] = 'finished'
         except Exception as e:
             logger.error(f"Background analysis job {job_id} failed: {e}", exc_info=True)
-            ANALYSIS_JOBS[job_id]['error'] = str(e)
+                                    ANALYSIS_JOBS[job_id]['error'] = str(e)
             ANALYSIS_JOBS[job_id]['status'] = 'failed'
         finally:
             ANALYSIS_JOBS[job_id]['finished_at'] = time.time()
 
     # Register a one-off job and execute it immediately
+    from core.plugin_SDK import PlaylistSupport, get_plugin_capabilities
+
+    source_caps = get_plugin_capabilities(source)
+    if not source_caps:
+        return jsonify({'error': f'Source plugin {source} not found'}), 404
+        
+    target_caps = get_plugin_capabilities(target)
+
     try:
         job_queue.register_job(job_name, _job_func, interval_seconds=None, start_after=0, enabled=True)
         job_queue.execute_job_now(job_name)

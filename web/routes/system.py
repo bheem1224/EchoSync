@@ -331,27 +331,27 @@ def get_all_system_accounts():
     the flat config.json 'account_mapping' key.
     """
     from database.config_database import get_config_database
-    from web.services.provider_registry import list_providers
+    from web.services.plugin_registry import list_plugins
     try:
         config_db = get_config_database()
         active_media_server = config_manager.get_active_media_server() or "plex"
 
         # 1. Get all music service accounts
         all_accounts = []
-        providers = list_providers()
-        for provider in providers:
-            if provider.id == 'plex' or provider.category != 'provider':
+        plugins = list_plugins()
+        for plugin in plugins:
+            if plugin['id'] == 'plex' or plugin['category'] != 'plugin':
                 continue
 
-            service_id = config_db.get_or_create_service_id(provider.id)
+            service_id = config_db.get_or_create_service_id(plugin['id'])
             accounts = config_db.get_accounts(service_id=service_id)
             for acc in accounts:
                 all_accounts.append({
                     'id': acc.get('id'),
                     'name': acc.get('display_name') or acc.get('account_name'),
-                    'service': provider.id,
-                    'label': f"{acc.get('display_name') or acc.get('account_name')} ({provider.id.title()})",
-                    'color': '#1DB954' if provider.id == 'spotify' else '#00E5FF' if provider.id == 'tidal' else '#5b21b6'
+                    'service': plugin['id'],
+                    'label': f"{acc.get('display_name') or acc.get('account_name')} ({plugin['id'].title()})",
+                    'color': '#1DB954' if plugin['id'] == 'spotify' else '#00E5FF' if plugin['id'] == 'tidal' else '#5b21b6'
                 })
 
         # 2. Get media server users (managed users)
@@ -422,17 +422,17 @@ def map_system_accounts():
             return jsonify({'error': 'user_id is required'}), 400
 
         config_db = get_config_database()
-        from web.services.provider_registry import list_providers
+        from web.services.plugin_registry import list_plugins
 
-        # Build a lookup: config.db account id → (provider_id, str(account id))
+        # Build a lookup: config.db account id → (plugin_id, str(account id))
         acc_meta: dict[int, tuple[str, str]] = {}
-        providers = list_providers()
-        for provider in providers:
-            if provider.id == 'plex' or provider.category != 'provider':
+        plugins = list_plugins()
+        for plugin in plugins:
+            if plugin['id'] == 'plex' or plugin['category'] != 'plugin':
                 continue
-            service_id = config_db.get_or_create_service_id(provider.id)
+            service_id = config_db.get_or_create_service_id(plugin['id'])
             for acc in config_db.get_accounts(service_id=service_id):
-                acc_meta[int(acc['id'])] = (provider.id, str(acc['id']))
+                acc_meta[int(acc['id'])] = (plugin['id'], str(acc['id']))
 
         # Clear existing mappings for this user on this media server
         existing = config_db.get_account_mappings(

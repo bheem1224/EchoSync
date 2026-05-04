@@ -145,7 +145,7 @@ class PluginSecurityScanner(ast.NodeVisitor):
 class PluginLoader:
     """
     Scans and loads providers from 'providers/' (core) and 'plugins/' (community).
-    Registers them with the ProviderRegistry and collects Flask blueprints.
+    Registers them with the PluginRegistry and collects Flask blueprints.
     """
 
     def __init__(self, app_root: Path):
@@ -208,13 +208,14 @@ class PluginLoader:
                 disabled = config_manager.get_disabled_providers()
                 is_disabled = f"plugin.{clean_id}" in disabled or clean_id in disabled
                 
-                self._load_provider_package(clean_id, self.plugins_dir.name, 'community', is_beta=is_beta, is_disabled=is_disabled)
+                self._load_plugin_package(clean_id, self.plugins_dir.name, 'community', is_beta=is_beta, is_disabled=is_disabled)
                 logger.info(f"✅ Successfully live-swapped: {plugin_id} (Path: {clean_id})")
             else:
                 logger.error(f"Cannot reload {plugin_id}: path does not exist (Searched for {clean_id})")
         except Exception as e:
-            logger.error(f"Live-swap failed for {plugin_id}: {e}")
-            raise
+            logger.error(f"Live-swap failed for {plugin_id}: {e}", exc_info=True)
+            # Clean abort: do not raise to prevent crashing the API thread
+
 
     def load_all(self):
         """Scan and load all providers and plugins."""
@@ -388,7 +389,7 @@ class PluginLoader:
 
                     continue
 
-            self._load_provider_package(provider_name, directory.name, source_type, is_beta=is_beta, is_disabled=is_disabled)
+            self._load_plugin_package(provider_name, directory.name, source_type, is_beta=is_beta, is_disabled=is_disabled)
 
     def _security_scan_package(self, package_dir: Path, plugin_name: str, privileged: bool = False) -> bool:
         """
@@ -432,9 +433,9 @@ class PluginLoader:
 
         return clean
 
-    def _load_provider_package(self, name: str, parent_dir_name: str, source_type: str, is_beta: bool = False, is_disabled: bool = False):
+    def _load_plugin_package(self, name: str, parent_dir_name: str, source_type: str, is_beta: bool = False, is_disabled: bool = False):
         """
-        Dynamically import a provider package and register its exports.
+        Dynamically import a plugin package and register its exports.
 
         Args:
             name: The package name or path (e.g., 'plex' or 'EchoSync/listenbrainz').
@@ -452,6 +453,7 @@ class PluginLoader:
             module_path = f"{parent_dir_name}.{clean_name}.beta"
         else:
             module_path = f"{parent_dir_name}.{clean_name}"
+        added_vendor_path = False
         try:
             # 0. Try to extract metadata from manifest before loading class
             version = "Unknown"
@@ -473,18 +475,19 @@ class PluginLoader:
 
             # If disabled, register a placeholder and return early
             if is_disabled:
-                from core.provider import DisabledProvider
                 provider_id = f"plugin.{clean_name}" if source_type == 'community' else clean_name
                 
-                # Create a specific subclass for this disabled provider to hold its metadata
-                class specific_disabled(DisabledProvider):
-                    pass
-                specific_disabled.version = version
-                specific_disabled.author = author
-                specific_disabled.category = category
+                # Create a simple placeholder class instead of importing from legacy core.provider
+                class DisabledPlugin(PluginBase):
+                    name = provider_id
+                    is_enabled = False
+                    
+                DisabledPlugin.version = version
+                DisabledPlugin.author = author
+                DisabledPlugin.category = category
                 
-                ProviderRegistry.register(specific_disabled, name=provider_id, source_type=source_type)
-                logger.info(f"Registered disabled provider: {provider_id} (v{version})")
+                PluginRegistry.register(DisabledPlugin, name=provider_id, source_type=source_type)
+                logger.info(f"Registered disabled plugin: {provider_id} (v{version})")
                 return
 
             if source_type == 'community':
@@ -503,7 +506,7 @@ class PluginLoader:
                 wrapper.author = author
                 wrapper.category = category
 
-                # In order to fit the ProviderRegistry generic type expectations, we wrap it in a mock class
+                # In order to fit the PluginRegistry generic type expectations, we wrap it in a mock class
                 class WasmClass:
                     plugin_id_int = wrapper.plugin_id_int
                     version = wrapper.version
@@ -514,7 +517,7 @@ class PluginLoader:
                     def __init__(self):
                         pass
 
-                ProviderRegistry.register(WasmClass, name=provider_id, source_type=source_type)
+                PluginRegistry.register(WasmClass, name=provider_id, source_type=source_type)
                 logger.info(f"Registered WASM plugin: {provider_id}")
                 return
 
@@ -524,14 +527,14 @@ class PluginLoader:
             # 1. Register Provider Class (if present)
             if hasattr(module, 'ProviderClass'):
                 provider_cls = getattr(module, 'ProviderClass')
-                ProviderRegistry.register(provider_cls, name=provider_id, source_type=source_type)
-                logger.debug(f"Registered ProviderClass for {provider_id} (v{version})")
+                PluginRegistry.register(provider_cls, name=provider_id, source_type=source_type)
+                logger.debug(f"Registered PluginClass for {provider_id} (v{version})")
             else:
                 # Fallback: Look for any ProviderBase subclass if not explicitly exported
                 found = False
                 for attr_name in dir(module):
                     attr = getattr(module, attr_name)
-                    if isinstance(attr, type) and issubclass(attr, PluginBase) and attr is not PluginBase and attr.__name__ != "DisabledProvider":
+                    if isinstance(attr, type) and issubclass(attr, PluginBase) and attr is not PluginBase and attr.__name__ != "DisabledPlugin":
                         try:
                             # Instantiate and register
                             provider_instance = attr()
@@ -582,33 +585,41 @@ class PluginLoader:
     def get_all_blueprints(self) -> List[Blueprint]:
         return self.loaded_blueprints
 
-    def get_provider(self, capability: Capability) -> Optional[PluginBase]:
+    def get_plugin_by_capability(self, capability: Capability) -> Optional[PluginBase]:
         """
-        Get the first available provider with the given capability.
-        Delegates to ProviderRegistry.
+        Get the first available plugin with the given capability.
+        Delegates to PluginRegistry.
         """
-        return get_provider(capability)
+        return get_plugin_by_capability(capability)
 
 
-def get_provider(capability: Capability) -> Optional[PluginBase]:
+
+def get_plugin_by_capability(capability: Capability) -> Optional[PluginBase]:
     """
     Get the first available provider with the given capability.
-    Delegates to ProviderRegistry.
+    Delegates to PluginRegistry.
     """
-    providers = ProviderRegistry.get_providers_with_capability(capability)
+    providers = PluginRegistry.get_providers_with_capability(capability)
     if providers:
         return providers[0]
     return None
 
+def get_plugin(name: str) -> Optional[PluginBase]:
+    """
+    Get a plugin instance by name.
+    """
+    try:
+        return PluginRegistry.create_instance(name)
+    except Exception:
+        return None
+
+
 
 def get_all_plugins() -> list:
-    import json
-    from pathlib import Path
-    from core.settings import config_manager
-
     plugins = []
     
-    core_dir = Path(__file__).parent.parent / "plugins"
+    import os
+    core_dir = Path(os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR', Path(__file__).parent.parent / "plugins"))
     community_dir = config_manager.get_plugins_dir()
 
     for source_type, directory in [('core', core_dir), ('community', community_dir)]:
@@ -638,8 +649,9 @@ def get_all_plugins() -> list:
             if channel == 'beta' and (item / 'beta').exists():
                 current_item = item / 'beta'
 
+            dot_id = folder_name.replace('/', '.')
             plugin_info = {
-                "id": f"{source_type}.{folder_name}" if source_type == 'core' else f"plugin.{folder_name}",
+                "id": f"{source_type}.{dot_id}" if source_type == 'core' else f"plugin.{dot_id}",
                 "name": folder_name.capitalize() if source_type == 'core' else folder_name,
                 "description": f"Core provider for {folder_name}" if source_type == 'core' else "Community plugin",
                 "type": source_type,
@@ -680,12 +692,23 @@ def get_all_plugins() -> list:
 
 class PluginRegistry:
     """
-    Central registry for all provider classes. Allows registration, lookup, and listing.
-    Supports both bundled providers and community plugins with enable/disable functionality.
+    Central registry for all plugin classes. Allows registration, lookup, and listing.
+    Supports both bundled (core) and community plugins with enable/disable functionality.
     """
     _providers: Dict[str, Type[PluginBase]] = {}
     _provider_sources: Dict[str, str] = {}  # metadata: provider_name -> source_type
     _disabled_providers: set = set()
+
+    @classmethod
+    def get_all(cls) -> Dict[str, Dict[str, Any]]:
+        """Return all registered plugins and their metadata."""
+        all_plugins = {}
+        for name, provider_cls in cls._providers.items():
+            all_plugins[name] = {
+                'class': provider_cls,
+                'source_type': cls._provider_sources.get(name, 'core')
+            }
+        return all_plugins
 
     @classmethod
     def get_providers_with_capability(cls, capability: Capability, exclude_disabled: bool = True) -> List[PluginBase]:
@@ -886,16 +909,22 @@ class ServiceRegistry:
                 return cls._services[active_override]
             return cls._services.get(service_name, cls._defaults.get(service_name))
 
-def get_provider_capabilities(provider: str):
+def get_plugin_capabilities(plugin_name: str):
     """
-    Return capabilities for a provider by looking up the provider class dynamically.
-    Gracefully handles providers that don't declare explicit capabilities.
+    Return capabilities for a plugin by looking up the plugin class dynamically.
+    Gracefully handles plugins that don't declare explicit capabilities.
     """
     from core.plugin_SDK import ProviderCapabilities
-    provider_cls = PluginRegistry.get_provider_class(provider)
+    provider_cls = PluginRegistry.get_provider_class(plugin_name)
     if not provider_cls:
         import logging
-        logging.getLogger(__name__).warning(f"Provider '{provider}' not found in registry, defaulting to empty capabilities.")
-        return ProviderCapabilities(name=provider, supports_playlists=None, search=None, metadata=None)
+        logging.getLogger(__name__).warning(f"Plugin '{plugin_name}' not found in registry, defaulting to empty capabilities.")
+        return ProviderCapabilities(name=plugin_name, supports_playlists=None, search=None, metadata=None)
 
-    return getattr(provider_cls, 'capabilities', ProviderCapabilities(name=provider, supports_playlists=None, search=None, metadata=None))
+    return getattr(provider_cls, 'capabilities', ProviderCapabilities(name=plugin_name, supports_playlists=None, search=None, metadata=None))
+
+# Backward compatibility aliases for legacy Provider architecture
+ProviderRegistry = PluginRegistry
+get_provider_capabilities = get_plugin_capabilities
+get_provider = get_plugin
+provider_registry = PluginRegistry # Discovery engine expects this

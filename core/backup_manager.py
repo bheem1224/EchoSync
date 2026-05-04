@@ -58,8 +58,8 @@ class BackupManager:
                 
             # 3. Generate plugins_snapshot.json
             plugins_snapshot = {}
-            from core.plugin_loader import ProviderRegistry
-            for name, entry in ProviderRegistry.get_all().items():
+            from core.plugin_loader import PluginRegistry
+            for name, entry in PluginRegistry.get_all().items():
                 cls = entry['class']
                 # Skip core providers, only backup community plugins
                 if entry.get('source_type') == 'core':

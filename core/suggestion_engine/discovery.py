@@ -205,30 +205,28 @@ def discover_new_tracks(user_id: str) -> List[dict]:
         return []
 
     # 2. Get similar artists/tracks from ListenBrainz
-    # To get a specific provider by name, we can iterate over get_providers_with_capability if it exists,
-    # or just use the core plugin_loader. Let's try to import the registry directly.
-    from core.plugin_loader import provider_registry
-    lb_provider = provider_registry.get_provider('listenbrainz')
-    if not lb_provider:
+    from core.plugin_loader import get_plugin
+    lb_plugin = get_plugin('listenbrainz')
+    if not lb_plugin:
         import logging
-        logging.getLogger("discovery_engine").error("ListenBrainz provider not found.")
+        logging.getLogger("discovery_engine").error("ListenBrainz plugin not found.")
         return []
 
     # get_similar_artists should return a list of EchosyncTrack or similar dictionary objects from those artists
     # Depending on implementation, we assume it returns top tracks by similar artists
-    if not hasattr(lb_provider, 'get_similar_artists'):
+    if not hasattr(lb_plugin, 'get_similar_artists'):
         import logging
-        logging.getLogger("discovery_engine").error("ListenBrainz provider does not support get_similar_artists.")
+        logging.getLogger("discovery_engine").error("ListenBrainz plugin does not support get_similar_artists.")
         return []
 
-    discovered_tracks = lb_provider.get_similar_artists(top_3_artists)
+    discovered_tracks = lb_plugin.get_similar_artists(top_3_artists)
     if not discovered_tracks:
         return []
 
     # 3. ListenBrainz / MusicBrainz cross-referencing loop (Chunked Concurrency)
     new_tracks = []
 
-    mb_provider = provider_registry.get_provider('musicbrainz')
+    mb_plugin = get_plugin('musicbrainz')
     import asyncio
 
     CHUNK_SIZE = 50
@@ -236,7 +234,7 @@ def discover_new_tracks(user_id: str) -> List[dict]:
         chunk = discovered_tracks[chunk_start:chunk_start + CHUNK_SIZE]
 
         async def fetch_mbids(chunk_list):
-            if not mb_provider:
+            if not mb_plugin:
                 return [[] for _ in chunk_list]
 
             tasks = []
@@ -246,7 +244,7 @@ def discover_new_tracks(user_id: str) -> List[dict]:
                     title = track.get("title") if isinstance(track, dict) else getattr(track, "title", None)
                     artist_name = track.get("artist_name") if isinstance(track, dict) else getattr(track, "artist_name", None)
                     if title and artist_name:
-                        tasks.append(mb_provider.search_recording_strict(artist_name, title, immediate=False))
+                        tasks.append(mb_plugin.search_recording_strict(artist_name, title, immediate=False))
                     else:
                         tasks.append(asyncio.sleep(0, result=[]))
                 else:
@@ -254,7 +252,7 @@ def discover_new_tracks(user_id: str) -> List[dict]:
 
             return await asyncio.gather(*tasks, return_exceptions=True)
 
-        mb_results_batch = asyncio.run(fetch_mbids(chunk)) if mb_provider else [[] for _ in chunk]
+        mb_results_batch = asyncio.run(fetch_mbids(chunk)) if mb_plugin else [[] for _ in chunk]
 
         with music_db.session_scope() as session:
             for track, mb_results in zip(chunk, mb_results_batch):

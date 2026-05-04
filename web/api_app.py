@@ -29,7 +29,7 @@ class SensitiveRequestFilter(logging.Filter):
         return True
 
 # Standard core blueprints
-from web.routes.providers import bp as providers_bp
+from web.routes.plugins_api import bp as plugins_bp
 from web.routes.jobs import bp as jobs_bp
 from web.routes.tracks import bp as tracks_bp
 from web.routes.search import bp as search_bp
@@ -159,7 +159,8 @@ def create_app() -> Flask:
                  pass
 
     # Register Core API blueprints
-    app.register_blueprint(providers_bp, name="plugins_config_mount")
+    app.register_blueprint(plugins_bp, url_prefix="/api/plugins", name="plugins_config")
+    app.register_blueprint(plugins_bp, url_prefix="/api/providers", name="legacy_providers")
     app.register_blueprint(jobs_bp)
     app.register_blueprint(tracks_bp)
     app.register_blueprint(search_bp)

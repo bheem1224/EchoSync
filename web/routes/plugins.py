@@ -107,9 +107,11 @@ def get_ui_manifest():
                 'yaml_path': view.get('yaml_path', ''),
             })
 
+        # Nexus Framework: api_base MUST use slashes for URI routing
+        uri_path = folder_name.replace('.', '/')
         ui_plugins.append({
             'id':         folder_name,
-            'api_base':   f'/api/plugins/{folder_name}',
+            'api_base':   f'/api/plugins/{uri_path}',
             'components': normalized_components,
             'assets':     raw_assets,
             'views':      normalized_views,
@@ -268,7 +270,6 @@ def serve_plugin_ui(plugin_id, filename):
     # Possible base directories for plugins
     base_dirs = [
         str(plugins_dir),
-        str(app_root / "plugins"),
     ]
 
     ui_dir = None
@@ -318,8 +319,6 @@ def serve_plugin_static(plugin_id, filename):
     # Possible base directories for plugins
     base_dirs = [
         str(plugins_dir),
-        str(app_root / "plugins"),
-        str(app_root / "providers"),
     ]
 
     static_dir = None

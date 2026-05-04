@@ -1,6 +1,6 @@
 from web.auth import require_auth
 from flask import Blueprint, jsonify, request
-from web.services.provider_registry import list_providers, get_providers_for_capability, get_provider
+from web.services.plugin_registry import list_plugins, get_plugins_for_capability, get_plugin
 from core.tiered_logger import get_logger
 
 logger = get_logger("plugins_config_route")
@@ -74,17 +74,17 @@ def _match_plex_user_for_account(plex_user_map: dict, account_name: str):
 
 @bp.get("")
 @bp.get("/")
-def list_all_providers():
-    """List all available providers with their metadata and capabilities.
+def list_all_plugins():
+    """List all available plugins with their metadata and capabilities.
 
     Returns a plain array so the Svelte web UI (baseURL=/api) can map it
     directly.
     """
     try:
-        providers_list = list_providers()
-        return jsonify(providers_list), 200
+        plugins_list = list_plugins()
+        return jsonify(plugins_list), 200
     except Exception as e:
-        logger.error(f"Error listing providers: {e}")
+        logger.error(f"Error listing plugins: {e}")
         return jsonify({'error': str(e)}), 500
 
 @bp.get("/download-clients")
@@ -169,10 +169,10 @@ def set_active_download_client():
         logger.error(f"Error setting active download client: {e}")
         return jsonify({'error': str(e)}), 500
 
-@bp.post("/<provider_name>/toggle")
+@bp.post("/<plugin_id>/toggle")
 @require_auth
-def toggle_provider(provider_name):
-    """Toggle a provider's enabled/disabled status.
+def toggle_plugin(plugin_id):
+    """Toggle a plugin's enabled/disabled status.
     
     Updates both persistent config and in-memory registry state.
     """
@@ -185,8 +185,8 @@ def toggle_provider(provider_name):
         enabled = data.get('enabled')
         
         current_disabled = config_manager.get_disabled_providers()
-        # Use full ID (provider_name) to distinguish between core and community plugins
-        is_currently_disabled = provider_name.lower() in [d.lower() for d in current_disabled]
+        # Use full ID (plugin_id) to distinguish between core and community plugins
+        is_currently_disabled = plugin_id.lower() in [d.lower() for d in current_disabled]
         
         if enabled is None:
             new_enabled = is_currently_disabled
@@ -195,89 +195,89 @@ def toggle_provider(provider_name):
             
         if new_enabled:
             # Enable: remove from disabled list
-            new_disabled = [d for d in current_disabled if d.lower() != provider_name.lower()]
-            PluginRegistry.enable_provider(provider_name)
+            new_disabled = [d for d in current_disabled if d.lower() != plugin_id.lower()]
+            PluginRegistry.enable_provider(plugin_id)
         else:
             # Disable: add to disabled list
             if not is_currently_disabled:
-                new_disabled = current_disabled + [provider_name]
+                new_disabled = current_disabled + [plugin_id]
             else:
                 new_disabled = current_disabled
-            PluginRegistry.disable_provider(provider_name)
+            PluginRegistry.disable_provider(plugin_id)
             
         config_manager.set_disabled_providers(new_disabled)
         
         return jsonify({
             'success': True,
             'enabled': new_enabled,
-            'provider': provider_name,
+            'plugin': plugin_id,
             'restart_required': True
         }), 200
     except Exception as e:
-        logger.error(f"Error toggling provider {provider_name}: {e}")
+        logger.error(f"Error toggling plugin {plugin_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
 
-@bp.post("/<provider_name>/rollback")
+@bp.post("/<plugin_id>/rollback")
 @require_auth
-def rollback_provider(provider_name):
-    """Roll back a provider to its previous stable version and state."""
+def rollback_plugin(plugin_id):
+    """Roll back a plugin to its previous stable version and state."""
     try:
         from core.plugin_store import plugin_store
         
-        # provider_name might be a full ID or just a folder name. 
+        # plugin_id might be a full ID or just a folder name. 
         # PluginStore needs the plugin_id.
-        success = plugin_store.rollback_plugin(provider_name)
+        success = plugin_store.rollback_plugin(plugin_id)
         
         if success:
             return jsonify({'success': True}), 200
         else:
             return jsonify({'error': 'Rollback failed or no snapshot found'}), 400
     except Exception as e:
-        logger.error(f"Error rolling back provider {provider_name}: {e}")
+        logger.error(f"Error rolling back plugin {plugin_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
 
-@bp.get("/<provider_name>/playlists")
-def get_provider_playlists(provider_name):
-    """Fetch playlists from a specific provider."""
+@bp.get("/<plugin_id>/playlists")
+def get_plugin_playlists(plugin_id):
+    """Fetch playlists from a specific plugin."""
     try:
-        # Get provider via registry
+        # Get plugin via registry
         from core.plugin_loader import PluginRegistry, ServiceRegistry
         
-        provider_cls = PluginRegistry.get_provider_class(provider_name)
-        if not provider_cls:
-            return jsonify({'error': f'Provider {provider_name} not found or not installed'}), 404
+        plugin_cls = PluginRegistry.get_provider_class(plugin_id)
+        if not plugin_cls:
+            return jsonify({'error': f'Plugin {plugin_id} not found or not installed'}), 404
         
         # Check disabled state before instantiating
-        if PluginRegistry.is_provider_disabled(provider_name):
-            return jsonify({'error': f'Provider {provider_name} is disabled'}), 403
+        if PluginRegistry.is_provider_disabled(plugin_id):
+            return jsonify({'error': f'Plugin {plugin_id} is disabled'}), 403
         
-        # Instantiate provider
+        # Instantiate plugin
         try:
-            plugin = PluginRegistry.create_instance(provider_name)
+            plugin = PluginRegistry.create_instance(plugin_id)
         except Exception as e:
-            logger.error(f"Error instantiating provider {provider_name}: {e}")
-            return jsonify({'error': f'Provider {provider_name} could not be initialized'}), 500
+            logger.error(f"Error instantiating plugin {plugin_id}: {e}")
+            return jsonify({'error': f'Plugin {plugin_id} could not be initialized'}), 500
         
         if not plugin:
-            return jsonify({'error': f'Provider {provider_name} instance not found'}), 404
+            return jsonify({'error': f'Plugin {plugin_id} instance not found'}), 404
         
-        # For multi-account providers (Spotify, Tidal), loop through all accounts
-        multi_account_providers = ['spotify', 'tidal']
-        if provider_name in multi_account_providers:
+        # For multi-account plugins (Spotify, Tidal), loop through all accounts
+        multi_account_plugins = ['spotify', 'tidal']
+        if plugin_id in multi_account_plugins:
             try:
                 from core.file_handling.storage import get_storage_service
                 storage = get_storage_service()
                 plex_user_map = _build_active_plex_user_map()
 
-                accounts = storage.list_accounts(provider_name)
+                accounts = storage.list_accounts(plugin_id)
 
                 if not accounts:
                     # No accounts configured
-                    logger.info(f"No accounts found for {provider_name}")
+                    logger.info(f"No accounts found for {plugin_id}")
                     return jsonify({
-                        'provider': provider_name,
+                        'plugin': plugin_id,
                         'items': [],
                         'total': 0,
                         'status': 'not_configured'
@@ -290,10 +290,10 @@ def get_provider_playlists(provider_name):
                         account_id = account['id']
                         account_name = account.get('display_name') or account.get('account_name') or f"Account {account_id}"
 
-                        if provider_name == 'spotify':
+                        if plugin_id == 'spotify':
                             from plugins.spotify.client import SpotifyClient
                             client = SpotifyClient(account_id=account_id)
-                        elif provider_name == 'tidal':
+                        elif plugin_id == 'tidal':
                             from plugins.tidal.client import TidalClient
                             client = TidalClient(account_id=str(account_id))
                         else:
@@ -330,21 +330,21 @@ def get_provider_playlists(provider_name):
                         continue
 
                 return jsonify({
-                    'provider': provider_name,
+                    'plugin': plugin_id,
                     'items': all_playlists,
                     'total': len(all_playlists)
                 }), 200
 
             except Exception as e:
-                logger.error(f"Error handling multi-account logic for {provider_name}: {e}")
+                logger.error(f"Error handling multi-account logic for {plugin_id}: {e}")
                 return jsonify({'error': str(e)}), 500
 
-        # Standard single-instance provider logic
+        # Standard single-instance plugin logic
         # Check if configured
         if hasattr(plugin, 'is_configured') and not plugin.is_configured():
-            logger.info(f"Provider {provider_name} is not configured, returning empty list")
+            logger.info(f"Plugin {plugin_id} is not configured, returning empty list")
             return jsonify({
-                'provider': provider_name,
+                'plugin': plugin_id,
                 'items': [],
                 'total': 0,
                 'status': 'not_configured'
@@ -352,9 +352,9 @@ def get_provider_playlists(provider_name):
         
         # Check if it has a get_user_playlists method
         if not hasattr(plugin, 'get_user_playlists'):
-            return jsonify({'error': f'Provider {provider_name} does not support playlists'}), 400
+            return jsonify({'error': f'Plugin {plugin_id} does not support playlists'}), 400
         
-        logger.info(f"[ROUTE] Calling get_user_playlists on {provider_name} provider")
+        logger.info(f"[ROUTE] Calling get_user_playlists on {plugin_id} plugin")
         playlists = plugin.get_user_playlists()
         
         # Convert to serializable format
@@ -371,17 +371,17 @@ def get_provider_playlists(provider_name):
                     serialized.append({'name': str(p)})
         
         return jsonify({
-            'provider': provider_name,
+            'plugin': plugin_id,
             'items': serialized,
             'total': len(serialized)
         }), 200
     except Exception as e:
-        logger.error(f"Error fetching playlists for {provider_name}: {e}", exc_info=True)
+        logger.error(f"Error fetching playlists for {plugin_id}: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
-@bp.get("/<provider_name>/settings")
-def get_provider_settings(provider_name):
-    """Get settings and schema for a specific provider.
+@bp.get("/<plugin_id>/settings")
+def get_plugin_settings(plugin_id):
+    """Get settings and schema for a specific plugin.
     
     Returns decrypted credentials for display (show/hide password button in UI).
     The storage service handles decryption automatically via config.db.
@@ -392,11 +392,11 @@ def get_provider_settings(provider_name):
         
         # Ensure service exists in config.db
         try:
-            service_id = config_db.get_or_create_service_id(provider_name)
+            service_id = config_db.get_or_create_service_id(plugin_id)
         except Exception:
-            return jsonify({'error': f'Provider {provider_name} not found'}), 404
+            return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
 
-        # Retrieve a known set of provider config keys
+        # Retrieve a known set of plugin config keys
         # The new config_db automatically handles decryption
         keys_of_interest = ['client_id', 'client_secret', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
         config = {}
@@ -405,27 +405,27 @@ def get_provider_settings(provider_name):
             if val is not None:
                 config[key] = _normalize_sensitive_value_for_ui(key, val)
         
-        # Dynamically inject immutable redirect URI for OAuth providers
+        # Dynamically inject immutable redirect URI for OAuth plugins
         from core.network_utils import get_lan_ip
         lan_ip = get_lan_ip()
-        config['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/{provider_name}"
+        config['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/{plugin_id}"
 
-        # Mock schema for dynamic UI generation (should eventually come from provider class)
-        schema = _get_mock_schema(provider_name)
+        # Mock schema for dynamic UI generation (should eventually come from plugin class)
+        schema = _get_mock_schema(plugin_id)
         
         return jsonify({
-            'provider': provider_name,
+            'plugin': plugin_id,
             'settings': config,
             'schema': schema
         }), 200
     except Exception as e:
-        logger.error(f"Error getting settings for {provider_name}: {e}")
+        logger.error(f"Error getting settings for {plugin_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
-@bp.post("/<provider_name>/settings")
+@bp.post("/<plugin_id>/settings")
 @require_auth
-def update_provider_settings(provider_name):
-    """Update settings for a specific provider.
+def update_plugin_settings(plugin_id):
+    """Update settings for a specific plugin.
     
     SECURITY:
     - Credentials are encrypted by config_manager before storage
@@ -436,7 +436,7 @@ def update_provider_settings(provider_name):
         payload = request.get_json(silent=True) or {}
 
         # SECURITY: Log only that we're updating, not the actual credentials
-        logger.info(f"Updating settings for provider: {provider_name}")
+        logger.info(f"Updating settings for plugin: {plugin_id}")
 
         # Use the config database directly
         from database.config_database import get_config_database
@@ -444,7 +444,7 @@ def update_provider_settings(provider_name):
 
         try:
             # Ensure service exists in config.db
-            service_id = config_db.get_or_create_service_id(provider_name)
+            service_id = config_db.get_or_create_service_id(plugin_id)
 
             # Default sensitive keys
             sensitive_keys = ['client_secret', 'access_token', 'refresh_token', 'password', 'token', 'api_key']
@@ -465,17 +465,17 @@ def update_provider_settings(provider_name):
                     all_ok = False
 
             if all_ok:
-                logger.info(f"Successfully updated {provider_name} settings in config.db")
-                return jsonify({'success': True, 'message': f'{provider_name} credentials saved securely'}), 200
+                logger.info(f"Successfully updated {plugin_id} settings in config.db")
+                return jsonify({'success': True, 'message': f'{plugin_id} credentials saved securely'}), 200
             else:
-                logger.warning(f"Failed to update one or more settings for {provider_name}")
+                logger.warning(f"Failed to update one or more settings for {plugin_id}")
                 return jsonify({'error': 'Failed to update one or more settings'}), 500
         except Exception as e:
-            logger.error(f"Error updating settings for {provider_name}: {e}")
+            logger.error(f"Error updating settings for {plugin_id}: {e}")
             return jsonify({'error': 'Failed to update settings'}), 500
     except Exception as e:
         # SECURITY: Log error but not the payload
-        logger.error(f"Error updating settings for {provider_name}: {type(e).__name__}")
+        logger.error(f"Error updating settings for {plugin_id}: {type(e).__name__}")
         return jsonify({'error': 'Failed to update settings'}), 500
 
 def _get_mock_schema(provider_name):
@@ -578,30 +578,30 @@ def get_providers_by_capability(capability):
         logger.error(f"Error getting providers for capability {capability}: {e}")
         return jsonify({'error': str(e)}), 500
 
-@bp.get("/<provider_name>")
-def get_provider_details(provider_name):
-    """Get full details for a specific provider."""
+@bp.get("/<plugin_id>")
+def get_plugin_details(plugin_id):
+    """Get full details for a specific plugin."""
     try:
-        provider = get_provider(provider_name)
-        if not provider:
-            return jsonify({'error': f'Provider {provider_name} not found'}), 404
+        plugin = get_plugin(plugin_id)
+        if not plugin:
+            return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
         
-        provider_dict = provider.to_dict()
-        provider_dict = _enrich_provider_capabilities(provider_dict, provider_name)
+        plugin_dict = plugin.to_dict() if hasattr(plugin, 'to_dict') else plugin
+        plugin_dict = _enrich_provider_capabilities(plugin_dict, plugin_id)
         
-        return jsonify(provider_dict), 200
+        return jsonify(plugin_dict), 200
     except Exception as e:
-        logger.error(f"Error getting provider details for {provider_name}: {e}")
+        logger.error(f"Error getting plugin details for {plugin_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
-@bp.get("/<provider_name>/credentials")
-def get_provider_credentials(provider_name):
-    """Get credentials/configuration for a specific provider."""
+@bp.get("/<plugin_id>/credentials")
+def get_plugin_credentials(plugin_id):
+    """Get credentials/configuration for a specific plugin."""
     try:
         from database.config_database import get_config_database
         config_db = get_config_database()
         
-        service_id = config_db.get_or_create_service_id(provider_name)
+        service_id = config_db.get_or_create_service_id(plugin_id)
         # Fetch directly since config_manager might be deprecated for these
         # But we don't have a get_all_service_config endpoint natively, so we fetch keys of interest
         keys_of_interest = ['client_id', 'client_secret', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
@@ -614,20 +614,20 @@ def get_provider_credentials(provider_name):
         # Dynamically inject immutable redirect URI
         from core.network_utils import get_lan_ip
         lan_ip = get_lan_ip()
-        credentials['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/{provider_name}"
+        credentials['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/{plugin_id}"
         
         return jsonify({
-            'provider': provider_name,
+            'plugin': plugin_id,
             'credentials': credentials
         }), 200
     except Exception as e:
-        logger.error(f"Error getting credentials for {provider_name}: {e}")
+        logger.error(f"Error getting credentials for {plugin_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
-@bp.post("/<provider_name>/credentials")
+@bp.post("/<plugin_id>/credentials")
 @require_auth
-def set_provider_credentials(provider_name):
-    """Set credentials/configuration for a specific provider."""
+def set_plugin_credentials(plugin_id):
+    """Set credentials/configuration for a specific plugin."""
     try:
         from database.config_database import get_config_database
         
@@ -639,7 +639,7 @@ def set_provider_credentials(provider_name):
         
         # Get or create service in config database
         config_db = get_config_database()
-        service_id = config_db.get_or_create_service_id(provider_name)
+        service_id = config_db.get_or_create_service_id(plugin_id)
         
         # Strip redirect_uri from payload
         if 'redirect_uri' in credentials:
@@ -653,13 +653,13 @@ def set_provider_credentials(provider_name):
                 value = _normalize_sensitive_value_for_save(key, value)
             config_db.set_service_config(service_id, key, value, is_sensitive=is_sensitive)
         
-        logger.info(f"Credentials saved for {provider_name}")
+        logger.info(f"Credentials saved for {plugin_id}")
         
         return jsonify({
             'success': True,
-            'provider': provider_name,
+            'plugin': plugin_id,
             'message': 'Credentials saved successfully'
         }), 200
     except Exception as e:
-        logger.error(f"Error setting credentials for {provider_name}: {e}")
+        logger.error(f"Error setting credentials for {plugin_id}: {e}")
         return jsonify({'error': str(e)}), 500

@@ -2,6 +2,8 @@ import json
 import logging
 import zipfile
 import requests
+import re
+import os
 from pathlib import Path
 from packaging import version
 from typing import Any, List, Dict, Optional
@@ -265,7 +267,9 @@ class PluginStore:
             # Precedence: Community (/data/plugins) > Core (/app/plugins)
             folder_id = plugin_id.split(".")[-1]
             comm_dir = self.plugins_dir / folder_id
-            core_dir = Path(__file__).parent.parent / "plugins" / folder_id
+            # Resolve core directory dynamically (ENV > Fallback)
+            core_root = Path(os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR', Path(__file__).parent.parent / "plugins"))
+            core_dir = core_root / folder_id
             
             comm_manifest = comm_dir / "manifest.json"
             core_manifest = core_dir / "manifest.json"
@@ -314,8 +318,16 @@ class PluginStore:
                         if version.parse(remote_version) > version.parse(local_version):
                             plugin["update_available"] = True
                     except Exception:
-                        if remote_version != local_version:
-                            plugin["update_available"] = True
+                        # Fallback: Strip non-numeric characters (v, beta, etc) for a safer comparison
+                        remote_numeric = re.sub(r'[^0-9.]', '', str(remote_version))
+                        local_numeric = re.sub(r'[^0-9.]', '', str(local_version))
+                        try:
+                            if version.parse(remote_numeric) > version.parse(local_numeric):
+                                plugin["update_available"] = True
+                        except Exception:
+                            # Final fallback: simple inequality
+                            if remote_version != local_version:
+                                plugin["update_available"] = True
                 except Exception as e:
                     logger.debug(f"Error checking local version for {plugin_id}: {e}")
             
@@ -562,8 +574,11 @@ class PluginStore:
     def uninstall_plugin(self, plugin_id: str) -> bool:
         import re
         import shutil
-        folder_id = plugin_id.split(".")[-1]
-        dest_dir = self.plugins_dir / folder_id
+        import os
+        # Nexus Framework: Resolve nested path by converting dots to slashes
+        clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+        folder_path = clean_id.replace('.', os.sep)
+        dest_dir = self.plugins_dir / folder_path
         if not dest_dir.exists():
             return False
         
@@ -571,7 +586,8 @@ class PluginStore:
             from database.working_database import get_working_database
             from database.config_database import get_config_database
             
-            safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', folder_id).lower()
+            # Use clean_id (Author.Name) but replace dots with underscores for DB safety
+            safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', clean_id.replace('.', '_')).lower()
             prefix = f"plugin_{safe_id}_%"
             
             for db_engine in [get_working_database().engine, get_config_database().engine]:

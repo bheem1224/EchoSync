@@ -1,4 +1,4 @@
-from core.plugin_loader import get_provider_capabilities
+from core.plugin_loader import get_plugin_capabilities
 from typing import List, Optional, Dict
 
 
@@ -7,21 +7,21 @@ from core.plugin_loader import PluginRegistry as CorePluginRegistry, ServiceRegi
 
 # Instance for direct access (for backward compatibility and testing)
 class PluginRegistry:
-    """Wrapper class for provider registry functions."""
+    """Wrapper class for plugin registry functions."""
     
     def list_all(self):
-        """List all providers."""
-        return list_providers()
+        """List all plugins."""
+        return list_plugins()
     
-    def get_provider(self, provider_name: str):
-        """Get a specific provider."""
-        return get_provider(provider_name)
+    def get_plugin(self, plugin_name: str):
+        """Get a specific plugin."""
+        return get_plugin(plugin_name)
 
-provider_registry = PluginRegistry()
+plugin_registry = PluginRegistry()
 
-def list_providers() -> List[Dict]:
-    """List all registered providers with enriched capability metadata."""
-    providers = []
+def list_plugins() -> List[Dict]:
+    """List all registered plugins with enriched capability metadata."""
+    plugins = []
     for name in CorePluginRegistry.list_providers():
         cls = CorePluginRegistry.get_provider_class(name)
         if cls:
@@ -29,12 +29,12 @@ def list_providers() -> List[Dict]:
             display_name = name.replace('plugin.', '').title()
             source_type = CorePluginRegistry.get_provider_source(name) or 'core'
             
-            provider_dict = {
+            plugin_dict = {
                 'id': name,  # Unique ID (e.g. plugin.plex)
                 'name': name,
                 'display_name': display_name,  # Friendly name (e.g. Plex)
                 'source_type': source_type,    # 'core' or 'community'
-                'category': getattr(cls, 'category', 'provider'),
+                'category': getattr(cls, 'category', 'plugin'),
                 'service_type': getattr(cls, 'service_type', None),
                 'disabled': is_disabled,
                 'version': getattr(cls, 'version', 'Unknown'),
@@ -42,30 +42,30 @@ def list_providers() -> List[Dict]:
                 'supports_downloads': getattr(cls, 'supports_downloads', False)
             }
             
-            # Only instantiate if the provider is not disabled; this avoids
+            # Only instantiate if the plugin is not disabled; this avoids
             # configuration warnings and unnecessary health checks for
             # disabled plugins.
             if not is_disabled:
                 try:
                     instance = CorePluginRegistry.create_instance(name)
                     if instance and hasattr(instance, 'is_configured'):
-                        provider_dict['is_configured'] = instance.is_configured()
+                        plugin_dict['is_configured'] = instance.is_configured()
                     else:
-                        provider_dict['is_configured'] = True  # Assume configured if method not available
+                        plugin_dict['is_configured'] = True  # Assume configured if method not available
                 except Exception:
-                    provider_dict['is_configured'] = False
+                    plugin_dict['is_configured'] = False
             else:
-                provider_dict['is_configured'] = False
+                plugin_dict['is_configured'] = False
             
             try:
-                caps = get_provider_capabilities(name)
+                caps = get_plugin_capabilities(name)
                 search_caps = {
                     'tracks': caps.search.tracks,
                     'artists': caps.search.artists,
                     'albums': caps.search.albums,
                     'playlists': caps.search.playlists,
                 }
-                provider_dict['capabilities'] = {
+                plugin_dict['capabilities'] = {
                     'metadata_richness': caps.metadata.name,
                     'supports_streaming': caps.supports_streaming,
                     'supports_downloads': caps.supports_downloads,
@@ -79,14 +79,14 @@ def list_providers() -> List[Dict]:
                     'resolve_fingerprint': caps.supports_fingerprinting if hasattr(caps, 'supports_fingerprinting') else False,
                 }
             except KeyError:
-                # Provider not in capability registry, check class-level capabilities
+                # Plugin not in capability registry, check class-level capabilities
                 from core.enums import Capability
                 class_caps = getattr(cls, 'capabilities', [])
                 if class_caps is None:
                     class_caps = []
                 
                 default_search = {'tracks': False, 'artists': False, 'albums': False, 'playlists': False}
-                provider_dict['capabilities'] = {
+                plugin_dict['capabilities'] = {
                     'metadata_richness': 'MEDIUM',
                     'supports_streaming': False,
                     'supports_downloads': False,
@@ -98,43 +98,43 @@ def list_providers() -> List[Dict]:
                     'fetch_metadata': Capability.FETCH_METADATA in class_caps,
                     'resolve_fingerprint': Capability.RESOLVE_FINGERPRINT in class_caps,
                 }
-            providers.append(provider_dict)
-    return providers
+            plugins.append(plugin_dict)
+    return plugins
 
-def get_providers_for_capability(capability: str) -> List[Dict]:
-    """Get providers that support a specific capability."""
-    providers = []
-    # Filter by capability and also exclude disabled providers
-    for provider in list_providers():
-        if provider.get('disabled'):
+def get_plugins_for_capability(capability: str) -> List[Dict]:
+    """Get plugins that support a specific capability."""
+    plugins = []
+    # Filter by capability and also exclude disabled plugins
+    for plugin in list_plugins():
+        if plugin.get('disabled'):
             continue
-        caps = provider.get('capabilities') or {}
-        # simple check: provider must either support playlists/search/etc.
+        caps = plugin.get('capabilities') or {}
+        # simple check: plugin must either support playlists/search/etc.
         # this helper is mostly used by the frontend so keep it lightweight
         if caps.get('supports_playlists') != 'NONE' or caps.get('search', {}).get('tracks'):
-            providers.append(provider)
-    return providers
+            plugins.append(plugin)
+    return plugins
 
-def get_provider(provider_name: str) -> Optional[Dict]:
-    """Get a specific provider by name."""
-    cls = CorePluginRegistry.get_provider_class(provider_name)
+def get_plugin(plugin_name: str) -> Optional[Dict]:
+    """Get a specific plugin by name."""
+    cls = CorePluginRegistry.get_provider_class(plugin_name)
     if cls:
         return {
-            'name': provider_name,
-            'category': getattr(cls, 'category', 'provider'),
-            'disabled': CorePluginRegistry.is_provider_disabled(provider_name),
+            'name': plugin_name,
+            'category': getattr(cls, 'category', 'plugin'),
+            'disabled': CorePluginRegistry.is_provider_disabled(plugin_name),
             'supports_downloads': getattr(cls, 'supports_downloads', False)
         }
     return None
 
-def _get_provider_capabilities() -> List[Dict]:
-    """Expose capability flags for each provider."""
+def _get_plugin_capabilities() -> List[Dict]:
+    """Expose capability flags for each plugin."""
     capabilities = []
     for name in CorePluginRegistry.list_providers():
         cls = CorePluginRegistry.get_provider_class(name)
         if cls:
             try:
-                caps = get_provider_capabilities(name)
+                caps = get_plugin_capabilities(name)
                 capabilities.append({
                     'name': name,
                     'metadata_richness': caps.metadata.name,
@@ -167,3 +167,9 @@ def _get_provider_capabilities() -> List[Dict]:
                     }
                 })
     return capabilities
+
+# Backward compatibility aliases for legacy terminology
+list_providers = list_plugins
+get_providers_for_capability = get_plugins_for_capability
+get_provider = get_plugin
+provider_registry = plugin_registry
