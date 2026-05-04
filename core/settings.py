@@ -646,13 +646,6 @@ class ConfigManager:
         self._save_non_secrets_to_json()
 
     # ... (rest of the getter methods remain the same) ...
-    def get_spotify_config(self) -> Dict[str, str]:
-        return self.get('spotify', {})
-
-    def get_spotify_accounts(self) -> list:
-        """Return list of Spotify account dicts."""
-        return self.get('spotify_accounts', []) or []
-
     def add_spotify_account(self, account: Dict[str, Any]) -> Dict[str, Any]:
         """Add a Spotify account entry. Auto-assign incremental id if missing."""
         accounts = self.get_spotify_accounts()
@@ -697,41 +690,7 @@ class ConfigManager:
                 return acc
         return None
 
-    def get_spotify_active_credentials(self) -> Dict[str, Any]:
-        """
-        Return the credentials for the active Spotify account, falling back to global only for redirect_uri.
-        In practice, client_id and client_secret are at the account level, and global tokens are not used.
-        """
-        spotify_config = self.get_spotify_config()
-        redirect_uri = spotify_config.get('redirect_uri', "http://127.0.0.1:8008/api/spotify/callback")
-        active = self.get_active_spotify_account()
-        if active:
-            return {
-                'client_id': active.get('client_id', ''),
-                'client_secret': active.get('client_secret', ''),
-                'redirect_uri': redirect_uri,
-                'refresh_token': active.get('refresh_token'),
-                'access_token': active.get('access_token'),
-                'user_id': active.get('user_id'),
-                'id': active.get('id'),
-                'name': active.get('name')
-            }
-        # No active account: return empty credentials except for redirect_uri
-        return {
-            'client_id': '',
-            'client_secret': '',
-            'redirect_uri': redirect_uri,
-            'refresh_token': None,
-            'access_token': None,
-            'user_id': None,
-            'id': None,
-            'name': None
-        }
-
     # --- Tidal multi-account helpers ---
-    def get_tidal_accounts(self) -> list:
-        return self.get('tidal_accounts', []) or []
-
     def add_tidal_account(self, account: Dict[str, Any]) -> Dict[str, Any]:
         accounts = self.get_tidal_accounts()
         existing_ids = [acc.get('id') for acc in accounts if acc.get('id') is not None]
@@ -760,27 +719,6 @@ class ConfigManager:
 
     def set_active_tidal_account(self, account_id: Optional[int]) -> None:
         self.set('active_tidal_account_id', account_id)
-
-    def get_active_tidal_account(self) -> Optional[Dict[str, Any]]:
-        active_id = self.get('active_tidal_account_id')
-        if not active_id:
-            return None
-        for acc in self.get_tidal_accounts():
-            if acc.get('id') == active_id:
-                return acc
-        return None
-
-    def get_plex_config(self) -> Dict[str, str]:
-        return self.get('plex', {})
-
-    def get_jellyfin_config(self) -> Dict[str, str]:
-        return self.get('jellyfin', {})
-
-    def get_navidrome_config(self) -> Dict[str, str]:
-        return self.get('navidrome', {})
-
-    def get_soulseek_config(self) -> Dict[str, str]:
-        return self.get('soulseek', {})
 
     def get_plugin_channel(self, plugin_id: str) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""

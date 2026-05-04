@@ -873,7 +873,7 @@ def get_plugin_capabilities(plugin_name: str):
     return getattr(provider_cls, 'capabilities', ProviderCapabilities(name=plugin_name, supports_playlists=None, search=None, metadata=None))
 
 # Backward compatibility aliases for legacy Provider architecture
-ProviderRegistry = PluginRegistry
+# ProviderRegistry = PluginRegistry
 get_provider_capabilities = get_plugin_capabilities
 get_provider = get_plugin
 provider_registry = PluginRegistry # Discovery engine expects this
