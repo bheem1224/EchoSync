@@ -157,6 +157,9 @@ class PluginLoader:
         """Perform a true Zero-Downtime hot reload of a plugin."""
         logger.info(f"🔄 HOT-SWAP INITIATED: {plugin_id}")
         
+        # Strip prefixes like 'core.' or 'plugin.' for path resolution
+        clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+        
         # 1. Kill Workers
         try:
             from core.job_queue import job_queue
@@ -165,25 +168,50 @@ class PluginLoader:
             logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
 
         # 2. Purge Memory
-        # Clear module from sys.modules so importlib.import_module grabs the fresh code
-        module_name = f"plugins.{plugin_id}"
-        if module_name in sys.modules:
-            logger.debug(f"Purging {module_name} from sys.modules")
-            # Also purge submodules
-            submodules = [m for m in sys.modules if m.startswith(module_name + ".")]
-            for m in submodules:
-                del sys.modules[m]
-            del sys.modules[module_name]
+        # Try both namespaced and flat module names
+        module_names = [f"plugins.{plugin_id}", f"plugins.{clean_id}"]
+        # If clean_id has a slash, it's a nested plugin, convert to dot notation
+        if '/' in clean_id:
+            module_names.append(f"plugins.{clean_id.replace('/', '.')}")
+
+        for module_name in module_names:
+            if module_name in sys.modules:
+                logger.debug(f"Purging {module_name} from sys.modules")
+                submodules = [m for m in sys.modules if m.startswith(module_name + ".")]
+                for m in submodules:
+                    del sys.modules[m]
+                del sys.modules[module_name]
 
         # 3. Reload Module
         try:
             # Re-run scanning for just this directory
-            plugin_path = self.plugins_dir / plugin_id
+            # Try direct path first
+            plugin_path = self.plugins_dir / clean_id
+            
+            # If not found, search 1-level deep for Nexus Schema (plugins/{author}/{plugin})
+            if not plugin_path.exists():
+                for author_dir in self.plugins_dir.iterdir():
+                    if author_dir.is_dir() and not author_dir.name.startswith('__'):
+                        potential_path = author_dir / clean_id
+                        if potential_path.exists():
+                            plugin_path = potential_path
+                            # Update clean_id to reflect full path for _load_provider_package
+                            clean_id = f"{author_dir.name}/{clean_id}"
+                            break
+
             if plugin_path.exists():
-                self._load_provider_package(plugin_path, 'community')
-                logger.info(f"✅ Successfully live-swapped: {plugin_id}")
+                # We need to determine if it's beta or stable
+                channel = config_manager.get_plugin_channel(clean_id)
+                is_beta = channel == 'beta' and (plugin_path / 'beta').exists()
+                
+                # Check if disabled
+                disabled = config_manager.get_disabled_providers()
+                is_disabled = f"plugin.{clean_id}" in disabled or clean_id in disabled
+                
+                self._load_provider_package(clean_id, self.plugins_dir.name, 'community', is_beta=is_beta, is_disabled=is_disabled)
+                logger.info(f"✅ Successfully live-swapped: {plugin_id} (Path: {clean_id})")
             else:
-                logger.error(f"Cannot reload {plugin_id}: path does not exist")
+                logger.error(f"Cannot reload {plugin_id}: path does not exist (Searched for {clean_id})")
         except Exception as e:
             logger.error(f"Live-swap failed for {plugin_id}: {e}")
             raise
@@ -254,35 +282,48 @@ class PluginLoader:
         """
         Scan a directory for plugin packages.
         Enforces strict namespace formatting {source}.{author}.{plugin_name}.
+        Supports Nexus Framework nested structure: plugins/{author}/{plugin_name}
         """
         import sys
         import importlib.util
         from core.security import is_privileged_or_verified
 
+        source_type = 'community' if directory.name == 'plugins' else 'core'
+        
+        # 1. Identify all plugin candidates (including nested ones)
+        candidates = []
         for item in directory.iterdir():
             if not item.is_dir() or item.name.startswith('__'):
                 continue
-
-            provider_name = item.name
             
+            # Check if this is a plugin (has __init__.py or main.wasm)
+            if (item / "__init__.py").exists() or (item / "main.wasm").exists():
+                candidates.append((item, item.name))
+            else:
+                # Check 1 level deeper (Nexus Schema: plugins/{author}/{plugin})
+                for subitem in item.iterdir():
+                    if subitem.is_dir() and not subitem.name.startswith('__'):
+                        if (subitem / "__init__.py").exists() or (subitem / "main.wasm").exists():
+                            # Use {author}/{plugin} as the provider_name for loading
+                            candidates.append((subitem, f"{item.name}/{subitem.name}"))
+
+        for current_item, provider_name in candidates:
             # Check if disabled in config
             disabled = config_manager.get_disabled_providers()
             is_disabled = f"plugin.{provider_name}" in disabled or provider_name in disabled
 
-            # Channel logic for all plugins
-            current_item = item
+            # Channel logic
+            actual_item = current_item
             is_beta = False
-
             channel = config_manager.get_plugin_channel(provider_name)
-            if channel == 'beta' and (item / 'beta').exists():
-                current_item = item / 'beta'
+            if channel == 'beta' and (current_item / 'beta').exists():
+                actual_item = current_item / 'beta'
                 is_beta = True
 
-            init_file = current_item / "__init__.py"
-            wasm_file = current_item / "main.wasm"
+            init_file = actual_item / "__init__.py"
+            wasm_file = actual_item / "main.wasm"
 
             if not init_file.exists() and not wasm_file.exists():
-                logger.debug(f"Skipping {provider_name}: no __init__.py or main.wasm found in {current_item}")
                 continue
 
 
@@ -396,22 +437,27 @@ class PluginLoader:
         Dynamically import a provider package and register its exports.
 
         Args:
-            name: The package name (e.g., 'plex').
+            name: The package name or path (e.g., 'plex' or 'EchoSync/listenbrainz').
             parent_dir_name: The parent directory name (e.g., 'providers' or 'plugins').
             source_type: 'core' or 'community'.
             is_beta: True if loading from the 'beta' subfolder.
             is_disabled: True if the plugin is marked as disabled in config.
         """
+        # Normalize name for module and path
+        # Module uses dots, Path uses slashes
+        clean_name = name.replace('/', '.')
+        path_name = name.replace('.', '/')
+
         if is_beta:
-            module_path = f"{parent_dir_name}.{name}.beta"
+            module_path = f"{parent_dir_name}.{clean_name}.beta"
         else:
-            module_path = f"{parent_dir_name}.{name}"
+            module_path = f"{parent_dir_name}.{clean_name}"
         try:
             # 0. Try to extract metadata from manifest before loading class
             version = "Unknown"
             author = "Unknown"
             category = "provider"
-            package_dir = self.app_root / parent_dir_name / name
+            package_dir = self.app_root / parent_dir_name / path_name
             if is_beta:
                 package_dir = package_dir / "beta"
             
@@ -428,7 +474,7 @@ class PluginLoader:
             # If disabled, register a placeholder and return early
             if is_disabled:
                 from core.provider import DisabledProvider
-                provider_id = f"plugin.{name}" if source_type == 'community' else name
+                provider_id = f"plugin.{clean_name}" if source_type == 'community' else clean_name
                 
                 # Create a specific subclass for this disabled provider to hold its metadata
                 class specific_disabled(DisabledProvider):
@@ -442,9 +488,9 @@ class PluginLoader:
                 return
 
             if source_type == 'community':
-                provider_id = f"plugin.{name}"
+                provider_id = f"plugin.{clean_name}"
             else:
-                provider_id = name
+                provider_id = clean_name
 
             # Handle WASM Plugins
             wasm_file = package_dir / "main.wasm"
@@ -569,22 +615,35 @@ def get_all_plugins() -> list:
         if not directory.exists():
             continue
 
+        # 1. Identify all plugin candidates (including nested ones)
+        candidates = []
         for item in directory.iterdir():
             if not item.is_dir() or item.name.startswith('_'):
                 continue
+            
+            # Check if this is a plugin (has manifest.json, __init__.py or main.wasm)
+            if (item / "manifest.json").exists() or (item / "__init__.py").exists() or (item / "main.wasm").exists():
+                candidates.append((item, item.name))
+            else:
+                # Check 1 level deeper (Nexus Schema: plugins/{author}/{plugin})
+                for subitem in item.iterdir():
+                    if subitem.is_dir() and not subitem.name.startswith('_'):
+                        if (subitem / "manifest.json").exists() or (subitem / "__init__.py").exists() or (subitem / "main.wasm").exists():
+                            candidates.append((subitem, f"{item.name}/{subitem.name}"))
 
+        for item, folder_name in candidates:
             current_item = item
             # Use the folder name for channel check, same as _scan_directory
-            channel = config_manager.get_plugin_channel(item.name)
+            channel = config_manager.get_plugin_channel(folder_name)
             if channel == 'beta' and (item / 'beta').exists():
                 current_item = item / 'beta'
 
             plugin_info = {
-                "id": f"{source_type}.{item.name}" if source_type == 'core' else f"plugin.{item.name}",
-                "name": item.name.capitalize() if source_type == 'core' else item.name,
-                "description": f"Core provider for {item.name}" if source_type == 'core' else "Community plugin",
+                "id": f"{source_type}.{folder_name}" if source_type == 'core' else f"plugin.{folder_name}",
+                "name": folder_name.capitalize() if source_type == 'core' else folder_name,
+                "description": f"Core provider for {folder_name}" if source_type == 'core' else "Community plugin",
                 "type": source_type,
-                "folder_name": item.name
+                "folder_name": folder_name
             }
 
             json_file = current_item / "manifest.json"

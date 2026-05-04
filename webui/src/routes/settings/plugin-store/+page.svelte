@@ -94,17 +94,23 @@
     }
   }
 
-  async function installPlugin(plugin, isUpdate = false) {
-    console.log(`[PluginStore] installPlugin called for ${plugin.name} (ID: ${plugin.id}), isUpdate: ${isUpdate}, channel: ${plugin.channel}`);
+  let showConsentModal = false;
+  let escalationData = null;
+  let pluginAwaitingConsent = null;
+
+  async function installPlugin(plugin, isUpdate = false, forceConsent = false) {
+    console.log(`[PluginStore] installPlugin called for ${plugin.name} (ID: ${plugin.id}), isUpdate: ${isUpdate}, forceConsent: ${forceConsent}`);
     downloading = plugin.id || plugin.name;
 
     try {
-      await apiClient.post('/system/plugins/install', { 
+      const url = forceConsent ? '/system/plugins/install?force_consent=true' : '/system/plugins/install';
+      await apiClient.post(url, { 
         plugin, 
         channel: plugin.channel || 'release',
         version: plugin.version
       });
-      feedback.addToast(`Successfully ${isUpdate ? 'updated' : 'installed'} ${plugin.name}. Restart required.`, 'success');
+      feedback.addToast(`Successfully ${isUpdate ? 'updated' : 'installed'} ${plugin.name}.`, 'success');
+      
       // Mark as installed locally so UI updates
       plugins = plugins.map(p =>
         (p.id === plugin.id || p.name === plugin.name) ? { 
@@ -116,13 +122,26 @@
           installed_channel: plugin.channel || 'release'
         } : p
       );
-      // Force status reload to show restart banner immediately
+      // Force status reload to show restart banner if hot-swap fallback occurred
       await systemStatus.load();
+      showConsentModal = false;
     } catch (err) {
-      feedback.addToast(`Failed to ${isUpdate ? 'update' : 'install'} ${plugin.name}.`, 'error');
-      console.error(err);
+      if (err.response?.status === 403 && err.response?.data?.requires_consent) {
+        escalationData = err.response.data.escalations;
+        pluginAwaitingConsent = { ...plugin, isUpdate };
+        showConsentModal = true;
+      } else {
+        feedback.addToast(`Failed to ${isUpdate ? 'update' : 'install'} ${plugin.name}.`, 'error');
+        console.error(err);
+      }
     } finally {
       downloading = null;
+    }
+  }
+
+  async function handleAcceptConsent() {
+    if (pluginAwaitingConsent) {
+      await installPlugin(pluginAwaitingConsent, pluginAwaitingConsent.isUpdate, true);
     }
   }
 
@@ -314,6 +333,52 @@
           <span class="text-xl">😏</span> <strong>See I told you so.</strong>
           <br/><br/>
           You have opted out of the beta program. A restart is highly recommended to purge any unstable beta components and restore system stability.
+      </div>
+  </ConfirmDialog>
+{/if}
+
+{#if showConsentModal}
+  <ConfirmDialog 
+      title="⚠️ Warning: Elevated Permissions Required"
+      confirmText="Accept Risk & Update"
+      cancelText="Cancel Update"
+      danger={true}
+      on:confirm={handleAcceptConsent}
+      on:cancel={() => showConsentModal = false}
+  >
+      <div class="text-sm mt-2">
+          An update for <strong>{pluginAwaitingConsent?.name}</strong> is requesting additional permissions:
+          
+          <ul class="mt-4 space-y-3">
+            {#if escalationData?.privileged_mode}
+              <li class="flex items-start gap-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                <span class="text-lg">⚖️</span>
+                <div>
+                  <p class="font-bold text-red-400">Privileged Mode</p>
+                  <p class="text-xs text-gray-400 leading-tight">Allows the plugin to bypass AST security sandboxing and perform direct OS-level operations.</p>
+                </div>
+              </li>
+            {/if}
+            
+            {#if escalationData?.new_domains && escalationData.new_domains.length > 0}
+              <li class="flex items-start gap-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                <span class="text-lg">🌐</span>
+                <div>
+                  <p class="font-bold text-blue-400">Expanded Network Access</p>
+                  <p class="text-xs text-gray-400 mb-2">The plugin is requesting access to new external domains:</p>
+                  <div class="flex flex-wrap gap-2">
+                    {#each escalationData.new_domains as domain}
+                      <span class="px-2 py-0.5 bg-white/5 border border-white/10 rounded font-mono text-[10px]">{domain}</span>
+                    {/each}
+                  </div>
+                </div>
+              </li>
+            {/if}
+          </ul>
+          
+          <p class="mt-4 text-[10px] text-gray-500 italic leading-tight">
+            By proceeding, you grant this plugin full access to the requested resources. Only accept if you trust the source.
+          </p>
       </div>
   </ConfirmDialog>
 {/if}

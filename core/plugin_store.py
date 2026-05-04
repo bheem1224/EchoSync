@@ -10,6 +10,11 @@ from core.settings import config_manager
 
 logger = logging.getLogger(__name__)
 
+class PrivilegeEscalationError(Exception):
+    def __init__(self, escalations):
+        self.escalations = escalations
+        super().__init__("Privilege escalation detected")
+
 class PluginStore:
     def __init__(self):
         self.plugins_dir = Path(config_manager.get_plugins_dir())
@@ -325,7 +330,7 @@ class PluginStore:
             
         return all_plugins
 
-    def download_plugin(self, plugin_info: Dict, channel: str = "stable") -> bool:
+    def download_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False) -> bool:
         """
         Direct Artifact Downloader.
         Downloads a cleanly packaged .zip artifact based on the selected channel.
@@ -347,9 +352,10 @@ class PluginStore:
             logger.error(f"No artifact URL found for plugin {plugin_info.get('id')} on channel {channel}")
             return False
 
-        plugin_id = plugin_info.get("id", plugin_info.get("name", "unknown_plugin"))
-        folder_id = plugin_id.split(".")[-1]
-        dest_dir = self.plugins_dir / folder_id
+        plugin_id = plugin_info.get("id", plugin_info.get("plugin_id", "unknown_plugin"))
+        # Nexus Framework: Use explicit path (e.g. EchoSync/listenbrainz) if provided
+        folder_path = plugin_info.get("path") or plugin_id.split(".")[-1]
+        dest_dir = self.plugins_dir / folder_path
         beta_dir = dest_dir / "beta"
 
         if channel == "beta":
@@ -357,7 +363,7 @@ class PluginStore:
         else:
             target_dir = dest_dir
 
-        tmp_dir = self.plugins_dir / f"tmp_{folder_id}"
+        tmp_dir = self.plugins_dir / f"tmp_{folder_path.replace('/', '_')}"
 
         try:
             logger.info(f"Direct downloading {plugin_id} ({channel}) from {download_url}")
@@ -393,6 +399,45 @@ class PluginStore:
                     # If this happens, we might be downloading a full repo zip by mistake
                     return False
 
+                # Security: Pre-Flight Consent Check for Privilege Escalation
+                if not force_consent:
+                    # Compare against what is CURRENTLY in target_dir
+                    # or fall back to the base directory if target_dir (beta) doesn't exist yet
+                    current_path = target_dir if target_dir.exists() else dest_dir
+                    current_manifest_file = current_path / "manifest.json"
+                    
+                    if current_manifest_file.exists():
+                        try:
+                            with open(current_manifest_file, "r") as f:
+                                old_manifest = json.load(f)
+                            with open(manifest_file, "r") as f:
+                                new_manifest = json.load(f)
+                            
+                            old_perms = old_manifest.get("permissions", {})
+                            new_perms = new_manifest.get("permissions", {})
+                            
+                            escalations = {}
+                            
+                            # 1. Check privileged_mode escalation
+                            if new_perms.get("privileged_mode") and not old_perms.get("privileged_mode"):
+                                escalations["privileged_mode"] = True
+                                
+                            # 2. Check network_domains expansion
+                            old_domains = set(old_perms.get("network_domains", []))
+                            new_domains = set(new_perms.get("network_domains", []))
+                            added_domains = list(new_domains - old_domains)
+                            if added_domains:
+                                escalations["new_domains"] = added_domains
+                                
+                            if escalations:
+                                logger.warning(f"Aborting update for {plugin_id}: Privilege escalation detected. Requires user consent.")
+                                if tmp_dir.exists(): shutil.rmtree(tmp_dir, ignore_errors=True)
+                                raise PrivilegeEscalationError(escalations)
+                        except PrivilegeEscalationError:
+                            raise
+                        except Exception as e:
+                            logger.error(f"Error during pre-flight manifest check: {e}")
+
                 # Task 4: Inject Verified Source Block if from Official Repo
                 # This allows official plugins to bypass the AST scanner safely.
                 if plugin_info.get("_source_repo") == self.default_repo:
@@ -422,9 +467,9 @@ class PluginStore:
                 os.rename(str(tmp_dir), str(target_dir))
                 logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
 
-                # Task 5: Persist Channel Preference (use folder_id for PluginLoader compatibility)
-                config_manager.set(f'plugins.{folder_id}.channel', channel)
-                logger.info(f"Persisted channel '{channel}' for plugin {folder_id}")
+                # Task 5: Persist Channel Preference (use folder_path for PluginLoader compatibility)
+                config_manager.set(f'plugins.{folder_path}.channel', channel)
+                logger.info(f"Persisted channel '{channel}' for plugin {folder_path}")
 
                 # Task 6: Blue/Green Namespace Shifting
                 if channel == "beta":

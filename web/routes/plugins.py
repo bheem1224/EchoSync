@@ -188,19 +188,32 @@ def get_plugin_store():
 @bp.route('/install', methods=['POST'])
 @require_auth
 def install_plugin():
+    from core.plugin_store import PrivilegeEscalationError
     data = request.json or {}
     plugin_info = data.get('plugin')
     channel = data.get('channel') or (plugin_info.get('channel') if plugin_info else 'stable')
     if channel == 'release': channel = 'stable' # Normalize internal naming
     
+    force_consent = request.args.get('force_consent') == 'true'
+    
     if not plugin_info:
         return jsonify({"error": "Plugin info required"}), 400
 
-    success = plugin_store.download_plugin(plugin_info, channel=channel)
-    if success:
-        return jsonify({"success": True})
-    else:
-        return jsonify({"error": f"Failed to install plugin on channel {channel}"}), 500
+    try:
+        success = plugin_store.download_plugin(plugin_info, channel=channel, force_consent=force_consent)
+        if success:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": f"Failed to install plugin on channel {channel}"}), 500
+    except PrivilegeEscalationError as e:
+        return jsonify({
+            "requires_consent": True, 
+            "escalations": e.escalations,
+            "message": "This update requires elevated permissions."
+        }), 403
+    except Exception as e:
+        logger.error(f"Install error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 
@@ -246,7 +259,7 @@ def toggle_plugin(plugin_id):
 @require_auth
 def serve_plugin_ui(plugin_id, filename):
     # Strip prefixes if present
-    clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+    clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
     plugins_dir = config_manager.get_plugins_dir()
     app_root = Path(__file__).parent.parent.parent
     
@@ -296,7 +309,7 @@ def serve_plugin_static(plugin_id, filename):
     Checks community plugins, beta channel, and core plugins.
     """
     # Strip prefixes if present
-    clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+    clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
     plugins_dir = config_manager.get_plugins_dir()
     app_root = Path(__file__).parent.parent.parent
     
