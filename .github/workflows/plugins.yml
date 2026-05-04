@@ -35,16 +35,16 @@ jobs:
             # Extracts pure numbers (e.g., "2.5.0") for the JSON manifest
             GLOBAL_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 | sed -E 's/version:\s*v?//i')
             echo "🚀 Global Release detected (v$GLOBAL_VERSION). Syncing ALL plugins."
-            CHANGED_DIRS=$(find plugins -mindepth 1 -maxdepth 1 -type d)
+            CHANGED_DIRS=$(find plugins/EchoSync -mindepth 1 -maxdepth 1 -type d)
             IS_GLOBAL_RELEASE="true"
           elif [[ "$COMMIT_MSG" == *"[plugin-beta]"* ]] || [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             echo "🚀 Manual trigger or [plugin-beta] override. Building ALL plugins as beta."
-            CHANGED_DIRS=$(find plugins -mindepth 1 -maxdepth 1 -type d)
+            CHANGED_DIRS=$(find plugins/EchoSync -mindepth 1 -maxdepth 1 -type d)
             IS_GLOBAL_RELEASE="false"
             GLOBAL_VERSION="0.0.0"
           else
             echo "🔍 Incremental commit. Detecting changed plugins for beta build."
-            CHANGED_DIRS=$(git diff --name-only HEAD^ HEAD | grep '^plugins/' | cut -d/ -f1,2 | sort -u)
+            CHANGED_DIRS=$(git diff --name-only HEAD^ HEAD | grep '^plugins/EchoSync/' | cut -d/ -f1,2,3 | sort -u)
             IS_GLOBAL_RELEASE="false"
             GLOBAL_VERSION="0.0.0"
           fi
@@ -141,7 +141,7 @@ jobs:
               npm install vite svelte @sveltejs/vite-plugin-svelte --no-save
 
               npm run build
-              cd ../../../
+              cd ../../../../
               echo "📦 UI Compiled to bundle.js"
             fi
 
@@ -161,7 +161,7 @@ jobs:
               zip -r "beta.zip" . -x "ui/*" -x "src/*" -x "target/*" -x "releases/*" -x "*/__pycache__/*"
               echo "✅ Created beta package: beta.zip"
             fi
-            cd ../../
+            cd ../../../
           done
 
       - name: Generate store-manifest.json
@@ -170,16 +170,17 @@ jobs:
           import glob, json
           
           store_manifest = {"plugins": []}
-          repo_base = "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins"
+          repo_base = "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync"
           
-          for manifest_file in glob.glob("plugins/*/manifest.json"):
+          for manifest_file in glob.glob("plugins/EchoSync/*/manifest.json"):
               with open(manifest_file, "r") as f:
                   try:
                       plugin_data = json.load(f)
-                      folder_name = manifest_file.split("/")[1]
+                      import os
+                      folder_name = os.path.basename(os.path.dirname(manifest_file))
                       
                       plugin_data["plugin_id"] = folder_name
-                      plugin_data["source_url"] = f"https://github.com/bheem1224/EchoSync/tree/main/plugins/{folder_name}"
+                      plugin_data["source_url"] = f"https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/{folder_name}"
                       
                       stable_version = plugin_data.get("version", "0.0.0")
                       plugin_data["download_url"] = f"{repo_base}/{folder_name}/releases/v{stable_version}.zip"
