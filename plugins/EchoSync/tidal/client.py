@@ -288,7 +288,7 @@ class TidalClient(SyncServiceProvider):
         return bool(self.client_id and self.client_secret and self.redirect_uri)
     
     def _load_config(self):
-        """Load Tidal configuration from database using centralized config_manager helper"""
+        """Load Tidal configuration from database using centralized self.sdk.config helper"""
         try:
             from core.file_handling.storage import get_storage_service
             storage = get_storage_service()
@@ -333,7 +333,7 @@ class TidalClient(SyncServiceProvider):
     def _start_callback_server(self):
         """Start HTTP server to receive OAuth callback"""
         # Skip starting server in Docker/production mode - web server handles callbacks
-        if config_manager.get('FLASK_ENV') == 'production' or config_manager.get('IS_DOCKER'):
+        if self.sdk.config.get('FLASK_ENV') == 'production' or self.sdk.config.get('IS_DOCKER'):
             logger.info("Docker/WebUI mode detected - skipping TidalClient callback server (web server handles callbacks)")
             return
             

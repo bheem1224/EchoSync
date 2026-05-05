@@ -44,7 +44,7 @@ from typing import Any, List
 
 from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
-from core.settings import config_manager
+
 from plugins.cjk_language_pack.transliterator import get_transliterator
 from plugins.cjk_language_pack.vgmdb_proxy import get_proxy
 from plugins.cjk_language_pack.noise_filter import get_noise_filter
@@ -428,7 +428,7 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             return
         TrackAlias = rel.mapper.class_
 
-        _dev_mode = config_manager.get('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+        _dev_mode = self.sdk.config.get('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
 
         # Dev mode: clear existing aliases so they are rebuilt from fresh data,
         # bypassing the "skip if already present" deduplication guard.
@@ -504,7 +504,7 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             return
         ArtistAlias = rel.mapper.class_
 
-        _dev_mode = config_manager.get('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+        _dev_mode = self.sdk.config.get('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
 
         # Dev mode: clear existing aliases so they are rebuilt from fresh data,
         # bypassing the "skip if already present" deduplication guard.

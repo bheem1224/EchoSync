@@ -4,7 +4,7 @@ import threading
 import uuid
 from flask import Blueprint, request, jsonify
 from core.tiered_logger import get_logger
-from core.settings import config_manager
+
 
 logger = get_logger("plex_routes")
 
@@ -21,9 +21,9 @@ def get_settings():
         return jsonify({'settings': {}}), 200
     try:
         # Load Hybrid Configuration
-        plex_config = config_manager.get('plex', {})
-        base_url = plex_config.get('base_url') or config_manager.get('plex.base_url', '')
-        server_name = plex_config.get('server_name') or config_manager.get('plex.server_name', '')
+        plex_config = ServiceRegistry.get_sdk("plex").config.get('plex', {})
+        base_url = plex_config.get('base_url') or ServiceRegistry.get_sdk("plex").config.get('plex.base_url', '')
+        server_name = plex_config.get('server_name') or ServiceRegistry.get_sdk("plex").config.get('plex.server_name', '')
         
         # Retrieve token from Singleton Account
         from core.file_handling.storage import get_storage_service
@@ -39,7 +39,7 @@ def get_settings():
                 token = decrypt_string(token_data.get('access_token'))
 
         # Check if this is the active media server
-        active_media_server = config_manager.get('active_media_server', 'plex')
+        active_media_server = ServiceRegistry.get_sdk("plex").config.get('active_media_server', 'plex')
         is_active = (active_media_server == 'plex')
         
         # Check connection status
@@ -56,7 +56,7 @@ def get_settings():
         
         # Get path mappings
         import json
-        path_mappings_raw = plex_config.get('path_mappings') or config_manager.get('plex.path_mappings', '[]')
+        path_mappings_raw = plex_config.get('path_mappings') or ServiceRegistry.get_sdk("plex").config.get('plex.path_mappings', '[]')
         try:
             path_mappings = json.loads(path_mappings_raw) if isinstance(path_mappings_raw, str) else path_mappings_raw
         except:
@@ -82,18 +82,18 @@ def save_settings():
     """Save Plex server settings."""
     try:
         data = request.get_json(force=True) or {}
-        plex_config = config_manager.get('plex', {})
+        plex_config = ServiceRegistry.get_sdk("plex").config.get('plex', {})
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
             plex_config['base_url'] = base_url
-            config_manager.set('plex.base_url', base_url) # Legacy fallback
+            ServiceRegistry.get_sdk("plex").config.set('plex.base_url', base_url) # Legacy fallback
             logger.info(f"Plex base_url saved: {base_url}")
         
         if 'server_name' in data:
             server_name = data['server_name'].strip()
             plex_config['server_name'] = server_name
-            config_manager.set('plex.server_name', server_name) # Legacy fallback
+            ServiceRegistry.get_sdk("plex").config.set('plex.server_name', server_name) # Legacy fallback
             logger.info(f"Plex server_name saved: {server_name}")
         
         if 'token' in data:
@@ -130,10 +130,10 @@ def save_settings():
             import json
             path_mappings = data['path_mappings']
             plex_config['path_mappings'] = path_mappings
-            config_manager.set('plex.path_mappings', json.dumps(path_mappings)) # Legacy fallback
+            ServiceRegistry.get_sdk("plex").config.set('plex.path_mappings', json.dumps(path_mappings)) # Legacy fallback
             logger.info(f"Plex path_mappings saved: {len(path_mappings)} mappings")
 
-        config_manager.set('plex', plex_config)
+        ServiceRegistry.get_sdk("plex").config.set('plex', plex_config)
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error saving Plex settings: {e}", exc_info=True)
@@ -144,7 +144,7 @@ def save_settings():
 def activate_server():
     """Set Plex as the active media server."""
     try:
-        config_manager.set('active_media_server', 'plex')
+        ServiceRegistry.get_sdk("plex").config.set('active_media_server', 'plex')
         logger.info("Plex set as active media server")
         return jsonify({
             'success': True,
@@ -161,11 +161,11 @@ def test_connection():
     try:
         payload = request.get_json(silent=True) or {}
 
-        plex_config = config_manager.get('plex', {})
+        plex_config = ServiceRegistry.get_sdk("plex").config.get('plex', {})
         base_url = str(
             payload.get('base_url')
             or plex_config.get('base_url')
-            or config_manager.get('plex.base_url', '')
+            or ServiceRegistry.get_sdk("plex").config.get('plex.base_url', '')
         ).strip()
 
         from core.file_handling.storage import get_storage_service

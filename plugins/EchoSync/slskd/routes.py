@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from core.settings import config_manager
+
 from core.tiered_logger import get_logger
 import asyncio
 import aiohttp
@@ -12,8 +12,8 @@ bp = Blueprint("soulseek_routes", __name__, url_prefix="/api/providers/soulseek"
 def get_settings():
     """Get slskd configuration settings."""
     try:
-        slskd_url = config_manager.get('soulseek.slskd_url', '')
-        server_name = config_manager.get('soulseek.server_name', '')
+        slskd_url = ServiceRegistry.get_sdk("slskd").config.get('soulseek.slskd_url', '')
+        server_name = ServiceRegistry.get_sdk("slskd").config.get('soulseek.server_name', '')
         # api_key is sensitive; prefer the storage helper which persists to DB
         from core.file_handling.storage import get_storage_service
         storage = get_storage_service()
@@ -22,7 +22,7 @@ def get_settings():
         # also update in-memory config in case UI reads it
         # (key is filtered out on save but may still exist transiently)
         if api_key:
-            config_manager.set('soulseek.api_key', api_key)
+            ServiceRegistry.get_sdk("slskd").config.set('soulseek.api_key', api_key)
         
         # Return masked API key if it exists
         masked_api_key = '****' if api_key else ''
@@ -56,8 +56,8 @@ def save_settings():
             return jsonify({"error": "Server URL is required"}), 400
         
         # Save settings using config_manager
-        config_manager.set('soulseek.slskd_url', slskd_url)
-        config_manager.set('soulseek.server_name', server_name)
+        ServiceRegistry.get_sdk("slskd").config.set('soulseek.slskd_url', slskd_url)
+        ServiceRegistry.get_sdk("slskd").config.set('soulseek.server_name', server_name)
         
         # Only update API key if provided (don't overwrite with empty string)
         if api_key:
@@ -66,7 +66,7 @@ def save_settings():
             storage = get_storage_service()
             storage.set_service_config('soulseek', 'api_key', api_key, is_sensitive=True)
             # mirror to config_manager so GET requests can see it immediately
-            config_manager.set('soulseek.api_key', api_key)
+            ServiceRegistry.get_sdk("slskd").config.set('soulseek.api_key', api_key)
         
         logger.info(f"Saved slskd settings: {slskd_url}")
         
@@ -80,9 +80,9 @@ def save_settings():
 def test_connection():
     """Test connection to slskd server."""
     try:
-        slskd_url = config_manager.get('soulseek.slskd_url', '')
-        api_key = config_manager.get('soulseek.api_key', '')
-        server_name = config_manager.get('soulseek.server_name', '')
+        slskd_url = ServiceRegistry.get_sdk("slskd").config.get('soulseek.slskd_url', '')
+        api_key = ServiceRegistry.get_sdk("slskd").config.get('soulseek.api_key', '')
+        server_name = ServiceRegistry.get_sdk("slskd").config.get('soulseek.server_name', '')
         
         if not slskd_url:
             return jsonify({
@@ -167,7 +167,7 @@ def get_api_key():
     the user explicitly requests to reveal the key via the show/hide toggle.
     """
     try:
-        api_key = config_manager.get('soulseek.api_key', '')
+        api_key = ServiceRegistry.get_sdk("slskd").config.get('soulseek.api_key', '')
         if not api_key:
             return jsonify({"error": "API key not configured"}), 404
 

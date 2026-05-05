@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 from core.tiered_logger import get_logger
-from core.settings import config_manager
+
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
 from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from time_utils import ensure_utc, utc_now
@@ -365,7 +365,7 @@ class JellyfinClient(MediaServerProvider):
     
     def _setup_client(self):
         """Setup Jellyfin client configuration"""
-        config = config_manager.get_jellyfin_config()
+        config = self.sdk.config.get_all()
         
         if not config.get('base_url'):
             logger.warning("Jellyfin server URL not configured")
@@ -514,7 +514,7 @@ class JellyfinClient(MediaServerProvider):
         # If tests/mock patched ensure_connection but didn't populate base_url/api_key,
         # try to read them from the config manager as a fallback for test fixtures.
         if not self.base_url or not self.api_key:
-            cfg = config_manager.get_jellyfin_config() or {}
+            cfg = self.sdk.config.get_all() or {}
             if not self.base_url and cfg.get('base_url'):
                 self.base_url = str(cfg.get('base_url')).rstrip('/')
             if not self.api_key and cfg.get('api_key'):
@@ -1259,8 +1259,8 @@ class JellyfinClient(MediaServerProvider):
             existing_playlist = self.get_playlist_by_name(playlist_name)
             
             # Check if backup is enabled in config
-            from core.settings import config_manager
-            create_backup = config_manager.get('playlist_sync.create_backup', True)
+
+            create_backup = self.sdk.config.get('playlist_sync.create_backup', True)
             
             if existing_playlist and create_backup:
                 backup_name = f"{playlist_name} Backup"

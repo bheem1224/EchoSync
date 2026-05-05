@@ -2,7 +2,7 @@
 
 from flask import Blueprint, request, jsonify, redirect
 from core.tiered_logger import get_logger
-from core.settings import config_manager
+
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import time
@@ -140,7 +140,7 @@ def oauth_callback():
         # Fallback to legacy config.json and seed storage if needed
         if not client_id or not client_secret or not redirect_uri:
             try:
-                spotify_conf = config_manager.get_spotify_config()
+                spotify_conf = ServiceRegistry.get_sdk("spotify").config.get_all()
                 client_id = client_id or spotify_conf.get('client_id')
                 client_secret = client_secret or spotify_conf.get('client_secret')
                 redirect_uri = redirect_uri or spotify_conf.get('redirect_uri') or None
