@@ -97,10 +97,9 @@ class TestDeducePathMappingCaseA:
         point where the two path trees diverge.
 
         The DB persistence side-effect is suppressed by returning None from
-        get_active_media_server() so the test stays pure and deterministic.
+        registry so the test stays pure and deterministic.
         """
         with patch("services.media_manager.config_manager") as mock_cm:
-            mock_cm.get_active_media_server.return_value = None   # skip DB write
 
             result = media_manager.deduce_path_mapping(local_path, provider_path)
 
@@ -116,8 +115,7 @@ class TestDeducePathMappingCaseA:
     def test_result_is_a_two_tuple(self, media_manager):
         """Return value must be a two-element tuple, not a list or dict."""
         with patch("services.media_manager.config_manager") as mock_cm:
-            mock_cm.get_active_media_server.return_value = None
-            result = media_manager.deduce_path_mapping(
+                        result = media_manager.deduce_path_mapping(
                 "/app/music/track.flac",
                 "/mnt/data/music/track.flac",
             )
@@ -141,7 +139,6 @@ class TestDeducePathMappingCaseB:
         and returns None immediately via the 'no common suffix' guard.
         """
         with patch("services.media_manager.config_manager") as mock_cm:
-            mock_cm.get_active_media_server.return_value = None
 
             result = media_manager.deduce_path_mapping(
                 "/data/files/song.flac",
@@ -156,7 +153,6 @@ class TestDeducePathMappingCaseB:
         means the algorithm cannot safely infer a mapping.
         """
         with patch("services.media_manager.config_manager") as mock_cm:
-            mock_cm.get_active_media_server.return_value = None
 
             result = media_manager.deduce_path_mapping(
                 "/music/Artist/Album/track_01.flac",
@@ -179,7 +175,6 @@ class TestDeducePathMappingEdgeCases:
     def test_empty_inputs_return_none(self, media_manager, local, remote):
         """The early-return guard must catch any empty path argument."""
         with patch("services.media_manager.config_manager") as mock_cm:
-            mock_cm.get_active_media_server.return_value = None
 
             assert media_manager.deduce_path_mapping(local, remote) is None
 
@@ -198,7 +193,6 @@ class TestDeducePathMappingEdgeCases:
         with patch("services.media_manager.config_manager") as mock_cm, \
              patch("database.config_database.get_config_database", return_value=mock_config_db):
 
-            mock_cm.get_active_media_server.return_value = "plex"
 
             result = media_manager.deduce_path_mapping(
                 "/app/music/Artist/Song.flac",
@@ -231,7 +225,6 @@ class TestDeducePathMappingEdgeCases:
         with patch("services.media_manager.config_manager") as mock_cm, \
              patch("database.config_database.get_config_database", return_value=mock_config_db):
 
-            mock_cm.get_active_media_server.return_value = "plex"
 
             media_manager.deduce_path_mapping(
                 "/app/music/Artist/Song.flac",

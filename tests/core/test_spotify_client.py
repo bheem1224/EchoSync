@@ -6,7 +6,7 @@ from plugins.spotify.client import SpotifyClient
 @pytest.fixture
 def spotify_client():
     # Use a dummy client ID so ConfigCacheHandler doesn't fail if it tries to init
-    with patch('core.settings.ConfigManager.get_spotify_config') as mock_config:
+    if True:
         mock_config.return_value = {'client_id': 'fake', 'client_secret': 'fake'}
         client = SpotifyClient()
         return client

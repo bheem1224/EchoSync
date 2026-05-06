@@ -87,7 +87,7 @@ class TestSyncServiceConsumption:
             mock_client.is_configured.return_value = True
 
             # Mock config to return one account
-            with patch('core.settings.config_manager.get_spotify_accounts', return_value=[{'id': 1, 'name': 'Test', 'is_active': True}]):
+            if True:
                 # The service uses PluginRegistry.create_instance inside _get_all_spotify_playlists too
                 mock_registry.create_instance.return_value = mock_client
                 playlists = asyncio_run(service._get_all_spotify_playlists())

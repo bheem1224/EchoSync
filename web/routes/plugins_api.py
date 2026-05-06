@@ -98,7 +98,9 @@ def list_download_clients():
         from core.plugin_loader import PluginRegistry, ServiceRegistry
         from core.settings import config_manager
         
-        active_client = config_manager.get_active_download_client()
+        from core.plugin_loader import PluginRegistry
+        active_downloads = PluginRegistry.get_active_services_by_type('download')
+        active_client = active_downloads[0].split('.')[-1] if active_downloads else None
         download_clients = []
         
         # Get all registered providers
@@ -130,7 +132,9 @@ def get_active_download_client():
     """Get the currently active download client."""
     try:
         from core.settings import config_manager
-        active = config_manager.get_active_download_client()
+        from core.plugin_loader import PluginRegistry
+        active_downloads = PluginRegistry.get_active_services_by_type('download')
+        active = active_downloads[0].split('.')[-1] if active_downloads else None
         return jsonify({'active_client': active}), 200
     except Exception as e:
         logger.error(f"Error getting active download client: {e}")

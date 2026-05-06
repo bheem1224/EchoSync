@@ -28,7 +28,10 @@ def trigger_library_scan():
         path = request.args.get("path")
         
         # Get active media server
-        active_server = config_manager.get_active_media_server()
+        from core.plugin_loader import PluginRegistry
+        active_servers = PluginRegistry.get_active_services_by_type('media_server')
+        active_server = active_servers[0] if active_servers else None
+
         if not active_server:
             return jsonify({"error": "No active media server configured"}), 400
 
@@ -80,7 +83,10 @@ def get_library_scan_status():
     """
     try:
         # Get active media server
-        active_server = config_manager.get_active_media_server()
+        from core.plugin_loader import PluginRegistry
+        active_servers = PluginRegistry.get_active_services_by_type('media_server')
+        active_server = active_servers[0] if active_servers else None
+
         if not active_server:
             return jsonify({"error": "No active media server configured"}), 400
 
@@ -130,7 +136,9 @@ def update_database():
         
         # Get active media server
         try:
-            active_server = config_manager.get_active_media_server()
+            from core.plugin_loader import PluginRegistry
+            active_servers = PluginRegistry.get_active_services_by_type('media_server')
+            active_server = active_servers[0] if active_servers else None
         except Exception as e:
             logger.error(f"Failed to get active media server: {e}")
             return jsonify({"error": f"Failed to get active media server: {str(e)}"}), 500
@@ -165,8 +173,9 @@ def update_database():
         # Get provider instance
         provider = None
         try:
-            from core.plugin_loader import PluginRegistry, ServiceRegistry
-            provider = PluginRegistry.create_instance(active_server)
+            from core.plugin_loader import PluginRegistry
+            active_servers = PluginRegistry.get_active_services_by_type('media_server')
+            active_server = active_servers[0] if active_servers else None
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
             return jsonify({"error": f"Media server '{active_server}' not available: {str(e)}"}), 500
@@ -248,59 +257,11 @@ def get_database_update_status():
         }
     """
     global _db_update_worker
-    
-    try:
-        active_server = config_manager.get_active_media_server()
-        
-        with _db_update_lock:
-            if _db_update_worker is None:
-                return jsonify({
-                    "running": False,
-                    "progress": {
-                        "artists": 0,
-                        "albums": 0,
-                        "tracks": 0,
-                        "successful": 0,
-                        "failed": 0
-                    },
-                    "server": active_server
-                }), 200
-            
-            # Ask the job queue directly — it sets _is_running[job_name] before
-            # spawning the thread and clears it in the finally block, so this is
-            # accurate from the moment start() returns until the job finishes.
-            is_running = False
-            job_name = getattr(_db_update_worker, '_job_name', None)
-            if job_name:
-                try:
-                    from core.job_queue import job_queue
-                    is_running = job_queue._is_running.get(job_name, False)
-                except Exception:
-                    is_running = False
-            if not is_running:
-                # Fallback for any worker that didn't go through start() (e.g. tests):
-                # infer from progress counters once the track list is fetched.
-                try:
-                    total = getattr(_db_update_worker, 'total_tracks', 0)
-                    processed = getattr(_db_update_worker, 'processed_tracks', 0)
-                    is_running = total > 0 and processed < total
-                except Exception:
-                    is_running = False
-            
-            return jsonify({
-                "running": is_running,
-                "progress": {
-                    "artists": _db_update_worker.processed_artists,
-                    "albums": _db_update_worker.processed_albums,
-                    "tracks": _db_update_worker.processed_tracks,
-                    "total": getattr(_db_update_worker, 'total_tracks', 0),
-                    "successful": _db_update_worker.successful_operations,
-                    "failed": _db_update_worker.failed_operations
-                },
-                "server": active_server
-            }), 200
-            
-    except Exception as e:
+        try:
+            from core.plugin_loader import PluginRegistry
+            active_servers = PluginRegistry.get_active_services_by_type('media_server')
+            active_server = active_servers[0] if active_servers else None
+        except Exception as e:
         logger.error(f"Database update status error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
@@ -317,24 +278,11 @@ def backfill_identifiers():
 
     Returns the number of new identifier rows written.
     """
-    try:
-        active_server = config_manager.get_active_media_server()
-        if not active_server:
-            return jsonify({"error": "No active media server configured"}), 400
-
-        from database import MusicDatabase, LibraryManager
-        db = MusicDatabase()
-        library_manager = LibraryManager(db.session_factory)
-
-        added = library_manager.backfill_provider_identifiers(active_server)
-        return jsonify({
-            "success": True,
-            "provider": active_server,
-            "identifiers_added": added,
-            "message": f"Linked {added} missing '{active_server}' identifier(s) to existing tracks.",
-        }), 200
-
-    except Exception as e:
+        try:
+            from core.plugin_loader import PluginRegistry
+            active_servers = PluginRegistry.get_active_services_by_type('media_server')
+            active_server = active_servers[0] if active_servers else None
+        except Exception as e:
         logger.error("backfill_identifiers error: %s", e, exc_info=True)
         return jsonify({"error": str(e)}), 500
 
