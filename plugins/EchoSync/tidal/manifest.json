@@ -9,5 +9,5 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "ui_manifest": "ui_manifest.json",
-  "beta_version": "2.4.3-beta.8"
+  "beta_version": "2.4.3-beta.9"
 }
