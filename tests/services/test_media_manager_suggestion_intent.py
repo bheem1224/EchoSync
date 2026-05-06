@@ -49,7 +49,7 @@ def test_media_manager_handles_suggestion_remove_intent_end_to_end(monkeypatch, 
         session.add(
             ExternalIdentifier(
                 track_id=track.id,
-                provider_source="plex",
+                plugin_id=1,
                 provider_item_id="12345",
             )
         )
@@ -62,7 +62,7 @@ def test_media_manager_handles_suggestion_remove_intent_end_to_end(monkeypatch, 
             "event": "SUGGESTION_PLAYLIST_REMOVE_INTENT",
             "sync_id": sync_id,
             "playlist_name": "Suggestions for You",
-            "user_id": 99,
+            "account_id": 99,
         }
     )
 

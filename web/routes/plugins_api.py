@@ -4,7 +4,7 @@ from web.services.plugin_registry import list_plugins, get_plugins_for_capabilit
 from core.tiered_logger import get_logger
 
 logger = get_logger("plugins_config_route")
-bp = Blueprint("plugins_config", __name__, url_prefix="/api/plugins")
+bp = Blueprint("plugins_config", __name__)
 
 
 def _normalize_sensitive_value_for_ui(key, value):
@@ -291,10 +291,10 @@ def get_plugin_playlists(plugin_id):
                         account_name = account.get('display_name') or account.get('account_name') or f"Account {account_id}"
 
                         if plugin_id == 'spotify':
-                            from plugins.spotify.client import SpotifyClient
+                            from plugins.EchoSync.spotify.client import SpotifyClient
                             client = SpotifyClient(account_id=account_id)
                         elif plugin_id == 'tidal':
-                            from plugins.tidal.client import TidalClient
+                            from plugins.EchoSync.tidal.client import TidalClient
                             client = TidalClient(account_id=str(account_id))
                         else:
                             continue

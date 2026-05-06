@@ -86,9 +86,13 @@ class MediaManagerService:
                 logger.warning(f"Unable to resolve track_id from sync_id: {sync_id}")
                 return
 
-            provider_track_id = self.db.get_external_identifier(active_server, track_id)
+            from database.config_database import get_config_database
+            config_db = get_config_database()
+            plugin_id = config_db.get_or_create_service_id(active_server)
+
+            provider_track_id = self.db.get_external_identifier(plugin_id, track_id)
             if not provider_track_id:
-                logger.warning(f"No external identifier for track {track_id} on provider {active_server}")
+                logger.warning(f"No external identifier for track {track_id} on provider {active_server} (id {plugin_id})")
                 return
 
             provider = PluginRegistry.create_instance(active_server)
@@ -249,7 +253,10 @@ class MediaManagerService:
         if active_server:
             try:
                 # Get the external identifier for this track on the active server
-                provider_item_id = self.db.get_external_identifier(active_server, track_id)
+                from database.config_database import get_config_database
+                config_db = get_config_database()
+                plugin_id = config_db.get_or_create_service_id(active_server)
+                provider_item_id = self.db.get_external_identifier(plugin_id, track_id)
 
                 if provider_item_id:
                     try:

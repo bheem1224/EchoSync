@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from database.working_database import WorkingDatabase, User, UserTrackState, UserRating
+from database.working_database import WorkingDatabase, User, UserTrackState, UserRating, WorkingAccount
 from services.state_listener import StateListenerService
 
 
@@ -36,15 +36,17 @@ def test_sponsor_rating_removes_from_suggestions_playlist(tmp_path, monkeypatch)
     base_sync_id = "ss:track:meta:sponsor-track"
 
     with db.session_scope() as session:
-        user = User(username="plex_42", provider_identifier="42", provider="plex")
-        session.add(user)
+        # Create a WorkingAccount to satisfy Foreign Key
+        account = WorkingAccount(plugin_id=1, remote_user_id="42")
+        session.add(account)
         session.flush()
+        account_id = account.id
 
         session.add(
             UserTrackState(
-                user_id=user.id,
+                account_id=account_id,
                 sync_id=base_sync_id,
-                sponsor_id=user.id,
+                sponsor_id=account_id,
             )
         )
 

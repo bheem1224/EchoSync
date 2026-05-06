@@ -20,7 +20,7 @@ class StateListenerService:
             self.event_bus.subscribe("TRACK_RATED", self.handle_track_rated)
             self.event_bus.subscribe("TRACK_PLAYED", self.handle_track_played)
 
-    def _resolve_user_id(self, session, provider_user_id, provider_name):
+    def _resolve_account_id(self, session, provider_user_id, provider_name):
         provider_user_id = str(provider_user_id)
         user = session.query(User).filter(
             User.provider_identifier == provider_user_id,
@@ -40,7 +40,7 @@ class StateListenerService:
         sync_id = event_data.get("sync_id")
         data = event_data.get("data", {})
         rating = data.get("rating")
-        provider_user_id = data.get("user_id")
+        provider_user_id = data.get("account_id") or data.get("user_id")
         provider_name = data.get("provider", "unknown")
 
         if not sync_id or rating is None or not provider_user_id:
@@ -48,11 +48,11 @@ class StateListenerService:
 
         with self.Session() as session:
             try:
-                internal_user_id = self._resolve_user_id(session, provider_user_id, provider_name)
+                internal_account_id = self._resolve_account_id(session, provider_user_id, provider_name)
                 base_sync_id = sync_id.split('?')[0]
 
                 existing = session.query(UserRating).filter(
-                    UserRating.user_id == internal_user_id,
+                    UserRating.account_id == internal_account_id,
                     UserRating.sync_id == base_sync_id
                 ).first()
 
@@ -61,7 +61,7 @@ class StateListenerService:
                     existing.timestamp = utc_now()
                 else:
                     new_rating = UserRating(
-                        user_id=internal_user_id,
+                        account_id=internal_account_id,
                         sync_id=base_sync_id,
                         rating=float(rating),
                         timestamp=utc_now()
@@ -74,14 +74,14 @@ class StateListenerService:
                 apply_lifecycle_action(base_sync_id, consensus)
 
                 # Sponsor action: if sponsor rated, remove from Suggestions for You playlist.
-                self._handle_sponsor_rating_action(session, base_sync_id, internal_user_id, float(rating))
+                self._handle_sponsor_rating_action(session, base_sync_id, internal_account_id, float(rating))
             except Exception as e:
                 session.rollback()
 
-    def _handle_sponsor_rating_action(self, session, base_sync_id: str, user_id: int, rating_stars: float) -> None:
+    def _handle_sponsor_rating_action(self, session, base_sync_id: str, account_id: int, rating_stars: float) -> None:
         sponsor_state = session.query(UserTrackState).filter(
             UserTrackState.sync_id == base_sync_id,
-            UserTrackState.sponsor_id == user_id
+            UserTrackState.sponsor_id == account_id
         ).first()
 
         if not sponsor_state:
@@ -96,7 +96,7 @@ class StateListenerService:
             {
                 "event": "SUGGESTION_PLAYLIST_REMOVE_INTENT",
                 "sync_id": base_sync_id,
-                "user_id": user_id,
+                "account_id": account_id,
                 "playlist_name": "Suggestions for You",
                 "rating_stars": rating_stars,
                 "rating_10": stars_to_ten_point(rating_stars),

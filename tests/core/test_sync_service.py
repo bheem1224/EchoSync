@@ -38,7 +38,7 @@ def patch_spotify_client(monkeypatch):
     monkeypatch.setattr('core.plugin_loader.PluginRegistry.create_instance', factory)
 
     # disable provider registry registration which isn't needed for these fakes
-    monkeypatch.setattr('core.provider.PluginRegistry.register', lambda *args, **kwargs: None)
+    monkeypatch.setattr('core.plugin_loader.PluginRegistry.register', lambda *args, **kwargs: None)
 
     # also patch storage service to return two accounts
     fake_storage = MagicMock()

@@ -83,11 +83,11 @@ def _get_provider_for_account(provider_name, acc_id=None):
             acc_id_local = acc_id
 
         if provider_name == 'spotify':
-            from plugins.spotify.client import SpotifyClient
+            from plugins.EchoSync.spotify.client import SpotifyClient
 
             return SpotifyClient(account_id=acc_id_local), acc_id_local
         if provider_name == 'tidal':
-            from plugins.tidal.client import TidalClient
+            from plugins.EchoSync.tidal.client import TidalClient
 
             return TidalClient(account_id=str(acc_id_local)), acc_id_local
 
@@ -732,7 +732,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             # aliases are checked; the highest Pinyin score wins.
                             if _best_artist_score < _PINYIN_ARTIST_THRESHOLD:
                                 try:
-                                    from plugins.cjk_language_pack.transliterator import CJKTransliterator
+                                    from plugins.EchoSync.cjk_language_pack.transliterator import CJKTransliterator
                                     from rapidfuzz import fuzz as _rfuzz
 
                                     def _py_strip(s: str) -> str:
@@ -1419,7 +1419,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
     job_name = f"sync:plex:{playlist_name}:{int(time.time())}"
 
     def _run_sync():
-        from plugins.plex.client import PlexClient
+        from plugins.EchoSync.plex.client import PlexClient
 
         marker = "⇄"
         total = len(rating_keys)
