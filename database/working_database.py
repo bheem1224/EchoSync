@@ -34,6 +34,7 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
     sessionmaker,
+    synonym,
 )
 
 
@@ -82,6 +83,7 @@ class UserRating(WorkingBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    user_id: Mapped[int] = synonym('account_id')
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 1-5, or system flags 0.1, 2.1, 3.1
     play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -186,6 +188,7 @@ class UserTrackState(WorkingBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("working_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[int] = synonym('account_id')
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     is_unlinked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_hard_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

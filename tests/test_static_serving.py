@@ -10,7 +10,7 @@ def test_spa_catchall(tmp_path, monkeypatch):
     (build_dir / "index.html").write_text("<html><body>hello</body></html>")
     (build_dir / "foo.js").write_text("console.log('hi');")
 
-    app = create_app()
+    app = create_app(testing=True)
     # monkeypatch the static_folder so our fake directory is used
     app.static_folder = str(build_dir)
 

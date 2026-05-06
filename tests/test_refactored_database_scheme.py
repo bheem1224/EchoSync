@@ -279,7 +279,7 @@ class TestOperationalTablesStringSyncId:
         Session = memory_working_session
 
         with Session() as session:
-            rating = UserRating(user_id=1, sync_id=urn, rating=4.5)
+            rating = UserRating(account_id=1, sync_id=urn, rating=4.5)
             session.add(rating)
             session.commit()
 
@@ -309,12 +309,12 @@ class TestOperationalTablesStringSyncId:
         Session = memory_working_session
 
         with Session() as session:
-            rating = UserRating(user_id=2, sync_id=urn, rating=5.0)
+            rating = UserRating(account_id=2, sync_id=urn, rating=5.0)
             session.add(rating)
             session.commit()
 
         with Session() as session:
-            queried = session.query(UserRating).filter_by(user_id=2).one()
+            queried = session.query(UserRating).filter_by(account_id=2).one()
 
             assert queried.sync_id == urn
             assert isinstance(queried.sync_id, str)
@@ -326,22 +326,22 @@ class TestOperationalTablesStringSyncId:
         Session = memory_working_session
 
         with Session() as session:
-            rating = UserRating(user_id=3, sync_id="ss:track:mbid:utc-check", rating=4.0)
+            rating = UserRating(account_id=3, sync_id="ss:track:mbid:utc-check", rating=4.0)
             session.add(rating)
             session.commit()
 
         with Session() as session:
-            queried = session.query(UserRating).filter_by(user_id=3).one()
+            queried = session.query(UserRating).filter_by(account_id=3).one()
 
             assert queried.timestamp is not None
             assert queried.timestamp.tzinfo is not None
             assert queried.timestamp.utcoffset() == UTC.utcoffset(queried.timestamp)
 
-    def test_unique_constraint_on_user_id_and_sync_id(
+    def test_unique_constraint_on_account_id_and_sync_id(
         self, memory_working_engine, memory_working_session
     ):
         """
-        The (user_id, sync_id) unique constraint on user_ratings must prevent
+        The (account_id, sync_id) unique constraint on user_ratings must prevent
         a second rating for the same user+track combination.
         """
         from sqlalchemy.exc import IntegrityError
@@ -350,10 +350,10 @@ class TestOperationalTablesStringSyncId:
         Session = memory_working_session
 
         with Session() as session:
-            session.add(UserRating(user_id=1, sync_id=urn, rating=3.0))
+            session.add(UserRating(account_id=1, sync_id=urn, rating=3.0))
             session.commit()
 
         with pytest.raises(IntegrityError):
             with Session() as session:
-                session.add(UserRating(user_id=1, sync_id=urn, rating=5.0))
+                session.add(UserRating(account_id=1, sync_id=urn, rating=5.0))
                 session.commit()

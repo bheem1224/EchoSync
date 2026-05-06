@@ -161,51 +161,71 @@ class MediaManagerService:
         file path to find the divergence point.
         """
         import os
-        from pathlib import Path
+        import re
 
         if not local_path or not provider_path:
             return None
 
-        # Normalize paths
-        local_parts = Path(local_path).parts
-        # provider path might be from a different OS, normalize separators
-        prov_path = provider_path.replace('\\', '/')
-        prov_parts = Path(prov_path).parts
+        def split_path(path: str) -> list[str]:
+            normalized = path.replace('\\', '/').strip()
+            if not normalized:
+                return []
 
-        # Step backwards
+            if normalized.startswith('/'):
+                parts = [p for p in normalized.split('/') if p]
+                return ['/'] + parts
+
+            drive_match = re.match(r'^([A-Za-z]:)(?:/|$)', normalized)
+            if drive_match:
+                drive = drive_match.group(1)
+                remainder = normalized[len(drive):].lstrip('/')
+                parts = [p for p in remainder.split('/') if p]
+                return [drive] + parts
+
+            return [p for p in normalized.split('/') if p]
+
+        def join_local(parts: list[str], original_path: str) -> str:
+            if not parts:
+                return ''
+
+            if parts[0] == '/':
+                return '/' + '/'.join(parts[1:]) if len(parts) > 1 else '/'
+
+            if re.match(r'^[A-Za-z]:$', parts[0]):
+                if '\\' in original_path:
+                    return '\\'.join(parts)
+                return '/'.join(parts)
+
+            return os.path.join(*parts)
+
+        def join_provider(parts: list[str]) -> str:
+            if not parts:
+                return ''
+            if parts[0] == '/':
+                return '/' + '/'.join(parts[1:]) if len(parts) > 1 else '/'
+            return '/'.join(parts)
+
+        local_parts = split_path(local_path)
+        provider_parts = split_path(provider_path)
+
         local_idx = len(local_parts) - 1
-        prov_idx = len(prov_parts) - 1
+        prov_idx = len(provider_parts) - 1
 
         while local_idx >= 0 and prov_idx >= 0:
-            if local_parts[local_idx] == prov_parts[prov_idx]:
+            if local_parts[local_idx] == provider_parts[prov_idx]:
                 local_idx -= 1
                 prov_idx -= 1
             else:
                 break
 
-        # If no common suffix is found (paths don't overlap at all)
-        if local_idx == len(local_parts) - 1 or prov_idx == len(prov_parts) - 1:
+        if local_idx == len(local_parts) - 1 or prov_idx == len(provider_parts) - 1:
             logger.warning(f"No path overlap found between local '{local_path}' and remote '{provider_path}'")
             return None
 
-        # Extract the prefixes
-        # Build local_prefix using os.path.join, but handle empty parts safely
-        if local_idx >= 0:
-            local_prefix = os.path.join(*local_parts[:local_idx + 1])
-        else:
-            local_prefix = '/'
+        local_prefix = join_local(local_parts[:local_idx + 1], local_path) if local_idx >= 0 else '/'
+        remote_prefix = join_provider(provider_parts[:prov_idx + 1]) if prov_idx >= 0 else '/'
 
-        if prov_idx >= 0:
-            # Join the provider path correctly avoiding double slashes like //path
-            prov_prefix_parts = prov_parts[:prov_idx + 1]
-            if prov_prefix_parts[0] == '/':
-                prov_prefix = '/' + '/'.join(prov_prefix_parts[1:])
-            else:
-                prov_prefix = '/'.join(prov_prefix_parts)
-        else:
-            prov_prefix = '/'
-
-        mapping = {"local": local_prefix, "remote": prov_prefix}
+        mapping = {"local": local_prefix, "remote": remote_prefix}
         logger.info(f"Deduced path mapping: {mapping}")
 
         # Save to active media server config
@@ -240,7 +260,7 @@ class MediaManagerService:
         except Exception as e:
             logger.error(f"Failed to save deduced path mapping: {e}")
 
-        return (local_prefix, prov_prefix)
+        return (local_prefix, remote_prefix)
 
     def delete_track(self, track_id: int) -> bool:
         """

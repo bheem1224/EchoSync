@@ -10,13 +10,13 @@ def create_test_app():
     app.config['TESTING'] = True
     # register blueprints manually if necessary
     from web.api_app import create_app
-    return create_app()
+    return create_app(testing=True)
 
 @pytest.fixture
 def client():
     from flask import Flask
     from web.api_app import create_app
-    app = create_app()
+    app = create_app(testing=True)
     with app.test_client() as c:
         yield c
 

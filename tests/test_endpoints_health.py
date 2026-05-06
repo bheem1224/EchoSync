@@ -6,7 +6,7 @@ from flask import Flask
 def test_all_critical_endpoints(monkeypatch):
     """Verify system endpoints respond correctly."""
     from web.api_app import create_app
-    app = create_app()
+    app = create_app(testing=True)
     
     client = app.test_client()
     

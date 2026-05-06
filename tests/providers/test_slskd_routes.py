@@ -5,7 +5,7 @@ from web.api_app import create_app
 
 
 def make_client():
-    app = create_app()
+    app = create_app(testing=True)
     return app.test_client()
 
 
