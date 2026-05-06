@@ -53,9 +53,12 @@ class ConfigDatabase:
                     CREATE TABLE IF NOT EXISTS services (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT UNIQUE NOT NULL,
+                        namespace TEXT NOT NULL,
+                        plugin_id INTEGER,
                         display_name TEXT,
                         service_type TEXT,
                         description TEXT,
+                        is_active INTEGER DEFAULT 1,
                         created_at INTEGER DEFAULT (strftime('%s','now')),
                         updated_at INTEGER DEFAULT (strftime('%s','now'))
                     )
@@ -178,6 +181,7 @@ class ConfigDatabase:
 
     # Service helpers
     def get_or_create_service_id(self, name: str) -> int:
+        # 1. Try to find existing
         import contextlib
         with contextlib.closing(self._get_connection()) as conn:
             c = conn.cursor()
@@ -185,14 +189,35 @@ class ConfigDatabase:
             row = c.fetchone()
             if row:
                 return int(row[0])
-        return self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service")
 
-    def register_service(self, name: str, display_name: str, service_type: str, description: str) -> int:
+        # 2. Register if missing
+        # Note: we use 'legacy' as default namespace for auto-registered services
+        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", namespace='legacy')
+
+        # 3. Try to find again after registration
+        with contextlib.closing(self._get_connection()) as conn:
+            c = conn.cursor()
+            c.execute("SELECT id FROM services WHERE name = ?", (name,))
+            row = c.fetchone()
+            if row:
+                return int(row[0])
+
+        logger.error(f"Failed to get or create service ID for '{name}' after registration attempt.")
+        return 0
+
+    def register_service(self, name: str, display_name: str, service_type: str, description: str, namespace: str = 'legacy', plugin_id: Optional[int] = None) -> int:
         try:
-            execute_write_sql(str(self.database_path), "INSERT OR IGNORE INTO services(name, display_name, service_type, description) VALUES(?,?,?,?)", (name, display_name, service_type, description))
-        except Exception:
-            pass
-        return self.get_or_create_service_id(name)
+            execute_write_sql(
+                str(self.database_path), 
+                "INSERT OR IGNORE INTO services(name, display_name, service_type, description, namespace, plugin_id) VALUES(?,?,?,?,?,?)", 
+                (name, display_name, service_type, description, namespace, plugin_id)
+            )
+        except Exception as e:
+            logger.error(f"Error registering service '{name}': {e}")
+        
+        # We don't call get_or_create_service_id here to avoid recursion.
+        # If the caller wants the ID, they should use get_or_create_service_id directly.
+        return 0
 
     def set_service_config(self, service_id: int, key: str, value: Any, is_sensitive: bool = False) -> bool:
         try:

@@ -44,7 +44,7 @@ def begin_auth():
     Query params: account_id (required)
     """
     from core.plugin_loader import PluginRegistry, ServiceRegistry
-    from plugins.spotify.client import SpotifyClient
+    from plugins.EchoSync.spotify.client import SpotifyClient
     if PluginRegistry.is_provider_disabled('spotify'):
         return jsonify({'error': 'Spotify provider is disabled'}), 403
     try:
@@ -77,7 +77,7 @@ def begin_auth():
         # Use account_id as state so callback knows which account to save tokens under
         state = str(account_id)
 
-        from plugins.spotify.client import CallbackBypassCacheHandler
+        from plugins.EchoSync.spotify.client import CallbackBypassCacheHandler
         sp_oauth = SpotifyOAuth(
             client_id=client_id,
             client_secret=decrypt_string(client_secret),
@@ -152,7 +152,7 @@ def oauth_callback():
             return jsonify({"error": "Spotify client_id/client_secret not configured"}), 400
 
         # Use ConfigCacheHandler so tokens are persisted via StorageService
-        from plugins.spotify.client import CallbackBypassCacheHandler
+        from plugins.EchoSync.spotify.client import CallbackBypassCacheHandler
         auth_manager = SpotifyOAuth(
             client_id=client_id,
             client_secret=decrypt_string(client_secret),

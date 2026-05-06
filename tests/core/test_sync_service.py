@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from services.sync_service import PlaylistSyncService
-from plugins.spotify.client import SpotifyClient
+from plugins.EchoSync.spotify.client import SpotifyClient
 
 
 class FakeSpotifyClient:
