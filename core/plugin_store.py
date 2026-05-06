@@ -619,6 +619,8 @@ class PluginStore:
         db_config = get_config_database()
         with db_config._get_connection() as conn:
             c = conn.cursor()
+            # Ensure table exists before querying
+            c.execute("CREATE TABLE IF NOT EXISTS config_kvs (namespace TEXT, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(namespace, key))")
             # Clean first to avoid duplicates if re-forking
             c.execute("DELETE FROM config_kvs WHERE namespace=?", (beta_id,))
             c.execute("""
@@ -669,6 +671,8 @@ class PluginStore:
         db_config = get_config_database()
         with db_config._get_connection() as conn:
             c = conn.cursor()
+            # Ensure table exists before querying
+            c.execute("CREATE TABLE IF NOT EXISTS config_kvs (namespace TEXT, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(namespace, key))")
             # Cleanup old archive
             c.execute("DELETE FROM config_kvs WHERE namespace=?", (archive_id,))
             

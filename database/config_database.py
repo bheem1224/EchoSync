@@ -163,6 +163,19 @@ class ConfigDatabase:
                     )
                 """)
 
+                # Config KVS (Namespace isolation for plugins)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS config_kvs (
+                        namespace TEXT NOT NULL,
+                        key TEXT NOT NULL,
+                        value TEXT,
+                        is_sensitive INTEGER DEFAULT 0,
+                        created_at INTEGER DEFAULT (strftime('%s','now')),
+                        updated_at INTEGER DEFAULT (strftime('%s','now')),
+                        PRIMARY KEY(namespace, key)
+                    )
+                """)
+
                 # Indexes
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)")
@@ -908,12 +921,16 @@ class ConfigDatabase:
             logger.error(f"Error cleaning expired plugin snapshots: {e}")
 
 
+import threading
 _config_db: Optional[ConfigDatabase] = None
+_config_db_lock = threading.Lock()
 
 def get_config_database() -> ConfigDatabase:
     global _config_db
     if _config_db is None:
-        _config_db = ConfigDatabase()
+        with _config_db_lock:
+            if _config_db is None:
+                _config_db = ConfigDatabase()
     return _config_db
 
 def close_config_database() -> None:

@@ -1,6 +1,5 @@
 """Tidal provider routes."""
 from flask import Blueprint, request, jsonify
-from core.file_handling.storage import get_storage_service
 from core.tiered_logger import get_logger
 
 logger = get_logger("tidal_routes")
@@ -10,23 +9,28 @@ bp = Blueprint("tidal_routes", __name__, url_prefix="/api/plugins/tidal")
 @bp.get('')
 def list_accounts():
     """List all Tidal accounts."""
-    # short‑circuit if provider disabled
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
-    if PluginRegistry.is_provider_disabled('tidal'):
-        # return empty result rather than error
+    from core.plugin_loader import PluginRegistry
+    # Use the namespaced ID
+    plugin_id = 'EchoSync/tidal'
+    
+    if PluginRegistry.is_provider_disabled(plugin_id) or PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'accounts': [], 'redirect_uri': ''}), 200
 
     try:
-        storage = get_storage_service()
-        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
-        
-        db_accounts = storage.list_accounts('tidal')
+        from core.plugin_loader import get_plugin
+        plugin = get_plugin(plugin_id)
+        if not plugin:
+            return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
+            
+        # Use the plugin's accounts SDK facade
+        db_accounts = plugin.accounts.get_all()
         accounts = []
         
         for a in db_accounts:
-            # Load per-account credentials
-            client_id = storage.get_account_config(a.get('id', 0), 'client_id')
-            client_secret_present = bool(storage.get_account_config(a.get('id', 0), 'client_secret'))
+            # Load per-account credentials via the accounts SDK
+            # The SDK handles the mapping to account_metadata
+            client_id = plugin.accounts.get_metadata(a['id'], 'client_id')
+            client_secret_present = bool(plugin.accounts.get_metadata(a['id'], 'client_secret'))
             
             normalized = {
                 'id': a.get('id'),
@@ -40,8 +44,8 @@ def list_accounts():
             }
             accounts.append(normalized)
         
-        # Get global redirect URI
-        redirect_uri = storage.get_service_config('tidal', 'redirect_uri') or 'http://127.0.0.1:8000/api/tidal/callback'
+        # Get global redirect URI from config facade
+        redirect_uri = plugin.config.get('redirect_uri') or 'http://127.0.0.1:8000/api/tidal/callback'
         
         return jsonify({
             'accounts': accounts,
@@ -58,8 +62,9 @@ def create_account():
     Create a new Tidal account with per-account credentials.
     Body: { account_name, client_id, client_secret }
     """
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
-    if PluginRegistry.is_provider_disabled('tidal'):
+    from core.plugin_loader import PluginRegistry
+    plugin_id = 'EchoSync/tidal'
+    if PluginRegistry.is_provider_disabled(plugin_id) or PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         payload = request.get_json(force=True) or {}
@@ -72,22 +77,23 @@ def create_account():
         if not client_id or not client_secret:
             return jsonify({'error': 'client_id and client_secret are required'}), 400
         
-        storage = get_storage_service()
-        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
+        from core.plugin_loader import get_plugin
+        plugin = get_plugin(plugin_id)
+        if not plugin:
+            return jsonify({'error': 'Plugin instance not found'}), 500
         
-        # Create account in encrypted config.db
-        account_id = storage.ensure_account('tidal', account_name=account_name, display_name=account_name)
+        # Create account in encrypted config.db via SDK
+        account_id = plugin.accounts.ensure_account(account_name=account_name, display_name=account_name)
         if not account_id:
             return jsonify({'error': 'Failed to create account'}), 500
         
-        # Store per-account credentials
-        storage.set_account_config(account_id, 'client_id', client_id, is_sensitive=False)
-        storage.set_account_config(account_id, 'client_secret', client_secret, is_sensitive=True)
+        # Store per-account credentials via SDK
+        plugin.accounts.set_metadata(account_id, 'client_id', client_id, is_sensitive=False)
+        plugin.accounts.set_metadata(account_id, 'client_secret', client_secret, is_sensitive=True)
         
-        # Store client_id and client_secret in service_config
-        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
-        storage.set_service_config('tidal', 'client_id', client_id, is_sensitive=False)
-        storage.set_service_config('tidal', 'client_secret', client_secret, is_sensitive=True)
+        # Also sync to global config if this is the first one
+        plugin.config.set('client_id', client_id)
+        plugin.secrets.set('client_secret', client_secret)
         
         logger.info(f"Created Tidal account {account_id} with credentials")
         
@@ -110,20 +116,25 @@ def create_account():
 @bp.get('/<int:account_id>')
 def get_account(account_id):
     """Get a specific Tidal account with credentials."""
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
-    if PluginRegistry.is_provider_disabled('tidal'):
+    from core.plugin_loader import PluginRegistry
+    plugin_id = 'EchoSync/tidal'
+    if PluginRegistry.is_provider_disabled(plugin_id) or PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
-        storage = get_storage_service()
-        accounts = storage.list_accounts('tidal')
+        from core.plugin_loader import get_plugin
+        plugin = get_plugin(plugin_id)
+        if not plugin:
+            return jsonify({'error': 'Plugin not found'}), 404
+            
+        accounts = plugin.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
             return jsonify({'error': 'Account not found'}), 404
         
-        # Load per-account credentials
-        client_id = storage.get_account_config(account_id, 'client_id')
-        client_secret = storage.get_account_config(account_id, 'client_secret')
+        # Load per-account credentials via SDK
+        client_id = plugin.accounts.get_metadata(account_id, 'client_id')
+        client_secret = plugin.accounts.get_metadata(account_id, 'client_secret')
         
         return jsonify({
             'account': {
@@ -274,9 +285,12 @@ def set_redirect_uri():
         if not redirect_uri:
             return jsonify({'error': 'redirect_uri is required'}), 400
         
-        storage = get_storage_service()
-        storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
-        storage.set_service_config('tidal', 'redirect_uri', redirect_uri, is_sensitive=False)
+        from core.plugin_loader import get_plugin
+        plugin = get_plugin('EchoSync/tidal')
+        if not plugin:
+            return jsonify({'error': 'Plugin not found'}), 404
+            
+        plugin.config.set('redirect_uri', redirect_uri)
         
         return jsonify({'status': 'ok', 'redirect_uri': redirect_uri})
     except Exception as e:

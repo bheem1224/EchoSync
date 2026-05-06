@@ -11,10 +11,10 @@ from core.tiered_logger import get_logger
 logger = get_logger("provider.acoustid")
 
 class AcoustIDProvider(PluginBase):
-    name = "acoustid"
+    name = "EchoSync.acoustid"
     service_type = "metadata"
     capabilities = ProviderCapabilities(
-        name='acoustid',
+        name='EchoSync.acoustid',
         supports_playlists=PlaylistSupport.NONE,
         search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
         metadata=MetadataRichness.LOW,
@@ -36,36 +36,26 @@ class AcoustIDProvider(PluginBase):
         self.http.rate = RateLimitConfig(requests_per_second=1.0)
 
     def _get_api_key(self) -> Optional[str]:
-        """Get AcoustID API key from config database with proper decryption."""
-        try:
-            storage = get_storage_service()
-            # get_service_config automatically handles decryption for sensitive keys
-            api_key = storage.get_service_config(self.name, 'api_key')
-            if api_key:
-                api_key = str(api_key).strip()
-                logger.debug(f"AcoustID API key loaded from storage (length={len(api_key)})")
-                return api_key or None
-        except Exception as e:
-            logger.debug(f"Could not load AcoustID API key from storage: {e}")
+        """Get AcoustID API key from namespaced config with proper decryption."""
+        # Check namespaced config/secrets first
+        api_key = self.secrets.get('api_key') or self.config.get('api_key')
         
-        # Fallback to direct config get
+        if api_key:
+            api_key = str(api_key).strip()
+            logger.debug(f"AcoustID API key loaded from namespaced storage (length={len(api_key)})")
+            return api_key or None
+
+        # Fallback to global config (legacy)
         api_key = self.sdk.config.get('acoustid.api_key')
         if api_key:
             api_key = str(api_key).strip()
-            logger.debug(f"AcoustID API key loaded from config.json (length={len(api_key)})")
+            logger.debug(f"AcoustID API key loaded from global config (length={len(api_key)})")
         return api_key or None
 
     def _get_submit_keys(self) -> tuple[Optional[str], Optional[str]]:
         """Get AcoustID client and user API keys for submission endpoints."""
-        client_key: Optional[str] = None
-        user_key: Optional[str] = None
-
-        try:
-            storage = get_storage_service()
-            client_key = storage.get_service_config(self.name, 'api_key')
-            user_key = storage.get_service_config(self.name, 'user_api_key')
-        except Exception as e:
-            logger.debug(f"Could not load AcoustID submission keys from storage service: {e}")
+        client_key = self.secrets.get('api_key') or self.config.get('api_key')
+        user_key = self.secrets.get('user_api_key') or self.config.get('user_api_key')
 
         client_key = str(client_key).strip() if client_key else None
         user_key = str(user_key).strip() if user_key else None
@@ -192,14 +182,9 @@ class AcoustIDProvider(PluginBase):
             return False
 
         # Opt-in check: only submit if auto_contribute is enabled in settings
-        try:
-            storage = get_storage_service()
-            auto_contribute = storage.get_service_config(self.name, 'auto_contribute')
-            if not (auto_contribute == 'true' or auto_contribute is True):
-                logger.debug("Skipping AcoustID submission: auto_contribute is disabled")
-                return False
-        except Exception as e:
-            logger.debug(f"Could not verify AcoustID auto_contribute flag: {e}")
+        auto_contribute = self.config.get('auto_contribute')
+        if not (auto_contribute == 'true' or auto_contribute is True):
+            logger.debug("Skipping AcoustID submission: auto_contribute is disabled")
             return False
 
         if not fingerprint or not str(fingerprint).strip() or not mbid or not str(mbid).strip():

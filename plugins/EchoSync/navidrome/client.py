@@ -151,7 +151,7 @@ class NavidromeTrack:
 from core.plugin_SDK import MediaServerProvider
 
 class NavidromeClient(MediaServerProvider):
-    name = "navidrome"
+    name = "EchoSync.navidrome"
     capabilities = ProviderCapabilities(
         name='navidrome',
         supports_playlists=PlaylistSupport.READ_WRITE,
@@ -289,19 +289,22 @@ class NavidromeClient(MediaServerProvider):
 
     def _setup_client(self):
         """Setup Navidrome client configuration"""
-        config = self.sdk.config.get_all()
+        # Retrieve Navidrome connection details from namespaced config facade
+        base_url = self.config.get('base_url')
+        username = self.config.get('username')
+        password = self.config.get('password')
 
-        if not config.get('base_url'):
+        if not base_url:
             logger.warning("Navidrome server URL not configured")
             return
 
-        if not config.get('username') or not config.get('password'):
+        if not username or not password:
             logger.warning("Navidrome username/password not configured")
             return
 
-        self.base_url = config['base_url'].rstrip('/')
-        self.username = config['username']
-        self.password = config['password']
+        self.base_url = base_url.rstrip('/')
+        self.username = username
+        self.password = password
 
         try:
             # Test connection with ping

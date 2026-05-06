@@ -6,13 +6,13 @@ from core.matching_engine.echo_sync_track import EchosyncTrack
 
 
 class LocalMetadataProvider(PluginBase):
-    name = 'local_metadata'
+    name = 'EchoSync.local_metadata'
     category = 'provider'
     supports_downloads = False
     enabled = True
 
     capabilities = ProviderCapabilities(
-        name='local_metadata',
+        name='EchoSync.local_metadata',
         supports_playlists=PlaylistSupport.NONE,
         search=SearchCapabilities(tracks=True),
         metadata=MetadataRichness.MEDIUM,
@@ -30,8 +30,7 @@ class LocalMetadataProvider(PluginBase):
         quality_profile: Optional[Dict[str, Any]] = None,
     ) -> List[EchosyncTrack]:
         """Search the local MusicDatabase by title (and optionally artist)."""
-        from core.file_handling.storage import get_storage_service
-        db = get_storage_service().get_music_database()
+        db = self.sdk.storage.get_music_database()
         # Support simple "artist - title" compound queries
         artist: Optional[str] = None
         title = query
@@ -43,10 +42,9 @@ class LocalMetadataProvider(PluginBase):
 
     def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         """Fetch a single track from the local MusicDatabase by its integer ID."""
-        from core.file_handling.storage import get_storage_service
         from sqlalchemy.orm import joinedload
 
-        db = get_storage_service().get_music_database()
+        db = self.sdk.storage.get_music_database()
         Track = self.models.Track
         
         try:
@@ -76,7 +74,7 @@ class LocalMetadataProvider(PluginBase):
                 isrc=t.isrc,
                 musicbrainz_id=t.musicbrainz_id,
                 provider_id=str(t.id),
-                source="local_metadata",
+                source="EchoSync.local_metadata",
             )
 
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:

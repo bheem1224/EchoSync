@@ -1,5 +1,5 @@
 {
-  "id": "core.tidal",
+  "id": "EchoSync.tidal",
   "name": "Tidal",
   "description": "Official EchoSync provider for tidal",
   "version": "2.4.2",

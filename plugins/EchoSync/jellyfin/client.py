@@ -148,7 +148,7 @@ class JellyfinTrack:
 from core.plugin_SDK import MediaServerProvider
 
 class JellyfinClient(MediaServerProvider):
-    name = "jellyfin"
+    name = "EchoSync.jellyfin"
     capabilities = ProviderCapabilities(
         name='jellyfin',
         supports_playlists=PlaylistSupport.READ_WRITE,
@@ -365,19 +365,21 @@ class JellyfinClient(MediaServerProvider):
     
     def _setup_client(self):
         """Setup Jellyfin client configuration"""
-        config = self.sdk.config.get_all()
-        
-        if not config.get('base_url'):
+        # Retrieve Jellyfin connection details from namespaced config facade
+        base_url = self.config.get('base_url')
+        api_key = self.config.get('api_key')
+
+        if not base_url:
             logger.warning("Jellyfin server URL not configured")
             return
-        
-        if not config.get('api_key'):
-            logger.warning("Jellyfin API key not configured") 
+
+        if not api_key:
+            logger.warning("Jellyfin API key not configured")
             return
-            
-        # Coerce to string in case the config manager is mocked in tests
-        self.base_url = str(config.get('base_url', '')).rstrip('/') if config.get('base_url') else None
-        self.api_key = config.get('api_key')
+
+        # Coerce to string
+        self.base_url = str(base_url).rstrip('/')
+        self.api_key = api_key
         
         try:
             # Test connection and get system info

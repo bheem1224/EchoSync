@@ -1,5 +1,5 @@
 {
-  "id": "core.spotify",
+  "id": "EchoSync.spotify",
   "name": "Spotify",
   "description": "Official EchoSync provider for spotify",
   "version": "2.4.2",

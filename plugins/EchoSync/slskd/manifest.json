@@ -1,5 +1,5 @@
 {
-  "id": "core.slskd",
+  "id": "EchoSync.slskd",
   "name": "Slskd",
   "description": "Official EchoSync provider for slskd",
   "version": "2.4.2",

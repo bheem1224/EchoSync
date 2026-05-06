@@ -1,5 +1,5 @@
 {
-  "id": "core.plex",
+  "id": "EchoSync.plex",
   "name": "Plex",
   "description": "Official EchoSync provider for plex",
   "version": "2.4.2",

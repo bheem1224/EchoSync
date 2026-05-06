@@ -9,8 +9,9 @@ logger = get_logger("listenbrainz_client")
 
 class ListenBrainzClient(PluginBase):
     """Client for interacting with ListenBrainz API"""
+    name = "EchoSync.listenbrainz"
     capabilities = ProviderCapabilities(
-        name='listenbrainz',
+        name='EchoSync.listenbrainz',
         supports_playlists=PlaylistSupport.READ,
         search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=True),
         metadata=MetadataRichness.MEDIUM,
@@ -25,13 +26,14 @@ class ListenBrainzClient(PluginBase):
     def __init__(self):
         super().__init__()
         self.base_url = "https://api.listenbrainz.org/1"
-        self.token = self.kvs.get("token", "", is_sensitive=True)
+        # Use namespaced secrets facade for sensitive token
+        self.token = self.secrets.get("token") or self.config.get("token")
         self.username = None
 
-        # Create RequestManager with rate limiting
-        pass # Let PluginBase handle HTTP,
-            rate=RateLimitConfig(requests_per_second=2.0)
-        )
+        # Configure rate limit: 2 requests/second per ListenBrainz API guidelines
+        from core.request_manager import RateLimitConfig
+        self.http.rate = RateLimitConfig(requests_per_second=2.0)
+        
         self.http._session.headers.update({
             'User-Agent': 'Echosync/1.0'
         })

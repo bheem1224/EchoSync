@@ -36,11 +36,11 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
 class PlexClient(PluginBase):
     """Plex music provider - streams music from Plex media server."""
     
-    name = "plex"
+    name = "EchoSync.plex"
     category = "provider"
     supports_downloads = False
     capabilities = ProviderCapabilities(
-        name='plex',
+        name='EchoSync.plex',
         supports_playlists=PlaylistSupport.READ_WRITE,
         search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
         metadata=MetadataRichness.HIGH,
@@ -91,21 +91,19 @@ class PlexClient(PluginBase):
         # Auto-detect active account if not provided
         if account_id is None:
             try:
-                from core.file_handling.storage import get_storage_service
-                storage = get_storage_service()
-                accounts = storage.list_accounts('plex')
+                accounts = self.accounts.get_all()
                 if accounts:
                     token_backed_account = next(
                         (
                             account for account in accounts
-                            if account.get('id') and storage.get_account_token(account.get('id'))
+                            if account.get('id') and self.accounts.get_token(account.get('id'))
                         ),
                         None,
                     )
                     account_id = (token_backed_account or accounts[0]).get('id')
                     logger.info(f"No Plex account explicitly requested, defaulting to account: {account_id}")
             except Exception as e:
-                logger.warning(f"Failed to auto-detect Plex account: {e}")
+                logger.warning(f"Failed to auto-detect Plex account: {account_id if account_id else 'None'}: {e}")
 
         self.account_id = account_id
         self._register_health_check()
@@ -144,21 +142,12 @@ class PlexClient(PluginBase):
         if not self.account_id:
             return False
 
-        from core.file_handling.storage import get_storage_service
-
-        storage = get_storage_service()
-
-        # Check token existence (Secure SQLite DB)
-        token_data = storage.get_account_token(self.account_id)
+        # Check token existence via SDK facade
+        token_data = self.accounts.get_token(self.account_id)
         token = token_data.get('access_token') if token_data else None
 
-        # Check base_url existence from config.json (Hybrid approach)
-        plex_config = {}
-        base_url = plex_config.get('base_url') or plex_config.get('server_url')
-
-        # Fallback to older config format just in case
-        if not base_url:
-            base_url = getattr(self, 'kvs', None) and (self.kvs.get('base_url') or self.kvs.get('server_url'))
+        # Check base_url existence from config facade
+        base_url = self.config.get('base_url') or self.config.get('server_url')
 
         return bool(base_url and token)
     
@@ -317,10 +306,8 @@ class PlexClient(PluginBase):
 
     def delete_track(self, rating_key: str) -> bool:
         """Delete a track from Plex server by ratingKey."""
-        from core.file_handling.storage import get_storage_service
-        storage = get_storage_service()
-        base_url = storage.get_service_config('plex', 'base_url') or storage.get_service_config('plex', 'server_url')
-        token = storage.get_service_config('plex', 'token')
+        base_url = self.config.get('base_url') or self.config.get('server_url')
+        token = self.secrets.get('token') or self.accounts.get_metadata(self.account_id, 'token')
 
         if not base_url or not token:
             logger.error("Plex not configured, cannot delete track")

@@ -30,9 +30,9 @@ class Playlist:
 
 class TidalClient(SyncServiceProvider):
     """Tidal API client for fetching user playlists and track data"""
-    name = "tidal"
+    name = "EchoSync.tidal"
     capabilities = ProviderCapabilities(
-        name='tidal',
+        name='EchoSync.tidal',
         supports_playlists=PlaylistSupport.READ,
         search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
         metadata=MetadataRichness.HIGH,
@@ -74,9 +74,8 @@ class TidalClient(SyncServiceProvider):
         self.token_url = "https://auth.tidal.com/v1/oauth2/token"
         self.redirect_uri = "http://127.0.0.1:8008/tidal/callback"
         # Initialize centralized RequestManager for Tidal (2 requests/second rate limit)
-        pass # Let PluginBase handle HTTP,
-            rate=RateLimitConfig(requests_per_second=2.0)
-        )
+        self.rate_limit = 2.0
+        # PluginBase handles self.http initialization based on self.rate_limit
 
         # Capability flags
         self.auth_server = None
@@ -288,41 +287,31 @@ class TidalClient(SyncServiceProvider):
         return bool(self.client_id and self.client_secret and self.redirect_uri)
     
     def _load_config(self):
-        """Load Tidal configuration from database using centralized self.sdk.config helper"""
+        """Load Tidal configuration from database using standardized SDK facades"""
         try:
-            from core.file_handling.storage import get_storage_service
-            storage = get_storage_service()
-            storage.ensure_service('tidal', display_name='Tidal', service_type='streaming', description='Tidal music streaming service')
-            
-            # Ensure client_id and client_secret are retrieved from service_config
-            self.client_id = storage.get_service_config('tidal', 'client_id') or None
-            self.client_secret = storage.get_service_config('tidal', 'client_secret') or None
-
-            # get_service_config in StorageService returns decrypted strings
-            if self.client_secret:
-                pass 
+            # Use self.config for service-level settings
+            self.client_id = self.config.get('client_id')
+            self.client_secret = self.secrets.get('client_secret')
 
             # Log a warning if they are missing
             if not self.client_id or not self.client_secret:
-                logger.warning("Tidal client ID or secret not configured in service_config table")
+                logger.warning("Tidal client ID or secret not configured in database")
                 return False
-            logger.info(f"Loaded Tidal config from config.db with client ID: {self.client_id[:8]}...")
+            logger.info(f"Loaded Tidal config from database with client ID: {self.client_id[:8]}...")
             return True
         except Exception as e:
             logger.error(f"Failed to load Tidal configuration: {e}")
             return False
     
     def _load_saved_tokens(self):
-        """Load saved tokens from encrypted database and refresh if needed"""
+        """Load saved tokens from encrypted database using standardized SDK facades"""
         try:
             if not self.account_id:
                 logger.warning("No account_id specified for Tidal client")
                 return
-            from core.file_handling.storage import get_storage_service
-            storage = get_storage_service()
-            token_data = storage.get_account_token(int(self.account_id))
+            
+            token_data = self.sdk.accounts.get_token(int(self.account_id))
             if token_data:
-                # StorageService.get_account_token returns decrypted tokens
                 self.access_token = token_data.get('access_token')
                 self.refresh_token = token_data.get('refresh_token')
                 self.token_expires_at = token_data.get('expires_at', 0)

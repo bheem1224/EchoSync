@@ -13,13 +13,13 @@ from core.tiered_logger import get_logger
 logger = get_logger("local_server_provider")
 
 class LocalServerProvider(PluginBase):
-    name = 'local_server'
+    name = 'EchoSync.local_server'
     category = 'provider'
     supports_downloads = False
     enabled = True
 
     capabilities = ProviderCapabilities(
-        name='local_server',
+        name='EchoSync.local_server',
         supports_playlists=PlaylistSupport.NONE,
         search=SearchCapabilities(tracks=False),
         metadata=MetadataRichness.LOW,

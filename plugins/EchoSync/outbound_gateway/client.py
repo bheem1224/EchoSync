@@ -9,7 +9,7 @@ class OutboundGatewayProvider(PluginBase):
     EchosyncTrack models into standard, external-friendly JSON schemas for
     the upcoming v2.4/v2.5 API Gateway.
     """
-    name = "outbound_gateway"
+    name = "EchoSync.outbound_gateway"
     category = "provider"
     supports_downloads = False
     enabled = True

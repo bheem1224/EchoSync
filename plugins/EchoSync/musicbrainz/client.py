@@ -32,11 +32,11 @@ logger = get_logger("provider.musicbrainz")
 class MusicBrainzClient(PluginBase):
     """Dedicated metadata provider used by discovery and enrichment flows."""
 
-    name = "musicbrainz"
+    name = "EchoSync.musicbrainz"
     supports_isrc_lookup = True
     service_type = "metadata"
     capabilities = ProviderCapabilities(
-        name="musicbrainz",
+        name="EchoSync.musicbrainz",
         supports_playlists=PlaylistSupport.NONE,
         search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
         metadata=MetadataRichness.HIGH,
@@ -58,7 +58,7 @@ class MusicBrainzClient(PluginBase):
                 "Accept": "application/json",
             }
         )
-        self.api_base = _safe_getattr(self, "get_config", lambda x: None)("api_base_url") or "https://musicbrainz.org/ws/2"
+        self.api_base = self.config.get("api_base_url") or "https://musicbrainz.org/ws/2"
         self._search_queue = []
         self._batch_task = None
         self._lock = asyncio.Lock()
@@ -281,7 +281,7 @@ class MusicBrainzClient(PluginBase):
         lookup_str = f"{artist}||{title}".lower()
         lookup_hash = hashlib.sha256(lookup_str.encode('utf-8')).hexdigest()
 
-        storage = get_storage_service()
+        storage = self.sdk.storage
         working_db = storage.get_working_database()
         with working_db.session_scope() as session:
             cached = session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first()
@@ -506,7 +506,7 @@ class MusicBrainzClient(PluginBase):
 
                 # Cache successful results
                 if best_matches:
-                        storage = get_storage_service()
+                        storage = self.sdk.storage
                         working_db = storage.get_working_database()
                         with working_db.session_scope() as session:
                             # Avoid duplicates
@@ -782,8 +782,7 @@ class MusicBrainzClient(PluginBase):
         client falls back to anonymous / read-only API access.
         """
         try:
-            storage = get_storage_service()
-            accounts = storage.list_accounts("musicbrainz")
+            accounts = self.accounts.get_all()
             if not accounts:
                 return None
 
@@ -798,6 +797,8 @@ class MusicBrainzClient(PluginBase):
 
             if not target:
                 return None
+
+            return self.accounts.get_token(target.get("id"))
 
             # get_account_token in StorageService handles database access safely
             token_row = storage.get_account_token(target["id"])

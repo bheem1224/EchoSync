@@ -158,7 +158,7 @@ class SlskdProvider(DownloaderProvider):
     Stateless, high-efficiency API wrapper for Slskd.
     Follows "Dumb Executor" pattern - no orchestration logic.
     """
-    name = "slskd"
+    name = "EchoSync.slskd"
     supports_downloads = True
     supports_pre_filtering = True
     rate_limit = 5.0 # High throughput allowed
@@ -231,19 +231,16 @@ class SlskdProvider(DownloaderProvider):
         register_health_check_job("slskd_health_check", slskd_health_check, interval_seconds=300)
 
     def _setup_client(self):
-        from core.file_handling.storage import get_storage_service
-        storage = get_storage_service()
-        
-        slskd_url = storage.get_service_config('soulseek', 'slskd_url') or storage.get_service_config('soulseek', 'server_url')
-        api_key = storage.get_service_config('soulseek', 'api_key') or ''
+        # Retrieve Slskd connection details from namespaced config facade
+        slskd_url = self.config.get('slskd_url') or self.config.get('server_url')
+        api_key = self.config.get('api_key') or ''
 
-        # Fallback: if URL isn't stored in config DB (e.g., saved only to config.json via config_manager),
-        # read it from config_manager so the provider can initialize when UI saved the URL there.
+        # Fallback: if URL isn't stored in namespaced config DB, check global config
         if not slskd_url:
             try:
                 slskd_url = self.sdk.config.get('soulseek.slskd_url', '')
                 if slskd_url:
-                    logger.debug("Using slskd_url from config_manager as fallback")
+                    logger.debug("Using slskd_url from global config as fallback")
             except Exception:
                 slskd_url = None
 

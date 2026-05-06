@@ -25,13 +25,16 @@ except Exception:
     LrcLibAPI = None
 
 
-class LRCLibClient:
+from core.plugin_SDK import PluginBase
+
+class LRCLibClient(PluginBase):
     """
     LRClib API client for fetching synchronized lyrics.
     Creates .lrc sidecar files during post-processing.
     """
+    name = "EchoSync.lrclib"
     capabilities = ProviderCapabilities(
-        name='lrclib',
+        name='EchoSync.lrclib',
         supports_playlists=PlaylistSupport.NONE,
         search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
         metadata=MetadataRichness.LOW,
@@ -44,8 +47,36 @@ class LRCLibClient:
     )
 
     def __init__(self):
+        super().__init__()
         self.api = None
         self._init_api()
+
+    def authenticate(self, **kwargs) -> bool:
+        return True
+
+    def search(self, query: str, type: str = "track", limit: int = 10) -> list:
+        return []
+
+    def get_track(self, track_id: str) -> Any:
+        return None
+
+    def get_album(self, album_id: str) -> Any:
+        return None
+
+    def get_artist(self, artist_id: str) -> Any:
+        return None
+
+    def get_user_playlists(self, user_id: Optional[str] = None) -> list:
+        return []
+
+    def get_playlist_tracks(self, playlist_id: str) -> list:
+        return []
+
+    def is_configured(self) -> bool:
+        return self.api is not None
+
+    def get_logo_url(self) -> str:
+        return "https://lrclib.net/logo.png"
 
     def _init_api(self):
         """Initialize LRClib API with graceful fallback"""

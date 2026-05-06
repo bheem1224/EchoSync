@@ -1,5 +1,5 @@
 {
-  "id": "core.jellyfin",
+  "id": "EchoSync.jellyfin",
   "name": "Jellyfin",
   "description": "Official EchoSync provider for jellyfin",
   "version": "2.4.2",

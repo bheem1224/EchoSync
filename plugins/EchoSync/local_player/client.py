@@ -5,7 +5,7 @@ from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
 class LocalPlayerProvider(PluginBase):
-    name = 'local_player'
+    name = 'EchoSync.local_player'
     category = 'provider'
     supports_downloads = False
     enabled = True
