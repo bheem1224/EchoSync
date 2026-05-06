@@ -16,7 +16,6 @@ import asyncio
 import logging
 from typing import Any, Iterable
 
-from core.settings import config_manager
 from core.tiered_logger import setup_logging, get_logger
 from services.download_manager import get_download_manager
 from services.library_watcher import get_library_watcher
@@ -48,106 +47,56 @@ async def start_services() -> None:
     """
     logger.info("Starting backend services...")
 
-    disabled_providers = config_manager.get_disabled_providers()
+    from core.plugin_loader import PluginRegistry
 
-    # Initialize provider clients (each registers its own health check)
-    spotify_client = None
-    plex_client = None
-    jellyfin_client = None
-    navidrome_client = None
-    soulseek_client = None
+    active_clients = []
 
-    # Spotify
-    if "spotify" not in disabled_providers:
-        creds = config_manager.get_spotify_config()
-        # Also check active account or global creds
-        active_acc = config_manager.get_active_spotify_account()
-        if (creds.get("client_id") and creds.get("client_secret")) or active_acc:
-            try:
-                from plugins.spotify.client import SpotifyClient
-                spotify_client = SpotifyClient()
-                logger.info("Spotify client started")
-            except Exception as e:
-                logger.error(f"Failed to start Spotify client: {e}")
-        else:
-            logger.debug("Spotify not configured, skipping")
-    else:
-        logger.info("Spotify is disabled")
+    # Initialize Sync Services
+    sync_services = PluginRegistry.get_active_services_by_type('sync')
+    for service_ns in sync_services:
+        try:
+            client = PluginRegistry.create_instance(service_ns)
+            active_clients.append(client)
+            logger.info(f"Started sync plugin: {service_ns}")
+        except Exception as e:
+            logger.error(f"Failed to start sync plugin {service_ns}: {e}")
 
-    # Plex
-    if "plex" not in disabled_providers:
-        from database.config_database import get_config_database
-        config_db = get_config_database()
-        plex_id = config_db.get_or_create_service_id('plex')
-        plex_url = config_db.get_service_config(plex_id, 'base_url') or config_db.get_service_config(plex_id, 'server_url')
-        plex_token = config_db.get_service_config(plex_id, 'token')
+    # Initialize Media Server Services
+    media_services = PluginRegistry.get_active_services_by_type('media_server')
+    for service_ns in media_services:
+        try:
+            client = PluginRegistry.create_instance(service_ns)
+            active_clients.append(client)
+            logger.info(f"Started media server plugin: {service_ns}")
+        except Exception as e:
+            logger.error(f"Failed to start media server plugin {service_ns}: {e}")
 
-        if plex_url and plex_token:
-            try:
-                from plugins.plex.client import PlexClient
-                plex_client = PlexClient()
-                logger.info("Plex client started")
-            except Exception as e:
-                logger.error(f"Failed to start Plex client: {e}")
-        else:
-            logger.debug("Plex not configured, skipping")
-    else:
-        logger.info("Plex is disabled")
+    # Initialize Downloader Services
+    download_services = PluginRegistry.get_active_services_by_type('download')
+    for service_ns in download_services:
+        try:
+            client = PluginRegistry.create_instance(service_ns)
+            active_clients.append(client)
+            logger.info(f"Started download plugin: {service_ns}")
+        except Exception as e:
+            logger.error(f"Failed to start download plugin {service_ns}: {e}")
 
-    # Jellyfin
-    if "jellyfin" not in disabled_providers:
-        conf = config_manager.get_jellyfin_config()
-        if conf.get("base_url") and conf.get("api_key"):
-            try:
-                from plugins.jellyfin.client import JellyfinClient
-                jellyfin_client = JellyfinClient()
-                logger.info("Jellyfin client started")
-            except Exception as e:
-                logger.error(f"Failed to start Jellyfin client: {e}")
-        else:
-            logger.debug("Jellyfin not configured, skipping")
-    else:
-        logger.info("Jellyfin is disabled")
+    # Initialize other active services
+    metadata_services = PluginRegistry.get_active_services_by_type('metadata')
+    for service_ns in metadata_services:
+        try:
+            client = PluginRegistry.create_instance(service_ns)
+            active_clients.append(client)
+            logger.info(f"Started metadata plugin: {service_ns}")
+        except Exception as e:
+            logger.error(f"Failed to start metadata plugin {service_ns}: {e}")
 
-    # Navidrome
-    if "navidrome" not in disabled_providers:
-        conf = config_manager.get_navidrome_config()
-        if conf.get("base_url") and conf.get("username"):
-            try:
-                from plugins.navidrome.client import NavidromeClient
-                navidrome_client = NavidromeClient()
-                logger.info("Navidrome client started")
-            except Exception as e:
-                logger.error(f"Failed to start Navidrome client: {e}")
-        else:
-            logger.debug("Navidrome not configured, skipping")
-    else:
-        logger.info("Navidrome is disabled")
-
-    # Slskd (Soulseek)
-    if "soulseek" not in disabled_providers and "slskd" not in disabled_providers:
-        from database.config_database import get_config_database
-        config_db = get_config_database()
-        slskd_id = config_db.get_or_create_service_id('soulseek')
-        slskd_url = config_db.get_service_config(slskd_id, 'slskd_url') or config_db.get_service_config(slskd_id, 'server_url')
-        api_key = config_db.get_service_config(slskd_id, 'api_key')
-
-        if slskd_url and api_key:
-            try:
-                from plugins.slskd.client import SlskdProvider
-                soulseek_client = SlskdProvider()
-                logger.info("Slskd client started")
-            except Exception as e:
-                logger.error(f"Failed to start Slskd client: {e}")
-        else:
-            logger.debug("Slskd not configured, skipping")
-    else:
-        logger.info("Soulseek/Slskd is disabled")
-    
     logger.info("Provider clients initialization complete")
 
     # Start Download Manager only if explicitly enabled (default: off)
-    downloads_cfg = config_manager.get_all().get("downloads", {}) if hasattr(config_manager, "get_all") else {}
+    from core.file_handling.storage import get_storage_service
+    storage = get_storage_service()
+    downloads_cfg = storage.get_service_config('system', 'downloads') or {}
     auto_start_downloads = downloads_cfg.get("auto_start", False)
 
     download_manager = get_download_manager()
@@ -170,14 +119,16 @@ async def start_services() -> None:
     finally:
         library_watcher.stop()
         await download_manager.stop_background_task()
-        active_clients = [c for c in [soulseek_client, plex_client, jellyfin_client, navidrome_client] if c is not None]
+        pass
         await _graceful_close(active_clients)
         logger.info("Backend services stopped")
 
 
 async def backend_main() -> None:
     """Standalone entry point if someone wants to run services outside of Flask."""
-    logging_config = config_manager.get_logging_config()
+    from core.file_handling.storage import get_storage_service
+    storage = get_storage_service()
+    logging_config = storage.get_service_config('system', 'logging') or {}
     log_file = logging_config.get("path", "logs/backend.log")
     setup_logging(level=logging_config.get("level", "INFO"), log_file=log_file)
 

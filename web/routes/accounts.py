@@ -118,7 +118,9 @@ def set_account_overrides():
         if not managed_user_id or not service_account_id or action not in ("unfuse", "refuse"):
             return jsonify({'error': 'Missing or invalid parameters: managed_user_id, service_account_id, action'}), 400
 
-        active_media_server = config_manager.get_active_media_server()
+        from core.plugin_loader import PluginRegistry
+        active_servers = PluginRegistry.get_active_services_by_type('media_server')
+        active_media_server = active_servers[0].split('.')[-1] if active_servers else 'plex'
         if not active_media_server:
             return jsonify({'error': 'No active media server configured'}), 400
 

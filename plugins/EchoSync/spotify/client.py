@@ -167,8 +167,8 @@ class SpotifyClient(SyncServiceProvider):
 
         # Auto-detect active account if not provided
         if account_id is None:
-            from core.settings import config_manager
-            account_id = config_manager.get('active_spotify_account_id')
+
+            account_id = self.sdk.config.get('active_spotify_account_id')
 
             # If still None, try to find the first available account
             if account_id is None:

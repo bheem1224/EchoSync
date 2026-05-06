@@ -1,7 +1,7 @@
 """Jellyfin provider routes."""
 
 from flask import Blueprint, request, jsonify
-from core.settings import config_manager
+
 from core.tiered_logger import get_logger
 
 logger = get_logger("jellyfin_routes")
@@ -16,12 +16,12 @@ def get_settings():
     if PluginRegistry.is_provider_disabled('jellyfin'):
         return jsonify({'settings': {}}), 200
     try:
-        base_url = config_manager.get('jellyfin.base_url', '')
-        username = config_manager.get('jellyfin.username', '')
-        password = config_manager.get('jellyfin.password', '')
+        base_url = ServiceRegistry.get_sdk("jellyfin").config.get('jellyfin.base_url', '')
+        username = ServiceRegistry.get_sdk("jellyfin").config.get('jellyfin.username', '')
+        password = ServiceRegistry.get_sdk("jellyfin").config.get('jellyfin.password', '')
         
         # Check if this is the active media server
-        active_media_server = config_manager.get('active_media_server', 'plex')
+        active_media_server = ServiceRegistry.get_sdk("jellyfin").config.get('active_media_server', 'plex')
         is_active = (active_media_server == 'jellyfin')
         
         # Check connection status
@@ -47,7 +47,7 @@ def get_settings():
         
         # Get path mappings
         import json
-        path_mappings_str = config_manager.get('jellyfin.path_mappings', '[]')
+        path_mappings_str = ServiceRegistry.get_sdk("jellyfin").config.get('jellyfin.path_mappings', '[]')
         try:
             path_mappings = json.loads(path_mappings_str)
         except:
@@ -79,23 +79,23 @@ def save_settings():
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
-            config_manager.set('jellyfin.base_url', base_url)
+            ServiceRegistry.get_sdk("jellyfin").config.set('jellyfin.base_url', base_url)
             logger.info(f"Jellyfin base_url saved: {base_url}")
         
         if 'username' in data:
             username = data['username'].strip()
-            config_manager.set('jellyfin.username', username)
+            ServiceRegistry.get_sdk("jellyfin").config.set('jellyfin.username', username)
             logger.info(f"Jellyfin username saved: {username}")
         
         if 'password' in data:
             password = data['password'].strip()
-            config_manager.set('jellyfin.password', password)
+            ServiceRegistry.get_sdk("jellyfin").config.set('jellyfin.password', password)
             logger.info(f"Jellyfin password saved")
         
         if 'path_mappings' in data:
             import json
             path_mappings = data['path_mappings']
-            config_manager.set('jellyfin.path_mappings', json.dumps(path_mappings))
+            ServiceRegistry.get_sdk("jellyfin").config.set('jellyfin.path_mappings', json.dumps(path_mappings))
             logger.info(f"Jellyfin path_mappings saved: {len(path_mappings)} mappings")
         
         return jsonify({'success': True})
@@ -108,7 +108,7 @@ def save_settings():
 def activate_server():
     """Set Jellyfin as the active media server."""
     try:
-        config_manager.set('active_media_server', 'jellyfin')
+        ServiceRegistry.get_sdk("jellyfin").config.set('active_media_server', 'jellyfin')
         logger.info("Jellyfin set as active media server")
         return jsonify({
             'success': True,
@@ -123,9 +123,9 @@ def activate_server():
 def test_connection():
     """Test connection to Jellyfin server."""
     try:
-        base_url = config_manager.get('jellyfin.base_url', '').strip()
-        username = config_manager.get('jellyfin.username', '').strip()
-        password = config_manager.get('jellyfin.password', '').strip()
+        base_url = ServiceRegistry.get_sdk("jellyfin").config.get('jellyfin.base_url', '').strip()
+        username = ServiceRegistry.get_sdk("jellyfin").config.get('jellyfin.username', '').strip()
+        password = ServiceRegistry.get_sdk("jellyfin").config.get('jellyfin.password', '').strip()
         
         if not base_url:
             return jsonify({'error': 'Server URL is required'}), 400

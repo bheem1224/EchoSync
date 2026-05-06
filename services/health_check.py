@@ -1,5 +1,4 @@
 from core.health_check import health_check_registry
-from core.settings import config_manager
 from typing import Dict, Any
 import logging
 

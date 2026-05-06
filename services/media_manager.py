@@ -4,7 +4,6 @@ from typing import Dict, Optional, List, Any
 
 from sqlalchemy import func
 
-from core.settings import config_manager
 from core.plugin_loader import PluginRegistry, ServiceRegistry
 from core.file_handling.path_mapper import PathMapper
 from core.event_bus import event_bus
@@ -132,24 +131,45 @@ class MediaManagerService:
 
         # 3. If not found, try to apply path mappings from the active media server
         try:
-            active_server = config_manager.get_active_media_server()
-            server_config = config_manager.get_active_media_server_config()
+            from core.plugin_loader import PluginRegistry
+            from core.file_handling.storage import get_storage_service
+            import json
 
-            # Check for mappings (Plex stores them in 'path_mappings', others might vary)
-            mappings = server_config.get('path_mappings', [])
+            storage = get_storage_service()
+            active_servers = PluginRegistry.get_active_services_by_type('media_server')
 
-            if mappings:
-                mapper = PathMapper(mappings)
-                mapped_path = mapper.map_to_local(file_path)
+            if not active_servers:
+                logger.warning("No active media server configured to check path mappings")
+                return None
 
-                if mapped_path != file_path and os.path.exists(mapped_path):
-                    logger.debug(f"Mapped remote path '{file_path}' to '{mapped_path}'")
-                    return mapped_path
-                elif mapped_path != file_path:
-                    logger.warning(f"Mapped path does not exist: {mapped_path} (original: {file_path})")
+            for active_server in active_servers:
+                try:
+                    server_type = active_server.split('.')[-1]
+                    service_id = storage.get_or_create_service_id(server_type)
+                    mappings_str = storage.get_service_config(service_id, 'path_mappings')
+
+                    mappings = []
+                    if mappings_str:
+                        try:
+                            mappings = json.loads(mappings_str)
+                        except Exception:
+                            mappings = []
+
+                    if mappings:
+                        mapper = PathMapper(mappings)
+                        mapped_path = mapper.map_to_local(file_path)
+
+                        if mapped_path != file_path and os.path.exists(mapped_path):
+                            logger.debug(f"Mapped remote path '{file_path}' to '{mapped_path}' using {server_type} mappings")
+                            return mapped_path
+                        elif mapped_path != file_path:
+                            logger.warning(f"Mapped path does not exist: {mapped_path} (original: {file_path})")
+                except Exception as e:
+                    logger.error(f"Error applying path mappings for server {active_server}: {e}")
+                    continue
 
         except Exception as e:
-            logger.error(f"Error applying path mappings for track {track_id}: {e}")
+            logger.error(f"Error checking local path for track {track_id}: {e}")
 
         logger.warning(f"File path for track {track_id} does not exist: {file_path}")
         return None
@@ -230,35 +250,41 @@ class MediaManagerService:
 
         # Save to active media server config
         try:
-            active_server = config_manager.get_active_media_server()
-            if active_server:
-                # Update config in database using set_service_credentials
-                from database.config_database import get_config_database
-                db = get_config_database()
-                service_id = db.get_or_create_service_id(active_server)
+            from core.plugin_loader import PluginRegistry
+            from database.config_database import get_config_database
+            import json
 
-                # Retrieve current path_mappings
-                current_mappings = db.get_service_config(service_id, 'path_mappings')
-                if not current_mappings:
-                    current_mappings = []
-                elif isinstance(current_mappings, str):
-                    import json
-                    try:
-                        current_mappings = json.loads(current_mappings)
-                    except json.JSONDecodeError:
+            active_servers = PluginRegistry.get_active_services_by_type('media_server')
+            if not active_servers:
+                logger.warning("No active media server configured to deduce path mapping")
+                return (local_prefix, prov_prefix)
+
+            for active_server in active_servers:
+                try:
+                    server_type = active_server.split('.')[-1]
+                    db = get_config_database()
+                    service_id = db.get_or_create_service_id(server_type)
+
+                    current_mappings = db.get_service_config(service_id, 'path_mappings')
+                    if not current_mappings:
                         current_mappings = []
+                    elif isinstance(current_mappings, str):
+                        try:
+                            current_mappings = json.loads(current_mappings)
+                        except Exception:
+                            current_mappings = []
 
-                # Check if this mapping already exists
-                exists = any(m.get('local') == mapping['local'] and m.get('remote') == mapping['remote'] for m in current_mappings)
+                    exists = any(m.get('local') == mapping['local'] and m.get('remote') == mapping['remote'] for m in current_mappings)
 
-                if not exists:
-                    current_mappings.append(mapping)
-                    # Convert to JSON string before saving
-                    import json
-                    db.set_service_config(service_id, 'path_mappings', json.dumps(current_mappings), is_sensitive=False)
-                    logger.info(f"Saved new path mapping for {active_server}")
+                    if not exists:
+                        current_mappings.append(mapping)
+                        db.set_service_config(service_id, 'path_mappings', json.dumps(current_mappings), is_sensitive=False)
+                        logger.info(f"Saved new path mapping for {server_type}")
+                except Exception as e:
+                    logger.error(f"Failed to save deduced path mapping for server {active_server}: {e}")
+                    continue
         except Exception as e:
-            logger.error(f"Failed to save deduced path mapping: {e}")
+            logger.error(f"Error deducing path mapping: {e}")
 
         return (local_prefix, remote_prefix)
 
@@ -266,39 +292,44 @@ class MediaManagerService:
         """
         Delete a track from the media server (if applicable) and local database.
         """
-        active_server = config_manager.get_active_media_server()
-        remote_delete_success = True
+        from core.plugin_loader import PluginRegistry
+        active_servers = PluginRegistry.get_active_services_by_type('media_server')
 
-        # 1. Try to delete from remote provider if configured
-        if active_server:
-            try:
-                # Get the external identifier for this track on the active server
-                from database.config_database import get_config_database
-                config_db = get_config_database()
-                plugin_id = config_db.get_or_create_service_id(active_server)
-                provider_item_id = self.db.get_external_identifier(plugin_id, track_id)
+        remote_delete_success = False
+        any_server_attempted = False
 
-                if provider_item_id:
-                    try:
+        if not active_servers:
+            logger.warning("No active media server configured for track deletion")
+            remote_delete_success = True  # We have no remote to delete from, proceed to local
+        else:
+            for active_server in active_servers:
+                try:
+                    server_type = active_server.split('.')[-1]
+                    provider_item_id = self.db.get_external_identifier(server_type, track_id)
+
+                    if provider_item_id:
+                        any_server_attempted = True
                         provider = PluginRegistry.create_instance(active_server)
                         if hasattr(provider, 'delete_track'):
                             success = provider.delete_track(provider_item_id)
-                            if not success:
-                                logger.error(f"Failed to delete track {track_id} (ID: {provider_item_id}) from {active_server}")
-                                remote_delete_success = False
-                            else:
+                            if success:
                                 logger.info(f"Successfully deleted track {track_id} from {active_server}")
+                                remote_delete_success = True
+                            else:
+                                logger.error(f"Failed to delete track {track_id} (ID: {provider_item_id}) from {active_server}")
                         else:
                             logger.warning(f"Provider {active_server} does not support delete_track")
-                    except Exception as e:
-                        logger.error(f"Failed to instantiate provider {active_server}: {e}")
-                        remote_delete_success = False
-                else:
-                     logger.info(f"Track {track_id} not linked to {active_server}, skipping remote delete")
+                    else:
+                        logger.info(f"Track {track_id} not linked to {server_type}, skipping remote delete")
 
-            except Exception as e:
-                logger.error(f"Error deleting from provider {active_server}: {e}")
-                remote_delete_success = False
+                except Exception as e:
+                    logger.error(f"Error deleting from provider {active_server}: {e}")
+                    continue
+
+            # If we didn't attempt to delete on ANY server because there were no external identifiers,
+            # treat it as a success so we can still clean up the local DB.
+            if not any_server_attempted:
+                remote_delete_success = True
 
         if not remote_delete_success:
             return False

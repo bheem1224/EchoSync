@@ -1177,7 +1177,7 @@ class PlexClient(PluginBase):
         import json
         mappings_raw = plex_config.get('path_mappings')
         if not mappings_raw:
-            mappings_raw = config_manager.get('plex.path_mappings')
+            mappings_raw = self.sdk.config.get('plex.path_mappings')
 
         mappings = []
         if mappings_raw:

@@ -70,7 +70,6 @@ def test_get_spotify_playlist_respects_account_id(monkeypatch):
 
 def test_get_all_spotify_playlists_filters_active(monkeypatch):
     # monkeypatch config manager to return account configs including active flag
-    monkeypatch.setattr('core.settings.config_manager.get_spotify_accounts',
                         lambda: [
                             {'id': 1, 'name': 'First', 'is_active': True},
                             {'id': 2, 'name': 'Second', 'is_active': False},

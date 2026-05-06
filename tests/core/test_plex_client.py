@@ -8,8 +8,7 @@ from core.user_history import UserTrackInteraction
 def plex_client():
     mock_cm = MagicMock()
     with patch.object(PlexClient, 'kvs', mock_cm, create=True):
-        mock_cm.get_plex_config.return_value = {}
-        client = PlexClient()
+                client = PlexClient()
         return client
 
 def test_initialization(plex_client):

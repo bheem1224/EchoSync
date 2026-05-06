@@ -3,7 +3,7 @@ from core.caching.provider_cache import provider_cache
 from core.plugin_SDK import PluginBase
 from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
-from core.settings import config_manager
+
 from core.file_handling.storage import get_storage_service
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger
@@ -49,7 +49,7 @@ class AcoustIDProvider(PluginBase):
             logger.debug(f"Could not load AcoustID API key from storage: {e}")
         
         # Fallback to direct config get
-        api_key = config_manager.get('acoustid.api_key')
+        api_key = self.sdk.config.get('acoustid.api_key')
         if api_key:
             api_key = str(api_key).strip()
             logger.debug(f"AcoustID API key loaded from config.json (length={len(api_key)})")
@@ -74,7 +74,7 @@ class AcoustIDProvider(PluginBase):
             client_key = self._get_api_key()
 
         if not user_key:
-            cfg_user_key = config_manager.get('acoustid.user_api_key')
+            cfg_user_key = self.sdk.config.get('acoustid.user_api_key')
             if cfg_user_key:
                 user_key = str(cfg_user_key).strip()
 

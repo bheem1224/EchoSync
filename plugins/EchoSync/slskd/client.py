@@ -241,7 +241,7 @@ class SlskdProvider(DownloaderProvider):
         # read it from config_manager so the provider can initialize when UI saved the URL there.
         if not slskd_url:
             try:
-                slskd_url = config_manager.get('soulseek.slskd_url', '')
+                slskd_url = self.sdk.config.get('soulseek.slskd_url', '')
                 if slskd_url:
                     logger.debug("Using slskd_url from config_manager as fallback")
             except Exception:
@@ -252,7 +252,7 @@ class SlskdProvider(DownloaderProvider):
             return
 
         # Apply Docker URL resolution if running in container
-        if config_manager.get('IS_DOCKER') and 'localhost' in slskd_url:
+        if self.sdk.config.get('IS_DOCKER') and 'localhost' in slskd_url:
             slskd_url = slskd_url.replace('localhost', 'host.docker.internal')
             logger.info(f"Docker detected, using {slskd_url} for slskd connection")
 
@@ -261,13 +261,13 @@ class SlskdProvider(DownloaderProvider):
 
         # Prefer global storage settings (from config manager) but fall back to per-provider values
         try:
-            storage_cfg = config_manager.get_all().get('storage', {}) or {}
+            storage_cfg = self.sdk.config.get_all().get('storage', {}) or {}
         except Exception:
             storage_cfg = {}
 
         # Handle download path with Docker translation
         download_path_str = storage_cfg.get('download_dir') or './downloads'
-        if config_manager.get('IS_DOCKER') and len(download_path_str) >= 3 and download_path_str[1] == ':' and download_path_str[0].isalpha():
+        if self.sdk.config.get('IS_DOCKER') and len(download_path_str) >= 3 and download_path_str[1] == ':' and download_path_str[0].isalpha():
             # Convert Windows path (E:/path) to WSL mount path (/mnt/e/path)
             drive_letter = download_path_str[0].lower()
             rest_of_path = download_path_str[2:].replace('\\', '/')  # Remove E: and convert backslashes

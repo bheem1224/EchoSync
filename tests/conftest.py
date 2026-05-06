@@ -61,23 +61,6 @@ def mock_config_manager(monkeypatch):
     # --- Mock Implementations ---
 
     # Mock the specific getter methods
-    mock_manager.get_spotify_config.return_value = test_config["spotify"]
-    mock_manager.get_spotify_accounts.return_value = test_config["spotify_accounts"]
-    mock_manager.get_active_spotify_account.return_value = test_config["spotify_accounts"][0]
-    mock_manager.get_spotify_active_credentials.return_value = {
-        'client_id': test_config["spotify_accounts"][0]['client_id'],
-        'client_secret': test_config["spotify_accounts"][0]['client_secret'],
-        'redirect_uri': test_config["spotify_accounts"][0]['redirect_uri'],
-        'refresh_token': test_config["spotify_accounts"][0]['refresh_token'],
-        'access_token': test_config["spotify_accounts"][0].get('access_token'),
-        'id': test_config["spotify_accounts"][0]['id'],
-        'name': test_config["spotify_accounts"][0]['name']
-    }
-    mock_manager.get_plex_config.return_value = test_config["plex"]
-    mock_manager.get_jellyfin_config.return_value = test_config["jellyfin"]
-    mock_manager.get_navidrome_config.return_value = test_config["navidrome"]
-    mock_manager.get_soulseek_config.return_value = test_config["soulseek"]
-    mock_manager.get_active_media_server.return_value = test_config["active_media_server"]
 
     # Mock the general-purpose .get() method
     def mock_get(key, default=None):

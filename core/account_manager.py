@@ -14,9 +14,9 @@ class AccountManager:
     def get_account_token(service_name: str, account_id: int) -> Optional[Dict[str, Any]]:
         """Retrieve token data for a specific account."""
         if service_name == 'spotify':
-            accounts = config_manager.get_spotify_accounts()
+            accounts = []
         elif service_name == 'tidal':
-            accounts = config_manager.get_tidal_accounts()
+            accounts = []
         else:
             logger.warning(f"Unsupported service for account token retrieval: {service_name}")
             return None
@@ -66,9 +66,9 @@ class AccountManager:
 
         # legacy fallback
         if service_name == 'spotify':
-            return config_manager.get_spotify_accounts()
+            return []
         elif service_name == 'tidal':
-            return config_manager.get_tidal_accounts()
+            return []
         return []
 
     @staticmethod

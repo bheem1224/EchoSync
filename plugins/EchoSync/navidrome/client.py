@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 from core.tiered_logger import get_logger
-from core.settings import config_manager
+
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
 from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from time_utils import utc_now
@@ -289,7 +289,7 @@ class NavidromeClient(MediaServerProvider):
 
     def _setup_client(self):
         """Setup Navidrome client configuration"""
-        config = config_manager.get_navidrome_config()
+        config = self.sdk.config.get_all()
 
         if not config.get('base_url'):
             logger.warning("Navidrome server URL not configured")
@@ -741,8 +741,8 @@ class NavidromeClient(MediaServerProvider):
             existing_playlist = self.get_playlist_by_name(playlist_name)
 
             # Check if backup is enabled in config
-            from core.settings import config_manager
-            create_backup = config_manager.get('playlist_sync.create_backup', True)
+
+            create_backup = self.sdk.config.get('playlist_sync.create_backup', True)
 
             if existing_playlist and create_backup:
                 backup_name = f"{playlist_name} Backup"

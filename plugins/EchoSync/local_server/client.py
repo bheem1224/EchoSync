@@ -6,7 +6,7 @@ from core.plugin_SDK import PluginBase
 from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
-from core.settings import config_manager
+
 from core.file_handling.local_io import LocalFileHandler
 from core.tiered_logger import get_logger
 
@@ -32,7 +32,7 @@ class LocalServerProvider(PluginBase):
         Yields EchosyncTrack objects by crawling the local library.
         Extracts duration, isrc, title, and artist via local tags.
         """
-        library_dir = config_manager.get_library_dir()
+        library_dir = self.sdk.config.get("library_dir")
         if not library_dir or not library_dir.exists():
             logger.warning(f"Library directory not configured or does not exist: {library_dir}")
             return
