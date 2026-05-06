@@ -244,7 +244,7 @@
               <span class="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
               <span>Processing...</span>
             {:else}
-              <span>{!isInstalled ? 'Install' : installedChannel === 'release' ? (hasStableUpdate ? 'Update' : 'Up to Date') : (hasBetaUpdate ? 'Update Beta' : 'Beta Current')}</span>
+              <span>{!isInstalled ? 'Install' : installedChannel === 'release' ? (hasStableUpdate ? 'Update' : 'Up to Date') : (hasBetaUpdate ? `Update to Beta v${latestBeta}` : 'Beta Current')}</span>
             {/if}
           </button>
 

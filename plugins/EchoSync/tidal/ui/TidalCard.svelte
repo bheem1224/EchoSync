@@ -217,16 +217,21 @@
         </button>
       </div>
       {#if !redirectCollapsed}
-        <div class="form-grid">
+        <div class="redirect-copy-group">
           <input
             type="text"
             bind:value={redirectUri}
-            class="input-field readonly"
+            class="input-field readonly text-wrap"
             readonly
-            disabled
           />
-          <p class="helper-text">This auto-generated URI must be registered in your Tidal Developer Applications.</p>
+          <button 
+            class="btn-primary copy-btn" 
+            on:click={() => { navigator.clipboard.writeText(redirectUri); alert('Copied to clipboard!'); }}
+          >
+            Copy
+          </button>
         </div>
+        <p class="helper-text">This auto-generated URI must be registered in your Tidal Developer Applications.</p>
       {/if}
     </div>
 
@@ -437,6 +442,32 @@
     font-size: 11px;
     color: var(--text-muted);
     margin-top: 4px;
+  }
+
+  .redirect-copy-group {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .redirect-copy-group .input-field {
+    flex: 1;
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .text-wrap {
+    word-break: break-all;
+    white-space: normal;
+    height: auto;
+    min-height: 40px;
+  }
+
+  .copy-btn {
+    padding: 0 16px;
+    height: auto;
+    white-space: nowrap;
   }
 
   .accounts-list {
