@@ -619,3 +619,12 @@ class PluginStateKVS(WorkingBase):
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+_working_db_instance: Optional[WorkingDatabase] = None
+
+def get_working_database() -> WorkingDatabase:
+    """Return the global singleton instance of WorkingDatabase."""
+    global _working_db_instance
+    if _working_db_instance is None:
+        _working_db_instance = WorkingDatabase()
+    return _working_db_instance
