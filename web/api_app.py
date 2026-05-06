@@ -64,7 +64,7 @@ mimetypes.add_type('image/svg+xml', '.svg')
 
 _backend_started = False
 
-def create_app() -> Flask:
+def create_app(testing: bool = False) -> Flask:
     # Check for custom UI path override
     custom_ui_path = config_manager.get('custom_ui_path')
     ui_path = os.path.join(os.path.dirname(__file__), '../webui/build')
@@ -79,6 +79,7 @@ def create_app() -> Flask:
         static_folder=ui_path,
         static_url_path='/static_assets_placeholder' # Avoid conflict with catch-all route at /
     )
+    app.testing = testing
     
     # Configure sensitive logging filter for Werkzeug
     werkzeug_logger = logging.getLogger('werkzeug')
@@ -247,7 +248,8 @@ def create_app() -> Flask:
         print(f"[WARN] Failed to load scheduled syncs: {e}")
 
     # Start the job queue for async task execution
-    start_job_queue()
+    if not testing:
+        start_job_queue()
     
     # Register system jobs with job_queue
     try:
@@ -288,7 +290,7 @@ def create_app() -> Flask:
     is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     should_start = (not dev_mode) or is_reloader_child
 
-    if should_start and not _backend_started:
+    if should_start and not _backend_started and not testing:
         def run_backend_services():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)

@@ -989,3 +989,32 @@ class MediaServerProvider(PluginBase):
         Enables incremental syncs by detecting only new/modified content.
         """
         pass
+
+
+def provision_plugin_table(plugin_id: int, table_schema: str) -> None:
+    """
+    Dynamically provision a high-speed relational cache table for a plugin inside working.db.
+    The SDK forcefully prefixes the table name with `cache_{plugin_id}_` to ensure sandbox safety.
+    """
+    import re
+    from database.working_database import get_working_database
+    from sqlalchemy import text
+
+    # Simple regex to find the CREATE TABLE statement and inject the prefix
+    match = re.search(r'CREATE TABLE (IF NOT EXISTS )?([a-zA-Z0-9_]+)', table_schema, re.IGNORECASE)
+    if not match:
+        raise ValueError("Invalid DDL: Could not find CREATE TABLE statement.")
+
+    if_not_exists = match.group(1) or ""
+    table_name = match.group(2)
+
+    # Strip any existing prefix if the plugin tried to be smart
+    clean_table_name = table_name.replace(f"cache_{plugin_id}_", "")
+
+    enforced_table_name = f"cache_{plugin_id}_{clean_table_name}"
+
+    sanitized_ddl = table_schema[:match.start()] + f"CREATE TABLE {if_not_exists}{enforced_table_name}" + table_schema[match.end():]
+
+    engine = get_working_database().engine
+    with engine.begin() as conn:
+        conn.execute(text(sanitized_ddl))

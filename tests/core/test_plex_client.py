@@ -1,7 +1,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
-from plugins.plex.client import PlexClient
+from plugins.EchoSync.plex.client import PlexClient
 from core.user_history import UserTrackInteraction
 
 @pytest.fixture

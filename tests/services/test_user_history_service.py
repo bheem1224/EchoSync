@@ -54,7 +54,7 @@ def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, moc
         work_session.add(user)
         work_session.flush()
         existing_sync_id = f"ss:track:meta:{generate_deterministic_id('Artist A', 'Song One')}"
-        work_session.add(UserRating(user_id=user.id, sync_id=existing_sync_id, rating=2.0))
+        work_session.add(UserRating(account_id=user.id, sync_id=existing_sync_id, rating=2.0))
         user_id = user.id
 
     stats = {"ratings_imported": 0}
@@ -66,7 +66,7 @@ def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, moc
 
     stats["listen_count_imported"] = 0
 
-    matched_count = service._process_interactions(user_id, interactions, stats)
+    matched_count = service._process_interactions(user_id, interactions, stats, plugin_id=1)
 
     assert matched_count == 2
     assert stats["ratings_imported"] == 2
@@ -75,7 +75,7 @@ def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, moc
     with mock_work_db.session_scope() as work_session:
         ratings = {
             rating.sync_id: (rating.rating, rating.play_count)
-            for rating in work_session.query(UserRating).filter(UserRating.user_id == user_id).all()
+            for rating in work_session.query(UserRating).filter(UserRating.account_id == user_id).all()
         }
 
     assert ratings[existing_sync_id] == (4.5, 7)
@@ -112,7 +112,7 @@ def test_process_interactions_persists_listen_count_without_rating(mock_db, mock
         )
     ]
 
-    matched_count = service._process_interactions(user_id, interactions, stats)
+    matched_count = service._process_interactions(user_id, interactions, stats, plugin_id=1)
 
     assert matched_count == 1
     assert stats["ratings_imported"] == 0
@@ -120,7 +120,7 @@ def test_process_interactions_persists_listen_count_without_rating(mock_db, mock
 
     sync_id = f"ss:track:meta:{generate_deterministic_id('Artist B', 'Playcount Only')}"
     with mock_work_db.session_scope() as work_session:
-        row = work_session.query(UserRating).filter(UserRating.user_id == user_id, UserRating.sync_id == sync_id).one()
+        row = work_session.query(UserRating).filter(UserRating.account_id == user_id, UserRating.sync_id == sync_id).one()
         assert row.play_count == 12
         assert row.rating is None
 
@@ -142,7 +142,7 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
         music_session.add(
             ExternalIdentifier(
                 track_id=track.id,
-                provider_source="plex",
+                plugin_id=1,
                 provider_item_id="120760",
                 raw_data=None,
             )
@@ -165,7 +165,7 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
         )
     ]
 
-    matched_count = service._process_interactions(user_id, interactions, stats)
+    matched_count = service._process_interactions(user_id, interactions, stats, plugin_id=1)
 
     assert matched_count == 1
     assert stats["ratings_imported"] == 1
@@ -173,7 +173,7 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
 
     expected_sync_id = f"ss:track:meta:{generate_deterministic_id('Coolio', 'Gangsta\'s Paradise')}"
     with mock_work_db.session_scope() as work_session:
-        row = work_session.query(UserRating).filter(UserRating.user_id == user_id, UserRating.sync_id == expected_sync_id).one()
+        row = work_session.query(UserRating).filter(UserRating.account_id == user_id, UserRating.sync_id == expected_sync_id).one()
         assert row.rating == 4.0
         assert row.play_count == 2
 
@@ -195,7 +195,7 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
         music_session.add(
             ExternalIdentifier(
                 track_id=track.id,
-                provider_source="plex",
+                plugin_id=1,
                 provider_item_id="120760",
                 raw_data=None,
             )
@@ -231,6 +231,7 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
         user_id,
         [legacy_id_interaction, dict_id_interaction],
         stats,
+        plugin_id=1
     )
 
     assert matched_count == 2
@@ -239,6 +240,6 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
 
     expected_sync_id = f"ss:track:meta:{generate_deterministic_id('Coolio', 'Gangsta\'s Paradise')}"
     with mock_work_db.session_scope() as work_session:
-        row = work_session.query(UserRating).filter(UserRating.user_id == user_id, UserRating.sync_id == expected_sync_id).one()
+        row = work_session.query(UserRating).filter(UserRating.account_id == user_id, UserRating.sync_id == expected_sync_id).one()
         assert row.rating == 4.0
         assert row.play_count == 2

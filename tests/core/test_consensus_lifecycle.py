@@ -2,7 +2,7 @@ from pathlib import Path
 
 from core.suggestion_engine.consensus import calculate_consensus
 from core.suggestion_engine.deletion import apply_lifecycle_action
-from database.working_database import WorkingDatabase, UserRating, UserTrackState, User
+from database.working_database import WorkingDatabase, UserRating, UserTrackState, User, WorkingAccount
 
 
 class _Bus:
@@ -31,15 +31,23 @@ def test_consensus_maps_stars_to_delete_upgrade_keep(tmp_path, monkeypatch):
     base_keep = "ss:track:meta:keep"
 
     with db.session_scope() as session:
+        # Create mock accounts to satisfy Foreign Keys if needed (UserRating doesn't strictly have one but good practice)
+        acc1 = WorkingAccount(plugin_id=1, remote_user_id="remote1")
+        acc2 = WorkingAccount(plugin_id=1, remote_user_id="remote2")
+        acc3 = WorkingAccount(plugin_id=1, remote_user_id="remote3")
+        acc4 = WorkingAccount(plugin_id=1, remote_user_id="remote4")
+        session.add_all([acc1, acc2, acc3, acc4])
+        session.flush()
+
         session.add_all(
             [
                 # DELETE: only the 0.5 half-star (internal score 1) triggers this.
-                UserRating(user_id=1, sync_id=base_delete, rating=0.5),
+                UserRating(account_id=acc1.id, sync_id=base_delete, rating=0.5),
                 # UPGRADE: exactly 1 whole star (internal score 2) is the explicit upgrade signal.
-                UserRating(user_id=3, sync_id=base_upgrade, rating=1.0),
+                UserRating(account_id=acc2.id, sync_id=base_upgrade, rating=1.0),
                 # KEEP: 1.5-5 stars (internal 3-10) are the opinion zone for the suggestion engine.
-                UserRating(user_id=5, sync_id=base_keep, rating=2.0),
-                UserRating(user_id=6, sync_id=base_keep, rating=4.0),
+                UserRating(account_id=acc3.id, sync_id=base_keep, rating=2.0),
+                UserRating(account_id=acc4.id, sync_id=base_keep, rating=4.0),
             ]
         )
 
@@ -64,24 +72,26 @@ def test_deletion_respects_admin_exempt_and_force_upgrade(tmp_path, monkeypatch)
     sync_force = "ss:track:meta:force"
 
     with db.session_scope() as session:
-        user = User(username="u1", provider_identifier="1", provider="plex")
-        session.add(user)
+        # Create a real WorkingAccount to satisfy the Foreign Key in UserTrackState
+        account = WorkingAccount(plugin_id=1, remote_user_id="1")
+        session.add(account)
         session.flush()
+        account_id = account.id
 
         session.add(
             UserTrackState(
-                user_id=user.id,
+                account_id=account_id,
                 sync_id=sync_exempt,
                 admin_exempt_deletion=True,
-                sponsor_id=user.id,
+                sponsor_id=account_id,
             )
         )
         session.add(
             UserTrackState(
-                user_id=user.id,
+                account_id=account_id,
                 sync_id=sync_force,
                 admin_force_upgrade=True,
-                sponsor_id=user.id,
+                sponsor_id=account_id,
             )
         )
 

@@ -67,8 +67,8 @@ class UserHistoryService:
         
         try:
             # Get all active Plex accounts (currently only Plex supports history fetching)
-            plex_service_id = self.config_db.get_or_create_service_id('plex')
-            accounts = self.config_db.get_accounts(service_id=plex_service_id, is_active=True)
+            plex_plugin_id = self.config_db.get_or_create_service_id('plex')
+            accounts = self.config_db.get_accounts(service_id=plex_plugin_id, is_active=True)
             
             if not accounts:
                 self.logger.info("No active Plex accounts found for history sync")
@@ -142,7 +142,8 @@ class UserHistoryService:
                     matched_count = self._process_interactions(
                         working_user.id,
                         interactions,
-                        stats
+                        stats,
+                        plugin_id=plex_plugin_id
                     )
                     
                     self.logger.info(
@@ -221,8 +222,8 @@ class UserHistoryService:
         users_synced = 0
         try:
             if accounts is None:
-                plex_service_id = self.config_db.get_or_create_service_id('plex')
-                accounts = self.config_db.get_accounts(service_id=plex_service_id, is_active=True)
+                plex_plugin_id = self.config_db.get_or_create_service_id('plex')
+                accounts = self.config_db.get_accounts(service_id=plex_plugin_id, is_active=True)
 
             for account in accounts or []:
                 account_name = account.get('display_name') or account.get('account_name') or 'Unknown'
@@ -241,9 +242,10 @@ class UserHistoryService:
     
     def _process_interactions(
         self,
-        user_id: int,
+        account_id: int,
         interactions: List[UserTrackInteraction],
-        stats: Dict
+        stats: Dict,
+        plugin_id: Optional[int] = None
     ) -> int:
         """
         Process a list of user interactions and store ratings in working.db.
@@ -255,9 +257,10 @@ class UserHistoryService:
         4. Create/upsert UserRating record
         
         Args:
-            user_id: Working database user ID
-            interactions: List of UserTrackInteraction objects
+            account_id: Working database user ID (account_id)
+            interactions: List[UserTrackInteraction] objects
             stats: Statistics dict to update
+            plugin_id: Optional plugin ID for ExternalIdentifier matching
             
         Returns:
             Number of interactions successfully matched and stored
@@ -287,11 +290,12 @@ class UserHistoryService:
 
                     # Primary O(1) lookup via ExternalIdentifiers.
                     ext_idents = []
-                    if provider_item_ids:
+                    if provider_item_ids and plugin_id:
                         ext_idents = (
                             music_session.query(ExternalIdentifier, Track)
                             .join(Track, ExternalIdentifier.track_id == Track.id)
                             .filter(
+                                ExternalIdentifier.plugin_id == plugin_id,
                                 ExternalIdentifier.provider_item_id.in_(list(provider_item_ids))
                             )
                             .all()
@@ -312,8 +316,8 @@ class UserHistoryService:
                             extracted_id = self._extract_provider_item_id(interaction)
                             interaction_provider_id = self._normalize_provider_item_id(extracted_id) or extracted_id
 
-                            user_record = work_session.query(User).filter_by(id=user_id).first()
-                            playback_user_id = user_record.provider_identifier if user_record and user_record.provider_identifier else str(user_id)
+                            user_record = work_session.query(User).filter_by(id=account_id).first()
+                            playback_user_id = user_record.provider_identifier if user_record and user_record.provider_identifier else str(account_id)
 
                             if interaction_provider_id:
                                 playback_payloads.append({
@@ -408,7 +412,7 @@ class UserHistoryService:
                         matched_count += 1
                         rating_value = float(interaction.rating) if interaction.rating is not None else None
                         rating_payload_by_sync_id[sync_id] = {
-                            "user_id": user_id,
+                            "account_id": account_id,
                             "sync_id": sync_id,
                             "rating": rating_value,
                             "play_count": play_count,
@@ -517,7 +521,7 @@ class UserHistoryService:
 
             insert_stmt = sqlite_insert(UserRating).values(rating_payloads)
             upsert_stmt = insert_stmt.on_conflict_do_update(
-                index_elements=['user_id', 'sync_id'],
+                index_elements=['account_id', 'sync_id'],
                 set_={
                     'rating': insert_stmt.excluded.rating,
                     'play_count': insert_stmt.excluded.play_count,
@@ -531,7 +535,7 @@ class UserHistoryService:
         existing_sync_ids = {
             sync_id
             for (sync_id,) in work_session.query(UserRating.sync_id).filter(
-                UserRating.user_id == rating_payloads[0]['user_id'],
+                UserRating.account_id == rating_payloads[0]['account_id'],
                 UserRating.sync_id.in_(sync_ids),
             ).all()
         }

@@ -52,11 +52,35 @@ class PlexClient(PluginBase):
         supports_downloads=False,
     )
     
+
     def __init__(self, account_id: Optional[int] = None):
         """Initialize Plex provider."""
         super().__init__()
-        pass
+
+        # Provision the high-speed relational cache
+        try:
+            from core.plugin_SDK import provision_plugin_table
+            # Hardcoded to 5 for now based on the prompt's example: cache_5_plex_media
+            plugin_db_id = 5
+
+            provision_plugin_table(plugin_db_id, """
+                CREATE TABLE IF NOT EXISTS plex_media (
+                    id INTEGER PRIMARY KEY,
+                    rating_key TEXT UNIQUE NOT NULL,
+                    title TEXT,
+                    artist TEXT,
+                    album TEXT,
+                    duration INTEGER,
+                    last_synced TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.error(f"Failed to provision Plex cache table: {e}")
+
         self.server: Optional[PlexServer] = None
+
         self.music_library: Optional[MusicSection] = None
         self.path_mapper: Optional[PathMapper] = None
         self._connection_attempted = False

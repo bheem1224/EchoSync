@@ -11,17 +11,14 @@ Coverage:
   Edge    — empty / None inputs                           → None
 
 Note on platform scope:
-  The parametrized "Case A" tests use POSIX-style absolute paths (/app/…,
-  /mnt/…).  They are skipped on Windows because Python's pathlib.Path.parts
-  represents the root differently on that platform ('\\' vs '/'), which changes
-  the exact string the function produces for the prefix.  These tests are
-  designed to run in a POSIX environment (CI / Docker).  The "Case B" and edge
-  tests do not depend on path representation and run everywhere.
+  These tests now assert path semantics rather than exact OS-native string
+  formatting.  The path mapping algorithm should work against both POSIX and
+  Windows local paths while preserving the original local path style.
 """
 
-import sys
 import os
 import pytest
+from pathlib import PurePosixPath
 from unittest.mock import patch, MagicMock
 
 from services.media_manager import MediaManagerService
@@ -44,8 +41,6 @@ def media_manager(monkeypatch, mock_db):
 
 # ── Case A: successful divergence point extraction (POSIX only) ────────────────
 
-@pytest.mark.skipif(sys.platform == "win32",
-                    reason="POSIX absolute-path test; run in CI / Docker")
 class TestDeducePathMappingCaseA:
     """
     The algorithm steps backward through matching path components.
@@ -109,8 +104,8 @@ class TestDeducePathMappingCaseA:
         )
 
         local_prefix, remote_prefix = result
-        assert local_prefix == expected_local
-        assert remote_prefix == expected_remote
+        assert PurePosixPath(local_prefix).as_posix() == expected_local
+        assert PurePosixPath(remote_prefix).as_posix() == expected_remote
 
     def test_result_is_a_two_tuple(self, media_manager):
         """Return value must be a two-element tuple, not a list or dict."""
@@ -122,6 +117,17 @@ class TestDeducePathMappingCaseA:
 
         assert isinstance(result, tuple)
         assert len(result) == 2
+
+    def test_windows_drive_local_path_is_supported(self, media_manager):
+        """Windows local paths must still map against POSIX provider paths."""
+        with patch("services.media_manager.config_manager") as mock_cm:
+            mock_cm.get_active_media_server.return_value = None
+            result = media_manager.deduce_path_mapping(
+                r"C:\app\music\Artist\Song.flac",
+                "/mnt/storage/media/music/Artist/Song.flac",
+            )
+
+        assert result == (r"C:\app", "/mnt/storage/media")
 
 
 # ── Case B: no common filename → None (platform-neutral) ──────────────────────
@@ -178,8 +184,6 @@ class TestDeducePathMappingEdgeCases:
 
             assert media_manager.deduce_path_mapping(local, remote) is None
 
-    @pytest.mark.skipif(sys.platform == "win32",
-                        reason="POSIX absolute-path test; run in CI / Docker")
     def test_successful_mapping_is_persisted_to_config_db(self, media_manager):
         """
         When a valid mapping is deduced AND an active media server is configured,
@@ -205,8 +209,6 @@ class TestDeducePathMappingEdgeCases:
         call_args = mock_config_db.set_service_config.call_args
         assert call_args[0][1] == "path_mappings"    # second positional arg is the key
 
-    @pytest.mark.skipif(sys.platform == "win32",
-                        reason="POSIX absolute-path test; run in CI / Docker")
     def test_duplicate_mapping_is_not_added_twice(self, media_manager):
         """
         If the deduced mapping already exists in the DB, set_service_config

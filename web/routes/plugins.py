@@ -58,9 +58,16 @@ def get_ui_manifest():
         if not ui_manifest:
             continue
 
-        folder_name = plugin.get('folder_name')
-        if not folder_name:
-            folder_name = plugin.get('id', '').replace('plugin.', '').replace('core.', '')
+        # Fix Bug 1: Ensure we use the correct folder_name (Nexus schema aware)
+        folder_name = plugin.get('folder_name') or plugin.get('id', '').replace('plugin.', '').replace('core.', '')
+
+        # Physical verification: only include plugins where UI assets actually exist on disk
+        abs_path = plugin.get('abs_path')
+        if abs_path:
+            bundle_file = Path(abs_path) / 'static' / 'bundle.js'
+            if not bundle_file.exists():
+                logger.warning(f"Plugin {plugin.get('id')} advertised UI but static/bundle.js is missing at {bundle_file}. Skipping.")
+                continue
 
         # ── Normalize components ──────────────────────────────────────
         # Old shape: { "dashboard_card": "tag-name" }
@@ -89,9 +96,14 @@ def get_ui_manifest():
                 }
             elif isinstance(value, dict):
                 # New schema: already a structured object
+                # Ensure we override broken/generic bundle_urls with our verified one if needed
+                m_bundle = value.get('bundle_url')
+                if m_bundle and '/static/bundle.js' in m_bundle and '/' not in m_bundle.replace('/api/system/plugins/', '').split('/static/')[0]:
+                     m_bundle = bundle_url
+
                 normalized_components[category] = {
                     'element_tag': value.get('element_tag', ''),
-                    'bundle_url':  value.get('bundle_url', bundle_url),
+                    'bundle_url':  m_bundle or bundle_url,
                 }
 
         # ── Normalize views ───────────────────────────────────────────

@@ -37,12 +37,28 @@ class LibraryManager:
         # Local caches to minimize DB lookups
         self.artist_cache: Dict[str, int] = {}  # normalized_name -> artist_id
         self.album_cache: Dict[Tuple[str, int], int] = {}  # (normalized_title, artist_id) -> album_id
+        self.plugin_id_cache: Dict[str, int] = {} # provider_name -> plugin_id
 
     def _normalize_name(self, name: Optional[str]) -> str:
         """Normalize name for cache lookup."""
         if not name:
             return ""
         return text_utils.normalize_text(name).lower()
+
+    def _resolve_plugin_id(self, provider_name: str) -> int:
+        """Resolve a string provider name to its integer plugin_id."""
+        if not provider_name:
+            return 0
+        
+        name = provider_name.lower()
+        if name in self.plugin_id_cache:
+            return self.plugin_id_cache[name]
+        
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+        pid = config_db.get_or_create_service_id(name)
+        self.plugin_id_cache[name] = pid
+        return pid
 
     def _get_or_create_artist(self, session: Session, artist_name: str, sort_name: Optional[str] = None) -> Artist:
         """
@@ -221,6 +237,8 @@ class LibraryManager:
             if not source or not item_id:
                 continue
 
+            plugin_id = self._resolve_plugin_id(source)
+
             # Ensure item_id is a string
             if not isinstance(item_id, str):
                 item_id = str(item_id)
@@ -229,7 +247,7 @@ class LibraryManager:
                 select(Track)
                 .join(ExternalIdentifier)
                 .where(
-                    ExternalIdentifier.provider_source == source,
+                    ExternalIdentifier.plugin_id == plugin_id,
                     ExternalIdentifier.provider_item_id == item_id,
                 )
             )
@@ -305,10 +323,11 @@ class LibraryManager:
         # If same external ID exists, it must be the same track - update it instead of creating new
         track = None
         if track_data.identifiers:
-            for provider_source, provider_item_id in track_data.identifiers.items():
-                if provider_source and provider_item_id:
+            for source, provider_item_id in track_data.identifiers.items():
+                if source and provider_item_id:
+                    plugin_id = self._resolve_plugin_id(source)
                     stmt = select(ExternalIdentifier).where(
-                        ExternalIdentifier.provider_source == provider_source,
+                        ExternalIdentifier.plugin_id == plugin_id,
                         ExternalIdentifier.provider_item_id == str(provider_item_id)
                     )
                     ext_id = session.execute(stmt).scalar_one_or_none()
@@ -343,16 +362,18 @@ class LibraryManager:
             # This ensures every Plex DB pull enriches locally-imported tracks with their
             # Plex ratingKeys so playlist sync can use them.
             if track is not None and track_data.identifiers:
-                existing_ids     = { (e.provider_source, e.provider_item_id) for e in track.external_identifiers }
-                existing_sources = { e.provider_source for e in track.external_identifiers }
+                existing_ids     = { (e.plugin_id, e.provider_item_id) for e in track.external_identifiers }
+                existing_plugins = { e.plugin_id for e in track.external_identifiers }
                 conflict = False
                 for src, pid in track_data.identifiers.items():
-                    if src and pid and src in existing_sources:
-                        # Same provider already has an entry on this track; if it's a
-                        # different ID it's a genuine different item → don't merge.
-                        if (src, str(pid)) not in existing_ids:
-                            conflict = True
-                            break
+                    if src and pid:
+                        plugin_id = self._resolve_plugin_id(src)
+                        if plugin_id in existing_plugins:
+                            # Same provider already has an entry on this track; if it's a
+                            # different ID it's a genuine different item → don't merge.
+                            if (plugin_id, str(pid)) not in existing_ids:
+                                conflict = True
+                                break
                 if conflict:
                     track = None
 
@@ -452,13 +473,15 @@ class LibraryManager:
             if not source or not item_id:
                 continue
 
+            plugin_id = self._resolve_plugin_id(source)
+
             # Ensure item_id is a string
             if not isinstance(item_id, str):
                 item_id = str(item_id)
 
             # Check if identifier already exists
             stmt = select(ExternalIdentifier).where(
-                ExternalIdentifier.provider_source == source,
+                ExternalIdentifier.plugin_id == plugin_id,
                 ExternalIdentifier.provider_item_id == item_id,
             )
             ext_id = session.execute(stmt).scalar_one_or_none()
@@ -467,7 +490,7 @@ class LibraryManager:
                 # Create new identifier
                 ext_id = ExternalIdentifier(
                     track=track,
-                    provider_source=source,
+                    plugin_id=plugin_id,
                     provider_item_id=item_id,
                     raw_data=None, # Raw data not supported in simple dict mapping
                 )
@@ -514,9 +537,9 @@ class LibraryManager:
 
         deleted_track_ids: set[int] = set()
 
-        for source, item_ids in observed_identifiers.items():
+        for plugin_id, item_ids in observed_identifiers.items():
             stmt = select(Track.id).join(ExternalIdentifier).where(
-                ExternalIdentifier.provider_source == source
+                ExternalIdentifier.plugin_id == plugin_id
             )
 
             # If no items were observed for this provider, delete all entries for that source
@@ -567,7 +590,7 @@ class LibraryManager:
         imported_count = 0
         updated_count = 0
         failed_count = 0
-        observed_identifiers: Dict[str, set[str]] = defaultdict(set)
+        observed_identifiers: Dict[int, set[str]] = defaultdict(set)
         # Progress tracking (unique artists/albums encountered)
         seen_artist_ids: set[int] = set()
         seen_album_ids: set[int] = set()
@@ -691,9 +714,10 @@ class LibraryManager:
                     for source, item_id in (track_data.identifiers or {}).items():
                         if not source or item_id is None:
                             continue
+                        plugin_id = self._resolve_plugin_id(source)
                         if not isinstance(item_id, str):
                             item_id = str(item_id)
-                        observed_identifiers[source].add(item_id)
+                        observed_identifiers[plugin_id].add(item_id)
 
                     if is_new:
                         imported_count += 1

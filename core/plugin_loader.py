@@ -565,12 +565,13 @@ def get_plugin(name: str) -> Optional[PluginBase]:
 
 
 def get_all_plugins() -> list:
-    plugins = []
+    plugins_map = {}  # ID-based map for deduplication and shadowing
     
     import os
     core_dir = Path(os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR', Path(__file__).parent.parent / "plugins"))
     community_dir = config_manager.get_plugins_dir()
 
+    # Process core first, then community. Community plugins with the same ID will shadow core ones.
     for source_type, directory in [('core', core_dir), ('community', community_dir)]:
         if not directory.exists():
             continue
@@ -604,7 +605,8 @@ def get_all_plugins() -> list:
                 "name": folder_name.capitalize() if source_type == 'core' else folder_name,
                 "description": f"Core provider for {folder_name}" if source_type == 'core' else "Community plugin",
                 "type": source_type,
-                "folder_name": folder_name
+                "folder_name": folder_name,
+                "abs_path": str(current_item.absolute()) # Track physical location
             }
 
             json_file = current_item / "manifest.json"
@@ -628,15 +630,17 @@ def get_all_plugins() -> list:
                 except Exception:
                     pass
 
-            plugins.append(plugin_info)
+            # Shadowing: Store by ID. Community will overwrite Core if IDs match.
+            plugins_map[plugin_info["id"]] = plugin_info
 
     # Determine enabled status based on config
     disabled = config_manager.get_disabled_providers()
-    for p in plugins:
+    final_plugins = list(plugins_map.values())
+    for p in final_plugins:
         # Check against full ID (e.g. plugin.plex or plex)
         p["enabled"] = p["id"].lower() not in [d.lower() for d in disabled]
 
-    return plugins
+    return final_plugins
 
 
 class PluginRegistry:

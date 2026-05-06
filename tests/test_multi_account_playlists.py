@@ -10,13 +10,13 @@ def create_test_app():
     app.config['TESTING'] = True
     # register blueprints manually if necessary
     from web.api_app import create_app
-    return create_app()
+    return create_app(testing=True)
 
 @pytest.fixture
 def client():
     from flask import Flask
     from web.api_app import create_app
-    app = create_app()
+    app = create_app(testing=True)
     with app.test_client() as c:
         yield c
 
@@ -84,12 +84,16 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
             # return a list with a single dict
             return [{'id': f'pl{self.account_id}', 'name': f'Playlist {self.account_id}', 'track_count': 5}]
 
-    monkeypatch.setattr('plugins.spotify.client.SpotifyClient', FakeSpotifyClient)
+    monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyClient', FakeSpotifyClient)
+    from core.plugin_loader import PluginRegistry
+    monkeypatch.setattr(PluginRegistry, 'get_provider_class', lambda name: FakeSpotifyClient if name == 'spotify' else None)
+    monkeypatch.setattr(PluginRegistry, 'create_instance', lambda name, *args, **kwargs: FakeSpotifyClient() if name == 'spotify' else None)
+    monkeypatch.setattr(PluginRegistry, 'is_provider_disabled', lambda name: False)
 
     resp = client.get('/api/plugins/spotify/playlists')
     assert resp.status_code == 200
     data = resp.get_json()
-    assert data['provider'] == 'spotify'
+    assert data['plugin'] == 'spotify'
     items = data['items']
     # we should have two items, one per account
     assert len(items) == 2
@@ -137,7 +141,7 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
                     self.identifiers = {}
             return [Track(f"t_{playlist_id}", "A", "B", 1234)]
 
-    monkeypatch.setattr('plugins.spotify.client.SpotifyClient', FakeSpotifyClient)
+    monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyClient', FakeSpotifyClient)
 
     payload = {
         'source': 'spotify',

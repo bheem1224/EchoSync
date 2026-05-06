@@ -93,7 +93,7 @@ class PlexWebhookParser(WebhookParser):
                     "sync_id": sync_id,  # May be None, that is fine
                     "data": {
                         "rating": rating,
-                        "user_id": user_id,
+                        "account_id": user_id,
                         "provider": "plex",
                         "provider_item_id": provider_item_id
                     }
@@ -103,7 +103,7 @@ class PlexWebhookParser(WebhookParser):
                     "event": "TRACK_PLAYED",
                     "sync_id": sync_id,  # May be None, that is fine
                     "data": {
-                        "user_id": user_id,
+                        "account_id": user_id,
                         "provider": "plex",
                         "provider_item_id": provider_item_id
                     }

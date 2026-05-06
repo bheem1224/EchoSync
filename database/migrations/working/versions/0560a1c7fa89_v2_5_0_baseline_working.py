@@ -1,13 +1,8 @@
-"""v2.3.0 Baseline Schema — working.db
+"""v2.5.0_baseline_working
 
-This revision captures the exact working.db schema that shipped with v2.3.0.
-It is used as the stamp target by the Smart Inspector in run_auto_migrations()
-when adopting a legacy (pre-Alembic) database so that only the v2.4.0
-additions (revision a1b2c3d4e5f6) are applied on first migration.
-
-Revision ID: 4661df33cf8b
-Revises:
-Create Date: 2026-03-28 05:36:47.525189
+Revision ID: 0560a1c7fa89
+Revises: 
+Create Date: 2026-05-04 22:42:43.763678
 
 """
 from typing import Sequence, Union
@@ -18,7 +13,7 @@ import time_utils
 
 
 # revision identifiers, used by Alembic.
-revision: str = '4661df33cf8b'
+revision: str = '0560a1c7fa89'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -63,6 +58,13 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_playback_history_provider_item_id'), ['provider_item_id'], unique=False)
         batch_op.create_index(batch_op.f('ix_playback_history_user_id'), ['user_id'], unique=False)
 
+    op.create_table('plugin_state_kvs',
+    sa.Column('namespace', sa.String(), nullable=False),
+    sa.Column('key', sa.String(), nullable=False),
+    sa.Column('value', sa.String(), nullable=True),
+    sa.Column('is_sensitive', sa.Boolean(), nullable=False),
+    sa.PrimaryKeyConstraint('namespace', 'key')
+    )
     op.create_table('review_tasks',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('file_path', sa.String(), nullable=False),
@@ -70,10 +72,21 @@ def upgrade() -> None:
     sa.Column('detected_metadata', sa.JSON(), nullable=True),
     sa.Column('confidence_score', sa.Float(), nullable=False),
     sa.Column('created_at', time_utils.UTCDateTime(), nullable=False),
+    sa.Column('updated_at', time_utils.UTCDateTime(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     with op.batch_alter_table('review_tasks', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_review_tasks_file_path'), ['file_path'], unique=True)
+
+    op.create_table('suggestion_blacklist',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('sync_id', sa.String(), nullable=False),
+    sa.Column('reason', sa.String(), nullable=True),
+    sa.Column('created_at', time_utils.UTCDateTime(), nullable=False),
+    sa.PrimaryKeyConstraint('id')
+    )
+    with op.batch_alter_table('suggestion_blacklist', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_suggestion_blacklist_sync_id'), ['sync_id'], unique=True)
 
     op.create_table('suggestion_staging_queue',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -81,6 +94,7 @@ def upgrade() -> None:
     sa.Column('music_db_track_id', sa.Integer(), nullable=True),
     sa.Column('sync_id', sa.String(), nullable=True),
     sa.Column('reason', sa.String(), nullable=False),
+    sa.Column('intent_type', sa.String(), nullable=True),
     sa.Column('ui_label', sa.String(), nullable=False),
     sa.Column('context_data', sa.JSON(), nullable=True),
     sa.Column('status', sa.String(), nullable=False),
@@ -91,6 +105,7 @@ def upgrade() -> None:
     sa.UniqueConstraint('user_id', 'sync_id', 'reason', name='uq_suggestion_per_user_sync_reason')
     )
     with op.batch_alter_table('suggestion_staging_queue', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_suggestion_staging_queue_intent_type'), ['intent_type'], unique=False)
         batch_op.create_index(batch_op.f('ix_suggestion_staging_queue_music_db_track_id'), ['music_db_track_id'], unique=False)
         batch_op.create_index(batch_op.f('ix_suggestion_staging_queue_reason'), ['reason'], unique=False)
         batch_op.create_index(batch_op.f('ix_suggestion_staging_queue_status'), ['status'], unique=False)
@@ -244,12 +259,18 @@ def downgrade() -> None:
         batch_op.drop_index(batch_op.f('ix_suggestion_staging_queue_status'))
         batch_op.drop_index(batch_op.f('ix_suggestion_staging_queue_reason'))
         batch_op.drop_index(batch_op.f('ix_suggestion_staging_queue_music_db_track_id'))
+        batch_op.drop_index(batch_op.f('ix_suggestion_staging_queue_intent_type'))
 
     op.drop_table('suggestion_staging_queue')
+    with op.batch_alter_table('suggestion_blacklist', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_suggestion_blacklist_sync_id'))
+
+    op.drop_table('suggestion_blacklist')
     with op.batch_alter_table('review_tasks', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_review_tasks_file_path'))
 
     op.drop_table('review_tasks')
+    op.drop_table('plugin_state_kvs')
     with op.batch_alter_table('playback_history', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_playback_history_user_id'))
         batch_op.drop_index(batch_op.f('ix_playback_history_provider_item_id'))

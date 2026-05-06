@@ -1,2 +1,2 @@
-from plugins.listenbrainz.client import *
+from plugins.EchoSync.listenbrainz.client import *
 

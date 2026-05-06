@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from services.sync_service import PlaylistSyncService
-from plugins.spotify.client import SpotifyClient
+from plugins.EchoSync.spotify.client import SpotifyClient
 
 
 class FakeSpotifyClient:
@@ -38,7 +38,7 @@ def patch_spotify_client(monkeypatch):
     monkeypatch.setattr('core.plugin_loader.PluginRegistry.create_instance', factory)
 
     # disable provider registry registration which isn't needed for these fakes
-    monkeypatch.setattr('core.provider.PluginRegistry.register', lambda *args, **kwargs: None)
+    monkeypatch.setattr('core.plugin_loader.PluginRegistry.register', lambda *args, **kwargs: None)
 
     # also patch storage service to return two accounts
     fake_storage = MagicMock()

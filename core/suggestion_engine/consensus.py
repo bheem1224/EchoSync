@@ -47,7 +47,7 @@ def calculate_consensus(sync_id: str) -> Dict[str, Any]:
                 "action": "DELETE_MONTH_END",
                 "sync_id": base_sync_id,
                 "score_10": avg_score,
-                "user_ids": [record.user_id for record in ratings_records],
+                "account_ids": [record.account_id for record in ratings_records],
             }
 
         if avg_score <= 2.0:
@@ -56,7 +56,7 @@ def calculate_consensus(sync_id: str) -> Dict[str, Any]:
                 "action": "UPGRADE_WEEK_END",
                 "sync_id": base_sync_id,
                 "score_10": avg_score,
-                "user_ids": [record.user_id for record in ratings_records],
+                "account_ids": [record.account_id for record in ratings_records],
             }
 
         return {
@@ -64,5 +64,5 @@ def calculate_consensus(sync_id: str) -> Dict[str, Any]:
             "action": "KEEP_AND_FEED_PREFERENCE_MODEL",
             "sync_id": base_sync_id,
             "score_10": avg_score,
-            "user_ids": [record.user_id for record in ratings_records],
+            "account_ids": [record.account_id for record in ratings_records],
         }

@@ -187,7 +187,7 @@ class SpotifyClient(SyncServiceProvider):
 
         # Initialize the cache manager
         try:
-            from plugins.spotify.cache_manager import SpotifyCacheManager
+            from plugins.EchoSync.spotify.cache_manager import SpotifyCacheManager
             self.cache_manager = SpotifyCacheManager()
         except Exception as e:
             logger.error(f"Failed to initialize SpotifyCacheManager: {e}")

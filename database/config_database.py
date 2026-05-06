@@ -53,9 +53,12 @@ class ConfigDatabase:
                     CREATE TABLE IF NOT EXISTS services (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT UNIQUE NOT NULL,
+                        namespace TEXT NOT NULL,
+                        plugin_id INTEGER,
                         display_name TEXT,
                         service_type TEXT,
                         description TEXT,
+                        is_active INTEGER DEFAULT 1,
                         created_at INTEGER DEFAULT (strftime('%s','now')),
                         updated_at INTEGER DEFAULT (strftime('%s','now'))
                     )
@@ -135,21 +138,17 @@ class ConfigDatabase:
                         FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
                     )
                 """)
-                # Account Mappings (Stateful Managed Account Builder)
-                # Stores the permanent mapping between a media-server user and a
-                # provider (music-service) account.  Both sides cascade-delete so
-                # removing a plugin/provider account automatically cleans up its
-                # mapping rows – mirroring how tokens/secrets are purged.
+                # Account Mappings (Agnostic Node Mapping)
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS account_mappings (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        media_server_id TEXT NOT NULL,
-                        managed_user_id TEXT NOT NULL,
-                        provider_id TEXT NOT NULL,
-                        provider_account_id TEXT NOT NULL,
+                        source_account_id INTEGER NOT NULL,
+                        mapped_account_id INTEGER NOT NULL,
                         created_at INTEGER DEFAULT (strftime('%s','now')),
                         updated_at INTEGER DEFAULT (strftime('%s','now')),
-                        UNIQUE(media_server_id, managed_user_id, provider_id, provider_account_id)
+                        UNIQUE(source_account_id, mapped_account_id),
+                        FOREIGN KEY(source_account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+                        FOREIGN KEY(mapped_account_id) REFERENCES accounts(id) ON DELETE CASCADE
                     )
                 """)
 
@@ -157,7 +156,7 @@ class ConfigDatabase:
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS plugin_snapshots (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        plugin_id TEXT NOT NULL UNIQUE,
+                        namespace TEXT NOT NULL UNIQUE,
                         snapshot_data TEXT NOT NULL,
                         expires_at INTEGER NOT NULL,
                         created_at INTEGER DEFAULT (strftime('%s','now'))
@@ -169,9 +168,9 @@ class ConfigDatabase:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_account ON account_tokens(account_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_user ON account_mappings(media_server_id, managed_user_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_provider ON account_mappings(provider_id, provider_account_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_plugin ON plugin_snapshots(plugin_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_source ON account_mappings(source_account_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_mapped ON account_mappings(mapped_account_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_ns ON plugin_snapshots(namespace)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_expires ON plugin_snapshots(expires_at)")
 
             # Run schema creation on writer thread to avoid concurrent-writes
@@ -182,6 +181,7 @@ class ConfigDatabase:
 
     # Service helpers
     def get_or_create_service_id(self, name: str) -> int:
+        # 1. Try to find existing
         import contextlib
         with contextlib.closing(self._get_connection()) as conn:
             c = conn.cursor()
@@ -189,14 +189,35 @@ class ConfigDatabase:
             row = c.fetchone()
             if row:
                 return int(row[0])
-        return self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service")
 
-    def register_service(self, name: str, display_name: str, service_type: str, description: str) -> int:
+        # 2. Register if missing
+        # Note: we use 'legacy' as default namespace for auto-registered services
+        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", namespace='legacy')
+
+        # 3. Try to find again after registration
+        with contextlib.closing(self._get_connection()) as conn:
+            c = conn.cursor()
+            c.execute("SELECT id FROM services WHERE name = ?", (name,))
+            row = c.fetchone()
+            if row:
+                return int(row[0])
+
+        logger.error(f"Failed to get or create service ID for '{name}' after registration attempt.")
+        return 0
+
+    def register_service(self, name: str, display_name: str, service_type: str, description: str, namespace: str = 'legacy', plugin_id: Optional[int] = None) -> int:
         try:
-            execute_write_sql(str(self.database_path), "INSERT OR IGNORE INTO services(name, display_name, service_type, description) VALUES(?,?,?,?)", (name, display_name, service_type, description))
-        except Exception:
-            pass
-        return self.get_or_create_service_id(name)
+            execute_write_sql(
+                str(self.database_path), 
+                "INSERT OR IGNORE INTO services(name, display_name, service_type, description, namespace, plugin_id) VALUES(?,?,?,?,?,?)", 
+                (name, display_name, service_type, description, namespace, plugin_id)
+            )
+        except Exception as e:
+            logger.error(f"Error registering service '{name}': {e}")
+        
+        # We don't call get_or_create_service_id here to avoid recursion.
+        # If the caller wants the ID, they should use get_or_create_service_id directly.
+        return 0
 
     def set_service_config(self, service_id: int, key: str, value: Any, is_sensitive: bool = False) -> bool:
         try:
@@ -734,23 +755,29 @@ class ConfigDatabase:
 
     def set_account_mapping(
         self,
-        media_server_id: str,
-        managed_user_id: str,
-        provider_id: str,
-        provider_account_id: str,
+        account_id_1: int,
+        account_id_2: int,
     ) -> bool:
-        """Upsert a stateful mapping between a media-server user and a provider account."""
+        """Upsert a stateful mapping between two accounts.
+        
+        Logic sorts the IDs to ensure source_account_id < mapped_account_id,
+        preventing duplicate mappings in reverse order.
+        """
         try:
+            if account_id_1 == account_id_2:
+                return False
+
+            source_id, mapped_id = sorted([int(account_id_1), int(account_id_2)])
             execute_write_sql(
                 str(self.database_path),
                 """
                     INSERT INTO account_mappings(
-                        media_server_id, managed_user_id, provider_id, provider_account_id
-                    ) VALUES(?,?,?,?)
-                    ON CONFLICT(media_server_id, managed_user_id, provider_id, provider_account_id)
+                        source_account_id, mapped_account_id
+                    ) VALUES(?,?)
+                    ON CONFLICT(source_account_id, mapped_account_id)
                     DO UPDATE SET updated_at=strftime('%s','now')
                 """,
-                (media_server_id, managed_user_id, provider_id, provider_account_id),
+                (source_id, mapped_id),
             )
             return True
         except Exception as e:
@@ -759,34 +786,28 @@ class ConfigDatabase:
 
     def get_account_mappings(
         self,
-        media_server_id: Optional[str] = None,
-        managed_user_id: Optional[str] = None,
-        provider_id: Optional[str] = None,
+        account_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Retrieve account mapping rows, optionally filtered."""
+        """Retrieve account mapping rows, optionally filtered by a specific account ID."""
         try:
             import contextlib
             with contextlib.closing(self._get_connection()) as conn:
                 c = conn.cursor()
-                query = "SELECT id, media_server_id, managed_user_id, provider_id, provider_account_id, created_at, updated_at FROM account_mappings WHERE 1=1"
+                query = "SELECT id, source_account_id, mapped_account_id, created_at, updated_at FROM account_mappings WHERE 1=1"
                 params: list = []
-                if media_server_id:
-                    query += " AND media_server_id = ?"; params.append(media_server_id)
-                if managed_user_id:
-                    query += " AND managed_user_id = ?"; params.append(managed_user_id)
-                if provider_id:
-                    query += " AND provider_id = ?"; params.append(provider_id)
+                if account_id:
+                    query += " AND (source_account_id = ? OR mapped_account_id = ?)"
+                    params.extend([account_id, account_id])
+                
                 c.execute(query, params)
                 rows = c.fetchall()
                 return [
                     {
                         'id': r[0],
-                        'media_server_id': r[1],
-                        'managed_user_id': r[2],
-                        'provider_id': r[3],
-                        'provider_account_id': r[4],
-                        'created_at': r[5],
-                        'updated_at': r[6],
+                        'source_account_id': r[1],
+                        'mapped_account_id': r[2],
+                        'created_at': r[3],
+                        'updated_at': r[4],
                     }
                     for r in rows
                 ]
@@ -796,78 +817,72 @@ class ConfigDatabase:
 
     def delete_account_mapping(
         self,
-        media_server_id: str,
-        managed_user_id: str,
-        provider_id: str,
-        provider_account_id: str,
+        account_id_1: int,
+        account_id_2: int,
     ) -> bool:
         """Remove a specific account mapping row."""
         try:
+            source_id, mapped_id = sorted([int(account_id_1), int(account_id_2)])
             rowcount = execute_write_sql(
                 str(self.database_path),
-                "DELETE FROM account_mappings WHERE media_server_id=? AND managed_user_id=? AND provider_id=? AND provider_account_id=?",
-                (media_server_id, managed_user_id, provider_id, provider_account_id),
+                "DELETE FROM account_mappings WHERE source_account_id=? AND mapped_account_id=?",
+                (source_id, mapped_id),
             )
             return bool(rowcount and rowcount > 0)
         except Exception as e:
             logger.error(f"Error deleting account mapping: {e}")
             return False
 
-    def delete_account_mappings_for_provider_account(
+    def delete_account_mappings_for_account(
         self,
-        provider_id: str,
-        provider_account_id: str,
+        account_id: int,
     ) -> None:
-        """Quietly purge all mapping rows for a provider account being deleted.
-
-        Called by EchoSync core when a plugin or provider account is removed,
-        mirroring the way secrets are purged on account deletion.
-        """
+        """Quietly purge all mapping rows for an account being deleted."""
         try:
             execute_write_sql(
                 str(self.database_path),
-                "DELETE FROM account_mappings WHERE provider_id=? AND provider_account_id=?",
-                (provider_id, provider_account_id),
+                "DELETE FROM account_mappings WHERE source_account_id=? OR mapped_account_id=?",
+                (account_id, account_id),
             )
-            logger.info(f"Purged account mappings for {provider_id}:{provider_account_id}")
+            logger.info(f"Purged all account mappings involving account {account_id}")
         except Exception as e:
-            logger.error(f"Error purging account mappings for {provider_id}:{provider_account_id}: {e}")
+            logger.error(f"Error purging account mappings for account {account_id}: {e}")
 
     # ── Plugin Snapshot Helpers ──────────────────────────────────────────
-    def create_plugin_snapshot(self, plugin_id: str, snapshot_data: str, ttl_hours: int = 24) -> bool:
+    def create_plugin_snapshot(self, namespace: str, snapshot_data: str, ttl_hours: int = 24) -> bool:
         try:
             expires_at = int(time.time()) + (ttl_hours * 3600)
             execute_write_sql(
                 str(self.database_path),
                 """
-                    INSERT INTO plugin_snapshots(plugin_id, snapshot_data, expires_at)
+                    INSERT INTO plugin_snapshots(namespace, snapshot_data, expires_at)
                     VALUES(?,?,?)
-                    ON CONFLICT(plugin_id) DO UPDATE SET
+                    ON CONFLICT(namespace) DO UPDATE SET
                         snapshot_data = excluded.snapshot_data,
                         expires_at = excluded.expires_at,
                         created_at = strftime('%s','now')
                 """,
-                (plugin_id, snapshot_data, expires_at),
+                (namespace, snapshot_data, expires_at),
             )
             return True
         except Exception as e:
-            logger.error(f"Error creating plugin snapshot for {plugin_id}: {e}")
+            logger.error(f"Error creating plugin snapshot for {namespace}: {e}")
             return False
 
-    def get_plugin_snapshot(self, plugin_id: str) -> Optional[Dict[str, Any]]:
+    def get_plugin_snapshot(self, namespace: str) -> Optional[Dict[str, Any]]:
         try:
             import contextlib
             import json
             with contextlib.closing(self._get_connection()) as conn:
                 c = conn.cursor()
-                c.execute("SELECT snapshot_data, expires_at FROM plugin_snapshots WHERE plugin_id = ?", (plugin_id,))
+                c.execute("SELECT snapshot_data, expires_at FROM plugin_snapshots WHERE namespace = ?", (namespace,))
                 row = c.fetchone()
                 if not row:
                     return None
                 
                 # Check expiry
                 if row[1] < int(time.time()):
-                    self.delete_plugin_snapshot(plugin_id)
+                    self.delete_plugin_snapshot(namespace)
                     return None
 
                 return {
@@ -875,15 +890,15 @@ class ConfigDatabase:
                     'expires_at': row[1]
                 }
         except Exception as e:
-            logger.error(f"Error getting plugin snapshot for {plugin_id}: {e}")
+            logger.error(f"Error getting plugin snapshot for {namespace}: {e}")
             return None
 
-    def delete_plugin_snapshot(self, plugin_id: str) -> bool:
+    def delete_plugin_snapshot(self, namespace: str) -> bool:
         try:
-            execute_write_sql(str(self.database_path), "DELETE FROM plugin_snapshots WHERE plugin_id = ?", (plugin_id,))
+            execute_write_sql(str(self.database_path), "DELETE FROM plugin_snapshots WHERE namespace = ?", (namespace,))
             return True
         except Exception as e:
-            logger.error(f"Error deleting plugin snapshot for {plugin_id}: {e}")
+            logger.error(f"Error deleting plugin snapshot for {namespace}: {e}")
             return False
 
     def cleanup_expired_snapshots(self) -> None:

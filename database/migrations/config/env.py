@@ -16,11 +16,9 @@ config = context.config
 if config.config_file_name is not None and config.attributes.get('configure_logger', True):
     fileConfig(config.config_file_name)
 
-# Config DB doesn't use SQLAlchemy models right now.
-# We will just pass empty metadata and a raw connection if needed,
-# or we can define a minimal metadata object for schema diffs if we wanted.
-# For now, just allow raw DDL scripts to run.
-target_metadata = MetaData()
+# Use the actual models for autogenerate detection
+from database.models import Base
+target_metadata = Base.metadata
 
 from core.settings import config_manager
 from sqlalchemy import create_engine

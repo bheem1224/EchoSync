@@ -333,7 +333,7 @@ class PluginStore:
             
             # 2. Check for active Grace Period (Snapshots)
             from database.config_database import get_config_database
-            snapshot = get_config_database().get_plugin_snapshot(plugin_id)
+            snapshot = get_config_database().get_plugin_snapshot(namespace=plugin_id)
             if snapshot:
                 # Convert unix timestamp to ISO format for frontend compatibility
                 import datetime

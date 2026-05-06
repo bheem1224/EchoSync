@@ -61,5 +61,20 @@ class HookManager:
             self._local.depths[hook_name] -= 1
         return value
 
+    def trigger(self, hook_name: str, *args, **kwargs) -> None:
+        """
+        Trigger an event hook. All registered callbacks will be executed.
+        Unlike apply_filters, this does not pass a value through the chain.
+        """
+        if hook_name in self._filters:
+            for callback in self._filters[hook_name]:
+                try:
+                    callback(*args, **kwargs)
+                except Exception as e:
+                    import logging
+                    logging.getLogger("hook_manager").error(
+                        f"Error triggering hook '{hook_name}': {e}", exc_info=True
+                    )
+
 # Global singleton
 hook_manager = HookManager()

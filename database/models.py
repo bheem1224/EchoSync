@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, JSON, UniqueConstraint, CheckConstraint
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 from sqlalchemy.types import DateTime
@@ -101,17 +101,31 @@ class PKCESession(Base):
 class AccountMapping(Base):
     __tablename__ = "account_mappings"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    media_server_id = Column(String, nullable=False)
-    managed_user_id = Column(String, nullable=False)
-    provider_id = Column(String, nullable=False)
-    provider_account_id = Column(String, nullable=False)
+    
+    # 1. Generic Pointers: Both columns point directly to the accounts table
+    source_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    mapped_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # 2. Database-Level Deduplication & Safety Rules
+    __table_args__ = (
+        # Rule A: Prevent exact duplicate mappings (cannot map 5 to 6 twice)
+        UniqueConstraint('source_account_id', 'mapped_account_id', name='uq_account_mapping'),
+        
+        # Rule B: Prevent an account from mapping to itself (cannot map 5 to 5)
+        CheckConstraint('source_account_id != mapped_account_id', name='chk_no_self_mapping'),
+    )
+
+    # 3. Optional ORM Relationships (makes querying in Python much easier)
+    source_account = relationship("Account", foreign_keys=[source_account_id])
+    mapped_account = relationship("Account", foreign_keys=[mapped_account_id])
 
 class PluginSnapshot(Base):
     __tablename__ = "plugin_snapshots"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    plugin_id = Column(String, nullable=False, unique=True)
+    namespace = Column(String, nullable=False, unique=True) 
     snapshot_data = Column(Text, nullable=False)
     expires_at = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=func.now())
