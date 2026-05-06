@@ -114,10 +114,11 @@
         matching.map(plugin => {
           const bundleUrl = plugin.components[category]?.bundle_url;
           if (!bundleUrl) return Promise.resolve(null);
-          // Build absolute URL: the backend serves bundles at /api/system/plugins/<id>/ui/<file>
+          
           const absoluteUrl = (bundleUrl.startsWith('http') || bundleUrl.startsWith('/'))
             ? bundleUrl
             : `/api/system/plugins/${plugin.id}/ui/${bundleUrl.replace(/^\//, '')}`;
+            
           return injectScript(absoluteUrl, plugin.version).then(() => ({
             plugin,
             tag: plugin.components[category]?.element_tag,
@@ -126,18 +127,26 @@
         })
       );
 
-      // 4. Collect successfully loaded plugins
+      // 4. Collect successfully loaded plugins with strict deduplication
       resolvedPlugins = loadResults
         .filter(r => r.status === 'fulfilled' && r.value != null && r.value.tag)
         .map(r => r.value)
         .filter((value, index, self) =>
-          self.findIndex(item => item.plugin.id === value.plugin.id && item.tag === value.tag) === index
+          self.findIndex(item => {
+            // Deduplicate by normalizing IDs (strip core./plugin. prefixes) and comparing tags
+            const norm1 = item.plugin.id.replace('core.', '').replace('plugin.', '');
+            const norm2 = value.plugin.id.replace('core.', '').replace('plugin.', '');
+            return (norm1 === norm2 && item.tag === value.tag);
+          }) === index
         );
 
-      // Log any failures but don't crash the page
+      // Log any failures but don't crash the UI grid
       loadResults
         .filter(r => r.status === 'rejected')
-        .forEach(r => console.warn('[DynamicPluginLoader] Plugin bundle failed to load:', r.reason));
+        .forEach(r => {
+          console.warn('[DynamicPluginLoader] Plugin bundle failed to load:', r.reason);
+          // Optional: we could push a 'failed' state to resolvedPlugins to show an error card
+        });
 
     } catch (err) {
       console.warn('[DynamicPluginLoader] Failed to load plugin manifest:', err?.message ?? err);

@@ -69,3 +69,6 @@ requirements.txt
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# plugins are no longer bundled with the app and must be downloaded via the store
+plugins/
