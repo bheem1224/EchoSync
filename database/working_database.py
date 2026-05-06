@@ -54,45 +54,34 @@ class WorkingBase(DeclarativeBase):
     """Base metadata class for WorkingDatabase SQLAlchemy models."""
 
 
-class User(WorkingBase):
-    __tablename__ = "users"
+class WorkingAccount(WorkingBase):
+    __tablename__ = "working_accounts"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    username: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
-    provider_identifier: Mapped[Optional[str]] = mapped_column(String, unique=True)  # External user ID from any provider (e.g. Plex account ID, Jellyfin user GUID)
-    provider: Mapped[Optional[str]] = mapped_column(String)
+    plugin_id: Mapped[int] = mapped_column(Integer, index=True)
+    remote_user_id: Mapped[str] = mapped_column(String(255), index=True)
 
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    __table_args__ = (
+        UniqueConstraint('plugin_id', 'remote_user_id', name='uq_working_account_anchor'),
+    )
 
     track_states: Mapped[list["UserTrackState"]] = relationship(
-        back_populates="user",
+        back_populates="account",
         cascade="all, delete-orphan",
-        foreign_keys="[UserTrackState.user_id]"
+        foreign_keys="[UserTrackState.account_id]"
     )
-    artist_ratings: Mapped[list["UserArtistRating"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    album_ratings: Mapped[list["UserAlbumRating"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-
-
-class PlaybackHistory(WorkingBase):
-    __tablename__ = "playback_history"
-    __table_args__ = (
-        UniqueConstraint("user_id", "provider_item_id", "listened_at", name="uq_playback_history"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    listened_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    artist_ratings: Mapped[list["UserArtistRating"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    album_ratings: Mapped[list["UserAlbumRating"]] = relationship(back_populates="account", cascade="all, delete-orphan")
 
 
 class UserRating(WorkingBase):
     __tablename__ = "user_ratings"
     __table_args__ = (
-        UniqueConstraint("user_id", "sync_id", name="uq_user_sync_id"),
+        UniqueConstraint("account_id", "sync_id", name="uq_user_sync_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(nullable=False, index=True)
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 1-5, or system flags 0.1, 2.1, 3.1
     play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -136,9 +125,9 @@ class ReviewTask(WorkingBase):
     )
 
 
-class Download(WorkingBase):
+class DownloadQueue(WorkingBase):
     """Model for tracking download state (Central Control)."""
-    __tablename__ = "downloads"
+    __tablename__ = "download_queue"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
@@ -162,15 +151,15 @@ class Download(WorkingBase):
 class UserTrackState(WorkingBase):
     __tablename__ = "user_track_states"
     __table_args__ = (
-        UniqueConstraint("user_id", "sync_id", name="uq_user_track_state"),
+        UniqueConstraint("account_id", "sync_id", name="uq_user_track_state"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("working_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     is_unlinked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_hard_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    sponsor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    sponsor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("working_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     admin_exempt_deletion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     admin_force_upgrade: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     lifecycle_action: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
@@ -180,8 +169,8 @@ class UserTrackState(WorkingBase):
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
-    user: Mapped[User] = relationship(back_populates="track_states", foreign_keys=[user_id])
-    sponsor: Mapped[Optional[User]] = relationship(foreign_keys=[sponsor_id])
+    account: Mapped["WorkingAccount"] = relationship(back_populates="track_states", foreign_keys=[account_id])
+    sponsor: Mapped[Optional["WorkingAccount"]] = relationship(foreign_keys=[sponsor_id])
 
     @validates('sync_id')
     def validate_sync_id(self, key, sync_id):
@@ -193,69 +182,32 @@ class UserTrackState(WorkingBase):
 class UserArtistRating(WorkingBase):
     __tablename__ = "user_artist_ratings"
     __table_args__ = (
-        UniqueConstraint("user_id", "artist_urn", name="uq_user_artist_rating"),
+        UniqueConstraint("account_id", "artist_urn", name="uq_user_artist_rating"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("working_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     artist_urn: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rating: Mapped[float] = mapped_column(Float)
     is_monitored: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    user: Mapped[User] = relationship(back_populates="artist_ratings")
+    account: Mapped["WorkingAccount"] = relationship(back_populates="artist_ratings")
 
 
 class UserAlbumRating(WorkingBase):
     __tablename__ = "user_album_ratings"
     __table_args__ = (
-        UniqueConstraint("user_id", "album_urn", name="uq_user_album_rating"),
+        UniqueConstraint("account_id", "album_urn", name="uq_user_album_rating"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("working_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     album_urn: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rating: Mapped[float] = mapped_column(Float)
 
-    user: Mapped[User] = relationship(back_populates="album_ratings")
+    account: Mapped["WorkingAccount"] = relationship(back_populates="album_ratings")
 
 
-class MediaServerPlaylist(WorkingBase):
-    """Cache of playlists retrieved from media servers (Plex, Jellyfin, Navidrome)."""
-    __tablename__ = "media_server_playlists"
-    __table_args__ = (
-        UniqueConstraint("server_source", "playlist_id", name="uq_media_server_playlist"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    server_source: Mapped[str] = mapped_column(String, nullable=False)   # "plex" | "jellyfin" | "navidrome"
-    playlist_id: Mapped[str] = mapped_column(String, nullable=False)     # Provider's native playlist ID
-    name: Mapped[str] = mapped_column(String, nullable=False)
-
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
-
-    items: Mapped[list["MediaServerPlaylistItem"]] = relationship(
-        back_populates="playlist", cascade="all, delete-orphan"
-    )
-
-
-class MediaServerPlaylistItem(WorkingBase):
-    """Individual track membership record inside a cached media server playlist."""
-    __tablename__ = "media_server_playlist_items"
-    __table_args__ = (
-        UniqueConstraint("playlist_id", "provider_item_id", name="uq_playlist_item"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    playlist_id: Mapped[int] = mapped_column(
-        ForeignKey("media_server_playlists.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # Provider-opaque string ID; never assumed to be numeric
-
-    playlist: Mapped["MediaServerPlaylist"] = relationship(back_populates="items")
 
 
 class SuggestionStagingQueue(WorkingBase):
@@ -289,14 +241,14 @@ class SuggestionStagingQueue(WorkingBase):
     __table_args__ = (
         # Dedup for locally-matched tracks (near-miss, vibe).
         UniqueConstraint(
-            "user_id", "music_db_track_id", "reason",
+            "account_id", "music_db_track_id", "reason",
             name="uq_suggestion_per_user_track_reason"
         ),
         # Dedup for missing tracks (playlist-gap).  SQLite treats NULL as distinct in
         # unique indexes, so rows with NULL sync_id are never caught by this constraint
         # and rows with a real sync_id are correctly deduplicated.
         UniqueConstraint(
-            "user_id", "sync_id", "reason",
+            "account_id", "sync_id", "reason",
             name="uq_suggestion_per_user_sync_reason"
         ),
     )
@@ -304,7 +256,7 @@ class SuggestionStagingQueue(WorkingBase):
     id: Mapped[int] = mapped_column(primary_key=True)
 
     # The internal user identifier (string form; mirrors PlaybackHistory.user_id).
-    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
 
     # Primary key of the matching local track in music.db's ``tracks`` table.
     # NULL for playlist-gap suggestions where the track does not yet exist locally.

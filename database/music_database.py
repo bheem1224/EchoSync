@@ -141,14 +141,14 @@ class Track(Base):
 class ExternalIdentifier(Base):
     __tablename__ = "external_identifiers"
     __table_args__ = (
-        UniqueConstraint("provider_source", "provider_item_id", name="uq_provider_item"),
+        UniqueConstraint("plugin_id", "provider_item_id", name="uq_provider_item"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     track_id: Mapped[int] = mapped_column(
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    provider_source: Mapped[str] = mapped_column(String, nullable=False)
+    plugin_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     provider_item_id: Mapped[str] = mapped_column(String, nullable=False)
     raw_data: Mapped[Optional[dict]] = mapped_column(JSON)
 
@@ -448,7 +448,7 @@ class MusicDatabase:
                 ))
         return results
 
-    def get_external_identifier_map(self, provider_source: str, track_ids: List[int]) -> Dict[int, str]:
+    def get_external_identifier_map(self, plugin_id: int, track_ids: List[int]) -> Dict[int, str]:
         """Return a map of track_id -> provider_item_id for a provider.
 
         Used to quickly determine whether tracks already exist on a target source
@@ -464,7 +464,7 @@ class MusicDatabase:
                     ExternalIdentifier.provider_item_id,
                 )
                 .filter(
-                    ExternalIdentifier.provider_source == provider_source,
+                    ExternalIdentifier.plugin_id == plugin_id,
                     ExternalIdentifier.track_id.in_(track_ids),
                 )
                 .all()
@@ -472,14 +472,14 @@ class MusicDatabase:
 
             return {track_id: provider_item_id for track_id, provider_item_id in rows}
 
-    def get_external_identifier(self, provider_source: str, track_id: int) -> Optional[str]:
+    def get_external_identifier(self, plugin_id: int, track_id: int) -> Optional[str]:
         """Return a single provider_item_id for a track/provider if present."""
-        mapping = self.get_external_identifier_map(provider_source, [track_id])
+        mapping = self.get_external_identifier_map(plugin_id, [track_id])
         return mapping.get(track_id)
 
-    def track_has_external_identifier(self, provider_source: str, track_id: int) -> bool:
+    def track_has_external_identifier(self, plugin_id: int, track_id: int) -> bool:
         """Boolean helper for quick existence checks."""
-        return bool(self.get_external_identifier(provider_source, track_id))
+        return bool(self.get_external_identifier(plugin_id, track_id))
 
     @property
     def session_factory(self):
@@ -625,7 +625,7 @@ class MusicDatabase:
                 return track.file_path
             return None
 
-    def clear_server_data(self, server_source: str):
+    def clear_server_data(self, plugin_id: int):
         """Purge all tracks/albums/artists associated with a given provider source.
 
         This is useful when re-syncing a media server from scratch. It deletes
@@ -637,7 +637,7 @@ class MusicDatabase:
             track_ids = (
                 session.query(Track.id)
                 .join(ExternalIdentifier)
-                .filter(ExternalIdentifier.provider_source == server_source)
+                .filter(ExternalIdentifier.plugin_id == plugin_id)
                 .distinct()
                 .all()
             )
@@ -647,7 +647,7 @@ class MusicDatabase:
 
             # remove identifiers themselves
             session.query(ExternalIdentifier).filter(
-                ExternalIdentifier.provider_source == server_source
+                ExternalIdentifier.plugin_id == plugin_id
             ).delete(synchronize_session=False)
 
             # clean up albums with no remaining tracks
