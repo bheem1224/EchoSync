@@ -204,12 +204,8 @@ def _engine_for_env(env: str):
 #                    possible for that environment.
 _ENV_LEGACY_BASELINE = {
     # (sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev)
-    # v2_4_0_rev is the Alembic revision ID that was the head at v2.4.0.  When a
-    # partial-upgrade is detected (v2_4_0_sentinel table present, alembic_version
-    # absent) we stamp at this revision then run upgrade(head) so any migrations
-    # added *after* v2.4.0 (e.g. column drops) are still applied.
-    "alembic:working": ("downloads", "4661df33cf8b", None,            None),
-    "alembic:music":   ("tracks",    "cb4f02f432ea", "track_aliases", "f3a9c1e82d47"),
+    "alembic:working": ("downloads", "0560a1c7fa89", None,            None),
+    "alembic:music":   ("artists",   "7b7461716632", "track_aliases", "7b7461716632"),
     # alembic:config has no application tables — no legacy adoption needed.
 }
 
@@ -281,9 +277,19 @@ def run_auto_migrations() -> None:
             if engine is not None:
                 inspector         = sa_inspect(engine)
                 has_alembic       = inspector.has_table("alembic_version")
+                
+                # Verify if alembic_version has actually been populated
+                is_stamped = False
+                if has_alembic:
+                    with engine.connect() as conn:
+                        from sqlalchemy import text
+                        res = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+                        if res:
+                            is_stamped = True
+
                 has_legacy_table  = inspector.has_table(sentinel_table)
 
-                if has_alembic:
+                if has_alembic and is_stamped:
                     # ── Case 1: Normal flow ───────────────────────────────────
                     logger.info(
                         "%s: alembic_version present — running upgrade to head.", env

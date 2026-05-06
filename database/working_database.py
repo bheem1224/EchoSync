@@ -110,6 +110,18 @@ class WatchlistArtist(WorkingBase):
     )
 
 
+class User(WorkingBase):
+    """Model for authenticated users and system identity."""
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    provider_identifier: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True)
+    provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+
 class ReviewTask(WorkingBase):
     """Model for items in the Metadata Review Queue."""
     __tablename__ = "review_tasks"
@@ -140,6 +152,24 @@ class DownloadQueue(WorkingBase):
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
+
+
+class Download(WorkingBase):
+    """Model for tracking download state (Central Control)."""
+    __tablename__ = "downloads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    echo_sync_track: Mapped[dict] = mapped_column(JSON, nullable=False)  # Serialized EchosyncTrack
+    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now
+    )
+
 
     @validates('sync_id')
     def validate_sync_id(self, key, sync_id):
@@ -206,6 +236,47 @@ class UserAlbumRating(WorkingBase):
     rating: Mapped[float] = mapped_column(Float)
 
     account: Mapped["WorkingAccount"] = relationship(back_populates="album_ratings")
+
+
+class MediaServerPlaylist(WorkingBase):
+    __tablename__ = "media_server_playlists"
+    __table_args__ = (
+        UniqueConstraint("server_source", "playlist_id", name="uq_media_server_playlist"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    server_source: Mapped[str] = mapped_column(String, nullable=False)
+    playlist_id: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+    items: Mapped[list["MediaServerPlaylistItem"]] = relationship(back_populates="playlist", cascade="all, delete-orphan")
+
+
+class MediaServerPlaylistItem(WorkingBase):
+    __tablename__ = "media_server_playlist_items"
+    __table_args__ = (
+        UniqueConstraint("playlist_id", "provider_item_id", name="uq_playlist_item"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    playlist_id: Mapped[int] = mapped_column(ForeignKey("media_server_playlists.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    playlist: Mapped["MediaServerPlaylist"] = relationship(back_populates="items")
+
+
+class PlaybackHistory(WorkingBase):
+    __tablename__ = "playback_history"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider_item_id", "listened_at", name="uq_playback_history"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    listened_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, index=True)
+
 
 
 
@@ -333,8 +404,6 @@ class RestrictedConnection:
     def execute(self, statement, *args, **kwargs):
         if getattr(_override_local, 'override_active', False):
             return self.conn.execute(statement, *args, **kwargs)
-
-        return self.conn.execute(statement, *args, **kwargs)
 
         # Extremely basic DDL block for non-prefixed tables
         import re
