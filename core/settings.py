@@ -778,4 +778,24 @@ class ConfigManager:
         """Returns the absolute path to the configuration root directory."""
         return self.config_dir
 
+    def get_disabled_providers(self) -> List[str]:
+        """Return the list of disabled providers/plugins."""
+        return self.get('disabled_providers', [])
+
+    def disable_provider(self, provider_id: str) -> bool:
+        """Add a provider/plugin to the disabled list."""
+        disabled = self.get_disabled_providers()
+        if provider_id not in disabled:
+            disabled.append(provider_id)
+            self.set('disabled_providers', disabled)
+            logger.info(f"Plugin {provider_id} has been disabled.")
+            return True
+        return False
+
+    def get_generated_encryption_key(self) -> Optional[str]:
+        """Return the auto-generated MASTER_KEY if it was created during this session."""
+        if getattr(self, '_auto_generated_key', False):
+            return getattr(self, '_generated_key_value', None)
+        return None
+
 config_manager = ConfigManager()
