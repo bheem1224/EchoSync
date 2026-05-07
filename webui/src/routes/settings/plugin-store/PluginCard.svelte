@@ -59,23 +59,19 @@
   $: hasStableUpdate = isNewer(latestRelease, installedVersion);
   $: hasBetaUpdate = isNewer(latestBeta, installedVersion);
   $: isInstalled = !!(plugin.is_installed || plugin._installed);
+  $: useBeta = globalBetaEnabled || installedChannel === 'beta';
 
   // Action Handlers
   function handleMainAction() {
     console.log(`[PluginCard] handleMainAction for ${plugin.id}. Channel: ${installedChannel}, StableUpdate: ${hasStableUpdate}, BetaUpdate: ${hasBetaUpdate}`);
     if (downloading) return;
     
-    if (globalBetaEnabled && installedChannel === 'beta') {
-      console.log(`[PluginCard] Forcing beta install dispatch for ${plugin.id}`);
+    if (useBeta) {
+      console.log(`[PluginCard] Dispatching beta install dispatch for ${plugin.id}`);
       dispatch('install', { ...plugin, channel: 'beta', version: latestBeta });
     } else {
-      if (hasStableUpdate || !isInstalled) {
-        console.log(`[PluginCard] Dispatching release install dispatch for ${plugin.id}`);
-        dispatch('install', { ...plugin, channel: 'release', version: latestRelease });
-      } else {
-        console.log(`[PluginCard] No stable update needed, but user clicked. Re-installing stable.`);
-        dispatch('install', { ...plugin, channel: 'release', version: latestRelease });
-      }
+      console.log(`[PluginCard] Dispatching release install dispatch for ${plugin.id}`);
+      dispatch('install', { ...plugin, channel: 'release', version: latestRelease });
     }
   }
 
@@ -128,7 +124,7 @@
       }
     }
   }
-  $: targetVersion = (globalBetaEnabled && installedChannel === 'beta' && hasBetaUpdate) 
+  $: targetVersion = (useBeta && hasBetaUpdate) 
     ? latestBeta 
     : (hasStableUpdate ? latestRelease : installedVersion);
   
@@ -210,7 +206,7 @@
           {#if showArrow}
             {installedVersion} ➔ {targetVersion}
           {:else}
-            {isInstalled ? installedVersion : latestRelease}
+            {isInstalled ? installedVersion : (useBeta ? latestBeta : latestRelease)}
           {/if}
         </span>
       </div>
@@ -233,7 +229,7 @@
             <span class="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
             <span>{isInstalled ? 'Updating...' : 'Installing...'}</span>
           {:else}
-            <span>{!isInstalled ? 'Install' : hasStableUpdate ? 'Update' : 'Up to Date'}</span>
+            <span>{!isInstalled ? 'Install' : useBeta ? (hasBetaUpdate ? 'Update' : 'Up to Date') : (hasStableUpdate ? 'Update' : 'Up to Date')}</span>
           {/if}
         </button>
       {:else}
@@ -249,7 +245,7 @@
               <span class="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
               <span>Processing...</span>
             {:else}
-              <span>{!isInstalled ? 'Install' : installedChannel === 'release' ? (hasStableUpdate ? 'Update' : 'Up to Date') : (hasBetaUpdate ? 'Update' : 'Beta Current')}</span>
+              <span>{!isInstalled ? 'Install' : useBeta ? (hasBetaUpdate ? 'Update' : 'Up to Date') : (hasStableUpdate ? 'Update' : 'Up to Date')}</span>
             {/if}
           </button>
 
