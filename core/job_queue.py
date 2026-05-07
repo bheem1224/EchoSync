@@ -55,7 +55,7 @@ class JobQueue:
     RESTART_PENDING = False
 
     def __init__(self, worker_count: int = 2, poll_interval: float = 0.5):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._jobs: Dict[str, ScheduledJob] = {}
         self._heap: List[ScheduledJob] = []
         self._running = False
@@ -495,7 +495,7 @@ class JobQueue:
             # Use multiprocessing for heavy jobs to bypass GIL and allow termination
             p = multiprocessing.Process(
                 target=_multiprocess_worker_target,
-                args=(job.name, job.plugin, job.plugin_id),
+                args=(job.name, job.plugin, None),
                 daemon=True
             )
             with self._lock:
