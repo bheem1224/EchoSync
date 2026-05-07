@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 # Ensure environment variables from project .env are loaded before ConfigManager initializes
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=True)
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from cryptography.fernet import Fernet
 from pathlib import Path
 import copy
@@ -797,5 +797,9 @@ class ConfigManager:
         if getattr(self, '_auto_generated_key', False):
             return getattr(self, '_generated_key_value', None)
         return None
+
+    def was_encryption_key_auto_generated(self) -> bool:
+        """Return True if the encryption key was auto-generated during this session."""
+        return getattr(self, '_auto_generated_key', False)
 
 config_manager = ConfigManager()
