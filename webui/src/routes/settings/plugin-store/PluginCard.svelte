@@ -203,7 +203,7 @@
         <span class="text-[10px] text-slate-500 uppercase font-bold tracking-tight">V</span>
         <span class="text-xs text-slate-300 font-mono">
           {#if isInstalled && (hasStableUpdate || (globalBetaEnabled && hasBetaUpdate))}
-            {installedVersion} ➔ {globalBetaEnabled && installedChannel === 'beta' ? latestBeta : latestRelease}
+            {installedVersion} ➔ {hasBetaUpdate && globalBetaEnabled && installedChannel === 'beta' ? latestBeta : latestRelease}
           {:else}
             {isInstalled ? installedVersion : latestRelease}
           {/if}
@@ -244,7 +244,7 @@
               <span class="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
               <span>Processing...</span>
             {:else}
-              <span>{!isInstalled ? 'Install' : installedChannel === 'release' ? (hasStableUpdate ? 'Update' : 'Up to Date') : (hasBetaUpdate ? `Update to Beta v${latestBeta}` : 'Beta Current')}</span>
+              <span>{!isInstalled ? 'Install' : installedChannel === 'release' ? (hasStableUpdate ? 'Update' : 'Up to Date') : (hasBetaUpdate ? 'Update' : 'Beta Current')}</span>
             {/if}
           </button>
 

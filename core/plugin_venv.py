@@ -64,10 +64,12 @@ def setup_plugin_venv(plugins_dir: Path, requirements: Set[str]):
             except Exception as e:
                 logger.error(f"Error executing pip install for plugin dependencies: {e}")
 
-        import threading
-        t = threading.Thread(target=_install_deps, daemon=True, name="PluginVenvInstaller")
-        t.start()
-        logger.info("Plugin dependency installation started in background.")
+        from core.job_queue import job_queue
+        import time
+        job_name = f"plugin_venv_installer_{int(time.time()*1000)}"
+        job_queue.register_job(name=job_name, func=_install_deps, interval_seconds=None, tags=["system", "plugin"])
+        job_queue.execute_job_now(job_name)
+        logger.info("Plugin dependency installation started in background via job queue.")
 
     else:
         logger.debug("No plugin dependencies to install.")

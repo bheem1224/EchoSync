@@ -471,7 +471,17 @@ class PluginLoader:
                 return
 
             # Dynamic import
-            module = importlib.import_module(module_path)
+            plugins_parent_str = str(self.plugins_dir.parent) if source_type == 'community' else str(self.app_root)
+            added_to_path = False
+            if plugins_parent_str not in sys.path:
+                sys.path.insert(0, plugins_parent_str)
+                added_to_path = True
+            
+            try:
+                module = importlib.import_module(module_path)
+            finally:
+                if added_to_path and plugins_parent_str in sys.path:
+                    sys.path.remove(plugins_parent_str)
 
             # 1. Register Provider Class (if present)
             if hasattr(module, 'ProviderClass'):
@@ -525,10 +535,18 @@ class PluginLoader:
 
         except Exception as e:
             logger.error(f"Error loading plugin {module_path}: {e}", exc_info=True)
-            config_manager.disable_provider(plugin_id)
+            try:
+                from database.config_database import get_config_database
+                db = get_config_database()
+                with db._get_connection() as conn:
+                    c = conn.cursor()
+                    c.execute("UPDATE services SET is_active = 0 WHERE namespace LIKE ?", (f"%{clean_name}%",))
+                    conn.commit()
+            except Exception as db_err:
+                logger.error(f"Could not disable plugin {clean_name} in DB: {db_err}")
         finally:
             # Cleanup vendored path
-            if added_vendor_path and str(vendor_dir) in sys.path:
+            if added_vendor_path and 'vendor_dir' in locals() and str(vendor_dir) in sys.path:
                 sys.path.remove(str(vendor_dir))
 
     def get_all_blueprints(self) -> List[Blueprint]:
@@ -651,6 +669,7 @@ class PluginRegistry:
     _providers: Dict[str, Type[PluginBase]] = {}
     _provider_sources: Dict[str, str] = {}  # metadata: provider_name -> source_type
     _disabled_providers: set = set()
+    _quality_options: Dict[str, List[Dict[str, Any]]] = {}
 
     @classmethod
     def get_all(cls) -> Dict[str, Dict[str, Any]]:
@@ -825,6 +844,28 @@ class PluginRegistry:
     @classmethod
     def get_disabled_providers(cls) -> List[str]:
         return list(cls._disabled_providers)
+    
+    @classmethod
+    def register_quality_option(cls, plugin_id: str, option: Dict[str, Any]):
+        """Register a custom quality configuration field for a plugin."""
+        if plugin_id not in cls._quality_options:
+            cls._quality_options[plugin_id] = []
+        
+        # Check for duplicates by name within this plugin
+        if not any(opt['name'] == option['name'] for opt in cls._quality_options[plugin_id]):
+            cls._quality_options[plugin_id].append(option)
+
+    @classmethod
+    def get_all_quality_options(cls) -> List[Dict[str, Any]]:
+        """Retrieve all registered quality options across all plugins."""
+        all_options = []
+        for plugin_id, options in cls._quality_options.items():
+            # Ensure each option carries its plugin_id context
+            for opt in options:
+                if 'plugin_id' not in opt:
+                    opt['plugin_id'] = plugin_id
+                all_options.append(opt)
+        return all_options
 
 
 

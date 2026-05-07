@@ -3,6 +3,7 @@
   import { preferences } from '../stores/preferences';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import { feedback } from '../stores/feedback';
+  import { dndzone } from 'svelte-dnd-action';
   import QualityProfileEditor from './QualityProfileEditor.svelte';
 
   let editingProfile = $state(null);
@@ -51,23 +52,12 @@
   }
 
   // Drag and drop handlers
-  function handleDragStart(e, idx) {
-    dragIndex = idx;
-    e.dataTransfer.effectAllowed = 'move';
+  const flipDurationMs = 200;
+  function handleDndConsider(e) {
+    preferences.setLocalProfiles(e.detail.items);
   }
-  function handleDragOver(e) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  }
-  function handleDrop(e, idx) {
-    e.preventDefault();
-    if (dragIndex === null) return;
-    const list = [...($preferences?.profiles || [])];
-    const [moved] = list.splice(dragIndex, 1);
-    list.splice(idx, 0, moved);
-    // reordering is local-only until Save All
-    preferences.setLocalProfiles(list);
-    dragIndex = null;
+  function handleDndFinalize(e) {
+    preferences.setLocalProfiles(e.detail.items);
   }
 
   function openEditor(profile) {
@@ -110,17 +100,18 @@
       </div>
     </div>
 
-      <div class="flex flex-col gap-2 mt-3">
-    {#each $preferences?.profiles ?? [] as profile, idx}
+      <div 
+        class="flex flex-col gap-2 mt-3"
+        use:dndzone="{{items: $preferences?.profiles ?? [], flipDurationMs}}"
+        on:consider={handleDndConsider}
+        on:finalize={handleDndFinalize}
+      >
+    {#each $preferences?.profiles ?? [] as profile (profile.id)}
       <div
-        class="flex justify-between items-center p-2 rounded-global bg-surface-hover"
-        draggable="true"
-        on:dragstart={(e) => handleDragStart(e, idx)}
-        on:dragover={handleDragOver}
-        on:drop={(e) => handleDrop(e, idx)}
+        class="flex justify-between items-center p-2 rounded-global bg-surface-hover outline-none"
       >
         <div class="flex gap-2 items-center">
-          <div class="cursor-grab">≡</div>
+          <div class="cursor-grab p-1 opacity-50 hover:opacity-100">≡</div>
           <div class="profile-name">{profile.name}</div>
         </div>
         <div class="row-right">

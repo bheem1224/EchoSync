@@ -29,7 +29,7 @@
   async function activateServer() {
     try {
       activating = true;
-      await fetch(`${apiBase}/plex/activate`, { method: 'POST' });
+      await fetch(`${apiBase}/activate`, { method: 'POST' });
       await loadSettings();
     } catch (error) {
       console.error('Failed to activate server:', error);
@@ -40,7 +40,7 @@
 
   async function loadSettings() {
     try {
-      const response = await fetch(`${apiBase}/plex/settings`);
+      const response = await fetch(`${apiBase}/settings`);
       const data = await response.json();
       if (data?.settings) {
         baseUrl = data.settings.base_url || '';
@@ -63,7 +63,7 @@
 
     try {
       saving = true;
-      await fetch(`${apiBase}/plex/settings`, { 
+      await fetch(`${apiBase}/settings`, { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({
@@ -83,7 +83,7 @@
   async function startOAuth() {
     try {
       authenticating = true;
-      const response = await fetch(`${apiBase}/plex/auth/start`, { method: 'POST' });
+      const response = await fetch(`${apiBase}/auth/start`, { method: 'POST' });
       const data = await response.json();
       
       if (data?.oauth_url && data?.session_id) {
@@ -92,7 +92,7 @@
         
         pollInterval = setInterval(async () => {
           try {
-            const pollResp = await fetch(`${apiBase}/plex/auth/poll/${oauthSession}`);
+            const pollResp = await fetch(`${apiBase}/auth/poll/${oauthSession}`);
             const pollData = await pollResp.json();
             if (pollData?.completed) {
               clearInterval(pollInterval);
@@ -123,7 +123,7 @@
       clearInterval(pollInterval);
       pollInterval = null;
       try {
-        await fetch(`${apiBase}/plex/auth/cancel/${oauthSession}`, { method: 'DELETE' });
+        await fetch(`${apiBase}/auth/cancel/${oauthSession}`, { method: 'DELETE' });
       } catch (error) {
         console.error('Failed to cancel OAuth:', error);
       }
@@ -135,7 +135,7 @@
   async function testConnection() {
     try {
       testing = true;
-      const response = await fetch(`${apiBase}/plex/test-connection`, { 
+      const response = await fetch(`${apiBase}/test-connection`, { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({ base_url: baseUrl }) 
@@ -297,7 +297,7 @@
     font-weight: 700;
   }
 
-  .status-badge.active { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); }
+  .status-badge.active { background: rgba(59, 130, 246, 0.15); color: var(--color-primary, #14b8a6); }
   .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
   .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
 
@@ -318,8 +318,8 @@
 
   .btn-primary {
     padding: 10px 20px;
-    background: var(--color-primary);
-    color: var(--bg-canvas);
+    background: var(--color-primary, #14b8a6);
+    color: var(--bg-canvas, #ffffff);
     border: none;
     border-radius: 8px;
     font-weight: 600;
@@ -373,7 +373,7 @@
 
   .input-field:focus {
     outline: none;
-    border-color: var(--color-primary);
+    border-color: var(--color-primary, #14b8a6);
     box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
   }
 

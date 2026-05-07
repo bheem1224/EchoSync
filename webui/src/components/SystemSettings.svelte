@@ -32,23 +32,24 @@
 
   async function loadProviders() {
     try {
-      const response = await apiClient.get('/plugins');
-      if (response.data && Array.isArray(response.data)) {
-        providerStates = response.data.map(provider => ({
+      const response = await apiClient.get('/system/plugins');
+      if (response.data && Array.isArray(response.data.plugins)) {
+        providerStates = response.data.plugins.map(provider => ({
           id: provider.id,
           name: provider.name,
           display_name: provider.display_name || provider.name || provider.id,
           configured: provider.is_configured || false,
-          disabled: provider.disabled || false,
+          disabled: !provider.enabled, // backend returns 'enabled', frontend uses 'disabled'
           version: provider.version || '0.0.0',
           author: provider.author || 'Unknown',
-          category: provider.category || 'provider',
-          source_type: provider.source_type || 'community'
+          category: provider.category || 'plugin',
+          source_type: provider.source_type || 'community',
+          channel: provider.channel
         }));
       }
     } catch (error) {
-      console.error('Failed to load providers:', error);
-      feedback.addToast('Failed to load provider list', 'error');
+      console.error('Failed to load plugins:', error);
+      feedback.addToast('Failed to load plugin list', 'error');
     } finally {
       loadingProviders = false;
     }
@@ -108,7 +109,7 @@
   async function handleToggleProvider(provider) {
     try {
       const targetEnabled = provider.disabled; // If currently disabled, target is enabled (true)
-      const response = await apiClient.post(`/plugins/${provider.id}/toggle`, {
+      const response = await apiClient.post(`/system/plugins/${provider.id}/toggle`, {
         enabled: targetEnabled
       });
       
@@ -129,7 +130,7 @@
 <section class="min-h-full bg-gray-900 text-gray-100 rounded-xl p-4 md:p-6">
   <header class="mb-6">
     <h1 class="text-2xl font-semibold tracking-tight">System</h1>
-    <p class="text-sm text-gray-400">System health, library metrics, and provider controls.</p>
+    <p class="text-sm text-gray-400">System health, library metrics, and plugin controls.</p>
   </header>
 
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -213,7 +214,7 @@
     </article>
 
     <article class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm">
-      <h2 class="text-base font-semibold mb-4">Installed Providers</h2>
+      <h2 class="text-base font-semibold mb-4">Installed Plugins</h2>
 
       {#if loadingProviders}
         <div class="flex items-center justify-center py-8">
@@ -221,11 +222,11 @@
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span class="ml-3 text-gray-400">Loading providers...</span>
+          <span class="ml-3 text-gray-400">Loading plugins...</span>
         </div>
       {:else if providerStates.length === 0}
         <div class="text-center py-6">
-          <p class="text-sm text-gray-400">No providers found</p>
+          <p class="text-sm text-gray-400">No plugins found</p>
         </div>
       {:else}
         <div class="space-y-3">

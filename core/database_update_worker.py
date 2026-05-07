@@ -119,7 +119,7 @@ class DatabaseUpdateWorker:
         # Expose the job name so get_database_update_status() can query the
         # job queue's _is_running flag for accurate concurrency detection.
         self._job_name = job_name
-        job_queue.register_job(name=job_name, func=self.run, interval_seconds=None)
+        job_queue.register_job(name=job_name, func=self.run, interval_seconds=None, tags=["system", "database"])
         job_queue.execute_job_now(job_name)
         logger.info(f"DatabaseUpdateWorker queued via job_queue for {self.server_type}")
 

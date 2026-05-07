@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
+  import { dndzone } from 'svelte-dnd-action';
   import { providers } from '../stores/providers';
 
   const { profile = null } = $props();
@@ -11,10 +12,11 @@
     name: '',
     formats: [],
     tie_breaker: 'MAX_QUALITY',
-    metadataRequired: false
+    metadataRequired: false,
+    plugin_options: []
   });
   let selectedFormat = $state('');
-  let dragIndex = $state(null);
+  const flipDurationMs = 200;
 
   const AVAILABLE_FORMATS = [
     'MP3','FLAC','OGG','AAC','ALAC','APE','WAV','DSD'
@@ -61,19 +63,11 @@
   }
 
   // Drag and drop handlers
-  function handleDragStart(e: DragEvent, idx: number) {
-    dragIndex = idx;
-    e.dataTransfer!.effectAllowed = 'move';
+  function handleDndConsider(e: any) {
+    p.formats = e.detail.items;
   }
-  function handleDragOver(e: DragEvent) { e.preventDefault(); }
-  function handleDrop(e: DragEvent, idx: number) {
-    e.preventDefault();
-    if (dragIndex === null) return;
-    const list = [...p.formats];
-    const [moved] = list.splice(dragIndex,1);
-    list.splice(idx,0,moved);
-    p.formats = list;
-    dragIndex = null;
+  function handleDndFinalize(e: any) {
+    p.formats = e.detail.items;
   }
 
   function toggleArray(arr: any[], val:any) {
@@ -134,13 +128,21 @@
       </div>
 
       {#if p.formats && p.formats.length}
-        <div class="flex flex-col gap-2 mt-4">
-          {#each p.formats as fmt, idx}
-            <div class="bg-background p-4 rounded-global border border-glass-border mb-2" draggable="true" on:dragstart={(e)=>handleDragStart(e, idx)} on:dragover={handleDragOver} on:drop={(e)=>handleDrop(e, idx)}>
+        <div 
+          class="flex flex-col gap-2 mt-4"
+          use:dndzone="{{items: p.formats, flipDurationMs}}"
+          on:consider={handleDndConsider}
+          on:finalize={handleDndFinalize}
+        >
+          {#each p.formats as fmt (fmt.id)}
+            <div class="bg-background p-4 rounded-global border border-glass-border mb-2 outline-none">
               <div class="flex justify-between items-center mb-2">
-                <strong>{fmt.type}</strong>
+                <div class="flex items-center gap-2">
+                  <div class="cursor-grab opacity-50">≡</div>
+                  <strong>{fmt.type}</strong>
+                </div>
                 <div class="card-actions">
-                  <button on:click={() => removeFormat(idx)}>Remove</button>
+                  <button class="text-xs text-error-text opacity-70 hover:opacity-100" on:click={() => removeFormat(p.formats.indexOf(fmt))}>Remove</button>
                 </div>
               </div>
 
@@ -198,13 +200,49 @@
             bind:value={p.tie_breaker}
             class="w-full px-3 py-2 bg-surface border border-glass-border rounded-global text-sm text-white focus:outline-none focus:ring-1 focus:ring-teal-500/50"
           >
-            <option value="MAX_QUALITY" class="bg-black/50 text-white">Max Quality (Largest File)</option>
-            <option value="SAVE_STORAGE" class="bg-black/50 text-white">Save Storage (Smallest File)</option>
-            <option value="SPEED" class="bg-black/50 text-white">Speed (First Available)</option>
+            <option value="MAX_QUALITY" class="bg-black/50 text-white">Max Quality (Largest)</option>
+            <option value="SAVE_STORAGE" class="bg-black/50 text-white">Save Storage (Smallest)</option>
+            <option value="SPEED" class="bg-black/50 text-white">Speed (Fastest)</option>
           </select>
         </label>
       {:else if !hasMatchingProvider}
         <p class="muted">Tie-breaker options available when capable providers are installed.</p>
+      {/if}
+    </section>
+
+    <!-- Task 4: Dynamic Plugin Options Loop -->
+    <section class="plugin-options mt-6">
+      {#if p.plugin_options && p.plugin_options.length > 0}
+        <h3 class="text-base font-semibold mb-3">Plugin Specific Options</h3>
+        <div class="flex flex-col gap-4">
+          {#each p.plugin_options as option (option.id || option.name)}
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs text-secondary font-medium" for={option.id}>{option.label || option.name}</label>
+              
+              {#if option.type === 'boolean'}
+                <div class="flex items-center gap-2">
+                  <input 
+                    type="checkbox" 
+                    id={option.id} 
+                    bind:checked={option.value} 
+                    class="w-4 h-4 rounded border-glass-border bg-surface accent-teal-500"
+                  />
+                  <span class="text-sm text-white/70">{option.description || ''}</span>
+                </div>
+              {:else if option.type === 'dropdown'}
+                <select 
+                  id={option.id} 
+                  bind:value={option.value} 
+                  class="w-full px-3 py-2 bg-surface border border-glass-border rounded-global text-sm text-white focus:outline-none focus:ring-1 focus:ring-teal-500/50"
+                >
+                  {#each option.choices || [] as choice}
+                    <option value={choice}>{choice}</option>
+                  {/each}
+                </select>
+              {/if}
+            </div>
+          {/each}
+        </div>
       {/if}
     </section>
   </div>

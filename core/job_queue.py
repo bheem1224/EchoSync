@@ -95,9 +95,10 @@ class JobQueue:
                 heapq.heappush(self._heap, job)
             return
 
-        # Purge transient one-time jobs to prevent "ghost" stale entries in UI.
+        # Purge transient one-time jobs from the heap so they do not run again,
+        # but keep them in self._jobs so they appear in the UI as finished.
         self._remove_from_heap(job.name)
-        self._jobs.pop(job.name, None)
+        # self._jobs.pop(job.name, None)
 
     # Public API
     def start(self):

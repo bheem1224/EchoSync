@@ -42,7 +42,7 @@
 
   async function loadGlobalSettings() {
     try {
-      const response = await fetch(`/api/providers/spotify/settings`);
+      const response = await fetch(`${apiBase}/settings`);
       const data = await response.json();
       if (data?.settings) {
         clientId = data.settings.client_id || "";
@@ -62,7 +62,7 @@
 
     try {
       savingGlobal = true;
-      await fetch(`/api/providers/spotify/settings`, {
+      await fetch(`${apiBase}/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -82,7 +82,7 @@
 
   async function loadAccounts() {
     try {
-      const response = await fetch(`/api/accounts/spotify`);
+      const response = await fetch(`${apiBase}/accounts`);
       const data = await response.json();
       accounts = data?.accounts || [];
     } catch (error) {
@@ -103,7 +103,7 @@
     }
 
     try {
-      await fetch(`${apiBase}/accounts/spotify`, {
+      await fetch(`${apiBase}/accounts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -122,7 +122,7 @@
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await fetch(`${apiBase}/accounts/spotify/${accountId}/activate`, {
+      await fetch(`${apiBase}/accounts/${accountId}/activate`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -142,7 +142,7 @@
     if (!confirm(`Delete account "${accountName}"?`)) return;
 
     try {
-      await fetch(`${apiBase}/accounts/spotify/${accountId}`, {
+      await fetch(`${apiBase}/accounts/${accountId}`, {
         method: "DELETE",
       });
       console.log("Account deleted");
@@ -367,7 +367,7 @@
     font-size: 11px;
     padding: 4px 8px;
     background: rgba(20, 184, 166, 0.15);
-    color: var(--color-primary);
+    color: var(--color-primary, #14b8a6);
     border-radius: 4px;
     font-weight: 600;
     text-transform: uppercase;
@@ -428,7 +428,7 @@
 
   .input-field:focus {
     outline: none;
-    border-color: var(--color-primary);
+    border-color: var(--color-primary, #14b8a6);
     box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
   }
 
@@ -439,8 +439,8 @@
 
   .btn-primary {
     padding: 10px 20px;
-    background: var(--color-primary);
-    color: var(--bg-canvas);
+    background: var(--color-primary, #14b8a6);
+    color: var(--bg-canvas, #ffffff);
     border: none;
     border-radius: 8px;
     font-weight: 600;
@@ -531,7 +531,7 @@
   }
   .status-badge.active {
     background: rgba(20, 184, 166, 0.15);
-    color: var(--color-primary);
+    color: var(--color-primary, #14b8a6);
   }
 
   .account-actions {
@@ -543,7 +543,7 @@
   .link-btn {
     background: none;
     border: none;
-    color: var(--color-primary);
+    color: var(--color-primary, #14b8a6);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;

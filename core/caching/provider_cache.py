@@ -139,15 +139,14 @@ class ProviderCache:
                 import logging
                 logging.getLogger("provider_cache").error(f"Error storing in cache: {e}")
 
-        # OPTIMIZATION: Dispatch via a static ThreadPoolExecutor to prevent thread exhaustion
-        # during heavy burst cache writes (e.g. library scanning)
-        from concurrent.futures import ThreadPoolExecutor
+        # OPTIMIZATION: Dispatch via job_queue to prevent thread exhaustion
+        # and keep all threads managed by central job queue
+        from core.job_queue import job_queue
+        import time
 
-        global _cache_write_executor
-        if '_cache_write_executor' not in globals():
-            _cache_write_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="provider_cache_writer")
-
-        _cache_write_executor.submit(_persist_cache)
+        job_name = f"provider_cache_writer_{hash(key)}_{int(time.time()*1000)}"
+        job_queue.register_job(name=job_name, func=_persist_cache, interval_seconds=None, tags=["system", "cache"])
+        job_queue.execute_job_now(job_name)
         return True
 
     def delete(self, key: str) -> bool:
@@ -210,7 +209,6 @@ class ProviderCache:
 
 
 # Global cache instance
-_cache_write_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix='provider_cache_writer')
 _cache_instance: Optional[ProviderCache] = None
 _cache_lock = threading.Lock()
 

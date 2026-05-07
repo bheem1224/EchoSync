@@ -118,6 +118,35 @@ class _FileSDKFacade:
             logger.error(f"Failed to soft delete {file_path}: {e}")
             return False
 
+class _QualitySDKFacade:
+    def __init__(self, plugin_id: str):
+        self.plugin_id = plugin_id
+
+    def register_option(self, name: str, label: str, input_type: str, default_value: Any, choices: Optional[List] = None):
+        """
+        Register a custom quality profile configuration field.
+        
+        Args:
+            name: Machine-readable name for the setting (key)
+            label: Human-readable label for the UI
+            input_type: Control type, must be 'boolean' or 'dropdown'
+            default_value: Initial value for the setting
+            choices: List of options for 'dropdown' type. Can be list of strings or list of {'label': str, 'value': Any}
+        """
+        if input_type not in ["boolean", "dropdown"]:
+            raise ValueError("input_type must be either 'boolean' or 'dropdown'")
+        
+        option = {
+            "name": name,
+            "label": label,
+            "type": input_type,
+            "default": default_value,
+            "choices": choices
+        }
+        
+        from core.plugin_loader import PluginRegistry
+        PluginRegistry.register_quality_option(self.plugin_id, option)
+
 class _NetworkSDKFacade:
     def __init__(self, plugin_id: str):
         self.plugin_id = plugin_id
@@ -185,6 +214,10 @@ class _SDK:
         self.plugins = _PluginsSDKFacade()
         self.file = _FileSDKFacade()
         
+    @property
+    def quality(self):
+        return _QualitySDKFacade(self._get_plugin_id())
+
     def _get_plugin_id(self):
         caller_mod = inspect.currentframe().f_back.f_back.f_globals.get('__name__', '')
         # Handle plugins.{author}.{plugin_name}

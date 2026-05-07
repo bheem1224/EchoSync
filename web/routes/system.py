@@ -557,10 +557,16 @@ def quality_profile():
 
 @bp.get('/quality-profiles')
 def list_quality_profiles():
-    """Return stored quality profiles from config manager."""
+    """Return stored quality profiles from config manager and dynamic plugin options."""
     try:
         profiles = config_manager.get_quality_profiles()
-        return jsonify({'profiles': profiles}), 200
+        from core.plugin_loader import PluginRegistry
+        plugin_options = PluginRegistry.get_all_quality_options()
+        
+        return jsonify({
+            'profiles': profiles,
+            'plugin_options': plugin_options
+        }), 200
     except Exception as e:
         logger.error(f"Error listing quality profiles: {e}")
         return jsonify({'error': 'Failed to list quality profiles'}), 500
