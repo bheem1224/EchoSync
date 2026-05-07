@@ -274,6 +274,29 @@ class ConfigDatabase:
             logger.error(f"Error reading service config: {e}")
             return None
 
+    def get_all_service_config(self, service_id: int) -> Dict[str, Any]:
+        try:
+            import contextlib
+            with contextlib.closing(self._get_connection()) as conn:
+                c = conn.cursor()
+                c.execute("SELECT config_key, config_value, is_sensitive FROM service_config WHERE service_id=?", (service_id,))
+                rows = c.fetchall()
+
+                config = {}
+                from core.security import decrypt_string
+                for key, value, is_sensitive in rows:
+                    if is_sensitive and value is not None:
+                        try:
+                            value = decrypt_string(value)
+                        except Exception:
+                            pass
+                    config[key] = value
+
+                return config
+        except Exception as e:
+            logger.error(f"Error reading all service config: {e}")
+            return {}
+
     # Accounts
     def get_service_name(self, service_id: int) -> Optional[str]:
         with self._get_connection() as conn:

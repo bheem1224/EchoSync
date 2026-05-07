@@ -16,7 +16,7 @@ from flask import Blueprint
 
 from core.enums import Capability
 
-from core.plugin_SDK import PluginBase
+from core.plugin_SDK import PluginBase, DownloaderProvider, MediaServerProvider, SyncServiceProvider
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 

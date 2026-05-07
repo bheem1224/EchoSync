@@ -73,6 +73,23 @@ class ConfigManager:
             logger.error(f"set_service_credentials failed: {e}")
             return False
 
+    def get_service_credentials(self, service_name: str) -> dict:
+        """
+        Get all credentials/config for a service from the database.
+        - service_name: e.g. 'spotify', 'tidal'
+        Returns a dict of all config keys and values.
+        """
+        from database.config_database import get_config_database
+        db = get_config_database()
+        try:
+            service_id = db.get_or_create_service_id(service_name)
+            if not service_id:
+                return {}
+            return db.get_all_service_config(service_id)
+        except Exception as e:
+            logger.error(f"get_service_credentials failed: {e}")
+            return {}
+
     def __init__(self, config_path: str = "config/config.json"):
         # STEP 1: Set config_dir from ENV (NOT from config.json)
         # config_dir is special: it's set only by ENV variables (for encryption key security)
@@ -748,3 +765,5 @@ class ConfigManager:
 
     def get_logging_config(self) -> Dict[str, str]:
         return self.get('logging', {})
+
+config_manager = ConfigManager()

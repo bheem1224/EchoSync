@@ -9,6 +9,12 @@ Main components:
 - @provider_cache: Decorator for caching provider queries
 """
 
+
+# ── Late Imports to break circular dependencies ──
+# We move these to the bottom so that core.settings (and others) can import 
+# from the core package without triggering a full load of the matching engine 
+# before config_manager is instantiated.
+
 from .matching_engine import (
     EchosyncTrack,
     QualityTag,
