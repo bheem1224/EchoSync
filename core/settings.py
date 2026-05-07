@@ -766,4 +766,16 @@ class ConfigManager:
     def get_logging_config(self) -> Dict[str, str]:
         return self.get('logging', {})
 
+    def get_plugins_dir(self) -> Path:
+        """Returns the absolute path to the plugins directory."""
+        return self.plugins_path
+
+    def get_data_dir(self) -> Path:
+        """Returns the absolute path to the data root directory."""
+        return self.data_dir
+
+    def get_config_dir(self) -> Path:
+        """Returns the absolute path to the configuration root directory."""
+        return self.config_dir
+
 config_manager = ConfigManager()
