@@ -257,13 +257,45 @@ def get_database_update_status():
         }
     """
     global _db_update_worker
-        try:
-            from core.plugin_loader import PluginRegistry
-            active_servers = PluginRegistry.get_active_services_by_type('media_server')
-            active_server = active_servers[0] if active_servers else None
-        except Exception as e:
+    try:
+        from core.plugin_loader import PluginRegistry
+        active_servers = PluginRegistry.get_active_services_by_type('media_server')
+        active_server = active_servers[0] if active_servers else None
+    except Exception as e:
         logger.error(f"Database update status error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+    is_running = False
+    stats = {
+        "artists": 0, "albums": 0, "tracks": 0,
+        "successful": 0, "failed": 0
+    }
+    
+    with _db_update_lock:
+        if _db_update_worker is not None:
+            # Check if job is still in progress via job_queue
+            _job_name = getattr(_db_update_worker, '_job_name', None)
+            if _job_name:
+                try:
+                    from core.job_queue import job_queue
+                    is_running = job_queue._is_running.get(_job_name, False)
+                except Exception:
+                    # Fallback to thread check if job_queue fails
+                    is_running = False
+            
+            stats = {
+                "artists": _db_update_worker.processed_artists,
+                "albums": _db_update_worker.processed_albums,
+                "tracks": _db_update_worker.processed_tracks,
+                "successful": _db_update_worker.successful_operations,
+                "failed": _db_update_worker.failed_operations
+            }
+
+    return jsonify({
+        "running": is_running,
+        "progress": stats,
+        "server": active_server
+    }), 200
 
 
 @bp.post("/backfill-identifiers")
@@ -278,12 +310,29 @@ def backfill_identifiers():
 
     Returns the number of new identifier rows written.
     """
-        try:
-            from core.plugin_loader import PluginRegistry
-            active_servers = PluginRegistry.get_active_services_by_type('media_server')
-            active_server = active_servers[0] if active_servers else None
-        except Exception as e:
-        logger.error("backfill_identifiers error: %s", e, exc_info=True)
+    try:
+        from core.plugin_loader import PluginRegistry
+        active_servers = PluginRegistry.get_active_services_by_type('media_server')
+        active_server = active_servers[0] if active_servers else None
+        
+        if not active_server:
+            return jsonify({"error": "No active media server configured"}), 400
+
+        from database.music_database import get_database
+        from database import LibraryManager
+        
+        db = get_database()
+        library_manager = LibraryManager(db.session_factory)
+        
+        count = library_manager.backfill_provider_identifiers(active_server)
+        
+        return jsonify({
+            "success": True,
+            "count": count,
+            "message": f"Successfully backfilled {count} identifiers for {active_server}"
+        }), 200
+    except Exception as e:
+        logger.error(f"Backfill error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
