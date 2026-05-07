@@ -8,6 +8,7 @@ from core.plugin_loader import PluginRegistry, ServiceRegistry
 from core.file_handling.path_mapper import PathMapper
 from core.event_bus import event_bus
 from database.music_database import get_database, Track, Artist
+from core.settings import config_manager
 from core.tiered_logger import get_logger
 
 logger = get_logger("media_manager")
@@ -75,7 +76,7 @@ class MediaManagerService:
                 logger.warning("SUGGESTION_PLAYLIST_REMOVE_INTENT missing sync_id")
                 return
 
-            active_server = config_manager.get_active_media_server()
+            active_server = config_manager.get('active_media_server')
             if not active_server:
                 logger.warning("No active media server configured for suggestion playlist removal")
                 return

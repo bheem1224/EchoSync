@@ -1,4 +1,5 @@
 from core.health_check import health_check_registry
+from core.settings import config_manager
 from typing import Dict, Any
 import logging
 
@@ -51,20 +52,22 @@ def get_system_health() -> Dict[str, Any]:
         core_message = str(e)
 
     # 2. Count Enabled Providers
-    disabled_providers = config_manager.get_disabled_providers()
+    disabled_providers = config_manager.get('disabled_providers', [])
     enabled_providers_count = 0
+
+    from database.config_database import get_config_database
+    config_db = get_config_database()
 
     # Check Spotify
     if 'spotify' not in disabled_providers:
-        creds = config_manager.get_spotify_config()
-        active = config_manager.get_active_spotify_account()
-        if (creds.get('client_id') and creds.get('client_secret')) or active:
+        spotify_id = config_db.get_or_create_service_id('spotify')
+        spotify_creds = config_db.get_all_service_config(spotify_id) or {}
+        spotify_accounts = config_db.get_accounts(service_id=spotify_id, is_active=True)
+        if (spotify_creds.get('client_id') and spotify_creds.get('client_secret')) or spotify_accounts:
             enabled_providers_count += 1
 
     # Check Plex
     if 'plex' not in disabled_providers:
-        from database.config_database import get_config_database
-        config_db = get_config_database()
         plex_id = config_db.get_or_create_service_id('plex')
         plex_url = config_db.get_service_config(plex_id, 'base_url') or config_db.get_service_config(plex_id, 'server_url')
         plex_token = config_db.get_service_config(plex_id, 'token')
@@ -74,20 +77,20 @@ def get_system_health() -> Dict[str, Any]:
 
     # Check Jellyfin
     if 'jellyfin' not in disabled_providers:
-        conf = config_manager.get_jellyfin_config()
-        if conf.get('base_url') and conf.get('api_key'):
+        jellyfin_id = config_db.get_or_create_service_id('jellyfin')
+        jellyfin_creds = config_db.get_all_service_config(jellyfin_id) or {}
+        if jellyfin_creds.get('base_url') and jellyfin_creds.get('api_key'):
             enabled_providers_count += 1
 
     # Check Navidrome
     if 'navidrome' not in disabled_providers:
-        conf = config_manager.get_navidrome_config()
-        if conf.get('base_url') and conf.get('username'):
+        navidrome_id = config_db.get_or_create_service_id('navidrome')
+        navidrome_creds = config_db.get_all_service_config(navidrome_id) or {}
+        if navidrome_creds.get('base_url') and navidrome_creds.get('username'):
             enabled_providers_count += 1
 
     # Check Soulseek (slskd)
     if 'soulseek' not in disabled_providers and 'slskd' not in disabled_providers:
-        from database.config_database import get_config_database
-        config_db = get_config_database()
         slskd_id = config_db.get_or_create_service_id('soulseek')
         slskd_url = config_db.get_service_config(slskd_id, 'slskd_url') or config_db.get_service_config(slskd_id, 'server_url')
         api_key = config_db.get_service_config(slskd_id, 'api_key')

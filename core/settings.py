@@ -662,7 +662,6 @@ class ConfigManager:
         # Save non-secrets to plaintext JSON
         self._save_non_secrets_to_json()
 
-    # ... (rest of the getter methods remain the same) ...
     def get_plugin_channel(self, plugin_id: str) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
         return self.get(f'plugins.{plugin_id}.channel', 'stable')

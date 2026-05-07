@@ -277,7 +277,7 @@ class LibraryWatcherService:
             logger.warning("LibraryWatcherService.start() called more than once — ignoring")
             return
 
-        library_dir = config_manager.get_library_dir()
+        library_dir = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
         if not library_dir:
             logger.warning(
                 "LibraryWatcherService: library directory is not configured — watcher disabled"

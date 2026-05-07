@@ -30,7 +30,8 @@ def stream_audio():
     if not path_param:
         return jsonify({"error": "Missing 'path' query parameter"}), 400
 
-    library_dir = config_manager.get_library_dir()
+    _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+    library_dir = Path(_lib) if _lib else None
 
     if not library_dir:
         return jsonify({"error": "Library directory is not configured"}), 500

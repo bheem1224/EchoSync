@@ -36,10 +36,14 @@ class FileJail:
 
     def allowed_roots(self) -> List[Path]:
         from core.settings import config_manager
-        return [
-            config_manager.get_download_dir().resolve(),
-            config_manager.get_library_dir().resolve(),
-        ]
+        roots = []
+        download_dir = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+        library_dir = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+        if download_dir:
+            roots.append(Path(download_dir).resolve())
+        if library_dir:
+            roots.append(Path(library_dir).resolve())
+        return roots
 
     def validate(self, resolved: Path) -> None:
         """

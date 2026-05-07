@@ -208,7 +208,7 @@ def create_app(testing: bool = False) -> Flask:
     
     # Load Disabled List first
     from core.plugin_loader import PluginRegistry, ServiceRegistry
-    disabled_providers = config_manager.get_disabled_providers()
+    disabled_providers = config_manager.get('disabled_providers', [])
     PluginRegistry.set_disabled_providers(disabled_providers)
     
     # Scan and Load Providers/Plugins

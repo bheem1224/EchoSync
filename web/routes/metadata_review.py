@@ -66,10 +66,13 @@ def _resolve_task_file(task: ReviewTask) -> Optional[Path]:
         return None
 
     # Jail / LFI protection
-    allowed_dirs = [
-        config_manager.get_library_dir().resolve(),
-        config_manager.get_download_dir().resolve()
-    ]
+    allowed_dirs = []
+    _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+    _dl = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+    if _lib:
+        allowed_dirs.append(Path(_lib).resolve())
+    if _dl:
+        allowed_dirs.append(Path(_dl).resolve())
 
     is_safe = False
     for allowed in allowed_dirs:

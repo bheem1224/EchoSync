@@ -65,7 +65,8 @@ class AutoImportService:
     _instance_lock = threading.Lock()
 
     def __init__(self):
-        self.library_root = config_manager.get_library_dir()
+        _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+        self.library_root = Path(_lib) if _lib else None
         self.enhancer = get_metadata_enhancer()
         self._scan_lock = threading.Lock()
         self._processing_lock = threading.Lock()
@@ -94,7 +95,8 @@ class AutoImportService:
         is not started — the scheduled ``scan_and_process`` job acts as the
         fallback in that case.
         """
-        download_dir = config_manager.get_download_dir()
+        _dl = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+        download_dir = Path(_dl) if _dl else None
         if not download_dir:
             logger.info(
                 "Auto-importer watchdog: download directory not configured — "
@@ -159,7 +161,8 @@ class AutoImportService:
                 logger.info("Auto-import scan skipped: Feature disabled in settings.")
                 return
 
-            download_dir = config_manager.get_download_dir()
+            _dl = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+            download_dir = Path(_dl) if _dl else None
             logger.debug(f"Download directory from config: {download_dir}")
             logger.debug(f"Download directory type: {type(download_dir)}")
             logger.debug(f"Download directory exists: {download_dir.exists() if download_dir else 'None'}")
@@ -511,7 +514,8 @@ class AutoImportService:
         try:
             if not directory.exists():
                 return
-            download_dir = config_manager.get_download_dir()
+            _dl = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+            download_dir = Path(_dl) if _dl else None
             if directory == download_dir:
                 return
             if not any(directory.iterdir()):

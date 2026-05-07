@@ -26,14 +26,14 @@ def stream_client(tmp_path, monkeypatch):
     Yield a (Flask test client, library_path) pair.
 
     The temp library directory is registered as the return value of
-    config_manager.get_library_dir() so every test gets an isolated sandbox
-    that maps exactly to the route's security boundary.
+    config_manager.get('storage.library_dir') so every test gets an isolated
+    sandbox that maps exactly to the route's security boundary.
     """
     library = tmp_path / "library"
     library.mkdir()
 
     mock_cm = MagicMock()
-    mock_cm.get_library_dir.return_value = library
+    mock_cm.get.side_effect = lambda key, default=None: str(library) if key == 'storage.library_dir' else default
     monkeypatch.setattr(route_module, "config_manager", mock_cm)
 
     app = Flask(__name__)

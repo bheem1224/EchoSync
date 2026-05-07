@@ -133,7 +133,7 @@ class DownloadManager:
 
         try:
             # Get active client from config
-            active_client = config_manager.get_active_download_client()
+            active_client = config_manager.get('active_download_client')
             if not active_client:
                 logger.warning("No active download client configured")
                 return None

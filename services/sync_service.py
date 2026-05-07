@@ -149,7 +149,7 @@ class PlaylistSyncService:
         """Get the active media client based on config settings"""
         try:
             from core.settings import config_manager
-            active_server = config_manager.get_active_media_server()
+            active_server = config_manager.get('active_media_server')
 
             if active_server == "jellyfin":
                 if not self.jellyfin_client:
@@ -448,7 +448,7 @@ class PlaylistSyncService:
             # Use the improved database check_track_exists method with server awareness
             try:
                 from core.settings import config_manager
-                active_server = config_manager.get_active_media_server()
+                active_server = config_manager.get('active_media_server')
                 db = MusicDatabase()
                 db_track, confidence = db.check_track_exists(original_title, artist_name, confidence_threshold=0.7, server_source=active_server)
                 
@@ -659,9 +659,11 @@ class PlaylistSyncService:
         """
         all_playlists = []
         try:
-            # 1. Get all accounts from config/storage
-            from core.settings import config_manager
-            accounts = config_manager.get_spotify_accounts()
+            # 1. Get all accounts from ConfigDatabase (Nexus framework)
+            from database.config_database import get_config_database
+            config_db = get_config_database()
+            spotify_service_id = config_db.get_or_create_service_id('spotify')
+            accounts = config_db.get_accounts(service_id=spotify_service_id, is_active=True)
 
             # If no accounts found, fallback to default single-client behavior
             if not accounts:
@@ -672,37 +674,13 @@ class PlaylistSyncService:
                          all_playlists.append(SpotifyPlaylist(id=p['id'], name=p['name'], tracks=[]))
                 return all_playlists
 
-            # 2. Iterate through each account
+            # 2. Iterate through each account (already filtered by is_active=True at DB level)
             for account in accounts:
                 try:
-                    # Debug dump to confirm key names
-                    logger.debug(f"DEBUG ACCOUNT OBJ: {account}")
-
-                    # Filter inactive accounts
-                    # Check both 'is_active' (DB convention) and 'enabled' (Config convention)
-                    is_active = account.get('is_active') or account.get('enabled')
-                    # Explicitly check against False/0/None, allowing True/1
-                    if not is_active and is_active is not None:
-                         # Some legacy configs might miss the key, defaulting to True if missing?
-                         # No, standard safe practice is default False if missing, or True?
-                         # Requirement says "strictly filter by is_active=True".
-                         # So if key is missing, we assume False? Or let it pass?
-                         # Let's assume strict: must be truthy.
-                         logger.info(f"Skipping inactive Spotify account: {account.get('name')} (id={account.get('id')})")
-                         continue
-
-                    # Determine next step if key is missing (legacy) - assuming active if not explicitly false?
-                    # The prompt says "is_active flag is being ignored".
-                    # If the key exists and is 0/False, we must skip.
-                    if 'is_active' in account and not account['is_active']:
-                        logger.info(f"Skipping inactive Spotify account: {account.get('name')}")
-                        continue
-
                     account_id = account.get('id')
                     account_name = account.get('name', f"Account {account_id}")
 
                     # Instantiate client for this account
-                    # We create a temporary client just for this fetch
                     client = PluginRegistry.create_instance('spotify', account_id=account_id)
 
                     if not client.is_configured():
@@ -752,8 +730,8 @@ class PlaylistSyncService:
 
         Returns a summary dict with counts for monitoring.
         """
-        from core.settings import config_manager
         from core.plugin_loader import PluginRegistry, ServiceRegistry
+        from database.config_database import get_config_database
 
         summary = {
             "total": 0,
@@ -765,19 +743,15 @@ class PlaylistSyncService:
         }
 
         try:
-            accounts = config_manager.get_spotify_accounts() or []
+            config_db = get_config_database()
+            spotify_service_id = config_db.get_or_create_service_id('spotify')
+            accounts = config_db.get_accounts(service_id=spotify_service_id, is_active=True) or []
         except Exception as e:
             logger.error(f"refresh_playlist_cache_throttled: failed to load accounts: {e}")
             return summary
 
         for account in accounts:
-            # Respect is_active / enabled flags (same logic as _get_all_spotify_playlists)
-            is_active = account.get('is_active') or account.get('enabled')
-            if not is_active and is_active is not None:
-                continue
-            if 'is_active' in account and not account['is_active']:
-                continue
-
+            # Accounts already filtered by is_active=True at DB level
             account_id = account.get('id')
             account_name = account.get('name', f"Account {account_id}")
 
@@ -861,8 +835,10 @@ class PlaylistSyncService:
     def get_library_comparison(self) -> Dict[str, Any]:
         try:
             # Re-implementing logic synchronously for compatibility with multi-account support
-            from core.settings import config_manager
-            accounts = config_manager.get_spotify_accounts()
+            from database.config_database import get_config_database
+            config_db = get_config_database()
+            spotify_service_id = config_db.get_or_create_service_id('spotify')
+            accounts = config_db.get_accounts(service_id=spotify_service_id, is_active=True)
 
             spotify_playlists = []
 
@@ -878,13 +854,7 @@ class PlaylistSyncService:
             else:
                 for account in accounts:
                     try:
-                        # STRICT Filter for active accounts
-                        is_active = account.get('is_active') or account.get('enabled')
-                        if not is_active and is_active is not None:
-                             continue
-                        if 'is_active' in account and not account['is_active']:
-                             continue
-
+                        # Accounts already filtered by is_active=True at DB level
                         client = PluginRegistry.create_instance('spotify', account_id=account.get('id'))
                         if client.is_configured():
                              # Consume generator
