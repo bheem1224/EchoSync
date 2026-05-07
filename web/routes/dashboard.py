@@ -14,9 +14,12 @@ DEFAULT_DASHBOARD_CONTENT = """# EchoSync Dashboard Configuration
 views:
   - title: Home
     icon: mdi:home
-    cards:
-      - type: spotify-dashboard-card
-      - type: plex-dashboard-card
+    sections:
+      - cards:
+          - type: echosync-system-overview
+      - cards:
+          - type: spotify-dashboard-card
+          - type: plex-dashboard-card
 """
 
 def _ensure_file():

@@ -1,5 +1,7 @@
 <script>
   import { onMount } from 'svelte';
+  // Side-effect import: registers <echosync-system-overview> custom element
+  import '../../components/core/SystemOverview.svelte';
 
   let layout = null;
   let isLoadingLayout = true;
