@@ -11,8 +11,8 @@ export default defineConfig({
     outDir: '../static',
     emptyOutDir: false,
     lib: {
-      entry: './MusicBrainzCard.svelte',
-      name: 'MusicBrainzCard',
+      entry: './main.js',
+      name: 'MusicBrainzUI',
       formats: ['es'],
       fileName: () => 'bundle.js'
     }

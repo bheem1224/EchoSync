@@ -811,9 +811,9 @@ class DownloadManager:
             try:
                 try:
                     from core.hook_manager import hook_manager
-                    plugin_decision = hook_manager.apply_filters('BEFORE_DOWNLOAD_START', None, target_track=target_track.to_dict(), candidate=winning_candidate.to_dict(), provider=winning_provider_name)
+                    plugin_decision = hook_manager.apply_filters('BEFORE_DOWNLOAD_START', None, target_track=target_track.to_dict(), candidate=best_candidate.to_dict(), provider=winning_provider_name)
                     if plugin_decision == "ABORT":
-                        logger.warning(f"Plugin aborted download for: {winning_candidate.title} on {winning_provider_name}")
+                        logger.warning(f"Plugin aborted download for: {best_candidate.title} on {winning_provider_name}")
                         self._update_status(download_id, "failed_start_download")
                         return
                 except Exception as e:

@@ -212,9 +212,8 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
 
             from core.plugin_loader import PluginRegistry, ServiceRegistry
 
-            from core.plugin_loader import PluginRegistry
-                active_servers = PluginRegistry.get_active_services_by_type('media_server')
-                active_server = active_servers[0].split('.')[-1] if active_servers else 'plex'
+            active_servers = PluginRegistry.get_active_services_by_type('media_server')
+            active_server = active_servers[0].split('.')[-1] if active_servers else 'plex'
             if not active_server:
                 logger.warning("No active media server configured, skipping media scan")
                 return

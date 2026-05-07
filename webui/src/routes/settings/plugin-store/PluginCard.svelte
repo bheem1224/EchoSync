@@ -128,6 +128,11 @@
       }
     }
   }
+  $: targetVersion = (globalBetaEnabled && installedChannel === 'beta' && hasBetaUpdate) 
+    ? latestBeta 
+    : (hasStableUpdate ? latestRelease : installedVersion);
+  
+  $: showArrow = isInstalled && targetVersion !== installedVersion && targetVersion !== '0.0.0';
 </script>
 
 <div class="group relative flex flex-col p-5 bg-black/40 border border-white/10 rounded-2xl hover:border-blue-500/50 transition-all duration-300 shadow-xl backdrop-blur-md overflow-visible">
@@ -160,7 +165,7 @@
             {#if openMenuId === plugin.id}
               <div class="absolute right-0 top-8 w-32 bg-slate-900 border border-white/10 shadow-2xl rounded-xl z-[110] overflow-hidden">
                 <button 
-                  class="w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-500/10 border-none bg-transparent cursor-pointer" 
+                  class="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-red-500/10 border-none bg-transparent cursor-pointer" 
                   on:click={() => { dispatch('uninstall', plugin); openMenuId = null; }}
                 >
                   Uninstall
@@ -202,8 +207,8 @@
       <div class="flex items-center gap-1 px-2 py-1 bg-white/5 rounded-md border border-white/10" title="Version">
         <span class="text-[10px] text-slate-500 uppercase font-bold tracking-tight">V</span>
         <span class="text-xs text-slate-300 font-mono">
-          {#if isInstalled && (hasStableUpdate || (globalBetaEnabled && hasBetaUpdate))}
-            {installedVersion} ➔ {hasBetaUpdate && globalBetaEnabled && installedChannel === 'beta' ? latestBeta : latestRelease}
+          {#if showArrow}
+            {installedVersion} ➔ {targetVersion}
           {:else}
             {isInstalled ? installedVersion : latestRelease}
           {/if}

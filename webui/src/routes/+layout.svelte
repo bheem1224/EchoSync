@@ -14,6 +14,7 @@
   import { systemStatus } from '../stores/systemStatus';
   import { loadPluginViews } from '../stores/pluginViews';
   import apiClient from '../api/client';
+  import { theme } from '../stores/theme';
   import '../app.css';
 
   let innerWidth;
@@ -23,6 +24,7 @@
   let migrationMessage = '';
 
   onMount(async () => {
+    theme.init();
     providers.load();
     loadPluginViews();          // fire-and-forget — populates pluginViews store
     systemStatus.startPolling(5000); // Poll every 5 seconds
@@ -66,7 +68,7 @@
 
 <svelte:window bind:innerWidth />
 
-<div class="h-screen w-full flex flex-col overflow-hidden" style="background-color: var(--bg-canvas); color: var(--text-primary);">
+<div class="h-screen w-full flex flex-col overflow-hidden theme-{$theme.current}" style="background-color: var(--bg-canvas); color: var(--text-primary);">
   <RestartBanner />
   <div class="flex-1 flex overflow-hidden min-h-0">
     {#if innerWidth >= 768}

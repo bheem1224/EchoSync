@@ -48,7 +48,6 @@ from core.tiered_logger import get_logger
 from plugins.cjk_language_pack.transliterator import get_transliterator
 from plugins.cjk_language_pack.vgmdb_proxy import get_proxy
 from plugins.cjk_language_pack.noise_filter import get_noise_filter
-from plugins.cjk_language_pack.noise_filter import get_noise_filter
 
 logger = get_logger("plugin.cjk")
 
@@ -428,7 +427,8 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             return
         TrackAlias = rel.mapper.class_
 
-        _dev_mode = self.sdk.config.get('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+        from core.settings import config_manager as _cm
+        _dev_mode = str(_cm.get('DEV_MODE') or 'false').lower() in ('true', '1', 'yes')
 
         # Dev mode: clear existing aliases so they are rebuilt from fresh data,
         # bypassing the "skip if already present" deduplication guard.
@@ -492,7 +492,8 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         from sqlalchemy.orm import object_session
         from sqlalchemy import inspect as sa_inspect
 
-        if object_session(track_obj) is None:
+        session = object_session(track_obj)
+        if session is None:
             return
 
         artist_obj = _safe_getattr(track_obj, "artist", None)
@@ -504,7 +505,8 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             return
         ArtistAlias = rel.mapper.class_
 
-        _dev_mode = self.sdk.config.get('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+        from core.settings import config_manager as _cm
+        _dev_mode = str(_cm.get('DEV_MODE') or 'false').lower() in ('true', '1', 'yes')
 
         # Dev mode: clear existing aliases so they are rebuilt from fresh data,
         # bypassing the "skip if already present" deduplication guard.

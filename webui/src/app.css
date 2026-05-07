@@ -66,6 +66,30 @@
   --glass-border: var(--border-subtle);
 }
 
+/* 
+  =============================================================================
+  Web Component Integration
+  -----------------------------------------------------------------------------
+  Ensure that all custom elements (plugins) inherit the global layout and
+  thematic rules. By default, our plugins use shadow: 'none' to allow these
+  styles to apply directly.
+  =============================================================================
+*/
+[plugin-id], [api-base] {
+  display: block;
+  width: 100%;
+}
+
+/* 
+  If a plugin explicitly uses Shadow DOM, we still want to ensure variables 
+  propagate. This is handled by inheritance, but we can also force 
+  layout-critical styles here.
+*/
+:where(musicbrainz-settings-card, acoustid-settings-card, plex-dashboard-card, spotify-dashboard-card) {
+  display: block;
+  margin-bottom: 1rem;
+}
+
 .switch {
   position: relative;
   display: inline-flex;

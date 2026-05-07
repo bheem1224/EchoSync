@@ -258,7 +258,7 @@ class MediaManagerService:
             active_servers = PluginRegistry.get_active_services_by_type('media_server')
             if not active_servers:
                 logger.warning("No active media server configured to deduce path mapping")
-                return (local_prefix, prov_prefix)
+                return (local_prefix, remote_prefix)
 
             for active_server in active_servers:
                 try:
