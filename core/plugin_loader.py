@@ -157,23 +157,65 @@ class PluginLoader:
         """Perform a true Zero-Downtime hot reload of a plugin."""
         logger.info(f"🔄 HOT-SWAP INITIATED: {plugin_id}")
         
-        # Strip prefixes like 'core.' or 'plugin.' for path resolution
-        clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+        # 1. Normalize ID and determine channel
+        # Strip prefixes
+        base_ns = plugin_id.split('@')[0].replace('core.', '').replace('plugin.', '')
         
-        # 1. Kill Workers
+        # Check channel preference from database if not in ID
+        channel = config_manager.get_plugin_channel(base_ns) or 'stable'
+        if '@beta' in plugin_id:
+            channel = 'beta'
+
+        # Split namespace (e.g., EchoSync.spotify -> EchoSync, spotify)
+        ns_parts = base_ns.split('.')
+        if len(ns_parts) >= 2:
+            author = ns_parts[0]
+            plugin_name = ".".join(ns_parts[1:])
+        else:
+            author = "unknown"
+            plugin_name = base_ns
+
+        # 2. Resolve Path
+        # The base_ns can be flat (spotify) or namespaced (EchoSync.spotify)
+        # Author-nested: plugins/EchoSync/spotify
+        # Flat (Legacy): plugins/spotify
+        
+        ns_parts = base_ns.split('.')
+        author = ns_parts[0] if len(ns_parts) > 1 else None
+        plugin_name = ".".join(ns_parts[1:]) if author else base_ns
+        
+        # Candidate 1: Author-nested (Standard)
+        if author:
+            plugin_dir = self.plugins_dir / author / plugin_name
+        else:
+            plugin_dir = self.plugins_dir / base_ns
+            
+        # Candidate 2: Flat fallback if author-nested doesn't exist
+        if author and not plugin_dir.exists():
+             plugin_dir = self.plugins_dir / base_ns
+
+        # Handle Beta Folder Nesting
+        if channel == 'beta' and (plugin_dir / 'beta').exists():
+            plugin_dir = plugin_dir / 'beta'
+
+        if not plugin_dir.exists():
+            # Final exhaustive search if all else fails
+            logger.error(f"Cannot reload {plugin_id}: path does not exist (Searched {plugin_dir})")
+            return
+
+        logger.info(f"Reloading {plugin_id} ({channel}) from {plugin_dir}")
+
+        # 3. Kill Workers
         try:
             from core.job_queue import job_queue
             job_queue.kill_jobs_by_plugin(plugin_id)
         except Exception as e:
             logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
 
-        # 2. Purge Memory
-        # Try both namespaced and flat module names
-        module_names = [f"plugins.{plugin_id}", f"plugins.{clean_id}"]
-        # If clean_id has a slash, it's a nested plugin, convert to dot notation
-        if '/' in clean_id:
-            module_names.append(f"plugins.{clean_id.replace('/', '.')}")
-
+        # 4. Purge Memory
+        clean_id = f"{author}/{plugin_name}" if author != "unknown" else base_ns
+        module_names = [f"plugins.{clean_id.replace('/', '.')}", f"plugins.{base_ns}"]
+        
         for module_name in module_names:
             if module_name in sys.modules:
                 logger.debug(f"Purging {module_name} from sys.modules")
@@ -182,46 +224,23 @@ class PluginLoader:
                     del sys.modules[m]
                 del sys.modules[module_name]
 
-        # 3. Reload Module
+        # 5. Reload Package
         try:
-            # Re-run scanning for just this directory
-            # Try direct path first
-            plugin_path = self.plugins_dir / clean_id
+            # Determine if disabled
+            disabled = config_manager.get_disabled_providers()
+            is_disabled = base_ns in disabled or plugin_id in disabled
             
-            # If not found, try namespaced path (author.plugin -> author/plugin)
-            if not plugin_path.exists() and '.' in clean_id:
-                namespaced_path = self.plugins_dir / clean_id.replace('.', '/')
-                if namespaced_path.exists():
-                    plugin_path = namespaced_path
-                    clean_id = clean_id.replace('.', '/')
-
-            # If still not found, search 1-level deep for Nexus Schema (plugins/{author}/{plugin})
-            if not plugin_path.exists():
-                for author_dir in self.plugins_dir.iterdir():
-                    if author_dir.is_dir() and not author_dir.name.startswith('__'):
-                        potential_path = author_dir / clean_id
-                        if potential_path.exists():
-                            plugin_path = potential_path
-                            # Update clean_id to reflect full path for _load_provider_package
-                            clean_id = f"{author_dir.name}/{clean_id}"
-                            break
-
-            if plugin_path.exists():
-                # We need to determine if it's beta or stable
-                channel = config_manager.get_plugin_channel(clean_id)
-                is_beta = channel == 'beta' and (plugin_path / 'beta').exists()
-                
-                # Check if disabled
-                disabled = config_manager.get_disabled_providers()
-                is_disabled = f"plugin.{clean_id}" in disabled or clean_id in disabled
-                
-                self._load_plugin_package(clean_id, self.plugins_dir.name, 'community', is_beta=is_beta, is_disabled=is_disabled)
-                logger.info(f"✅ Successfully live-swapped: {plugin_id} (Path: {clean_id})")
-            else:
-                logger.error(f"Cannot reload {plugin_id}: path does not exist (Searched for {clean_id})")
+            # Re-load
+            self._load_plugin_package(
+                clean_id, 
+                self.plugins_dir.name, 
+                'community', 
+                is_beta=(channel == 'beta'), 
+                is_disabled=is_disabled
+            )
+            logger.info(f"✅ Successfully live-swapped: {plugin_id}")
         except Exception as e:
             logger.error(f"Live-swap failed for {plugin_id}: {e}", exc_info=True)
-            # Clean abort: do not raise to prevent crashing the API thread
 
     def load_all(self):
         """Scan and load all providers and plugins based on database definitions."""

@@ -9,6 +9,9 @@ dashboard:
       sections:
         - fullWidth: true
           cards:
+            - type: echosync-system-overview
+        - fullWidth: true
+          cards:
             - type: echosync-manager-settings
         - fullWidth: true
           cards:

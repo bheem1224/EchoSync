@@ -486,9 +486,10 @@ class PluginStore:
                 os.rename(str(tmp_dir), str(target_dir))
                 logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
 
-                # Task 5: Persist Channel Preference (use folder_path for PluginLoader compatibility)
-                config_manager.set(f'plugins.{folder_path}.channel', channel)
-                logger.info(f"Persisted channel '{channel}' for plugin {folder_path}")
+                # Task 5: Persist Channel Preference (Nexus normalization)
+                clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+                config_manager.set(f'plugins.{clean_id}.channel', channel)
+                logger.info(f"Persisted channel '{channel}' for plugin {clean_id}")
 
                 # Task 6: Blue/Green Namespace Shifting
                 if channel == "beta":
@@ -614,6 +615,11 @@ class PluginStore:
             
         shutil.rmtree(dest_dir, ignore_errors=True)
         return True
+
+    def get_plugin_channel(self, plugin_id: str) -> str:
+        """Get the active update channel ('stable' or 'beta') for a plugin."""
+        clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+        return config_manager.get(f'plugins.{clean_id}.channel', 'stable')
 
     def _fork_namespace(self, plugin_id: str):
         """The Fork: Copies current stable data to a @beta side-car."""

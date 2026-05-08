@@ -3,6 +3,9 @@
 />
 
 <script>
+  /**
+   * @type {string} apiBase - The base URL for API calls, provided by the dashboard host.
+   */
   export let apiBase = "";
   import { onMount } from "svelte";
 
@@ -19,6 +22,9 @@
   const MAX_ACCOUNTS = 25;
 
   onMount(async () => {
+    // Ensure apiBase is trimmed
+    apiBase = apiBase.replace(/\/$/, "");
+    
     await loadGlobalSettings();
     await loadAccounts();
 
@@ -27,7 +33,7 @@
       redirectUri = `${window.location.protocol}//${window.location.host}/api/spotify/callback`;
     }
 
-    // Collapse credentials by default when all globals are present and at least one account is authenticated
+    // Collapse credentials by default if configured
     credsCollapsed = Boolean(
       clientId &&
         clientSecret &&
@@ -53,13 +59,13 @@
 
   async function saveGlobalSettings() {
     if (!clientId || !clientSecret) {
-      console.error("Client ID and Secret are required");
+      alert("Client ID and Secret are required");
       return;
     }
 
     try {
       savingGlobal = true;
-      await fetch(`${apiBase}/settings`, {
+      const resp = await fetch(`${apiBase}/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -68,10 +74,13 @@
           redirect_uri: redirectUri,
         }),
       });
+      
+      if (!resp.ok) throw new Error("Save failed");
+      
       console.log("Spotify credentials saved");
     } catch (error) {
       console.error("Failed to save Spotify settings:", error);
-      throw error;
+      alert("Failed to save settings. Check console.");
     } finally {
       savingGlobal = false;
     }
@@ -89,18 +98,15 @@
   }
 
   async function addAccount() {
-    if (!newAccountName.trim()) {
-      console.error("Account name is required");
-      return;
-    }
+    if (!newAccountName.trim()) return;
 
     if (accounts.length >= MAX_ACCOUNTS) {
-      console.error(`Maximum ${MAX_ACCOUNTS} accounts allowed`);
+      alert(`Maximum ${MAX_ACCOUNTS} accounts allowed`);
       return;
     }
 
     try {
-      await fetch(`${apiBase}/accounts`, {
+      const resp = await fetch(`${apiBase}/accounts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -108,7 +114,9 @@
           display_name: newAccountName,
         }),
       });
-      console.log("Account added");
+      
+      if (!resp.ok) throw new Error("Add failed");
+      
       newAccountName = "";
       showAddAccount = false;
       await loadAccounts();
@@ -119,16 +127,14 @@
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await fetch(`${apiBase}/accounts/${accountId}/activate`, {
+      const resp = await fetch(`${apiBase}/accounts/${accountId}/activate`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           is_active: !currentlyActive,
         }),
       });
-      console.log(
-        currentlyActive ? "Account deactivated" : "Account activated",
-      );
+      if (!resp.ok) throw new Error("Toggle failed");
       await loadAccounts();
     } catch (error) {
       console.error("Failed to toggle account:", error);
@@ -139,10 +145,10 @@
     if (!confirm(`Delete account "${accountName}"?`)) return;
 
     try {
-      await fetch(`${apiBase}/accounts/${accountId}`, {
+      const resp = await fetch(`${apiBase}/accounts/${accountId}`, {
         method: "DELETE",
       });
-      console.log("Account deleted");
+      if (!resp.ok) throw new Error("Delete failed");
       await loadAccounts();
     } catch (error) {
       console.error("Failed to delete account:", error);
@@ -151,30 +157,18 @@
 
   async function authenticate(accountId) {
     if (!clientId || !clientSecret) {
-      console.error(
-        "Please save Spotify Client ID and Client Secret before authenticating an account",
-      );
+      alert("Please save Client ID and Secret first.");
       return;
     }
 
     try {
       await saveGlobalSettings();
-    } catch (e) {
-      return;
-    }
-
-    try {
       const resp = await fetch(`${apiBase}/auth?account_id=${accountId}`);
       const data = await resp.json();
-      const url = data?.auth_url;
-      if (url) {
-        window.open(url, '_blank', 'noopener,noreferrer');
-        // Poll for auth completion after a delay
-        setTimeout(async () => {
-          await loadAccounts();
-        }, 5000);
-      } else {
-        console.error("Failed to get Spotify auth URL");
+      if (data?.auth_url) {
+        window.open(data.auth_url, '_blank', 'noopener,noreferrer');
+        // Refresh after a delay to catch the callback
+        setTimeout(() => loadAccounts(), 5000);
       }
     } catch (err) {
       console.error("Failed to start OAuth:", err);
@@ -191,7 +185,10 @@
   </div>
 
   {#if loading}
-    <div class="loading-state">Loading...</div>
+    <div class="loading-state">
+      <div class="spinner"></div>
+      <span>Initializing Spotify Nexus...</span>
+    </div>
   {:else}
     <!-- Global Credentials -->
     <div class="settings-section">
@@ -207,26 +204,28 @@
 
       {#if !credsCollapsed}
         <div class="form-grid">
-          <label class="form-field">
+          <div class="form-field">
             <span class="field-label">Client ID</span>
             <input
               type="text"
               bind:value={clientId}
-              placeholder="Enter Spotify Client ID"
+              placeholder="Spotify Developer Client ID"
               class="input-field"
             />
-          </label>
-          <label class="form-field">
+          </div>
+          <div class="form-field">
             <span class="field-label">Client Secret</span>
-            <input
-              type="password"
-              bind:value={clientSecret}
-              placeholder="Enter Spotify Client Secret"
-              class="input-field"
-            />
-          </label>
-          <label class="form-field">
-            <span class="field-label">Redirect URI (Immutable)</span>
+            <div class="password-wrapper">
+              <input
+                type="password"
+                bind:value={clientSecret}
+                placeholder="Spotify Developer Client Secret"
+                class="input-field"
+              />
+            </div>
+          </div>
+          <div class="form-field">
+            <span class="field-label">Redirect URI</span>
             <input
               type="text"
               bind:value={redirectUri}
@@ -234,17 +233,22 @@
               readonly
               disabled
             />
-          </label>
-          <button
-            class="btn-primary"
-            on:click={saveGlobalSettings}
-            disabled={savingGlobal}
-          >
-            {savingGlobal ? "Saving..." : "Save Credentials"}
-          </button>
+            <span class="helper-text">Whitelist this in Spotify Dashboard</span>
+          </div>
+          <div class="actions-row">
+            <button
+              class="btn-primary"
+              on:click={saveGlobalSettings}
+              disabled={savingGlobal}
+            >
+              {savingGlobal ? "Saving..." : "Save Credentials"}
+            </button>
+          </div>
         </div>
       {/if}
     </div>
+
+    <hr class="divider" />
 
     <!-- Accounts -->
     <div class="settings-section">
@@ -257,25 +261,24 @@
             class="btn-ghost"
             on:click={() => (showAddAccount = !showAddAccount)}
           >
-            + Add Account
+            {showAddAccount ? "Cancel" : "+ Add Account"}
           </button>
         {/if}
       </div>
 
       {#if showAddAccount}
         <div class="add-account-form">
-          <input
-            type="text"
-            bind:value={newAccountName}
-            placeholder="Account name"
-            class="input-field"
-            on:keydown={(e) => e.key === "Enter" && addAccount()}
-          />
-          <div class="form-actions">
-            <button class="btn-primary" on:click={addAccount}>Add</button>
-            <button class="btn-ghost" on:click={() => (showAddAccount = false)}
-              >Cancel</button
-            >
+          <div class="form-field">
+            <input
+              type="text"
+              bind:value={newAccountName}
+              placeholder="e.g. My Personal Account"
+              class="input-field"
+              on:keydown={(e) => e.key === "Enter" && addAccount()}
+            />
+          </div>
+          <div class="actions-row">
+            <button class="btn-primary" on:click={addAccount}>Add Account</button>
           </div>
         </div>
       {/if}
@@ -289,12 +292,12 @@
               </div>
               <div class="account-badges">
                 {#if account.is_authenticated}
-                  <span class="status-badge success">✓ Authenticated</span>
+                  <span class="status-badge success">Authenticated</span>
                 {:else}
-                  <span class="status-badge warning">⚠ Not Authenticated</span>
+                  <span class="status-badge warning">Pending Auth</span>
                 {/if}
                 {#if account.is_active}
-                  <span class="status-badge active">● Active</span>
+                  <span class="status-badge active">Active</span>
                 {/if}
               </div>
             </div>
@@ -303,29 +306,35 @@
                 class="link-btn"
                 on:click={() => authenticate(account.id)}
               >
-                {account.is_authenticated ? "Reauthenticate" : "Authenticate"}
+                {account.is_authenticated ? "Re-auth" : "Authorize"}
               </button>
+              
+              <div class="switch-container">
+                 <label class="switch">
+                    <input 
+                      type="checkbox" 
+                      checked={account.is_active} 
+                      on:change={() => toggleAccount(account.id, account.is_active)}
+                    />
+                    <span class="slider round"></span>
+                 </label>
+              </div>
+
               <button
-                class="btn-ghost"
-                class:active={account.is_active}
-                on:click={() => toggleAccount(account.id, account.is_active)}
-              >
-                {account.is_active ? "Deactivate" : "Activate"}
-              </button>
-              <button
-                class="btn-danger"
+                class="btn-danger-icon"
                 on:click={() =>
                   deleteAccount(
                     account.id,
                     account.display_name || account.account_name,
                   )}
+                title="Delete Account"
               >
                 ✕
               </button>
             </div>
           </div>
         {:else}
-          <div class="empty-accounts">No accounts added yet</div>
+          <div class="empty-accounts">No Spotify accounts connected.</div>
         {/each}
       </div>
     </div>
@@ -334,245 +343,399 @@
 
 <style>
   .plugin-card {
-    background: var(--bg-surface, #0f172a);
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--border-subtle, #1e293b);
-    border-radius: var(--radius, 12px);
-    padding: 24px;
-    margin-bottom: 24px;
-    color: var(--text-primary, #f8fafc);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius, 16px);
+    padding: 28px;
+    color: var(--text-primary);
+    font-family: 'Inter', sans-serif;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s ease;
   }
 
   .card-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 24px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .header-left {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
   }
 
   .card-title {
     margin: 0;
-    font-size: 20px;
-    font-weight: 700;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
 
   .type-badge {
-    font-size: 11px;
-    padding: 4px 8px;
-    background: rgba(20, 184, 166, 0.15);
-    color: var(--color-primary, #14b8a6);
-    border-radius: 4px;
-    font-weight: 600;
+    font-size: 10px;
+    padding: 4px 10px;
+    background: rgba(20, 184, 166, 0.1);
+    color: var(--color-primary);
+    border: 1px solid rgba(20, 184, 166, 0.2);
+    border-radius: 20px;
+    font-weight: 700;
     text-transform: uppercase;
-  }
-
-  .loading-state {
-    padding: 24px;
-    text-align: center;
-    color: var(--text-muted);
+    letter-spacing: 0.05em;
   }
 
   .settings-section {
-    margin-bottom: 24px;
+    margin-bottom: 32px;
   }
 
   .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: 20px;
   }
 
   .section-title {
     margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary, #f8fafc);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
   .form-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  @media (min-width: 640px) {
+    .form-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+    .actions-row {
+      grid-column: span 2;
+    }
   }
 
   .form-field {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
   }
 
   .field-label {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-secondary, #cbd5e1);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    opacity: 0.8;
   }
 
   .input-field {
     width: 100%;
-    padding: 10px 14px;
-    background: var(--bg-surface-elevated, #1e293b);
-    border: 1px solid var(--border-subtle, #334155);
-    border-radius: 8px;
-    color: var(--text-primary, #f8fafc);
+    padding: 14px 18px;
+    background: var(--bg-input, #0f172a);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    color: var(--text-primary);
     font-size: 14px;
-    transition: all 0.2s;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .input-field:focus {
     outline: none;
-    border-color: var(--color-primary, #14b8a6);
-    box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.15);
+    background: rgba(255, 255, 255, 0.03);
   }
 
   .input-field.readonly {
     opacity: 0.6;
     cursor: not-allowed;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .helper-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    font-style: italic;
   }
 
   .btn-primary {
-    padding: 10px 20px;
-    background: var(--color-primary, #14b8a6);
-    color: var(--bg-canvas, #000000);
+    padding: 12px 28px;
+    background: var(--color-primary);
+    color: #000;
     border: none;
-    border-radius: 8px;
-    font-weight: 600;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 14px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 12px rgba(20, 184, 166, 0.2);
   }
 
-  .btn-primary:hover {
-    opacity: 0.9;
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.1);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(20, 184, 166, 0.3);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    box-shadow: none;
   }
 
   .btn-ghost {
-    padding: 8px 16px;
+    padding: 10px 18px;
     background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--text-primary, #f8fafc);
-    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    border-radius: 10px;
     font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.2s ease;
   }
 
   .btn-ghost:hover {
     background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
   }
 
-  .add-account-form {
-    background: rgba(255, 255, 255, 0.03);
-    padding: 16px;
-    border-radius: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .form-actions {
-    display: flex;
-    gap: 8px;
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border-subtle);
+    margin: 32px 0;
+    opacity: 0.3;
   }
 
   .accounts-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 14px;
   }
 
   .account-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
+    padding: 20px;
     background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    transition: all 0.3s ease;
+  }
+
+  .account-item:hover {
+    border-color: rgba(20, 184, 166, 0.3);
+    background: rgba(255, 255, 255, 0.05);
+    transform: translateX(4px);
   }
 
   .account-info {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 8px;
   }
 
   .account-name {
-    font-weight: 600;
-    font-size: 14px;
+    font-weight: 700;
+    font-size: 16px;
+    color: #fff;
   }
 
   .account-badges {
     display: flex;
-    gap: 8px;
+    gap: 10px;
   }
 
   .status-badge {
     font-size: 10px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
 
   .status-badge.success {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.2);
   }
+
   .status-badge.warning {
-    background: rgba(234, 179, 8, 0.15);
-    color: #eab308;
+    background: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.2);
   }
+
   .status-badge.active {
-    background: rgba(20, 184, 166, 0.15);
-    color: var(--color-primary, #14b8a6);
+    background: rgba(20, 184, 166, 0.1);
+    color: var(--color-primary);
+    border: 1px solid rgba(20, 184, 166, 0.2);
   }
 
   .account-actions {
     display: flex;
-    gap: 12px;
+    gap: 20px;
     align-items: center;
   }
 
   .link-btn {
     background: none;
     border: none;
-    color: var(--color-primary, #14b8a6);
+    color: var(--color-primary);
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
+    padding: 0;
+    transition: opacity 0.2s;
   }
 
   .link-btn:hover {
+    opacity: 0.8;
     text-decoration: underline;
   }
 
-  .btn-danger {
-    background: rgba(239, 68, 68, 0.15);
-    color: var(--color-danger);
-    border: none;
-    padding: 8px 12px;
-    border-radius: 6px;
+  .btn-danger-icon {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 16px;
+  }
+
+  .btn-danger-icon:hover {
+    background: #ef4444;
+    color: #fff;
+    transform: rotate(90deg);
+  }
+
+  /* Switch Component */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+  }
+
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.1);
+    transition: .4s;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 2px;
+    bottom: 2px;
+    background-color: #94a3b8;
+    transition: .4s;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }
+
+  input:checked + .slider {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  input:checked + .slider:before {
+    transform: translateX(20px);
+    background-color: white;
+  }
+
+  .slider.round {
+    border-radius: 34px;
+  }
+
+  .slider.round:before {
+    border-radius: 50%;
+  }
+
+  .loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    padding: 60px;
+    color: var(--text-muted);
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(20, 184, 166, 0.1);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.8s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .add-account-form {
+    background: rgba(255, 255, 255, 0.02);
+    padding: 20px;
+    border-radius: 16px;
+    border: 1px dashed var(--border-subtle);
+    margin-bottom: 24px;
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   .empty-accounts {
     text-align: center;
-    padding: 16px;
-    color: var(--text-secondary, #cbd5e1);
-    font-size: 13px;
+    padding: 40px;
     background: rgba(255, 255, 255, 0.02);
-    border-radius: 8px;
-    border: 1px dashed rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    border: 1px dashed var(--border-subtle);
+    color: var(--text-muted);
+    font-style: italic;
   }
 </style>
+
 
 
 

@@ -664,7 +664,8 @@ class ConfigManager:
 
     def get_plugin_channel(self, plugin_id: str) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
-        return self.get(f'plugins.{plugin_id}.channel', 'stable')
+        clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+        return self.get(f'plugins.{clean_id}.channel', 'stable')
 
     def get_settings(self) -> Dict[str, Any]:
         """Return the full non-secret configuration (alias for get_all)."""

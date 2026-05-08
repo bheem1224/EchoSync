@@ -6,7 +6,7 @@ from core.plugin_loader import PluginRegistry as CorePluginRegistry, ServiceRegi
 
 
 # Instance for direct access (for backward compatibility and testing)
-class PluginRegistry:
+class PluginRegistryFacade:
     """Wrapper class for plugin registry functions."""
     
     def list_all(self):
@@ -17,7 +17,7 @@ class PluginRegistry:
         """Get a specific plugin."""
         return get_plugin(plugin_name)
 
-plugin_registry = PluginRegistry()
+plugin_registry = PluginRegistryFacade()
 
 def list_plugins() -> List[Dict]:
     """List all registered plugins with enriched capability metadata."""

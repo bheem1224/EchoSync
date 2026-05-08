@@ -209,22 +209,22 @@
 
 <style>
   .plugin-card {
-    background: var(--bg-surface, #0f172a);
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--border-subtle, #1e293b);
-    border-radius: var(--radius, 12px);
-    padding: 24px;
-    margin-bottom: 24px;
-    color: var(--text-primary, #f8fafc);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius, 16px);
+    padding: 28px;
+    color: var(--text-primary);
+    font-family: 'Inter', sans-serif;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
   }
 
   .card-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--border-subtle, #1e293b);
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .header-left {
@@ -235,8 +235,12 @@
 
   .card-title {
     margin: 0;
-    font-size: 20px;
-    font-weight: 700;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
 
   .badges {
@@ -246,93 +250,139 @@
 
   .status-badge {
     font-size: 10px;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
 
-  .status-badge.active { background: rgba(20, 184, 166, 0.15); color: var(--color-primary, #14b8a6); }
-  .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-  .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+  .status-badge.active {
+    background: rgba(20, 184, 166, 0.1);
+    color: var(--color-primary);
+    border: 1px solid rgba(20, 184, 166, 0.2);
+  }
+
+  .status-badge.success {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+  }
+
+  .status-badge.warning {
+    background: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.2);
+  }
 
   .btn-ghost {
-    padding: 8px 16px;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
+    padding: 10px 18px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
     color: var(--text-primary);
-    border-radius: 8px;
+    border-radius: 10px;
     font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.2s ease;
   }
 
   .btn-ghost:hover {
-    background: rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
   }
 
   .btn-primary {
-    padding: 10px 20px;
-    background: var(--color-primary, #14b8a6);
-    color: var(--bg-canvas, #000000);
+    padding: 12px 28px;
+    background: var(--color-primary);
+    color: #000;
     border: none;
-    border-radius: 8px;
-    font-weight: 600;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 14px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 12px rgba(20, 184, 166, 0.2);
   }
 
-  .btn-primary:hover {
-    opacity: 0.9;
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.1);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(20, 184, 166, 0.3);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   .loading-state {
-    padding: 24px;
-    text-align: center;
-    color: var(--text-secondary, #94a3b8);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    padding: 60px;
+    color: var(--text-muted);
   }
 
   .settings-section {
-    margin-top: 16px;
+    margin-top: 24px;
   }
 
   .section-title {
-    margin: 0 0 16px 0;
-    font-size: 16px;
-    font-weight: 600;
+    margin: 0 0 20px 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
   .form-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  @media (min-width: 640px) {
+    .form-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+    .actions-row, .path-mappings {
+      grid-column: span 2;
+    }
   }
 
   .form-field {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 10px;
   }
 
   .field-label {
-    font-size: 13px;
-    color: var(--text-secondary, #94a3b8);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    opacity: 0.8;
   }
 
   .input-field {
     width: 100%;
-    padding: 10px 14px;
-    background: var(--bg-surface-elevated, #1e293b);
-    border: 1px solid var(--border-subtle, #334155);
-    border-radius: 8px;
-    color: var(--text-primary, #f8fafc);
+    padding: 14px 18px;
+    background: var(--bg-input, #0f172a);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    color: var(--text-primary);
     font-size: 14px;
-    transition: all 0.2s;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .input-field:focus {
     outline: none;
-    border-color: var(--color-primary, #14b8a6);
-    box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.15);
+    background: rgba(255, 255, 255, 0.03);
   }
 
   .password-wrapper {
@@ -343,29 +393,41 @@
 
   .toggle-visibility {
     position: absolute;
-    right: 12px;
+    right: 14px;
     background: none;
     border: none;
     cursor: pointer;
     opacity: 0.6;
     color: var(--text-primary);
+    font-size: 18px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .toggle-visibility:hover {
+    opacity: 1;
   }
 
   .helper-text {
     font-size: 11px;
-    color: var(--text-secondary, #94a3b8);
+    color: var(--text-muted);
+    margin-top: 6px;
+    font-style: italic;
   }
 
   .path-mappings {
-    padding: 16px 0;
-    border-top: 1px solid rgba(255,255,255,0.05);
+    padding: 24px 0;
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 12px;
   }
 
   .actions-row {
     display: flex;
-    gap: 12px;
+    gap: 16px;
     flex-wrap: wrap;
-    margin-top: 8px;
+    margin-top: 12px;
   }
 </style>
 

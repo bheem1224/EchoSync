@@ -2,6 +2,11 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
 
+  /**
+   * @type {string} apiBase - Included for future-proofing as a Web Component.
+   */
+  export let apiBase = "";
+
   let systemStatus = null;
   let jobsSummary = null;
   let libraryStats = null;
@@ -13,9 +18,12 @@
   let pollTimer = null;
 
   onMount(async () => {
+    // Normalize apiBase
+    apiBase = apiBase ? apiBase.replace(/\/$/, "") : "";
+    
     await loadAll();
     loading = false;
-    pollTimer = setInterval(loadAll, 15000);
+    pollTimer = setInterval(loadAll, 10000); // Faster polling for dashboard
   });
 
   onDestroy(() => {
@@ -33,28 +41,28 @@
 
   async function loadSystemStatus() {
     try {
-      const resp = await fetch('/api/system/status', { credentials: 'include' });
+      const resp = await fetch(`${apiBase}/api/system/status`);
       if (resp.ok) systemStatus = await resp.json();
     } catch (e) { /* ignore */ }
   }
 
   async function loadJobsSummary() {
     try {
-      const resp = await fetch('/api/jobs/summary', { credentials: 'include' });
+      const resp = await fetch(`${apiBase}/api/jobs/summary`);
       if (resp.ok) jobsSummary = await resp.json();
     } catch (e) { /* ignore */ }
   }
 
   async function loadLibraryStats() {
     try {
-      const resp = await fetch('/api/library/', { credentials: 'include' });
+      const resp = await fetch(`${apiBase}/api/library/`);
       if (resp.ok) libraryStats = await resp.json();
     } catch (e) { /* ignore */ }
   }
 
   async function loadUpdateStatus() {
     try {
-      const resp = await fetch('/api/library/update-status', { credentials: 'include' });
+      const resp = await fetch(`${apiBase}/api/library/update-status`);
       if (resp.ok) {
         updateStatus = await resp.json();
         updatingDb = updateStatus?.running || false;
@@ -67,9 +75,8 @@
     updatingDb = true;
     error = null;
     try {
-      const resp = await fetch(`/api/library/update-database?mode=${updateMode}`, {
-        method: 'POST',
-        credentials: 'include'
+      const resp = await fetch(`${apiBase}/api/library/update-database?mode=${updateMode}`, {
+        method: 'POST'
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -84,9 +91,8 @@
 
   async function cancelUpdate() {
     try {
-      await fetch('/api/library/update-cancel', {
-        method: 'POST',
-        credentials: 'include'
+      await fetch(`${apiBase}/api/library/update-cancel`, {
+        method: 'POST'
       });
       updatingDb = false;
       await loadUpdateStatus();
@@ -94,444 +100,576 @@
   }
 
   function formatNumber(n) {
-    if (n == null) return '—';
+    if (n == null) return '0';
     return n.toLocaleString();
-  }
-
-  function formatUptime(ts) {
-    if (!ts) return 'Unknown';
-    return ts;
   }
 </script>
 
-<section class="so-root">
+<section class="so-container">
   {#if loading}
     <div class="so-loading">
       <div class="so-spinner"></div>
-      <span>Loading system overview…</span>
+      <span>Hydrating System State...</span>
     </div>
   {:else}
-    <!-- System State Row -->
-    <div class="so-header">
-      <h2 class="so-title">System Overview</h2>
-      <div class="so-status-pill" class:so-online={systemStatus?.status === 'online'}>
-        <span class="so-pulse"></span>
-        {systemStatus?.status === 'online' ? 'All Systems Nominal' : 'Offline'}
+    <!-- Header -->
+    <header class="so-header">
+      <div class="so-title-group">
+        <h2 class="so-title">Nexus Core Overview</h2>
+        <p class="so-subtitle">Real-time database and service health</p>
       </div>
-    </div>
+      <div class="so-status-badge" class:online={systemStatus?.status === 'online'}>
+        <div class="status-dot"></div>
+        {systemStatus?.status === 'online' ? 'All Systems Nominal' : 'System degraded'}
+      </div>
+    </header>
 
     <!-- Stats Grid -->
-    <div class="so-grid">
-      <!-- Library Stats Card -->
-      <div class="so-stat-card">
-        <div class="so-stat-icon">🎵</div>
-        <div class="so-stat-body">
-          <span class="so-stat-value">{formatNumber(libraryStats?.total_tracks ?? libraryStats?.tracks ?? 0)}</span>
-          <span class="so-stat-label">Tracks</span>
+    <div class="so-stats-grid">
+      <div class="so-card stat-card">
+        <div class="stat-icon tracks">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+        </div>
+        <div class="stat-content">
+          <div class="stat-value">{formatNumber(libraryStats?.total_tracks ?? libraryStats?.tracks ?? 0)}</div>
+          <div class="stat-label">Indexed Tracks</div>
         </div>
       </div>
 
-      <div class="so-stat-card">
-        <div class="so-stat-icon">💿</div>
-        <div class="so-stat-body">
-          <span class="so-stat-value">{formatNumber(libraryStats?.total_albums ?? libraryStats?.albums ?? 0)}</span>
-          <span class="so-stat-label">Albums</span>
+      <div class="so-card stat-card">
+        <div class="stat-icon albums">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+        </div>
+        <div class="stat-content">
+          <div class="stat-value">{formatNumber(libraryStats?.total_albums ?? libraryStats?.albums ?? 0)}</div>
+          <div class="stat-label">Collections</div>
         </div>
       </div>
 
-      <div class="so-stat-card">
-        <div class="so-stat-icon">🎤</div>
-        <div class="so-stat-body">
-          <span class="so-stat-value">{formatNumber(libraryStats?.total_artists ?? libraryStats?.artists ?? 0)}</span>
-          <span class="so-stat-label">Artists</span>
+      <div class="so-card stat-card">
+        <div class="stat-icon artists">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        </div>
+        <div class="stat-content">
+          <div class="stat-value">{formatNumber(libraryStats?.total_artists ?? libraryStats?.artists ?? 0)}</div>
+          <div class="stat-label">Unique Artists</div>
         </div>
       </div>
 
-      <div class="so-stat-card">
-        <div class="so-stat-icon">⚙️</div>
-        <div class="so-stat-body">
-          <span class="so-stat-value">{jobsSummary?.running_jobs ?? 0}</span>
-          <span class="so-stat-label">Active Jobs</span>
+      <div class="so-card stat-card">
+        <div class="stat-icon jobs">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+        </div>
+        <div class="stat-content">
+          <div class="stat-value">{jobsSummary?.running_jobs ?? 0}</div>
+          <div class="stat-label">Active Workers</div>
         </div>
       </div>
     </div>
 
-    <!-- Jobs Summary -->
-    <div class="so-section">
-      <h3 class="so-section-title">Job Queue Status</h3>
-      <div class="so-jobs-row">
-        <div class="so-jobs-metric">
-          <span class="so-metric-dot so-dot-green"></span>
-          <span>{jobsSummary?.running_jobs ?? 0} Running</span>
+    <!-- Main Content Row -->
+    <div class="so-content-row">
+      <!-- Database Operations -->
+      <div class="so-card main-card">
+        <div class="card-header">
+          <h3 class="card-title">Database Lifecycle</h3>
+          {#if updatingDb}
+             <span class="pulse-label">Scanning...</span>
+          {/if}
         </div>
-        <div class="so-jobs-metric">
-          <span class="so-metric-dot so-dot-blue"></span>
-          <span>{jobsSummary?.queued_jobs ?? 0} Queued</span>
-        </div>
-        {#if jobsSummary?.errors?.length}
-          <div class="so-jobs-metric so-jobs-error">
-            <span class="so-metric-dot so-dot-red"></span>
-            <span>{jobsSummary.errors.length} Error{jobsSummary.errors.length > 1 ? 's' : ''}</span>
+
+        {#if updatingDb}
+          <div class="update-progress-container">
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill animated"></div>
+            </div>
+            <div class="progress-details">
+              <div class="detail-item">
+                <span class="detail-label">Tracks</span>
+                <span class="detail-value">{updateStatus?.progress?.tracks ?? 0}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Albums</span>
+                <span class="detail-value">{updateStatus?.progress?.albums ?? 0}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Artists</span>
+                <span class="detail-value">{updateStatus?.progress?.artists ?? 0}</span>
+              </div>
+            </div>
+            <button class="btn-cancel" on:click={cancelUpdate}>Abort Scan</button>
+          </div>
+        {:else}
+          <div class="update-controls">
+            <div class="mode-toggle">
+              <button 
+                class="mode-btn" 
+                class:active={updateMode === 'incremental'}
+                on:click={() => updateMode = 'incremental'}
+              >
+                Incremental
+              </button>
+              <button 
+                class="mode-btn" 
+                class:active={updateMode === 'full'}
+                on:click={() => updateMode = 'full'}
+              >
+                Full Sync
+              </button>
+            </div>
+            <p class="control-help">
+              {#if updateMode === 'incremental'}
+                Only scan for new files and metadata updates since last run.
+              {:else}
+                Perform a complete sweep of all library providers and re-validate matching.
+              {/if}
+            </p>
+            <button class="btn-primary-large" on:click={triggerUpdate}>
+              Start Library Refresh
+            </button>
           </div>
         {/if}
-        {#if jobsSummary?.last_run}
-          <div class="so-jobs-metric so-jobs-last">
-            Last run: {new Date(jobsSummary.last_run * 1000).toLocaleTimeString()}
-          </div>
+
+        {#if error}
+          <div class="error-banner">{error}</div>
         {/if}
       </div>
-    </div>
 
-    <!-- System Info -->
-    <div class="so-section">
-      <h3 class="so-section-title">Environment</h3>
-      <div class="so-info-grid">
-        <div class="so-info-item">
-          <span class="so-info-key">Platform</span>
-          <span class="so-info-val">{systemStatus?.platform ?? '—'}</span>
-        </div>
-        <div class="so-info-item">
-          <span class="so-info-key">Python</span>
-          <span class="so-info-val">{systemStatus?.python_version ?? '—'}</span>
-        </div>
-        <div class="so-info-item">
-          <span class="so-info-key">Restart Pending</span>
-          <span class="so-info-val" class:so-warn={systemStatus?.restart_pending}>
-            {systemStatus?.restart_pending ? 'Yes' : 'No'}
-          </span>
-        </div>
+      <!-- Environment / Health -->
+      <div class="so-card side-card">
+        <h3 class="card-title">Environment</h3>
+        <ul class="info-list">
+          <li>
+            <span class="info-label">Host OS</span>
+            <span class="info-value">{systemStatus?.platform || 'Linux (Docker)'}</span>
+          </li>
+          <li>
+            <span class="info-label">Python Runtime</span>
+            <span class="info-value">{systemStatus?.python_version || '3.11.x'}</span>
+          </li>
+          <li>
+            <span class="info-label">Worker Pool</span>
+            <span class="info-value">{jobsSummary?.queued_jobs ?? 0} queued tasks</span>
+          </li>
+          <li>
+            <span class="info-label">Memory State</span>
+            <span class="info-value" class:warn={systemStatus?.restart_pending}>
+              {systemStatus?.restart_pending ? 'Restart Required' : 'Optimized'}
+            </span>
+          </li>
+        </ul>
       </div>
-    </div>
-
-    <!-- Database Update Action -->
-    <div class="so-section so-update-section">
-      <h3 class="so-section-title">Database Update</h3>
-      
-      {#if updatingDb}
-        <div class="so-update-progress">
-          <div class="so-progress-bar">
-            <div class="so-progress-fill"></div>
-          </div>
-          <div class="so-progress-stats">
-            <span>Artists: {updateStatus?.progress?.artists ?? 0}</span>
-            <span>Albums: {updateStatus?.progress?.albums ?? 0}</span>
-            <span>Tracks: {updateStatus?.progress?.tracks ?? 0}</span>
-          </div>
-          <button class="so-btn so-btn-danger" on:click={cancelUpdate}>Cancel Update</button>
-        </div>
-      {:else}
-        <div class="so-update-controls">
-          <div class="so-mode-selector">
-            <button
-              class="so-mode-btn"
-              class:so-mode-active={updateMode === 'incremental'}
-              on:click={() => updateMode = 'incremental'}
-            >Incremental</button>
-            <button
-              class="so-mode-btn"
-              class:so-mode-active={updateMode === 'full'}
-              on:click={() => updateMode = 'full'}
-            >Full Refresh</button>
-          </div>
-          <button class="so-btn so-btn-primary" on:click={triggerUpdate}>
-            Run Database Update
-          </button>
-        </div>
-      {/if}
-
-      {#if error}
-        <div class="so-error">{error}</div>
-      {/if}
-
-      {#if updateStatus?.progress}
-        <div class="so-last-update-stats">
-          <span>Last run: {updateStatus.progress.successful ?? 0} synced, {updateStatus.progress.failed ?? 0} failed</span>
-        </div>
-      {/if}
     </div>
   {/if}
 </section>
 
 <style>
-  .so-root {
-    padding: 24px;
-    color: var(--text-primary, #f8fafc);
+  .so-container {
+    padding: 32px;
+    font-family: 'Inter', sans-serif;
+    color: var(--text-primary);
   }
 
+  /* ── Loading ──────────────────────────────────────────────────────── */
   .so-loading {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 12px;
-    padding: 48px 0;
-    color: var(--text-secondary, #94a3b8);
-    font-size: 14px;
+    gap: 20px;
+    padding: 80px 0;
+    color: var(--text-muted);
   }
 
   .so-spinner {
-    width: 24px; height: 24px;
-    border: 3px solid rgba(255,255,255,0.06);
-    border-top-color: var(--color-primary, #14b8a6);
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(20, 184, 166, 0.1);
+    border-top-color: var(--color-primary);
     border-radius: 50%;
-    animation: so-spin 0.7s linear infinite;
+    animation: spin 0.8s cubic-bezier(0.5, 0, 0.5, 1) infinite;
   }
-  @keyframes so-spin { to { transform: rotate(360deg); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── Header ──────────────────────────────────────────────────────── */
   .so-header {
     display: flex;
-    align-items: center;
     justify-content: space-between;
-    margin-bottom: 24px;
-    flex-wrap: wrap;
-    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 40px;
   }
+
   .so-title {
     margin: 0;
-    font-size: 22px;
+    font-size: 28px;
     font-weight: 800;
-    letter-spacing: -0.3px;
+    letter-spacing: -0.03em;
+    background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
-  .so-status-pill {
+
+  .so-subtitle {
+    margin: 6px 0 0 0;
+    font-size: 15px;
+    color: var(--text-secondary);
+    opacity: 0.8;
+  }
+
+  .so-status-badge {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 14px;
+    gap: 12px;
+    padding: 10px 20px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.2);
     border-radius: 999px;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
-    letter-spacing: 0.05em;
-    background: rgba(239, 68, 68, 0.12);
     color: #ef4444;
-    border: 1px solid rgba(239, 68, 68, 0.25);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.1);
   }
-  .so-status-pill.so-online {
-    background: rgba(34, 197, 94, 0.12);
-    color: #22c55e;
-    border-color: rgba(34, 197, 94, 0.25);
+
+  .so-status-badge.online {
+    background: rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
   }
-  .so-pulse {
-    width: 8px; height: 8px;
+
+  .status-dot {
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     background: currentColor;
-    animation: so-pulse-anim 2s ease-in-out infinite;
+    box-shadow: 0 0 10px currentColor;
   }
-  @keyframes so-pulse-anim {
+
+  .online .status-dot {
+    animation: pulse 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+  }
+
+  @keyframes pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
-    50%      { opacity: 0.5; transform: scale(0.75); }
+    50% { opacity: 0.4; transform: scale(0.7); }
   }
 
   /* ── Stats Grid ──────────────────────────────────────────────────── */
-  .so-grid {
+  .so-stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 14px;
-    margin-bottom: 28px;
-  }
-  .so-stat-card {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 18px;
-    background: var(--bg-surface-elevated, #1e293b);
-    border: 1px solid var(--border-subtle, #334155);
-    border-radius: 14px;
-    transition: border-color 0.2s, transform 0.2s;
-  }
-  .so-stat-card:hover {
-    border-color: rgba(255, 255, 255, 0.12);
-    transform: translateY(-2px);
-  }
-  .so-stat-icon {
-    font-size: 28px;
-    flex-shrink: 0;
-  }
-  .so-stat-body {
-    display: flex;
-    flex-direction: column;
-  }
-  .so-stat-value {
-    font-size: 24px;
-    font-weight: 800;
-    line-height: 1;
-    letter-spacing: -0.5px;
-  }
-  .so-stat-label {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.15em;
-    color: var(--text-secondary, #94a3b8);
-    margin-top: 4px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 24px;
+    margin-bottom: 40px;
   }
 
-  /* ── Sections ────────────────────────────────────────────────────── */
-  .so-section {
-    padding: 18px 0;
-    border-top: 1px solid rgba(255,255,255,0.05);
-  }
-  .so-section-title {
-    margin: 0 0 14px 0;
-    font-size: 11px;
-    font-weight: 900;
-    text-transform: uppercase;
-    letter-spacing: 0.2em;
-    color: rgba(255,255,255,0.4);
+  .so-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 20px;
+    padding: 24px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
   }
 
-  /* ── Jobs row ────────────────────────────────────────────────────── */
-  .so-jobs-row {
+  .stat-card {
     display: flex;
     align-items: center;
     gap: 20px;
-    flex-wrap: wrap;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .so-jobs-metric {
+
+  .stat-card:hover {
+    transform: translateY(-4px);
+    border-color: rgba(20, 184, 166, 0.3);
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .stat-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    font-weight: 600;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    transition: transform 0.3s ease;
   }
-  .so-metric-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .so-dot-green { background: #22c55e; }
-  .so-dot-blue  { background: #3b82f6; }
-  .so-dot-red   { background: #ef4444; }
-  .so-jobs-error { color: #ef4444; }
-  .so-jobs-last { color: var(--text-secondary, #94a3b8); font-size: 11px; margin-left: auto; }
 
-  /* ── Info Grid ───────────────────────────────────────────────────── */
-  .so-info-grid {
-    display: flex;
-    gap: 24px;
-    flex-wrap: wrap;
+  .stat-card:hover .stat-icon {
+    transform: scale(1.1) rotate(-5deg);
   }
-  .so-info-item {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+
+  .stat-icon.tracks { color: #8b5cf6; background: rgba(139, 92, 246, 0.1); }
+  .stat-icon.albums { color: #ec4899; background: rgba(236, 72, 153, 0.1); }
+  .stat-icon.artists { color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
+  .stat-icon.jobs { color: #10b981; background: rgba(16, 185, 129, 0.1); }
+
+  .stat-value {
+    font-size: 24px;
+    font-weight: 800;
+    line-height: 1;
+    color: #fff;
+    letter-spacing: -0.02em;
   }
-  .so-info-key {
-    font-size: 11px;
+
+  .stat-label {
+    font-size: 12px;
     font-weight: 700;
+    color: var(--text-muted);
+    margin-top: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  /* ── Content Layout ──────────────────────────────────────────────── */
+  .so-content-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 24px;
+  }
+
+  @media (max-width: 1024px) {
+    .so-content-row { grid-template-columns: 1fr; }
+  }
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+
+  .card-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 800;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: var(--text-secondary, #94a3b8);
-  }
-  .so-info-val {
-    font-size: 14px;
-    font-weight: 600;
-  }
-  .so-info-val.so-warn {
-    color: #eab308;
+    color: var(--text-secondary);
+    opacity: 0.9;
   }
 
-  /* ── Database Update ─────────────────────────────────────────────── */
-  .so-update-section {
-    border-top: 1px solid rgba(255,255,255,0.05);
+  .pulse-label {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    animation: blink 1.5s infinite;
   }
-  .so-update-controls {
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.95); }
+  }
+
+  /* ── Database Ops ────────────────────────────────────────────────── */
+  .update-controls {
     display: flex;
-    align-items: center;
-    gap: 14px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 24px;
   }
-  .so-mode-selector {
+
+  .mode-toggle {
     display: flex;
-    background: var(--bg-surface-elevated, #1e293b);
-    border: 1px solid var(--border-subtle, #334155);
-    border-radius: 8px;
-    overflow: hidden;
+    background: rgba(0,0,0,0.3);
+    padding: 6px;
+    border-radius: 14px;
+    width: fit-content;
+    border: 1px solid var(--border-subtle);
   }
-  .so-mode-btn {
-    padding: 8px 16px;
-    font-size: 12px;
-    font-weight: 600;
-    background: none;
-    border: none;
-    color: var(--text-secondary, #94a3b8);
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .so-mode-btn.so-mode-active {
-    background: var(--color-primary, #14b8a6);
-    color: var(--bg-canvas, #000000);
-  }
-  .so-btn {
+
+  .mode-btn {
     padding: 10px 20px;
-    border-radius: 8px;
-    font-weight: 700;
-    font-size: 13px;
     border: none;
+    background: none;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 700;
     cursor: pointer;
-    transition: all 0.2s;
+    border-radius: 10px;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .so-btn-primary {
-    background: var(--color-primary, #14b8a6);
-    color: var(--bg-canvas, #000000);
+
+  .mode-btn.active {
+    background: var(--color-primary);
+    color: #000;
+    box-shadow: 0 4px 12px rgba(20, 184, 166, 0.3);
   }
-  .so-btn-primary:hover {
+
+  .control-help {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.6;
+    opacity: 0.8;
+  }
+
+  .btn-primary-large {
+    width: 100%;
+    padding: 18px;
+    background: var(--color-primary);
+    color: #000;
+    border: none;
+    border-radius: 16px;
+    font-weight: 800;
+    font-size: 16px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 6px 16px rgba(20, 184, 166, 0.2);
+  }
+
+  .btn-primary-large:hover:not(:disabled) {
     filter: brightness(1.1);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(20, 184, 166, 0.3);
   }
-  .so-btn-danger {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
-    border: 1px solid rgba(239, 68, 68, 0.3);
-  }
-  .so-btn-danger:hover {
-    background: rgba(239, 68, 68, 0.25);
+
+  .btn-primary-large:active:not(:disabled) {
+    transform: translateY(0);
   }
 
   /* ── Progress ────────────────────────────────────────────────────── */
-  .so-update-progress {
+  .update-progress-container {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-  }
-  .so-progress-bar {
-    width: 100%;
-    height: 6px;
-    background: var(--bg-surface-elevated, #1e293b);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .so-progress-fill {
-    height: 100%;
-    width: 40%;
-    background: linear-gradient(90deg, var(--color-primary, #14b8a6), #3b82f6);
-    border-radius: 3px;
-    animation: so-progress-pulse 1.5s ease-in-out infinite;
-  }
-  @keyframes so-progress-pulse {
-    0%, 100% { opacity: 1; }
-    50%      { opacity: 0.6; }
-  }
-  .so-progress-stats {
-    display: flex;
-    gap: 16px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-secondary, #94a3b8);
+    gap: 24px;
   }
 
-  .so-error {
-    margin-top: 10px;
-    padding: 10px 14px;
+  .progress-bar-bg {
+    height: 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 7px;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(90deg, var(--color-primary), #3b82f6, #8b5cf6);
+    background-size: 200% 100%;
+  }
+
+  .progress-bar-fill.animated {
+    width: 100%;
+    animation: shimmer 2s infinite linear;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  .progress-details {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+
+  .detail-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.02);
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid var(--border-subtle);
+    transition: background 0.2s;
+  }
+
+  .detail-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .detail-label {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .detail-value {
+    font-size: 22px;
+    font-weight: 800;
+    margin-top: 6px;
+    color: #fff;
+  }
+
+  .btn-cancel {
+    padding: 14px;
     background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 8px;
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-cancel:hover {
+    background: #ef4444;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
+  }
+
+  /* ── Info List ───────────────────────────────────────────────────── */
+  .info-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .info-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  }
+
+  .info-list li:last-child {
+    border-bottom: none;
+  }
+
+  .info-label {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  .info-value {
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .info-value.warn {
+    color: #f59e0b;
+    text-shadow: 0 0 8px rgba(245, 158, 11, 0.3);
+  }
+
+  .error-banner {
+    margin-top: 20px;
+    padding: 14px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 12px;
     color: #ef4444;
     font-size: 13px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
 
-  .so-last-update-stats {
-    margin-top: 8px;
-    font-size: 11px;
-    color: var(--text-secondary, #94a3b8);
+  .error-banner::before {
+    content: '⚠️';
   }
 </style>
+
