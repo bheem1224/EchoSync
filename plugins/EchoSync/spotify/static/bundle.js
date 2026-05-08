@@ -1974,67 +1974,44 @@ function Rr(e, t) {
 	});
 }
 //#endregion
-//#region node_modules/svelte/src/internal/shared/attributes.js
-var zr = [..." 	\n\r\f\xA0\v﻿"];
-function Br(e, t, n) {
-	var r = e == null ? "" : "" + e;
-	if (t && (r = r ? r + " " + t : t), n) {
-		for (var i of Object.keys(n)) if (n[i]) r = r ? r + " " + i : i;
-		else if (r.length) for (var a = i.length, o = 0; (o = r.indexOf(i, o)) >= 0;) {
-			var s = o + a;
-			(o === 0 || zr.includes(r[o - 1])) && (s === r.length || zr.includes(r[s])) ? r = (o === 0 ? "" : r.substring(0, o)) + r.substring(s + 1) : o = s;
-		}
-	}
-	return r === "" ? null : r;
-}
-//#endregion
-//#region node_modules/svelte/src/internal/client/dom/elements/class.js
-function Vr(e, t, n, r, i, a) {
-	var o = e.__className;
-	if (T || o !== n || o === void 0) {
-		var s = Br(n, r, a);
-		(!T || s !== e.getAttribute("class")) && (s == null ? e.removeAttribute("class") : t ? e.className = s : e.setAttribute("class", s)), e.__className = n;
-	} else if (a && i !== a) for (var c in a) {
-		var l = !!a[c];
-		(i == null || l !== !!i[c]) && e.classList.toggle(c, l);
-	}
-	return a;
-}
-//#endregion
 //#region node_modules/svelte/src/internal/client/dom/elements/attributes.js
-var Hr = Symbol("is custom element"), Ur = Symbol("is html"), Wr = ge ? "link" : "LINK";
-function Gr(e) {
+var zr = Symbol("is custom element"), Br = Symbol("is html"), Vr = ge ? "link" : "LINK";
+function Hr(e) {
 	if (T) {
 		var t = !1, n = () => {
 			if (!t) {
 				if (t = !0, e.hasAttribute("value")) {
 					var n = e.value;
-					Kr(e, "value", null), e.value = n;
+					Wr(e, "value", null), e.value = n;
 				}
 				if (e.hasAttribute("checked")) {
 					var r = e.checked;
-					Kr(e, "checked", null), e.checked = r;
+					Wr(e, "checked", null), e.checked = r;
 				}
 			}
 		};
 		e.__on_r = n, qe(n), cn();
 	}
 }
-function Kr(e, t, n, r) {
-	var i = qr(e);
-	T && (i[t] = e.getAttribute(t), t === "src" || t === "srcset" || t === "href" && e.nodeName === Wr) || i[t] !== (i[t] = n) && (t === "loading" && (e[me] = n), n == null ? e.removeAttribute(t) : typeof n != "string" && Yr(e).includes(t) ? e[t] = n : e.setAttribute(t, n));
+function Ur(e, t) {
+	var n = Gr(e);
+	n.checked !== (n.checked = t ?? void 0) && (e.checked = t);
 }
-function qr(e) {
+function Wr(e, t, n, r) {
+	var i = Gr(e);
+	T && (i[t] = e.getAttribute(t), t === "src" || t === "srcset" || t === "href" && e.nodeName === Vr) || i[t] !== (i[t] = n) && (t === "loading" && (e[me] = n), n == null ? e.removeAttribute(t) : typeof n != "string" && qr(e).includes(t) ? e[t] = n : e.setAttribute(t, n));
+}
+function Gr(e) {
 	return e.__attributes ??= {
-		[Hr]: e.nodeName.includes("-"),
-		[Ur]: e.namespaceURI === a
+		[zr]: e.nodeName.includes("-"),
+		[Br]: e.namespaceURI === a
 	};
 }
-var Jr = /* @__PURE__ */ new Map();
-function Yr(e) {
-	var t = e.getAttribute("is") || e.nodeName, n = Jr.get(t);
+var Kr = /* @__PURE__ */ new Map();
+function qr(e) {
+	var t = e.getAttribute("is") || e.nodeName, n = Kr.get(t);
 	if (n) return n;
-	Jr.set(t, n = []);
+	Kr.set(t, n = []);
 	for (var r, i = e, a = Element.prototype; a !== i;) {
 		for (var o in r = p(i), r) r[o].set && n.push(o);
 		i = g(i);
@@ -2043,36 +2020,36 @@ function Yr(e) {
 }
 //#endregion
 //#region node_modules/svelte/src/internal/client/dom/elements/bindings/input.js
-function Xr(t, n, r = n) {
+function Jr(t, n, r = n) {
 	var i = /* @__PURE__ */ new WeakSet();
 	un(t, "input", async (e) => {
 		var a = e ? t.defaultValue : t.value;
-		if (a = Zr(t) ? Qr(a) : a, r(a), j !== null && i.add(j), await $n(), a !== (a = n())) {
+		if (a = Yr(t) ? Xr(a) : a, r(a), j !== null && i.add(j), await $n(), a !== (a = n())) {
 			var o = t.selectionStart, s = t.selectionEnd, c = t.value.length;
 			if (t.value = a ?? "", s !== null) {
 				var l = t.value.length;
 				o === s && s === c && l > c ? (t.selectionStart = l, t.selectionEnd = l) : (t.selectionStart = o, t.selectionEnd = Math.min(s, l));
 			}
 		}
-	}), (T && t.defaultValue !== t.value || Z(n) == null && t.value) && (r(Zr(t) ? Qr(t.value) : t.value), j !== null && i.add(j)), Sn(() => {
+	}), (T && t.defaultValue !== t.value || Z(n) == null && t.value) && (r(Yr(t) ? Xr(t.value) : t.value), j !== null && i.add(j)), Sn(() => {
 		var r = n();
 		if (t === document.activeElement) {
 			var a = e ? at : j;
 			if (i.has(a)) return;
 		}
-		Zr(t) && r === Qr(t.value) || t.type === "date" && !r && !t.value || r !== t.value && (t.value = r ?? "");
+		Yr(t) && r === Xr(t.value) || t.type === "date" && !r && !t.value || r !== t.value && (t.value = r ?? "");
 	});
 }
-function Zr(e) {
+function Yr(e) {
 	var t = e.type;
 	return t === "number" || t === "range";
 }
-function Qr(e) {
+function Xr(e) {
 	return e === "" ? null : +e;
 }
 //#endregion
 //#region node_modules/svelte/src/internal/client/dom/legacy/lifecycle.js
-function $r(e = !1) {
+function Zr(e = !1) {
 	let t = k, n = t.l.u;
 	if (!n) return;
 	let r = () => nr(t.s);
@@ -2085,23 +2062,23 @@ function $r(e = !1) {
 		r = () => X(i);
 	}
 	n.b.length && _n(() => {
-		ei(t, r), b(n.b);
+		Qr(t, r), b(n.b);
 	}), hn(() => {
 		let e = Z(() => n.m.map(y));
 		return () => {
 			for (let t of e) typeof t == "function" && t();
 		};
 	}), n.a.length && hn(() => {
-		ei(t, r), b(n.a);
+		Qr(t, r), b(n.a);
 	});
 }
-function ei(e, t) {
+function Qr(e, t) {
 	if (e.l.s) for (let t of e.l.s) X(t);
 	t();
 }
 //#endregion
 //#region node_modules/svelte/src/internal/client/reactivity/props.js
-function ti(e, n, r, i) {
+function $r(e, n, r, i) {
 	var a = !t || (r & 2) != 0, o = (r & 8) != 0, s = (r & 16) != 0, c = i, l = !0, u = () => (l && (l = !1, c = s ? Z(i) : i), c);
 	let d;
 	if (o) {
@@ -2137,10 +2114,10 @@ function ti(e, n, r, i) {
 }
 //#endregion
 //#region node_modules/svelte/src/legacy/legacy-client.js
-function ni(e) {
-	return new ri(e);
+function ei(e) {
+	return new ti(e);
 }
-var ri = class {
+var ti = class {
 	#e;
 	#t;
 	constructor(t) {
@@ -2199,8 +2176,8 @@ var ri = class {
 	$destroy() {
 		this.#t.$destroy();
 	}
-}, ii;
-typeof HTMLElement == "function" && (ii = class extends HTMLElement {
+}, ni;
+typeof HTMLElement == "function" && (ni = class extends HTMLElement {
 	$$ctor;
 	$$s;
 	$$c;
@@ -2237,14 +2214,14 @@ typeof HTMLElement == "function" && (ii = class extends HTMLElement {
 					e !== "default" && (n.name = e), $(t, n);
 				};
 			}
-			let t = {}, n = oi(this);
+			let t = {}, n = ii(this);
 			for (let r of this.$$s) r in n && (r === "default" && !this.$$d.children ? (this.$$d.children = e(r), t.default = !0) : t[r] = e(r));
 			for (let e of this.attributes) {
 				let t = this.$$g_p(e.name);
-				t in this.$$d || (this.$$d[t] = ai(t, e.value, this.$$p_d, "toProp"));
+				t in this.$$d || (this.$$d[t] = ri(t, e.value, this.$$p_d, "toProp"));
 			}
 			for (let e in this.$$p_d) !(e in this.$$d) && this[e] !== void 0 && (this.$$d[e] = this[e], delete this[e]);
-			this.$$c = ni({
+			this.$$c = ei({
 				component: this.$$ctor,
 				target: this.$$shadowRoot || this,
 				props: {
@@ -2258,7 +2235,7 @@ typeof HTMLElement == "function" && (ii = class extends HTMLElement {
 					for (let e of u(this.$$c)) {
 						if (!this.$$p_d[e]?.reflect) continue;
 						this.$$d[e] = this.$$c[e];
-						let t = ai(e, this.$$d[e], this.$$p_d, "toAttribute");
+						let t = ri(e, this.$$d[e], this.$$p_d, "toAttribute");
 						t == null ? this.removeAttribute(this.$$p_d[e].attribute || e) : this.setAttribute(this.$$p_d[e].attribute || e, t);
 					}
 					this.$$r = !1;
@@ -2272,7 +2249,7 @@ typeof HTMLElement == "function" && (ii = class extends HTMLElement {
 		}
 	}
 	attributeChangedCallback(e, t, n) {
-		this.$$r || (e = this.$$g_p(e), this.$$d[e] = ai(e, n, this.$$p_d, "toProp"), this.$$c?.$set({ [e]: this.$$d[e] }));
+		this.$$r || (e = this.$$g_p(e), this.$$d[e] = ri(e, n, this.$$p_d, "toProp"), this.$$c?.$set({ [e]: this.$$d[e] }));
 	}
 	disconnectedCallback() {
 		this.$$cn = !1, Promise.resolve().then(() => {
@@ -2283,7 +2260,7 @@ typeof HTMLElement == "function" && (ii = class extends HTMLElement {
 		return u(this.$$p_d).find((t) => this.$$p_d[t].attribute === e || !this.$$p_d[t].attribute && t.toLowerCase() === e) || e;
 	}
 });
-function ai(e, t, n, r) {
+function ri(e, t, n, r) {
 	let i = n[e]?.type;
 	if (t = i === "Boolean" && typeof t != "boolean" ? t != null : t, !r || !n[e]) return t;
 	if (r === "toAttribute") switch (i) {
@@ -2301,14 +2278,14 @@ function ai(e, t, n, r) {
 		default: return t;
 	}
 }
-function oi(e) {
+function ii(e) {
 	let t = {};
 	return e.childNodes.forEach((e) => {
 		t[e.slot || "default"] = !0;
 	}), t;
 }
-function si(e, t, n, r, i, a) {
-	let o = class extends ii {
+function ai(e, t, n, r, i, a) {
+	let o = class extends ni {
 		constructor() {
 			super(e, n, i), this.$$p_d = t;
 		}
@@ -2322,7 +2299,7 @@ function si(e, t, n, r, i, a) {
 				return this.$$c && e in this.$$c ? this.$$c[e] : this.$$d[e];
 			},
 			set(n) {
-				n = ai(e, n, t), this.$$d[e] = n;
+				n = ri(e, n, t), this.$$d[e] = n;
 				var r = this.$$c;
 				r && (f(r, e)?.get ? r[e] = n : r.$set({ [e]: n }));
 			}
@@ -2335,15 +2312,15 @@ function si(e, t, n, r, i, a) {
 }
 //#endregion
 //#region SpotifyCard.svelte
-var ci = /* @__PURE__ */ Q("<div class=\"loading-state svelte-16m7f8c\">Loading...</div>"), li = /* @__PURE__ */ Q("<div class=\"form-grid svelte-16m7f8c\"><label class=\"form-field svelte-16m7f8c\"><span class=\"field-label svelte-16m7f8c\">Client ID</span> <input type=\"text\" placeholder=\"Enter Spotify Client ID\" class=\"input-field svelte-16m7f8c\"/></label> <label class=\"form-field svelte-16m7f8c\"><span class=\"field-label svelte-16m7f8c\">Client Secret</span> <input type=\"password\" placeholder=\"Enter Spotify Client Secret\" class=\"input-field svelte-16m7f8c\"/></label> <label class=\"form-field svelte-16m7f8c\"><span class=\"field-label svelte-16m7f8c\">Redirect URI (Immutable)</span> <input type=\"text\" class=\"input-field readonly svelte-16m7f8c\" readonly=\"\" disabled=\"\"/></label> <button class=\"btn-primary svelte-16m7f8c\"> </button></div>"), ui = /* @__PURE__ */ Q("<button class=\"btn-ghost svelte-16m7f8c\">+ Add Account</button>"), di = /* @__PURE__ */ Q("<div class=\"add-account-form svelte-16m7f8c\"><input type=\"text\" placeholder=\"Account name\" class=\"input-field svelte-16m7f8c\"/> <div class=\"form-actions svelte-16m7f8c\"><button class=\"btn-primary svelte-16m7f8c\">Add</button> <button class=\"btn-ghost svelte-16m7f8c\">Cancel</button></div></div>"), fi = /* @__PURE__ */ Q("<span class=\"status-badge success svelte-16m7f8c\">✓ Authenticated</span>"), pi = /* @__PURE__ */ Q("<span class=\"status-badge warning svelte-16m7f8c\">⚠ Not Authenticated</span>"), mi = /* @__PURE__ */ Q("<span class=\"status-badge active svelte-16m7f8c\">● Active</span>"), hi = /* @__PURE__ */ Q("<div class=\"account-item svelte-16m7f8c\"><div class=\"account-info svelte-16m7f8c\"><div class=\"account-name svelte-16m7f8c\"> </div> <div class=\"account-badges svelte-16m7f8c\"><!> <!></div></div> <div class=\"account-actions svelte-16m7f8c\"><button class=\"link-btn svelte-16m7f8c\"> </button> <button> </button> <button class=\"btn-danger svelte-16m7f8c\">✕</button></div></div>"), gi = /* @__PURE__ */ Q("<div class=\"empty-accounts svelte-16m7f8c\">No accounts added yet</div>"), _i = /* @__PURE__ */ Q("<div class=\"settings-section svelte-16m7f8c\"><div class=\"section-header svelte-16m7f8c\"><h3 class=\"section-title svelte-16m7f8c\">Global Credentials</h3> <button class=\"btn-ghost svelte-16m7f8c\"> </button></div> <!></div> <div class=\"settings-section svelte-16m7f8c\"><div class=\"section-header svelte-16m7f8c\"><h3 class=\"section-title svelte-16m7f8c\"> </h3> <!></div> <!> <div class=\"accounts-list svelte-16m7f8c\"></div></div>", 1), vi = /* @__PURE__ */ Q("<section class=\"plugin-card svelte-16m7f8c\"><div class=\"card-header svelte-16m7f8c\"><div class=\"header-left svelte-16m7f8c\"><h2 class=\"card-title svelte-16m7f8c\">Spotify</h2> <span class=\"type-badge svelte-16m7f8c\">Streaming Service</span></div></div> <!></section>"), yi = {
+var oi = /* @__PURE__ */ Q("<div class=\"loading-state svelte-16m7f8c\"><div class=\"spinner svelte-16m7f8c\"></div> <span>Initializing Spotify Nexus...</span></div>"), si = /* @__PURE__ */ Q("<div class=\"form-grid svelte-16m7f8c\"><div class=\"form-field svelte-16m7f8c\"><span class=\"field-label svelte-16m7f8c\">Client ID</span> <input type=\"text\" placeholder=\"Spotify Developer Client ID\" class=\"input-field svelte-16m7f8c\"/></div> <div class=\"form-field svelte-16m7f8c\"><span class=\"field-label svelte-16m7f8c\">Client Secret</span> <div class=\"password-wrapper\"><input type=\"password\" placeholder=\"Spotify Developer Client Secret\" class=\"input-field svelte-16m7f8c\"/></div></div> <div class=\"form-field svelte-16m7f8c\"><span class=\"field-label svelte-16m7f8c\">Redirect URI</span> <input type=\"text\" class=\"input-field readonly svelte-16m7f8c\" readonly=\"\" disabled=\"\"/> <span class=\"helper-text svelte-16m7f8c\">Whitelist this in Spotify Dashboard</span></div> <div class=\"actions-row svelte-16m7f8c\"><button class=\"btn-primary svelte-16m7f8c\"> </button></div></div>"), ci = /* @__PURE__ */ Q("<button class=\"btn-ghost svelte-16m7f8c\"> </button>"), li = /* @__PURE__ */ Q("<div class=\"add-account-form svelte-16m7f8c\"><div class=\"form-field svelte-16m7f8c\"><input type=\"text\" placeholder=\"e.g. My Personal Account\" class=\"input-field svelte-16m7f8c\"/></div> <div class=\"actions-row svelte-16m7f8c\"><button class=\"btn-primary svelte-16m7f8c\">Add Account</button></div></div>"), ui = /* @__PURE__ */ Q("<span class=\"status-badge success svelte-16m7f8c\">Authenticated</span>"), di = /* @__PURE__ */ Q("<span class=\"status-badge warning svelte-16m7f8c\">Pending Auth</span>"), fi = /* @__PURE__ */ Q("<span class=\"status-badge active svelte-16m7f8c\">Active</span>"), pi = /* @__PURE__ */ Q("<div class=\"account-item svelte-16m7f8c\"><div class=\"account-info svelte-16m7f8c\"><div class=\"account-name svelte-16m7f8c\"> </div> <div class=\"account-badges svelte-16m7f8c\"><!> <!></div></div> <div class=\"account-actions svelte-16m7f8c\"><button class=\"link-btn svelte-16m7f8c\"> </button> <div class=\"switch-container\"><label class=\"switch svelte-16m7f8c\"><input type=\"checkbox\" class=\"svelte-16m7f8c\"/> <span class=\"slider round svelte-16m7f8c\"></span></label></div> <button class=\"btn-danger-icon svelte-16m7f8c\" title=\"Delete Account\">✕</button></div></div>"), mi = /* @__PURE__ */ Q("<div class=\"empty-accounts svelte-16m7f8c\">No Spotify accounts connected.</div>"), hi = /* @__PURE__ */ Q("<div class=\"settings-section svelte-16m7f8c\"><div class=\"section-header svelte-16m7f8c\"><h3 class=\"section-title svelte-16m7f8c\">Global Credentials</h3> <button class=\"btn-ghost svelte-16m7f8c\"> </button></div> <!></div> <hr class=\"divider svelte-16m7f8c\"/> <div class=\"settings-section svelte-16m7f8c\"><div class=\"section-header svelte-16m7f8c\"><h3 class=\"section-title svelte-16m7f8c\"> </h3> <!></div> <!> <div class=\"accounts-list svelte-16m7f8c\"></div></div>", 1), gi = /* @__PURE__ */ Q("<section class=\"plugin-card svelte-16m7f8c\"><div class=\"card-header svelte-16m7f8c\"><div class=\"header-left svelte-16m7f8c\"><h2 class=\"card-title svelte-16m7f8c\">Spotify</h2> <span class=\"type-badge svelte-16m7f8c\">Streaming Service</span></div></div> <!></section>"), _i = {
 	hash: "svelte-16m7f8c",
-	code: ".plugin-card.svelte-16m7f8c {background:var(--bg-surface, #0f172a);backdrop-filter:blur(12px);border:1px solid var(--border-subtle, #1e293b);border-radius:var(--radius, 12px);padding:24px;margin-bottom:24px;color:var(--text-primary, #f8fafc);}.card-header.svelte-16m7f8c {display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));}.header-left.svelte-16m7f8c {display:flex;align-items:center;gap:12px;}.card-title.svelte-16m7f8c {margin:0;font-size:20px;font-weight:700;}.type-badge.svelte-16m7f8c {font-size:11px;padding:4px 8px;background:rgba(20, 184, 166, 0.15);color:var(--color-primary, #14b8a6);border-radius:4px;font-weight:600;text-transform:uppercase;}.loading-state.svelte-16m7f8c {padding:24px;text-align:center;color:var(--text-muted);}.settings-section.svelte-16m7f8c {margin-bottom:24px;}.section-header.svelte-16m7f8c {display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}.section-title.svelte-16m7f8c {margin:0;font-size:16px;font-weight:600;color:var(--text-primary, #f8fafc);}.form-grid.svelte-16m7f8c {display:flex;flex-direction:column;gap:16px;}.form-field.svelte-16m7f8c {display:flex;flex-direction:column;gap:8px;}.field-label.svelte-16m7f8c {font-size:13px;font-weight:500;color:var(--text-secondary, #cbd5e1);}.input-field.svelte-16m7f8c {width:100%;padding:10px 14px;background:var(--bg-surface-elevated, #1e293b);border:1px solid var(--border-subtle, #334155);border-radius:8px;color:var(--text-primary, #f8fafc);font-size:14px;transition:all 0.2s;}.input-field.svelte-16m7f8c:focus {outline:none;border-color:var(--color-primary, #14b8a6);box-shadow:0 0 0 2px rgba(20, 184, 166, 0.1);}.input-field.readonly.svelte-16m7f8c {opacity:0.6;cursor:not-allowed;}.btn-primary.svelte-16m7f8c {padding:10px 20px;background:var(--color-primary, #14b8a6);color:var(--bg-canvas, #000000);border:none;border-radius:8px;font-weight:600;cursor:pointer;transition:all 0.2s;}.btn-primary.svelte-16m7f8c:hover {opacity:0.9;}.btn-ghost.svelte-16m7f8c {padding:8px 16px;background:rgba(255, 255, 255, 0.05);border:1px solid rgba(255, 255, 255, 0.1);color:var(--text-primary, #f8fafc);border-radius:8px;font-size:13px;cursor:pointer;transition:all 0.2s;}.btn-ghost.svelte-16m7f8c:hover {background:rgba(255, 255, 255, 0.1);}.add-account-form.svelte-16m7f8c {background:rgba(255, 255, 255, 0.03);padding:16px;border-radius:8px;display:flex;flex-direction:column;gap:12px;margin-bottom:16px;}.form-actions.svelte-16m7f8c {display:flex;gap:8px;}.accounts-list.svelte-16m7f8c {display:flex;flex-direction:column;gap:8px;}.account-item.svelte-16m7f8c {display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:rgba(255, 255, 255, 0.03);border:1px solid rgba(255, 255, 255, 0.05);border-radius:8px;}.account-info.svelte-16m7f8c {display:flex;flex-direction:column;gap:4px;}.account-name.svelte-16m7f8c {font-weight:600;font-size:14px;}.account-badges.svelte-16m7f8c {display:flex;gap:8px;}.status-badge.svelte-16m7f8c {font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700;}.status-badge.success.svelte-16m7f8c {background:rgba(34, 197, 94, 0.15);color:#22c55e;}.status-badge.warning.svelte-16m7f8c {background:rgba(234, 179, 8, 0.15);color:#eab308;}.status-badge.active.svelte-16m7f8c {background:rgba(20, 184, 166, 0.15);color:var(--color-primary, #14b8a6);}.account-actions.svelte-16m7f8c {display:flex;gap:12px;align-items:center;}.link-btn.svelte-16m7f8c {background:none;border:none;color:var(--color-primary, #14b8a6);font-size:13px;font-weight:600;cursor:pointer;}.link-btn.svelte-16m7f8c:hover {text-decoration:underline;}.btn-danger.svelte-16m7f8c {background:rgba(239, 68, 68, 0.15);color:var(--color-danger);border:none;padding:8px 12px;border-radius:6px;cursor:pointer;}.empty-accounts.svelte-16m7f8c {text-align:center;padding:16px;color:var(--text-secondary, #cbd5e1);font-size:13px;background:rgba(255, 255, 255, 0.02);border-radius:8px;border:1px dashed rgba(255, 255, 255, 0.1);}"
+	code: ".plugin-card.svelte-16m7f8c {background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius, 16px);padding:28px;color:var(--text-primary);font-family:'Inter', sans-serif;box-shadow:0 4px 24px rgba(0, 0, 0, 0.2);transition:transform 0.2s ease;}.card-header.svelte-16m7f8c {display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid var(--border-subtle);}.header-left.svelte-16m7f8c {display:flex;align-items:center;gap:16px;}.card-title.svelte-16m7f8c {margin:0;font-size:22px;font-weight:800;letter-spacing:-0.02em;background:linear-gradient(135deg, #fff 0%, #a5b4fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}.type-badge.svelte-16m7f8c {font-size:10px;padding:4px 10px;background:rgba(20, 184, 166, 0.1);color:var(--color-primary);border:1px solid rgba(20, 184, 166, 0.2);border-radius:20px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;}.settings-section.svelte-16m7f8c {margin-bottom:32px;}.section-header.svelte-16m7f8c {display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}.section-title.svelte-16m7f8c {margin:0;font-size:14px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;}.form-grid.svelte-16m7f8c {display:grid;grid-template-columns:1fr;gap:20px;}\n\n  @media (min-width: 640px) {.form-grid.svelte-16m7f8c {grid-template-columns:1fr 1fr;}.actions-row.svelte-16m7f8c {grid-column:span 2;}\n  }.form-field.svelte-16m7f8c {display:flex;flex-direction:column;gap:10px;}.field-label.svelte-16m7f8c {font-size:12px;font-weight:600;color:var(--text-secondary);opacity:0.8;}.input-field.svelte-16m7f8c {width:100%;padding:14px 18px;background:var(--bg-input, #0f172a);border:1px solid var(--border-subtle);border-radius:12px;color:var(--text-primary);font-size:14px;transition:all 0.25s cubic-bezier(0.4, 0, 0.2, 1);}.input-field.svelte-16m7f8c:focus {outline:none;border-color:var(--color-primary);box-shadow:0 0 0 4px rgba(20, 184, 166, 0.15);background:rgba(255, 255, 255, 0.03);}.input-field.readonly.svelte-16m7f8c {opacity:0.6;cursor:not-allowed;background:rgba(255, 255, 255, 0.02);}.helper-text.svelte-16m7f8c {font-size:11px;color:var(--text-muted);margin-top:6px;font-style:italic;}.btn-primary.svelte-16m7f8c {padding:12px 28px;background:var(--color-primary);color:#000;border:none;border-radius:12px;font-weight:700;font-size:14px;cursor:pointer;transition:all 0.3s cubic-bezier(0.4, 0, 0.2, 1);box-shadow:0 4px 12px rgba(20, 184, 166, 0.2);}.btn-primary.svelte-16m7f8c:hover:not(:disabled) {filter:brightness(1.1);transform:translateY(-2px);box-shadow:0 6px 20px rgba(20, 184, 166, 0.3);}.btn-primary.svelte-16m7f8c:active:not(:disabled) {transform:translateY(0);}.btn-primary.svelte-16m7f8c:disabled {opacity:0.4;cursor:not-allowed;box-shadow:none;}.btn-ghost.svelte-16m7f8c {padding:10px 18px;background:rgba(255, 255, 255, 0.05);border:1px solid var(--border-subtle);color:var(--text-primary);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s ease;}.btn-ghost.svelte-16m7f8c:hover {background:rgba(255, 255, 255, 0.1);border-color:rgba(255, 255, 255, 0.2);transform:translateY(-1px);}.divider.svelte-16m7f8c {border:none;border-top:1px solid var(--border-subtle);margin:32px 0;opacity:0.3;}.accounts-list.svelte-16m7f8c {display:flex;flex-direction:column;gap:14px;}.account-item.svelte-16m7f8c {display:flex;justify-content:space-between;align-items:center;padding:20px;background:rgba(255, 255, 255, 0.03);border:1px solid var(--border-subtle);border-radius:16px;transition:all 0.3s ease;}.account-item.svelte-16m7f8c:hover {border-color:rgba(20, 184, 166, 0.3);background:rgba(255, 255, 255, 0.05);transform:translateX(4px);}.account-info.svelte-16m7f8c {display:flex;flex-direction:column;gap:8px;}.account-name.svelte-16m7f8c {font-weight:700;font-size:16px;color:#fff;}.account-badges.svelte-16m7f8c {display:flex;gap:10px;}.status-badge.svelte-16m7f8c {font-size:10px;padding:3px 10px;border-radius:6px;font-weight:800;text-transform:uppercase;letter-spacing:0.03em;}.status-badge.success.svelte-16m7f8c {background:rgba(16, 185, 129, 0.1);color:#10b981;border:1px solid rgba(16, 185, 129, 0.2);}.status-badge.warning.svelte-16m7f8c {background:rgba(245, 158, 11, 0.1);color:#f59e0b;border:1px solid rgba(245, 158, 11, 0.2);}.status-badge.active.svelte-16m7f8c {background:rgba(20, 184, 166, 0.1);color:var(--color-primary);border:1px solid rgba(20, 184, 166, 0.2);}.account-actions.svelte-16m7f8c {display:flex;gap:20px;align-items:center;}.link-btn.svelte-16m7f8c {background:none;border:none;color:var(--color-primary);font-size:13px;font-weight:700;cursor:pointer;padding:0;transition:opacity 0.2s;}.link-btn.svelte-16m7f8c:hover {opacity:0.8;text-decoration:underline;}.btn-danger-icon.svelte-16m7f8c {background:rgba(239, 68, 68, 0.1);color:#ef4444;border:1px solid rgba(239, 68, 68, 0.2);width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all 0.2s ease;font-size:16px;}.btn-danger-icon.svelte-16m7f8c:hover {background:#ef4444;color:#fff;transform:rotate(90deg);}\n\n  /* Switch Component */.switch.svelte-16m7f8c {position:relative;display:inline-block;width:44px;height:24px;}.switch.svelte-16m7f8c input:where(.svelte-16m7f8c) {opacity:0;width:0;height:0;}.slider.svelte-16m7f8c {position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:rgba(255, 255, 255, 0.1);transition:.4s;border:1px solid var(--border-subtle);}.slider.svelte-16m7f8c:before {position:absolute;content:\"\";height:18px;width:18px;left:2px;bottom:2px;background-color:#94a3b8;transition:.4s;box-shadow:0 2px 4px rgba(0,0,0,0.2);}input.svelte-16m7f8c:checked + .slider:where(.svelte-16m7f8c) {background-color:var(--color-primary);border-color:var(--color-primary);}input.svelte-16m7f8c:checked + .slider:where(.svelte-16m7f8c):before {transform:translateX(20px);background-color:white;}.slider.round.svelte-16m7f8c {border-radius:34px;}.slider.round.svelte-16m7f8c:before {border-radius:50%;}.loading-state.svelte-16m7f8c {display:flex;flex-direction:column;align-items:center;gap:20px;padding:60px;color:var(--text-muted);}.spinner.svelte-16m7f8c {width:40px;height:40px;border:4px solid rgba(20, 184, 166, 0.1);border-top-color:var(--color-primary);border-radius:50%;\n    animation: svelte-16m7f8c-spin 0.8s cubic-bezier(0.5, 0, 0.5, 1) infinite;}\n\n  @keyframes svelte-16m7f8c-spin {\n    to { transform: rotate(360deg); }\n  }.add-account-form.svelte-16m7f8c {background:rgba(255, 255, 255, 0.02);padding:20px;border-radius:16px;border:1px dashed var(--border-subtle);margin-bottom:24px;\n    animation: svelte-16m7f8c-fadeIn 0.3s ease-out;}\n\n  @keyframes svelte-16m7f8c-fadeIn {\n    from { opacity: 0; transform: translateY(-10px); }\n    to { opacity: 1; transform: translateY(0); }\n  }.empty-accounts.svelte-16m7f8c {text-align:center;padding:40px;background:rgba(255, 255, 255, 0.02);border-radius:16px;border:1px dashed var(--border-subtle);color:var(--text-muted);font-style:italic;}"
 };
-function bi(e, t) {
-	He(t, !1), Rr(e, yi);
-	let n = ti(t, "apiBase", 12, ""), r = /* @__PURE__ */ N(""), i = /* @__PURE__ */ N(""), a = /* @__PURE__ */ N(""), o = /* @__PURE__ */ N([]), s = /* @__PURE__ */ N(!1), c = /* @__PURE__ */ N(""), l = /* @__PURE__ */ N(!0), u = /* @__PURE__ */ N(!1), d = /* @__PURE__ */ N(!1);
+function vi(e, t) {
+	He(t, !1), Rr(e, _i);
+	let n = $r(t, "apiBase", 12, ""), r = /* @__PURE__ */ N(""), i = /* @__PURE__ */ N(""), a = /* @__PURE__ */ N(""), o = /* @__PURE__ */ N([]), s = /* @__PURE__ */ N(!1), c = /* @__PURE__ */ N(""), l = /* @__PURE__ */ N(!0), u = /* @__PURE__ */ N(!1), d = /* @__PURE__ */ N(!1);
 	Tr(async () => {
-		await f(), await m(), !X(a) && typeof window < "u" && P(a, `${window.location.protocol}//${window.location.host}/api/spotify/callback`), P(d, !!(X(r) && X(i) && X(a) && X(o).some((e) => e.is_authenticated))), P(l, !1);
+		n(n().replace(/\/$/, "")), await f(), await m(), !X(a) && typeof window < "u" && P(a, `${window.location.protocol}//${window.location.host}/api/spotify/callback`), P(d, !!(X(r) && X(i) && X(a) && X(o).some((e) => e.is_authenticated))), P(l, !1);
 	});
 	async function f() {
 		try {
@@ -2355,11 +2332,11 @@ function bi(e, t) {
 	}
 	async function p() {
 		if (!X(r) || !X(i)) {
-			console.error("Client ID and Secret are required");
+			alert("Client ID and Secret are required");
 			return;
 		}
 		try {
-			P(u, !0), await fetch(`${n()}/settings`, {
+			if (P(u, !0), !(await fetch(`${n()}/settings`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -2367,9 +2344,10 @@ function bi(e, t) {
 					client_secret: X(i),
 					redirect_uri: X(a)
 				})
-			}), console.log("Spotify credentials saved");
+			})).ok) throw Error("Save failed");
+			console.log("Spotify credentials saved");
 		} catch (e) {
-			throw console.error("Failed to save Spotify settings:", e), e;
+			console.error("Failed to save Spotify settings:", e), alert("Failed to save settings. Check console.");
 		} finally {
 			P(u, !1);
 		}
@@ -2382,60 +2360,55 @@ function bi(e, t) {
 		}
 	}
 	async function h() {
-		if (!X(c).trim()) {
-			console.error("Account name is required");
-			return;
-		}
-		if (X(o).length >= 25) {
-			console.error("Maximum 25 accounts allowed");
-			return;
-		}
-		try {
-			await fetch(`${n()}/accounts`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					account_name: X(c),
-					display_name: X(c)
-				})
-			}), console.log("Account added"), P(c, ""), P(s, !1), await m();
-		} catch (e) {
-			console.error("Failed to add account:", e);
+		if (X(c).trim()) {
+			if (X(o).length >= 25) {
+				alert("Maximum 25 accounts allowed");
+				return;
+			}
+			try {
+				if (!(await fetch(`${n()}/accounts`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						account_name: X(c),
+						display_name: X(c)
+					})
+				})).ok) throw Error("Add failed");
+				P(c, ""), P(s, !1), await m();
+			} catch (e) {
+				console.error("Failed to add account:", e);
+			}
 		}
 	}
 	async function g(e, t) {
 		try {
-			await fetch(`${n()}/accounts/${e}/activate`, {
+			if (!(await fetch(`${n()}/accounts/${e}/activate`, {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ is_active: !t })
-			}), console.log(t ? "Account deactivated" : "Account activated"), await m();
+			})).ok) throw Error("Toggle failed");
+			await m();
 		} catch (e) {
 			console.error("Failed to toggle account:", e);
 		}
 	}
 	async function _(e, t) {
 		if (confirm(`Delete account "${t}"?`)) try {
-			await fetch(`${n()}/accounts/${e}`, { method: "DELETE" }), console.log("Account deleted"), await m();
+			if (!(await fetch(`${n()}/accounts/${e}`, { method: "DELETE" })).ok) throw Error("Delete failed");
+			await m();
 		} catch (e) {
 			console.error("Failed to delete account:", e);
 		}
 	}
 	async function v(e) {
 		if (!X(r) || !X(i)) {
-			console.error("Please save Spotify Client ID and Client Secret before authenticating an account");
+			alert("Please save Client ID and Secret first.");
 			return;
 		}
 		try {
 			await p();
-		} catch {
-			return;
-		}
-		try {
-			let t = (await (await fetch(`${n()}/auth?account_id=${e}`)).json())?.auth_url;
-			t ? (window.open(t, "_blank", "noopener,noreferrer"), setTimeout(async () => {
-				await m();
-			}, 5e3)) : console.error("Failed to get Spotify auth URL");
+			let t = await (await fetch(`${n()}/auth?account_id=${e}`)).json();
+			t?.auth_url && (window.open(t.auth_url, "_blank", "noopener,noreferrer"), setTimeout(() => m(), 5e3));
 		} catch (e) {
 			console.error("Failed to start OAuth:", e);
 		}
@@ -2448,75 +2421,73 @@ function bi(e, t) {
 			n(e), mt();
 		}
 	};
-	$r();
-	var b = vi(), x = R(L(b), 2), S = (e) => {
-		$(e, ci());
+	Zr();
+	var b = gi(), x = R(L(b), 2), S = (e) => {
+		$(e, oi());
 	}, C = (e) => {
-		var t = _i(), n = tn(t), l = L(n), f = R(L(l), 2), m = L(f, !0);
+		var t = hi(), n = tn(t), l = L(n), f = R(L(l), 2), m = L(f, !0);
 		O(f), O(l);
 		var y = R(l, 2), b = (e) => {
-			var t = li(), n = L(t), o = R(L(n), 2);
-			Gr(o), O(n);
-			var s = R(n, 2), c = R(L(s), 2);
-			Gr(c), O(s);
-			var l = R(s, 2), d = R(L(l), 2);
-			Gr(d), O(l);
-			var f = R(l, 2), m = L(f, !0);
-			O(f), O(t), Cn(() => {
-				f.disabled = X(u), _r(m, X(u) ? "Saving..." : "Save Credentials");
-			}), Xr(o, () => X(r), (e) => P(r, e)), Xr(c, () => X(i), (e) => P(i, e)), Xr(d, () => X(a), (e) => P(a, e)), cr("click", f, p), $(e, t);
+			var t = si(), n = L(t), o = R(L(n), 2);
+			Hr(o), O(n);
+			var s = R(n, 2), c = R(L(s), 2), l = L(c);
+			Hr(l), O(c), O(s);
+			var d = R(s, 2), f = R(L(d), 2);
+			Hr(f), Fe(2), O(d);
+			var m = R(d, 2), h = L(m), g = L(h, !0);
+			O(h), O(m), O(t), Cn(() => {
+				h.disabled = X(u), _r(g, X(u) ? "Saving..." : "Save Credentials");
+			}), Jr(o, () => X(r), (e) => P(r, e)), Jr(l, () => X(i), (e) => P(i, e)), Jr(f, () => X(a), (e) => P(a, e)), cr("click", h, p), $(e, t);
 		};
 		Dr(y, (e) => {
 			X(d) || e(b);
 		}), O(n);
-		var x = R(n, 2), S = L(x), C = L(S), w = L(C);
+		var x = R(n, 4), S = L(x), C = L(S), w = L(C);
 		O(C);
 		var ee = R(C, 2), te = (e) => {
-			var t = ui();
-			cr("click", t, () => P(s, !X(s))), $(e, t);
+			var t = ci(), n = L(t, !0);
+			O(t), Cn(() => _r(n, X(s) ? "Cancel" : "+ Add Account")), cr("click", t, () => P(s, !X(s))), $(e, t);
 		};
 		Dr(ee, (e) => {
 			X(o), Z(() => X(o).length < 25) && e(te);
 		}), O(S);
 		var ne = R(S, 2), re = (e) => {
-			var t = di(), n = L(t);
-			Gr(n);
-			var r = R(n, 2), i = L(r), a = R(i, 2);
-			O(r), O(t), Xr(n, () => X(c), (e) => P(c, e)), cr("keydown", n, (e) => e.key === "Enter" && h()), cr("click", i, h), cr("click", a, () => P(s, !1)), $(e, t);
+			var t = li(), n = L(t), r = L(n);
+			Hr(r), O(n);
+			var i = R(n, 2), a = L(i);
+			O(i), O(t), Jr(r, () => X(c), (e) => P(c, e)), cr("keydown", r, (e) => e.key === "Enter" && h()), cr("click", a, h), $(e, t);
 		};
 		Dr(ne, (e) => {
 			X(s) && e(re);
 		});
 		var ie = R(ne, 2);
 		Mr(ie, 5, () => X(o), Or, (e, t) => {
-			var n = hi(), r = L(n), i = L(r), a = L(i, !0);
+			var n = pi(), r = L(n), i = L(r), a = L(i, !0);
 			O(i);
 			var o = R(i, 2), s = L(o), c = (e) => {
-				$(e, fi());
+				$(e, ui());
 			}, l = (e) => {
-				$(e, pi());
+				$(e, di());
 			};
 			Dr(s, (e) => {
 				X(t), Z(() => X(t).is_authenticated) ? e(c) : e(l, -1);
 			});
 			var u = R(s, 2), d = (e) => {
-				$(e, mi());
+				$(e, fi());
 			};
 			Dr(u, (e) => {
 				X(t), Z(() => X(t).is_active) && e(d);
 			}), O(o), O(r);
 			var f = R(r, 2), p = L(f), m = L(p, !0);
 			O(p);
-			var h = R(p, 2);
-			let y;
-			var b = L(h, !0);
-			O(h);
+			var h = R(p, 2), y = L(h), b = L(y);
+			Hr(b), Fe(2), O(y), O(h);
 			var x = R(h, 2);
 			O(f), O(n), Cn(() => {
-				_r(a, (X(t), Z(() => X(t).display_name || X(t).account_name))), _r(m, (X(t), Z(() => X(t).is_authenticated ? "Reauthenticate" : "Authenticate"))), y = Vr(h, 1, "btn-ghost svelte-16m7f8c", null, y, { active: X(t).is_active }), _r(b, (X(t), Z(() => X(t).is_active ? "Deactivate" : "Activate")));
-			}), cr("click", p, () => v(X(t).id)), cr("click", h, () => g(X(t).id, X(t).is_active)), cr("click", x, () => _(X(t).id, X(t).display_name || X(t).account_name)), $(e, n);
+				_r(a, (X(t), Z(() => X(t).display_name || X(t).account_name))), _r(m, (X(t), Z(() => X(t).is_authenticated ? "Re-auth" : "Authorize"))), Ur(b, (X(t), Z(() => X(t).is_active)));
+			}), cr("click", p, () => v(X(t).id)), cr("change", b, () => g(X(t).id, X(t).is_active)), cr("click", x, () => _(X(t).id, X(t).display_name || X(t).account_name)), $(e, n);
 		}, (e) => {
-			$(e, gi());
+			$(e, mi());
 		}), O(ie), O(x), Cn(() => {
 			_r(m, X(d) ? "Expand" : "Collapse"), _r(w, `Accounts (${(X(o), Z(() => X(o).length)) ?? ""}/25)`);
 		}), cr("click", f, () => P(d, !X(d))), $(e, t);
@@ -2525,6 +2496,6 @@ function bi(e, t) {
 		X(l) ? e(S) : e(C, -1);
 	}), O(b), $(e, b), Ue(y);
 }
-customElements.define("spotify-dashboard-card", si(bi, { apiBase: {} }, [], [], { mode: "open" }));
+customElements.define("spotify-dashboard-card", ai(vi, { apiBase: {} }, [], [], { mode: "open" }));
 //#endregion
-export { bi as default };
+export { vi as default };
