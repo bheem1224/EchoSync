@@ -1,7 +1,4 @@
-<svelte:options customElement={{
-  tag: 'plex-dashboard-card',
-  shadow: 'none'
-}} />
+<svelte:options customElement="plex-dashboard-card" />
 <script>
   export let apiBase = '';
   import { onMount } from 'svelte';
@@ -255,13 +252,13 @@
 
 <style>
   .plugin-card {
-    background: var(--bg-surface);
+    background: var(--bg-surface, #0f172a);
     backdrop-filter: blur(12px);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-subtle, #1e293b);
     border-radius: var(--radius, 12px);
     padding: 24px;
     margin-bottom: 24px;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
   }
 
   .card-header {
@@ -270,7 +267,7 @@
     align-items: center;
     margin-bottom: 16px;
     padding-bottom: 12px;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle, #1e293b);
   }
 
   .header-left {
@@ -319,12 +316,16 @@
   .btn-primary {
     padding: 10px 20px;
     background: var(--color-primary, #14b8a6);
-    color: var(--bg-canvas, #ffffff);
+    color: var(--bg-canvas, #000000);
     border: none;
     border-radius: 8px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
+  }
+
+  .btn-primary:hover {
+    opacity: 0.9;
   }
 
   .loading-state {
@@ -357,16 +358,16 @@
 
   .field-label {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-secondary, #94a3b8);
   }
 
   .input-field {
     width: 100%;
     padding: 10px 14px;
-    background: var(--bg-surface-elevated);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-surface-elevated, #1e293b);
+    border: 1px solid var(--border-subtle, #334155);
     border-radius: 8px;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
     font-size: 14px;
     transition: all 0.2s;
   }
@@ -379,7 +380,7 @@
 
   .helper-text {
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--text-secondary, #94a3b8);
   }
 
   .path-mappings {

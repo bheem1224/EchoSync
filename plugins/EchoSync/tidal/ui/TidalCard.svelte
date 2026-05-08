@@ -1,7 +1,4 @@
-<svelte:options customElement={{
-  tag: 'tidal-dashboard-card',
-  shadow: 'none'
-}} />
+<svelte:options customElement="tidal-dashboard-card" />
 <script>
   export let apiBase = '';
   import { onMount } from 'svelte';
@@ -346,13 +343,13 @@
 
 <style>
   .plugin-card {
-    background: var(--bg-surface);
+    background: var(--bg-surface, #0f172a);
     backdrop-filter: blur(12px);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-subtle, #1e293b);
     border-radius: var(--radius, 12px);
     padding: 24px;
     margin-bottom: 24px;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
   }
 
   .card-header {
@@ -511,7 +508,7 @@
 
   .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
   .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
-  .status-badge.active { background: rgba(20, 184, 166, 0.15); color: var(--color-primary); }
+  .status-badge.active { background: rgba(20, 184, 166, 0.15); color: var(--color-primary, #14b8a6); }
 
   .account-actions {
     display: flex;
@@ -522,7 +519,7 @@
   .link-btn {
     background: none;
     border: none;
-    color: var(--color-primary);
+    color: var(--color-primary, #14b8a6);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -549,13 +546,17 @@
 
   .btn-primary {
     padding: 10px 20px;
-    background: var(--color-primary);
-    color: var(--bg-canvas);
+    background: var(--color-primary, #14b8a6);
+    color: var(--bg-canvas, #000000);
     border: none;
     border-radius: 8px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
+  }
+
+  .btn-primary:hover {
+    opacity: 0.9;
   }
 
   .btn-danger {

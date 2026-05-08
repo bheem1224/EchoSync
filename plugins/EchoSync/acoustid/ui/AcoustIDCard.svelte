@@ -1,7 +1,4 @@
-<svelte:options customElement={{
-  tag: 'acoustid-settings-card',
-  shadow: 'none'
-}} />
+<svelte:options customElement="acoustid-settings-card" />
 
 <script>
   export let apiBase = '';
@@ -216,7 +213,7 @@
     gap: 12px;
     margin-bottom: 20px;
     padding-bottom: 12px;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle, #1e293b);
   }
 
   .accent-icon {
@@ -233,7 +230,7 @@
   .card-subtitle {
     margin: 4px 0 0;
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-secondary, #94a3b8);
   }
 
   .type-badge {
@@ -249,7 +246,7 @@
   .loading-state {
     padding: 20px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-secondary, #94a3b8);
   }
 
   .form-section {
@@ -301,7 +298,7 @@
     background: var(--bg-surface-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius, 12px);
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
     font-size: 0.875rem;
     transition: border-color 0.2s;
   }
@@ -358,7 +355,7 @@
   }
 
   .switch.active {
-    background: var(--color-primary);
+    background: var(--color-primary, #14b8a6);
   }
 
   .switch-thumb {
@@ -383,7 +380,7 @@
     border: 1px solid rgba(245, 158, 11, 0.2);
     border-radius: 4px;
     font-size: 11px;
-    color: var(--color-primary);
+    color: var(--color-primary, #14b8a6);
   }
 
   .feedback {
@@ -412,8 +409,8 @@
 
   .btn-primary {
     padding: 10px 20px;
-    background: var(--color-primary);
-    color: white;
+    background: var(--color-primary, #14b8a6);
+    color: var(--bg-canvas, #000000);
     font-weight: 500;
     border: none;
     border-radius: var(--radius, 12px);
@@ -422,7 +419,7 @@
   }
 
   .btn-primary:hover:not(:disabled) {
-    filter: brightness(1.1);
+    opacity: 0.9;
   }
 
   .btn-primary:active:not(:disabled) {

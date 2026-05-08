@@ -1,7 +1,4 @@
-<svelte:options customElement={{
-  tag: 'navidrome-dashboard-card',
-  shadow: 'none'
-}} />
+<svelte:options customElement="navidrome-dashboard-card" />
 <script>
   export let apiBase = '';
   import { onMount } from 'svelte';
@@ -212,13 +209,13 @@
 
 <style>
   .plugin-card {
-    background: var(--bg-surface);
+    background: var(--bg-surface, #0f172a);
     backdrop-filter: blur(12px);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-subtle, #1e293b);
     border-radius: var(--radius, 12px);
     padding: 24px;
     margin-bottom: 24px;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
   }
 
   .card-header {
@@ -227,7 +224,7 @@
     align-items: center;
     margin-bottom: 16px;
     padding-bottom: 12px;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle, #1e293b);
   }
 
   .header-left {
@@ -254,7 +251,7 @@
     font-weight: 700;
   }
 
-  .status-badge.active { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); }
+  .status-badge.active { background: rgba(20, 184, 166, 0.15); color: var(--color-primary, #14b8a6); }
   .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
   .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
 
@@ -275,8 +272,8 @@
 
   .btn-primary {
     padding: 10px 20px;
-    background: var(--color-primary);
-    color: var(--bg-canvas);
+    background: var(--color-primary, #14b8a6);
+    color: var(--bg-canvas, #000000);
     border: none;
     border-radius: 8px;
     font-weight: 600;
@@ -284,10 +281,14 @@
     transition: all 0.2s;
   }
 
+  .btn-primary:hover {
+    opacity: 0.9;
+  }
+
   .loading-state {
     padding: 24px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-secondary, #94a3b8);
   }
 
   .settings-section {
@@ -314,23 +315,23 @@
 
   .field-label {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-secondary, #94a3b8);
   }
 
   .input-field {
     width: 100%;
     padding: 10px 14px;
-    background: var(--bg-surface-elevated);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-surface-elevated, #1e293b);
+    border: 1px solid var(--border-subtle, #334155);
     border-radius: 8px;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
     font-size: 14px;
     transition: all 0.2s;
   }
 
   .input-field:focus {
     outline: none;
-    border-color: var(--color-primary);
+    border-color: var(--color-primary, #14b8a6);
     box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
   }
 
@@ -347,12 +348,12 @@
     border: none;
     cursor: pointer;
     opacity: 0.6;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
   }
 
   .helper-text {
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--text-secondary, #94a3b8);
   }
 
   .path-mappings {

@@ -1,7 +1,4 @@
-<svelte:options customElement={{
-  tag: 'musicbrainz-dashboard-card',
-  shadow: 'none'
-}} />
+<svelte:options customElement="musicbrainz-dashboard-card" />
 <script>
   export let apiBase = '';
   import { onMount } from 'svelte';
@@ -20,7 +17,6 @@
   let redirectCollapsed = false;
   let customApiBaseUrl = 'https://musicbrainz.org/ws/2';
 
-
   // Add-account modal
   let showAddModal = false;
   let newAccountName = '';
@@ -38,31 +34,31 @@
     try {
       // Status (accounts + redirect URI + credential flags)
       const statusResp = await fetch(`${apiBase}/musicbrainz/accounts`);
-      if (statusResp.data) {
-        accounts = statusResp.data.accounts || [];
-        redirectUri = statusResp.data.redirect_uri || '';
-        clientIdConfigured = statusResp.data.client_id_configured || false;
-        clientSecretConfigured = statusResp.data.client_secret_configured || false;
+      const statusData = await statusResp.json();
+      
+      if (statusData) {
+        accounts = statusData.accounts || [];
+        redirectUri = statusData.redirect_uri || '';
+        clientIdConfigured = statusData.client_id_configured || false;
+        clientSecretConfigured = statusData.client_secret_configured || false;
         redirectCollapsed = Boolean(redirectUri);
       }
 
-      // Load existing credentials for display
-
       // Load custom API Base URL
       const settingsResp = await fetch(`${apiBase}/providers/musicbrainz/settings`);
-      if (settingsResp.data?.settings) {
-        customApiBaseUrl = settingsResp.data.settings.api_base_url || 'https://musicbrainz.org/ws/2';
+      const settingsData = await settingsResp.json();
+      if (settingsData?.settings) {
+        customApiBaseUrl = settingsData.settings.api_base_url || 'https://musicbrainz.org/ws/2';
       }
 
       const credsResp = await fetch(`${apiBase}/providers/musicbrainz/credentials`);
-      if (credsResp.data?.credentials) {
-        clientId = credsResp.data.credentials.client_id || '';
-        // Never pre-fill the secret; show a placeholder if one is stored
+      const credsData = await credsResp.json();
+      if (credsData?.credentials) {
+        clientId = credsData.credentials.client_id || '';
         clientSecretPlaceholder = clientSecretConfigured ? '••••••••' : '';
       }
     } catch (err) {
       console.error('Failed to load MusicBrainz data:', err);
-      console.error('Failed to load MusicBrainz settings');
     }
   }
 
@@ -83,18 +79,19 @@
 
     try {
       savingCreds = true;
-      await fetch(`${apiBase}/providers/musicbrainz/credentials`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credentials: creds }) });
-      console.log('MusicBrainz credentials saved');
+      await fetch(`${apiBase}/providers/musicbrainz/credentials`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ credentials: creds }) 
+      });
       clientSecret = '';
       await loadData();
     } catch (err) {
-      console.error('Failed to save credentials');
-      console.error(err);
+      console.error('Failed to save credentials:', err);
     } finally {
       savingCreds = false;
     }
   }
-
 
   async function saveSettings() {
     try {
@@ -122,282 +119,412 @@
 
   async function addAccount() {
     const name = newAccountName.trim();
-    if (!name) {
-      console.error('Account name is required');
-      return;
-    }
+    if (!name) return;
+    
     try {
       savingAccount = true;
-      await fetch(`${apiBase}/musicbrainz/accounts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_name: name }) });
-      console.log('Account added');
+      await fetch(`${apiBase}/musicbrainz/accounts`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ account_name: name }) 
+      });
       closeAddModal();
       await loadData();
     } catch (err) {
-      console.error('Failed to add account');
-      console.error(err);
+      console.error('Failed to add account:', err);
     } finally {
       savingAccount = false;
     }
   }
 
   async function deleteAccount(accountId, displayName) {
-    if (!confirm(`Delete account "${displayName}"? This will also remove its stored tokens.`)) return;
+    if (!confirm(`Delete account "${displayName}"?`)) return;
     try {
       await fetch(`${apiBase}/musicbrainz/accounts/${accountId}`, { method: 'DELETE' });
-      console.log('Account deleted');
       await loadData();
     } catch (err) {
-      console.error('Failed to delete account');
+      console.error('Failed to delete account:', err);
     }
   }
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await fetch(`${apiBase}/musicbrainz/accounts/${accountId}/activate`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        is_active: !currentlyActive,
-      }) });
-      console.log(currentlyActive ? 'Account deactivated' : 'Account activated');
+      await fetch(`${apiBase}/musicbrainz/accounts/${accountId}/activate`, { 
+        method: 'PUT', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ is_active: !currentlyActive }) 
+      });
       await loadData();
     } catch (err) {
-      console.error('Failed to update account status');
+      console.error('Failed to update account status:', err);
     }
   }
 
   async function authenticate(accountId) {
     if (!clientIdConfigured || !clientSecretConfigured) {
-      console.log(
-        'Save your MusicBrainz Client ID and Client Secret before authenticating.',
-        'error'
-      );
+      alert('Save your Client ID and Secret first.');
       return;
     }
     try {
-      const resp = await fetch(`${apiBase}/musicbrainz/auth`, {
-        params: { account_id: accountId },
-      });
-      const url = resp.data?.auth_url;
+      const resp = await fetch(`${apiBase}/musicbrainz/auth?account_id=${accountId}`);
+      const data = await resp.json();
+      const url = data?.auth_url;
       if (url) {
         window.open(url, '_blank', 'noopener,noreferrer');
-        // Poll for auth completion after a delay
-        setTimeout(async () => {
-          await loadData();
-        }, 5000);
-      } else {
-        console.error('Failed to get MusicBrainz auth URL');
+        setTimeout(() => loadData(), 5000);
       }
     } catch (err) {
-      const msg = err?.response?.data?.error || 'Failed to start OAuth';
-      console.error(msg);
+      console.error('Failed to start OAuth:', err);
     }
   }
 </script>
 
-<section class="p-6 bg-[var(--bg-surface)] backdrop-blur-md border border-[var(--border-subtle)] rounded-global mb-4">
-  <div class="flex justify-between items-center mb-5 pb-3 border-b border-[var(--border-subtle)]">
-    <div class="flex items-center gap-3">
-      <h2 class="m-0 text-xl font-semibold">MusicBrainz</h2>
-      <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[var(--color-primary)]/20 text-[var(--color-primary)]">Metadata</span>
+<section class="plugin-card">
+  <div class="card-header">
+    <div class="header-left">
+      <h2 class="card-title">MusicBrainz</h2>
+      <span class="type-badge">Metadata Provider</span>
     </div>
   </div>
 
   {#if loading}
-    <div class="p-5 text-center text-[var(--text-muted)]">Loading...</div>
+    <div class="loading-state">Loading...</div>
   {:else}
-
-
     <!-- Custom API Base URL -->
-    <div class="mb-6">
-      <h3 class="m-0 mb-4 text-base font-semibold">Custom API Base URL</h3>
-      <p class="text-xs text-[var(--text-muted)] mt-1">
-        Point this to a local MusicBrainz Docker container to go 100% offline.
-      </p>
-
-      <div class="flex flex-col gap-3">
-        <div class="flex flex-col gap-1">
-          <label class="text-[13px] font-medium text-[var(--text-primary)]" for="mb-api-base-url">API Base URL</label>
+    <div class="settings-section">
+      <h3 class="section-title">Server Configuration</h3>
+      <div class="form-grid">
+        <label class="form-field">
+          <span class="field-label">API Base URL</span>
           <input
-            id="mb-api-base-url"
             type="text"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-[var(--text-primary)] w-full box-border focus:outline-none focus:border-accent"
+            class="input-field"
             bind:value={customApiBaseUrl}
             placeholder="https://musicbrainz.org/ws/2"
           />
-        </div>
-        <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={saveSettings}>
+          <p class="helper-text">Point this to a local MusicBrainz container for offline use.</p>
+        </label>
+        <button class="btn-primary" on:click={saveSettings}>
           Save Settings
         </button>
       </div>
     </div>
 
     <!-- Application Credentials -->
-    <div class="mb-6">
-      <h3 class="m-0 mb-4 text-base font-semibold">Application Credentials</h3>
-      <p class="text-xs text-[var(--text-muted)] mt-1">
-        Register an application at
-        <a href="https://musicbrainz.org/account/applications" target="_blank" rel="noopener noreferrer">
-          musicbrainz.org/account/applications
-        </a>
-        to obtain a Client ID and Secret. These are required for OAuth logins and ISRC submissions.
-      </p>
-
-      <div class="flex flex-col gap-3">
-        <div class="flex flex-col gap-1">
-          <label class="text-[13px] font-medium text-[var(--text-primary)]" for="mb-client-id">Client ID</label>
+    <div class="settings-section">
+      <h3 class="section-title">OAuth Credentials</h3>
+      <div class="form-grid">
+        <label class="form-field">
+          <span class="field-label">Client ID</span>
           <input
-            id="mb-client-id"
             type="text"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-[var(--text-primary)] w-full box-border focus:outline-none focus:border-accent"
+            class="input-field"
             bind:value={clientId}
-            placeholder="Enter your MusicBrainz Client ID"
+            placeholder="Enter Client ID"
           />
-        </div>
+        </label>
 
-        <div class="flex flex-col gap-1">
-          <label class="text-[13px] font-medium text-[var(--text-primary)]" for="mb-client-secret">Client Secret</label>
-          <div class="relative flex items-center">
+        <label class="form-field">
+          <span class="field-label">Client Secret</span>
+          <div class="password-wrapper">
             <input
-              id="mb-client-secret"
               type={showSecret ? 'text' : 'password'}
-              class="px-3 py-2 bg-background border border-border rounded-global text-sm text-[var(--text-primary)] w-full box-border focus:outline-none focus:border-accent"
+              class="input-field"
               bind:value={clientSecret}
-              placeholder={clientSecretConfigured ? '••••••••  (leave blank to keep current)' : 'Enter your MusicBrainz Client Secret'}
+              placeholder={clientSecretPlaceholder || 'Enter Client Secret'}
             />
-            <button
-              type="button"
-              class="absolute right-2 bg-transparent border-none cursor-pointer text-lg p-1 opacity-60 hover:opacity-100 transition-opacity active:scale-95"
-              on:click={() => (showSecret = !showSecret)}
-              title={showSecret ? 'Hide' : 'Show'}
-            >
-              {showSecret ? '👁️' : '👁️‍🗨️'}
+            <button class="toggle-visibility" on:click={() => showSecret = !showSecret}>
+              {showSecret ? '🙈' : '👁️'}
             </button>
           </div>
-        </div>
+        </label>
 
-        <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={saveCredentials} disabled={savingCreds}>
-          {savingCreds ? 'Saving…' : 'Save Credentials'}
+        <button class="btn-primary" on:click={saveCredentials} disabled={savingCreds}>
+          {savingCreds ? 'Saving...' : 'Save Credentials'}
         </button>
       </div>
     </div>
 
-    <!-- Redirect URI (auto-generated, read-only) -->
-    <div class="mb-6">
-      <div class="mb-3">
-        <h3 class="m-0 mb-4 text-base font-semibold">OAuth Redirect URI (Auto-generated)</h3>
-        <button class="px-4 py-2 bg-white/10 text-[var(--text-primary)] border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={() => (redirectCollapsed = !redirectCollapsed)}>
+    <!-- Redirect URI -->
+    <div class="settings-section">
+      <div class="section-header">
+        <h3 class="section-title">Redirect URI</h3>
+        <button class="btn-ghost" on:click={() => redirectCollapsed = !redirectCollapsed}>
           {redirectCollapsed ? 'Expand' : 'Collapse'}
         </button>
       </div>
       {#if !redirectCollapsed}
-        <input
-          type="text"
-          class="px-3 py-2 bg-background/50 border border-border rounded-global text-sm text-[var(--text-primary)] w-full box-border opacity-70 cursor-not-allowed select-all"
-          value={redirectUri}
-          readonly
-          disabled
-        />
-        <p class="text-xs text-[var(--text-muted)] mt-1" style="margin-top:6px;">
-          Add this URI as a callback URL in your MusicBrainz application settings.
-        </p>
+        <div class="redirect-copy-group">
+          <input
+            type="text"
+            class="input-field readonly"
+            value={redirectUri}
+            readonly
+          />
+          <button class="btn-primary" on:click={() => { navigator.clipboard.writeText(redirectUri); alert('Copied!'); }}>Copy</button>
+        </div>
       {/if}
     </div>
 
     <!-- Accounts -->
-    <div class="mb-6">
-      <div class="mb-3">
-        <h3 class="m-0 mb-4 text-base font-semibold">Accounts ({accounts.length}/{MAX_ACCOUNTS})</h3>
-        <p class="text-xs text-[var(--text-muted)] mt-1">
-          Each account represents a MusicBrainz user that will authenticate via OAuth.
-          Authenticated accounts can contribute ISRCs and metadata to MusicBrainz.
-        </p>
+    <div class="settings-section">
+      <div class="section-header">
+        <h3 class="section-title">Accounts ({accounts.length}/{MAX_ACCOUNTS})</h3>
         {#if accounts.length < MAX_ACCOUNTS}
-          <button class="px-4 py-2 bg-white/10 text-[var(--text-primary)] border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={openAddModal}>
-            + Add Account
-          </button>
+          <button class="btn-ghost" on:click={openAddModal}>+ Add Account</button>
         {/if}
       </div>
 
-      <div class="flex flex-col gap-2">
+      <div class="accounts-list">
         {#each accounts as account}
-          <div class="flex justify-between items-center p-3 bg-white/5 border border-white/10 rounded-global">
-            <div class="flex flex-col gap-1">
-              <div class="font-medium text-[14px]">{account.display_name || account.account_name}</div>
-              <div class="flex gap-[6px] flex-wrap">
+          <div class="account-item">
+            <div class="account-info">
+              <div class="account-name">{account.display_name || account.account_name}</div>
+              <div class="account-badges">
                 {#if account.is_authenticated}
-                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[#00e676]/20 text-[#00e676]">✓ Authenticated</span>
+                  <span class="status-badge success">✓ Authenticated</span>
                 {:else}
-                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-yellow-500/20 text-yellow-500">⚠ Not Authenticated</span>
+                  <span class="status-badge warning">⚠ Not Authenticated</span>
                 {/if}
                 {#if account.is_active}
-                  <span class="text-[12px] px-2 py-1 rounded-[4px] bg-[var(--color-primary)]/20 text-[var(--color-primary)]">● Active</span>
+                  <span class="status-badge active">● Active</span>
                 {/if}
               </div>
             </div>
-            <div class="flex gap-2 items-center flex-wrap">
-              <button class="bg-transparent text-[var(--color-primary)] px-2 py-1 hover:underline active:scale-95 transition-all duration-200" on:click={() => authenticate(account.id)}>
+            <div class="account-actions">
+              <button class="link-btn" on:click={() => authenticate(account.id)}>
                 {account.is_authenticated ? 'Reauthenticate' : 'Authenticate'}
               </button>
-              <button
-                class="px-4 py-2 bg-white/10 text-[var(--text-primary)] border-none rounded-global transition-colors hover:bg-white/15 active:scale-95"
-                class:active={account.is_active}
-                on:click={() => toggleAccount(account.id, account.is_active)}
-                title={account.is_active ? 'Deactivate' : 'Activate'}
-              >
+              <button class="btn-ghost" class:active={account.is_active} on:click={() => toggleAccount(account.id, account.is_active)}>
                 {account.is_active ? 'Deactivate' : 'Activate'}
               </button>
-              <button
-                class="px-4 py-2 bg-red-500/20 text-red-500 border-none rounded-global transition-colors hover:bg-red-500/30 active:scale-95"
-                on:click={() => deleteAccount(account.id, account.display_name || account.account_name)}
-              >
-                ✕
-              </button>
+              <button class="btn-danger" on:click={() => deleteAccount(account.id, account.display_name || account.account_name)}>✕</button>
             </div>
           </div>
         {:else}
-          <div class="p-4 text-center text-[var(--text-muted)] text-sm">
-            No accounts added yet. Click "Add Account" to get started.
-          </div>
+          <div class="empty-accounts">No accounts linked.</div>
         {/each}
       </div>
     </div>
-
   {/if}
 </section>
 
-<!-- Add Account Modal -->
 {#if showAddModal}
-  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]" on:click={closeAddModal}>
-    <div class="bg-[#1e1e2e] rounded-[10px] p-0 min-w-[420px] max-w-[90vw] border border-white/15" on:click|stopPropagation>
-      <div class="flex justify-between items-center px-5 py-4 border-b border-white/10">
-        <h3 class="m-0 mb-4 text-base font-semibold">Add MusicBrainz Account</h3>
-        <button class="bg-transparent border-none text-[18px] cursor-pointer text-[var(--text-muted)] p-0 leading-none active:scale-95 transition-all duration-200" on:click={closeAddModal}>✕</button>
+  <div class="modal-overlay" on:click={closeAddModal}>
+    <div class="modal-content" on:click|stopPropagation>
+      <div class="modal-header">
+        <h3 class="modal-title">Add MusicBrainz Account</h3>
+        <button class="close-btn" on:click={closeAddModal}>✕</button>
       </div>
-      <div class="p-5 flex flex-col gap-[14px]">
-        <label class="flex flex-col gap-[6px]">
-          <span class="text-[13px] font-medium text-[var(--text-primary)]">Display Name</span>
-          <input
-            type="text"
-            bind:value={newAccountName}
-            placeholder="e.g. My MusicBrainz Username"
-            class="px-3 py-2 bg-background border border-border rounded-global text-sm text-[var(--text-primary)] w-full box-border focus:outline-none focus:border-accent"
-          />
+      <div class="modal-body">
+        <label class="form-field">
+          <span class="field-label">Display Name</span>
+          <input type="text" class="input-field" bind:value={newAccountName} placeholder="My Account" />
         </label>
-        <p class="text-[12px] text-[var(--text-muted)] m-0">
-          Give this slot a friendly name. After adding, click "Authenticate" to link it
-          to a real MusicBrainz account via OAuth.
-        </p>
       </div>
-      <div class="flex justify-end gap-[10px] px-5 py-4 border-t border-white/10">
-        <button class="px-4 py-2 bg-white/10 text-[var(--text-primary)] border border-white/20 rounded-global transition-colors hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={closeAddModal}>Cancel</button>
-        <button class="px-4 py-2 bg-accent text-black font-medium rounded-global transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95" on:click={addAccount} disabled={savingAccount}>
-          {savingAccount ? 'Adding…' : 'Add Account'}
-        </button>
+      <div class="modal-footer">
+        <button class="btn-ghost" on:click={closeAddModal}>Cancel</button>
+        <button class="btn-primary" on:click={addAccount} disabled={savingAccount}>Add</button>
       </div>
     </div>
   </div>
 {/if}
 
+<style>
+  .plugin-card {
+    background: var(--bg-surface, #0f172a);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-subtle, #1e293b);
+    border-radius: var(--radius, 12px);
+    padding: 24px;
+    margin-bottom: 24px;
+    color: var(--text-primary, #f8fafc);
+  }
 
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-subtle, #1e293b);
+  }
 
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .card-title { margin: 0; font-size: 20px; font-weight: 700; }
+  
+  .type-badge {
+    font-size: 11px;
+    padding: 4px 8px;
+    background: rgba(20, 184, 166, 0.15);
+    color: var(--color-primary, #14b8a6);
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
 
+  .loading-state { padding: 24px; text-align: center; color: var(--text-secondary, #cbd5e1); }
+  
+  .settings-section { margin-bottom: 24px; }
+  .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .section-title { margin: 0; font-size: 16px; font-weight: 600; }
 
+  .form-grid { display: flex; flex-direction: column; gap: 16px; }
+  .form-field { display: flex; flex-direction: column; gap: 8px; }
+  .field-label { font-size: 13px; font-weight: 500; color: var(--text-secondary, #cbd5e1); }
 
+  .input-field {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-surface-elevated, #1e293b);
+    border: 1px solid var(--border-subtle, #334155);
+    border-radius: 8px;
+    color: var(--text-primary, #f8fafc);
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+
+  .input-field:focus {
+    outline: none;
+    border-color: var(--color-primary, #14b8a6);
+    box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
+  }
+
+  .input-field.readonly { opacity: 0.6; cursor: not-allowed; }
+
+  .btn-primary {
+    padding: 10px 20px;
+    background: var(--color-primary, #14b8a6);
+    color: var(--bg-canvas, #000000);
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-primary:hover:not(:disabled) { opacity: 0.9; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-ghost {
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary, #f8fafc);
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-ghost:hover { background: rgba(255, 255, 255, 0.1); }
+  .btn-ghost.active { border-color: var(--color-primary, #14b8a6); color: var(--color-primary, #14b8a6); }
+
+  .btn-danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .helper-text { font-size: 11px; color: var(--text-secondary, #cbd5e1); margin-top: 4px; }
+
+  .redirect-copy-group { display: flex; gap: 8px; align-items: stretch; }
+  .redirect-copy-group .input-field { flex: 1; font-family: monospace; }
+
+  .accounts-list { display: flex; flex-direction: column; gap: 8px; }
+  .account-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+  }
+
+  .account-info { display: flex; flex-direction: column; gap: 4px; }
+  .account-name { font-weight: 600; font-size: 14px; }
+  .account-badges { display: flex; gap: 8px; }
+
+  .status-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+  .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+  .status-badge.warning { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+  .status-badge.active { background: rgba(20, 184, 166, 0.15); color: var(--color-primary, #14b8a6); }
+
+  .account-actions { display: flex; gap: 12px; align-items: center; }
+
+  .link-btn {
+    background: none;
+    border: none;
+    color: var(--color-primary, #14b8a6);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .link-btn:hover { text-decoration: underline; }
+
+  .password-wrapper { position: relative; display: flex; align-items: center; width: 100%; }
+  .toggle-visibility {
+    position: absolute;
+    right: 12px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    opacity: 0.6;
+    color: var(--text-primary, #f8fafc);
+  }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal-content {
+    background: #0f1216;
+    border: 1px solid var(--border-subtle, #1e293b);
+    border-radius: 12px;
+    width: 100%;
+    max-width: 440px;
+    box-shadow: 0 24px 48px rgba(0,0,0,0.5);
+  }
+
+  .modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .modal-title { margin: 0; font-size: 16px; font-weight: 700; }
+  .close-btn { background: none; border: none; color: var(--text-secondary, #cbd5e1); font-size: 20px; cursor: pointer; }
+
+  .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .modal-footer {
+    padding: 16px 20px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+  }
+
+  .empty-accounts {
+    text-align: center;
+    padding: 16px;
+    color: var(--text-secondary, #cbd5e1);
+    font-size: 13px;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 8px;
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+  }
+</style>

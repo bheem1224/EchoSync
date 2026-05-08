@@ -188,7 +188,14 @@ class PluginLoader:
             # Try direct path first
             plugin_path = self.plugins_dir / clean_id
             
-            # If not found, search 1-level deep for Nexus Schema (plugins/{author}/{plugin})
+            # If not found, try namespaced path (author.plugin -> author/plugin)
+            if not plugin_path.exists() and '.' in clean_id:
+                namespaced_path = self.plugins_dir / clean_id.replace('.', '/')
+                if namespaced_path.exists():
+                    plugin_path = namespaced_path
+                    clean_id = clean_id.replace('.', '/')
+
+            # If still not found, search 1-level deep for Nexus Schema (plugins/{author}/{plugin})
             if not plugin_path.exists():
                 for author_dir in self.plugins_dir.iterdir():
                     if author_dir.is_dir() and not author_dir.name.startswith('__'):

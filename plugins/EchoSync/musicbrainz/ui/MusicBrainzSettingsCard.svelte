@@ -1,7 +1,4 @@
-<svelte:options customElement={{
-  tag: 'musicbrainz-settings-card',
-  shadow: 'none'
-}} />
+<svelte:options customElement="musicbrainz-settings-card" />
 
 <script>
   export let apiBase = '';
@@ -377,7 +374,7 @@
   }
 
   .switch.active {
-    background: var(--color-primary);
+    background: var(--color-primary, #14b8a6);
   }
 
   .switch-thumb {
@@ -432,8 +429,8 @@
 
   .btn-primary {
     padding: 10px 24px;
-    background: var(--color-primary);
-    color: white;
+    background: var(--color-primary, #14b8a6);
+    color: var(--bg-canvas, #000000);
     font-weight: 600;
     border: none;
     border-radius: var(--radius, 12px);
@@ -442,8 +439,8 @@
   }
 
   .btn-primary:hover:not(:disabled) {
-    filter: brightness(1.1);
-    box-shadow: 0 4px 12px rgba(29, 185, 84, 0.3);
+    opacity: 0.9;
+    box-shadow: 0 4px 12px rgba(20, 184, 166, 0.2);
   }
 
   .btn-primary:active:not(:disabled) {

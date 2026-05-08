@@ -1,8 +1,5 @@
 <svelte:options
-  customElement={{
-    tag: "spotify-dashboard-card",
-    shadow: "none",
-  }}
+  customElement="spotify-dashboard-card"
 />
 
 <script>
@@ -171,7 +168,11 @@
       const data = await resp.json();
       const url = data?.auth_url;
       if (url) {
-        window.location.href = url;
+        window.open(url, '_blank', 'noopener,noreferrer');
+        // Poll for auth completion after a delay
+        setTimeout(async () => {
+          await loadAccounts();
+        }, 5000);
       } else {
         console.error("Failed to get Spotify auth URL");
       }
@@ -333,13 +334,13 @@
 
 <style>
   .plugin-card {
-    background: var(--bg-surface);
+    background: var(--bg-surface, #0f172a);
     backdrop-filter: blur(12px);
-    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+    border: 1px solid var(--border-subtle, #1e293b);
     border-radius: var(--radius, 12px);
     padding: 24px;
     margin-bottom: 24px;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
   }
 
   .card-header {
@@ -394,7 +395,7 @@
     margin: 0;
     font-size: 16px;
     font-weight: 600;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
   }
 
   .form-grid {
@@ -412,16 +413,16 @@
   .field-label {
     font-size: 13px;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-secondary, #cbd5e1);
   }
 
   .input-field {
     width: 100%;
     padding: 10px 14px;
-    background: var(--bg-surface-elevated);
-    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+    background: var(--bg-surface-elevated, #1e293b);
+    border: 1px solid var(--border-subtle, #334155);
     border-radius: 8px;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
     font-size: 14px;
     transition: all 0.2s;
   }
@@ -440,7 +441,7 @@
   .btn-primary {
     padding: 10px 20px;
     background: var(--color-primary, #14b8a6);
-    color: var(--bg-canvas, #ffffff);
+    color: var(--bg-canvas, #000000);
     border: none;
     border-radius: 8px;
     font-weight: 600;
@@ -456,7 +457,7 @@
     padding: 8px 16px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
     border-radius: 8px;
     font-size: 13px;
     cursor: pointer;
@@ -565,7 +566,7 @@
   .empty-accounts {
     text-align: center;
     padding: 16px;
-    color: var(--text-muted);
+    color: var(--text-secondary, #cbd5e1);
     font-size: 13px;
     background: rgba(255, 255, 255, 0.02);
     border-radius: 8px;

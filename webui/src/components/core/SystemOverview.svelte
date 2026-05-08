@@ -1,7 +1,4 @@
-<svelte:options customElement={{
-  tag: 'echosync-system-overview',
-  shadow: 'none'
-}} />
+<svelte:options customElement="echosync-system-overview" />
 <script>
   import { onMount, onDestroy } from 'svelte';
 
@@ -258,7 +255,7 @@
 <style>
   .so-root {
     padding: 24px;
-    color: var(--text-primary, #e2e8f0);
+    color: var(--text-primary, #f8fafc);
   }
 
   .so-loading {
@@ -267,7 +264,7 @@
     justify-content: center;
     gap: 12px;
     padding: 48px 0;
-    color: var(--text-muted, rgba(255,255,255,0.4));
+    color: var(--text-secondary, #94a3b8);
     font-size: 14px;
   }
 
@@ -336,8 +333,8 @@
     align-items: center;
     gap: 14px;
     padding: 18px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--bg-surface-elevated, #1e293b);
+    border: 1px solid var(--border-subtle, #334155);
     border-radius: 14px;
     transition: border-color 0.2s, transform 0.2s;
   }
@@ -364,7 +361,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.15em;
-    color: var(--text-muted, rgba(255,255,255,0.4));
+    color: var(--text-secondary, #94a3b8);
     margin-top: 4px;
   }
 
@@ -405,7 +402,7 @@
   .so-dot-blue  { background: #3b82f6; }
   .so-dot-red   { background: #ef4444; }
   .so-jobs-error { color: #ef4444; }
-  .so-jobs-last  { color: var(--text-muted, rgba(255,255,255,0.4)); font-size: 11px; margin-left: auto; }
+  .so-jobs-last { color: var(--text-secondary, #94a3b8); font-size: 11px; margin-left: auto; }
 
   /* ── Info Grid ───────────────────────────────────────────────────── */
   .so-info-grid {
@@ -423,7 +420,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: var(--text-muted, rgba(255,255,255,0.4));
+    color: var(--text-secondary, #94a3b8);
   }
   .so-info-val {
     font-size: 14px;
@@ -445,8 +442,8 @@
   }
   .so-mode-selector {
     display: flex;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-surface-elevated, #1e293b);
+    border: 1px solid var(--border-subtle, #334155);
     border-radius: 8px;
     overflow: hidden;
   }
@@ -456,13 +453,13 @@
     font-weight: 600;
     background: none;
     border: none;
-    color: var(--text-muted, rgba(255,255,255,0.4));
+    color: var(--text-secondary, #94a3b8);
     cursor: pointer;
     transition: all 0.2s;
   }
   .so-mode-btn.so-mode-active {
     background: var(--color-primary, #14b8a6);
-    color: #000;
+    color: var(--bg-canvas, #000000);
   }
   .so-btn {
     padding: 10px 20px;
@@ -475,7 +472,7 @@
   }
   .so-btn-primary {
     background: var(--color-primary, #14b8a6);
-    color: #000;
+    color: var(--bg-canvas, #000000);
   }
   .so-btn-primary:hover {
     filter: brightness(1.1);
@@ -499,7 +496,7 @@
   .so-progress-bar {
     width: 100%;
     height: 6px;
-    background: rgba(255,255,255,0.06);
+    background: var(--bg-surface-elevated, #1e293b);
     border-radius: 3px;
     overflow: hidden;
   }
@@ -519,7 +516,7 @@
     gap: 16px;
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-muted, rgba(255,255,255,0.5));
+    color: var(--text-secondary, #94a3b8);
   }
 
   .so-error {
@@ -535,6 +532,6 @@
   .so-last-update-stats {
     margin-top: 8px;
     font-size: 11px;
-    color: var(--text-muted, rgba(255,255,255,0.35));
+    color: var(--text-secondary, #94a3b8);
   }
 </style>
