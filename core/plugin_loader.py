@@ -736,6 +736,57 @@ class PluginRegistry:
         return providers
 
     @classmethod
+    def get_active_services_by_type(cls, service_type: str) -> List[str]:
+        """
+        Return a list of active (enabled and configured) plugin IDs for a given service role.
+        Normalized service_type aliases: 'media_server', 'download', 'sync', 'metadata'
+        """
+        # Mapping common codebase aliases to internal base class keys
+        normalized_map = {
+            'media_server': 'mediaserver',
+            'download': 'downloader',
+            'sync': 'syncservice'
+        }
+        
+        target_role = service_type.lower()
+        mapped_type = normalized_map.get(target_role, target_role)
+
+        # Special handling for metadata role (role based on capability rather than base class)
+        if mapped_type == 'metadata':
+            from core.enums import Capability
+            active = []
+            for p in cls.get_providers_with_capability(Capability.FETCH_METADATA):
+                if p.name.lower() not in cls._disabled_providers:
+                    # Verify configuration if possible
+                    if hasattr(p, 'is_configured'):
+                        if p.is_configured():
+                            active.append(p.name)
+                    else:
+                        active.append(p.name)
+            return active
+
+        # Standard provider-type lookup
+        try:
+            potential_names = cls.get_providers_by_type(mapped_type, exclude_disabled=True)
+            active = []
+            for name in potential_names:
+                try:
+                    instance = cls.create_instance(name)
+                    if hasattr(instance, 'is_configured'):
+                        if instance.is_configured():
+                            active.append(name)
+                    else:
+                        active.append(name)
+                except Exception as e:
+                    logger.error(f"Failed to check configuration for active service {name}: {e}")
+                    # If we can't even instantiate it, it's not active
+                    continue
+            return active
+        except ValueError:
+            # If the type is unknown to get_providers_by_type, return empty list
+            return []
+
+    @classmethod
     def create_instance_by_type(cls, provider_type: str, *args, **kwargs) -> List[PluginBase]:
         """
         Instantiate all providers of a given type (excluding disabled ones).
