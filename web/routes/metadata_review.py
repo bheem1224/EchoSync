@@ -11,7 +11,7 @@ from flask import Blueprint, jsonify, request, send_file
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.enums import Capability
 from core.plugin_loader import get_provider
-from core.track_parser import TrackParser
+from core.matching_engine.track_parser import TrackParser
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.settings import config_manager
 from core.tiered_logger import get_logger

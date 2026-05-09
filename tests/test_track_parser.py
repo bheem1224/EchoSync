@@ -12,7 +12,7 @@ Tests cover:
 """
 
 import pytest
-from core.track_parser import TrackParser, ParseConfig
+from core.matching_engine.track_parser import TrackParser, ParseConfig
 from core.matching_engine import EchosyncTrack, QualityTag
 
 

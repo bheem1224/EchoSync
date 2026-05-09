@@ -764,7 +764,7 @@ class MetadataEnhancerService:
 
     def _filename_to_track(self, file_path: Path, duration_ms: Optional[int]) -> EchosyncTrack:
         """Convert filename to EchosyncTrack for matching using provider_base helper."""
-        from core.track_parser import TrackParser
+        from core.matching_engine.track_parser import TrackParser
         from core.plugin_SDK import PluginBase
         
         # Use TrackParser to extract artist/title from filename
