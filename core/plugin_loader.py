@@ -859,7 +859,26 @@ class PluginRegistry:
         return cls._provider_sources.get(name.lower())
 
     @classmethod
-    def create_instance(cls, name: str, *args, **kwargs) -> PluginBase:
+    def create_instance(cls, name, *args, **kwargs) -> PluginBase:
+        # Phase 2: Translation Bridge
+        # If the incoming identifier is an integer (plugin_id), resolve it to its namespace
+        original_name = name
+        try:
+            # Check if name is an int or a string representation of an int
+            if isinstance(name, int) or (isinstance(name, str) and name.isdigit()):
+                plugin_id = int(name)
+                from database.config_database import get_config_database
+                db = get_config_database()
+                resolved_name = db.get_service_name(plugin_id)
+                if not resolved_name:
+                    raise ValueError(f"Provider with plugin_id '{plugin_id}' not found in database")
+                name = resolved_name
+        except Exception as e:
+            if isinstance(e, ValueError) and "not found in database" in str(e):
+                raise
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to resolve integer plugin_id '{original_name}': {e}")
+
         # Double check against config manager to ensure latest state
         # (The set_disabled_providers might be stale if config reloaded)
         from core.settings import config_manager
