@@ -152,3 +152,56 @@ The Nexus Framework dictates that core logic should use raw, standard functions,
 
 **Conclusion:**
 Dismantle standalone utility files that exist simply to wrap standard library functions. Move database migrations to `migrations.py`, config lookups to `settings.py`, and eliminate generic `<subject>_utils.py` files to enforce linear execution without bouncing through middleware abstractions.
+
+## Phase 3: Database & Helper Teardown
+
+### Task 1: The Database Gateway & Wrapper Search
+
+The legacy architecture relies heavily on custom Python classes that act as gateways/wrappers over SQLAlchemy (and SQLite). With the incoming v2.5.x database pivot, these must be replaced by raw SQLAlchemy Sessions intercepted by Native Events.
+
+**1. `database/music_database.py` (MusicDatabase)**
+- **Role:** God-object wrapper around SQLAlchemy sessions for the main music database.
+- **Wrappers Found:**
+  - `session()` (Line 283): Wraps `sessionmaker`. Replace with raw `Session()` context.
+  - `search_library()` (Line 298), `search_canonical_fuzzy()` (Line 363): Wraps `session.query(Track).filter(...)`. These should be standard repository functions, not bound to a monolithic gateway class.
+  - `count_artists()`, `count_albums()`, `count_tracks()` (Lines 489-499): Wraps `session.query(Model).count()`.
+  - `check_track_exists()` (Line 511): Wraps a complex heuristic search. This belongs in a matching engine or query repository, not the database connection manager.
+- **Evaluation:** Obsolete. The entire `MusicDatabase` class should be dismantled. Code should use `yield Session()` generators from FastAPI/Starlette dependencies and use standard SQLAlchemy 2.0 select statements.
+
+**2. `database/working_database.py` (WorkingDatabase & ProviderStorageBox)**
+- **Role:** Handles plugin-specific storage (e.g., download caches, sync queues).
+- **Wrappers Found:**
+  - `ProviderStorageBox.execute()` (Line 407), `commit()` (Line 433): Wraps raw SQLite cursors.
+  - `create_table()` (Line 474): Wraps `Table(..., MetaData, autoload_with=engine)`.
+  - `validate_sync_id()` (Lines 93, 177, etc.): Wraps specific data validation for sync processes.
+- **Evaluation:** Obsolete for core execution, but the concept of `ProviderStorageBox` is close to the Sandboxed AST requirement. This should be refactored into the Plugin SDK as `plugin_sdk.get_storage(plugin_id)` returning an async SQLAlchemy session bound to a restricted tenant schema, rather than raw executing SQLite strings.
+
+**3. `database/config_database.py` (ConfigDatabase)**
+- **Role:** Manages application settings, OAuth tokens, and plugin states using raw `sqlite3` cursors instead of SQLAlchemy.
+- **Wrappers Found:**
+  - `get_or_create_service_id()` (Line 196), `set_service_config()` (Line 235), `get_accounts()` (Line 308).
+- **Evaluation:** Must be Preserved (with refactoring). Because this manages OAuth tokens and security settings, plugins should *never* have raw SQLAlchemy access to this table. The wrapper methods are necessary as a security boundary, but the internal implementation should be updated to use SQLAlchemy 2.0 rather than raw `sqlite3` cursors.
+
+
+### Task 2: The `EchoSyncTrack` Builder Hunt
+
+The `EchoSyncTrack` python God-Object (located at `core/matching_engine/echo_sync_track.py`) acts as a massive data container and auto-cleaning layer. Replacing it with a lightweight `SyncID` string and raw SQLAlchemy Models requires dismantling the following builders and workflows:
+
+**1. `EchosyncTrack.from_dict()`**
+- **File/Line:** `core/matching_engine/matching_engine.py` (line 1184), `services/match_service.py` (line 224), `services/download_manager.py` (lines 72, 116, 552), `web/routes/suggestions.py` (line 343), `web/routes/playlists.py` (line 1720).
+- **Cascading Systems:** The Download Manager and the Web Suggestions routing completely depend on parsing dictionary data back into this python God-Object before doing any processing. Disabling this breaks UI suggestions and all downloading logic.
+- **Evaluation:** Obsolete wrapper. These should be replaced by generic JSON validation using Pydantic or direct passing of `SyncID` strings to SQLAlchemy model constructors.
+
+**2. Direct Instantiation: `EchosyncTrack(...)`**
+- **File/Line:** `core/matching_engine/track_parser.py` (line 182), `core/plugin_SDK.py` (line 782), `core/track_parser.py` (line 189), `services/library_hygiene.py` (line 279), `services/library_watcher.py` (line 198), `services/metadata_enhancer.py` (line 390).
+- **Plugin Usage:** Found in `plugins/EchoSync/musicbrainz/client.py` (line 292), `spotify/cache_manager.py` (line 232), and `plex/client.py` (line 1065).
+- **Cascading Systems:** The entire `TrackParser` class relies on returning an `EchosyncTrack`. The `PluginBase` SDK forces all plugins to return this object (via `core/plugin_SDK.py` line 782). If this is disabled, every plugin breaks and the entire media library matching engine collapses.
+- **Evaluation:** The data sanitization currently happening inside `__post_init__` (auto-cleaning titles, sorting, etc.) contains heuristic logic that must be salvaged. Rather than discarding it entirely, this logic should be shifted to SQLAlchemy `@validates` decorators on the final database ORM class, so plugins can just return generic Python dictionaries or Pydantic schemas which the Database handles natively.
+
+**3. Bulk Construction: `database/bulk_operations.py`**
+- **File/Line:** `database/bulk_operations.py` - `bulk_import` (Line 558).
+- **Cascading Systems:** Used heavily during initial library scans to ingest massive numbers of `EchosyncTrack`s.
+- **Evaluation:** This explicitly requires an `Iterable[EchosyncTrack]`. If we deprecate the object, this bulk loader must be refactored to accept raw dictionaries, relying on `session.bulk_insert_mappings()` for true raw speed.
+
+**Conclusion:**
+The `EchoSyncTrack` acts as a monolithic bottleneck. By dismantling it, we remove the need for every plugin to import a core python class. Data cleaning heuristics inside its `__post_init__` must be migrated to the ORM, and plugins should be refactored to emit pure JSON/Pydantic schemas.
