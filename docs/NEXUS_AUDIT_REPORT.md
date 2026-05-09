@@ -75,3 +75,80 @@ As part of the legacy purge, several functions and variables still utilize the o
   - Required by `services/media_manager.py` (lines 98, 313)
   - Required by `plugins/EchoSync/spotify/routes.py` (line 66) and `plugins/EchoSync/spotify/client.py` (line 765)
 - **Plugin Framework Alternative:** Rename `create_instance` to `instantiate_plugin`. Refactor `sync_service.py` to stop explicitly instantiating plugins by static string names (`'spotify'`) and instead rely on dependency injection or interface capabilities dynamically provided by the `PluginRegistry`.
+
+## Task 1: The Namespace Eradication Audit
+
+As part of the shift to using a 32-bit integer `plugin_id`, all string-based identifiers, namespaces, and routing parameters must be systematically replaced.
+
+**API Routes using String Identifiers:**
+- `web/routes/metadata.py` - `@bp.get("/isrc/<string:isrc>")` (Note: ISRC is a string standard, this may not be a plugin ID, but worth noting if it relates).
+- `web/routes/plugins.py` - Contains routes using `<plugin_id>` that currently expect strings (like `plugin.name` or `core.spotify`):
+  - `@bp.route('/<plugin_id>/ui/<path:filename>', methods=['GET'])`
+  - `@bp.route('/<plugin_id>/static/<path:filename>', methods=['GET'])`
+  - `@bp.route('/<plugin_id>/toggle', methods=['POST'])`
+  - `clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')` (This cleaning logic proves it expects string names).
+  - *Recommendation:* Update routes to `<int:plugin_id>`, query `config.db` to map to the local file path, and completely remove `clean_id` string replacing.
+
+**Memory/Logic usage of `provider.name` / `provider_name` / `plugin_name`:**
+- `core/plugin_loader.py` - `PluginRegistry._providers` is keyed by lowercase strings. The `get_plugin`, `create_instance`, `disable_provider`, and `enable_provider` methods all take `name: str`.
+- `services/download_manager.py` - Extensively uses `winning_provider_name = provider.name` to track the best download source. All logs and cache lookups use this string.
+- `services/state_listener.py` - Resolves account ID via string `provider_name` (`User.provider == provider_name`).
+- `web/services/library_service.py` - Iterates over `provider_names = PluginRegistry.list_providers()` and creates instances via string names.
+- `web/services/search_service.py` - Federates search via string `provider_name`. Dedup logic maps tracks back to `dedup_map[match_key]["sources"].append(provider_name)`.
+- `web/routes/playlists.py` - Hardcoded provider name checks like `if provider_name == 'spotify':` to load accounts.
+
+**Conclusion:**
+The codebase is fundamentally wired to track plugins via string names (e.g. `'spotify'`, `'plex'`, `'local_server'`). Eradicating this requires changing the `PluginRegistry` to index by a database-issued `int` ID. Then, the database schema (e.g. `User.provider`) and caching logic must be migrated to foreign keys on `plugin_id`.
+
+## Task 2: Logger Resolution Audit
+
+When the system transitions fully to using `plugin_id` (a 32-bit integer), the current log outputs will degrade into unreadable integer traces (e.g., `[plugin 4912]`).
+
+**Current Logging Architecture:**
+- `core/tiered_logger.py` uses a `SourceTagAdapter` class to intercept and format log messages.
+- The `_derive_tag(self, name: str)` method splits the logger name (e.g., `plugins.4912`) and injects it into the log prefix via `return f"[plugin {parts[1]}]"`.
+- `core/plugin_SDK.py` exposes a `logger` property for plugins: `get_logger(f"plugin.{self._name}")`. Once `_name` becomes an integer `plugin_id`, the adapter will simply print `[plugin <id>]`.
+
+**Architectural Solution (Runtime Translation):**
+To keep logs human-readable without polluting the core execution pipeline with heavy string lookups, we should inject a translation layer specifically into `SourceTagAdapter`:
+1. Maintain an asynchronous/lightweight RAM cache (or rely on `config.db` directly if it uses SQLite's WAL mode for fast reads) mapping `plugin_id (int) -> plugin_name (str)`.
+2. Inside `SourceTagAdapter._derive_tag`, intercept the integer ID.
+3. Attempt to resolve the integer ID against the RAM cache right before string formatting.
+4. If resolution succeeds: `[plugin {resolved_name}]`. If it fails: `[plugin ID:{plugin_id}]`.
+5. This ensures the engine operates purely on `int` values for speed, and only spends clock cycles converting to strings at the edge when formatting terminal/file strings for humans.
+
+## Task 3: Core Bias & Provider Ghosts Audit
+
+The core logic should not be biased toward any specific provider. The Nexus Framework dictates that the Core handles generic objects (like `EchosyncTrack` and `EchosyncPlaylist`), while plugins handle their proprietary formatting.
+
+**Core Bias Violations Found:**
+1. `services/sync_service.py` is deeply biased toward Spotify:
+   - Contains a hardcoded class `class SpotifyPlaylist:` (Line 29). This class should be a generic `EchosyncPlaylist` object.
+   - Contains methods heavily tailored to Spotify API concepts, like `_get_spotify_playlist`, `_get_all_spotify_playlists`, and explicitly references `spotify_track: EchosyncTrack`.
+   - Iterates specifically through `self.spotify_clients` using hardcoded string lookups for the `'spotify'` plugin.
+   - Evaluates download intents by searching specifically for `spotify_id = identifiers.get("spotify")` and calling `wishlist_service.add_spotify_track_to_wishlist()`.
+2. `services/health_check.py` looks explicitly for `spotify` via `config_db.get_or_create_service_id('spotify')` and fetches `spotify_creds`.
+
+**Architectural Violation:**
+The synchronization and media layer logic is fundamentally coupled to the concept that Spotify is the source of truth, rather than treating Spotify as just another "Playlist Provider" plugin.
+
+**Conclusion:**
+To respect the Nexus framework, `services/sync_service.py` must be completely stripped of the word "Spotify". It should accept a generic `EchosyncPlaylist` from any plugin that supports `Capability.READ_PLAYLIST`, process the `EchosyncTrack` objects within it, and output generic `DOWNLOAD_INTENT` actions without checking if the track originated from Spotify.
+
+## Task 4: Unnecessary Abstractions & Helper Bloat Audit
+
+The Nexus Framework dictates that core logic should use raw, standard functions, minimizing middleware wrappers (with the exception of `core/plugin_sdk.py`).
+
+**Helper Bloat & Abstraction Leaks Found:**
+1. `time_utils.py`
+   - **Issue:** The file contains wrappers like `utc_now()` which merely returns `datetime.now(UTC)`, and `ensure_utc()` / `parse_utc_datetime()`. While useful in a massive monolith, this acts as middleware over standard library `datetime` objects.
+   - **Recommendation:** Fold custom SQLAlchemy types (`UTCDateTime`) directly into `core/models.py`. Standardize timestamps directly in the core using native Python `datetime` objects rather than routing them through a generic `time_utils` script.
+2. `core/network_utils.py`
+   - **Issue:** Contains `get_lan_ip()` which wraps standard socket logic and `get_main_app_port()` which simply queries the `config_manager`.
+   - **Recommendation:** Collapse `get_main_app_port()` into `settings.py` where the config manager actually resides. Inline `get_lan_ip()` into the network bootloader, as a standalone utility file for a 5-line standard socket ping is unnecessary bloat.
+3. `core/plugin_orm.py`
+   - **Issue:** Provides `get_plugin_base` and `copy_table_data` middleware to dynamically generate SQL table names (`plugin_musicbrainz_cache`) and perform basic SQL inserts for plugins switching channels.
+   - **Recommendation:** This is a severe abstraction leak. Plugin ORM management should be consolidated directly into `core/plugin_sdk.py` or the `core/migrations.py` database module.
+
+**Conclusion:**
+Dismantle standalone utility files that exist simply to wrap standard library functions. Move database migrations to `migrations.py`, config lookups to `settings.py`, and eliminate generic `<subject>_utils.py` files to enforce linear execution without bouncing through middleware abstractions.
