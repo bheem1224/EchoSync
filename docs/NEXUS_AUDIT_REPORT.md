@@ -205,3 +205,89 @@ The `EchoSyncTrack` python God-Object (located at `core/matching_engine/echo_syn
 
 **Conclusion:**
 The `EchoSyncTrack` acts as a monolithic bottleneck. By dismantling it, we remove the need for every plugin to import a core python class. Data cleaning heuristics inside its `__post_init__` must be migrated to the ORM, and plugins should be refactored to emit pure JSON/Pydantic schemas.
+
+## Phase 5: The Master Debt & Bias Map
+
+### Task 1: Core Bias & Hardcoded Providers
+
+The core of the Nexus framework must be entirely generic, shifting all provider-specific logic to the Plugin layer and standardizing on the `plugin_id` schema.
+
+**1. `core/models.py` - `ProviderType` Enum**
+- **Issue:** The `ProviderType(Enum)` hardcodes providers like SPOTIFY, PLEX, TIDAL, etc.
+- **Blast Radius:**
+  - `core/models.py` uses it heavily for `ProviderRef` tracking (`add_provider_ref`, `get_provider_ref`).
+  - Plugin adapters specifically import and inherit it:
+    - `plugins/EchoSync/navidrome/adapter.py`
+    - `plugins/EchoSync/listenbrainz/adapter.py`
+    - `plugins/EchoSync/spotify/adapter.py`
+    - `plugins/EchoSync/tidal/adapter.py`
+    - `plugins/EchoSync/jellyfin/adapter.py`
+- **Refactor Strategy:** Drop the `ProviderType` enum. Refactor `ProviderRef` to use `plugin_id: int` instead. Update all plugin adapters to dynamically supply their `plugin_id` (retrieved from `ConfigDatabase` or the Plugin Registry) rather than hardcoded enums.
+
+**2. `core/settings.py` - Plugin-Specific Bias**
+- **Issue:** The `settings.py` file dictates default configurations explicitly meant for single plugins.
+  - Tracks `"spotify.client_id"`, `"spotify.client_secret"`, `"spotify_accounts"`.
+  - Sets default redirect URIs (`"http://127.0.0.1:8008/api/spotify/callback"`).
+- **Refactor Strategy:** Remove all `"spotify.*"` and `"tidal.*"` keys from the core settings dictionary. These should be defined locally inside `plugins/EchoSync/spotify/manifest.json` or equivalent, and dynamically merged into the config database on plugin initialization.
+
+**3. `core/webhook_parsers.py` - Plugin Bias**
+- **Issue:** The core handles specific payloads for Plex (`parse_media_server_webhook(..., provider="plex")`) and MusicBrainz (MusicBrainzWebhookParser).
+- **Refactor Strategy:** The core engine should expose a generic `WebhookEndpoint` (e.g., `/api/webhooks/<plugin_id>`). The payload should be directly routed to the instantiated plugin's `parse_webhook()` method. `core/webhook_parsers.py` should be deleted and its contents moved to `plugins/EchoSync/plex/routes.py` and `plugins/EchoSync/musicbrainz/routes.py`.
+
+### Task 2: Dead Code & Unused Services
+
+**1. `core/watchlist_scanner.py`**
+- **Issue:** 1600+ lines of completely unused, heavily Spotify-biased sleeping giant.
+- **Core Functions to Salvage:**
+  - `clean_track_name_for_search()`: Contains valuable heuristic logic for normalizing track names.
+  - `_fetch_similar_artists_from_musicmap()`: Includes a bespoke web scraper for MusicMap to find similar artists. This should be preserved but migrated into a dedicated `SuggestionProvider` plugin, not stored in the core execution layer.
+- **Refactor Strategy:** Extract the text-cleaning heuristics into `core/matching_engine/text_utils.py` and the scraping logic into a plugin. Delete the remaining 1500 lines of `WatchlistScanner` completely.
+
+**2. `core/wishlist_service.py` & `services/sync_service.py`**
+- **Issue:** `wishlist_service.py` is a broken placeholder returning dummy values, but `services/sync_service.py` (Line 379) explicitly calls `wishlist_service.add_spotify_track_to_wishlist(...)` which does not even exist in the `WishlistService` class signature.
+- **Blast Radius:** If a sync fails to find a track, it attempts to call this non-existent method, causing the entire playlist sync queue to crash.
+- **Refactor Strategy:** Comment out the `add_spotify_track_to_wishlist` call in `sync_service.py` immediately to prevent sync crashes. Rebuild the `WishlistService` logic to interface via the unified Event Bus rather than hardcoded method calls.
+
+**3. `core/personalized_playlists.py`**
+- **Issue:** This module creates "Playlist Algorithms" (e.g., `SeasonalPlaylistAlgorithm`). This is essentially what the generic `Suggestion Engine` is designed to do. This module duplicates the effort while baking in hardcoded logic (e.g. `_fetch_seasonal_tracks`) directly into the core.
+- **Refactor Strategy:** Deprecate `PersonalizedPlaylistsService`. All playlist generation logic should be ported to the generic `SuggestionEngine` framework where community plugins can register their own Suggestion Algorithms.
+
+
+### Task 3: Abstraction Bloat & Legacy Shims
+
+**1. `core/storage.py` (Legacy Shim)**
+- **Issue:** A stub file left behind to map old `core.storage` imports to `core.file_handling.storage`.
+- **Trace:** A comprehensive search found *zero* usages of `from core.storage` anywhere in the codebase.
+- **Refactor Strategy:** The shim is dead weight. Delete `core/storage.py` immediately.
+
+**2. `core/network_utils.py`**
+- **Issue:** Extracts network details logic outside of the modules that actually need them.
+- **Trace:**
+  - `get_lan_ip` is used strictly by the OAuth sidecar (`core/oauth/sidecar.py`) and UI Plugin APIs (`web/routes/plugins_api.py`) to construct local callback URLs.
+  - `get_main_app_port` is used solely by the OAuth sidecar.
+- **Refactor Strategy:** Inline `get_lan_ip` and `get_main_app_port` directly into `core/oauth/sidecar.py` as internal helper functions, since that is the primary module attempting to route local callbacks.
+
+**3. `core/plugin_loader.py` & `plugin_orm.py`**
+- **Issue:** These files contain legacy router aliases and explicit database generation logic intended to simulate native plugin isolation before the migration to ContextVars.
+- **Refactor Strategy:** Both will be aggressively pruned. `plugin_loader.py` will have `PluginRegistry.get_providers_*` renamed to `get_plugins_*`. `plugin_orm.py` will be downgraded to a developer utility script rather than being loaded dynamically during every core execution cycle.
+
+
+### Task 4: Worker Dumbing-Down
+
+**1. `core/database_update_worker.py` & `core/media_scan_manager.py`**
+- **Issue:** These classes act as overly complex supervisors that try to orchestrate the internal state of third-party media servers (Plex, Jellyfin). They contain logic to explicitly trigger library scans, monitor scan progress via periodic polling loops, and manage scan completion callbacks.
+- **Trace:**
+  - `media_scan_manager.py` explicitly fetches `active_servers = PluginRegistry.get_active_services_by_type('media_server')` to push commands to the server.
+  - `database_update_worker.py` forces sequential updates by pulling a full payload from the provider and pushing it to the bulk import.
+- **Refactor Strategy (Event Bus Transition):**
+  - Delete `media_scan_manager.py`. The core engine should never actively manage a third-party server's state. When a download finishes, the core should simply emit: `event_bus.publish("DOWNLOAD_COMPLETED", {"track_id": 123})`.
+  - The Plex/Jellyfin plugins should subscribe to the `DOWNLOAD_COMPLETED` event via the SDK and independently trigger their own library updates.
+  - `database_update_worker.py` should be downgraded to a simple cron job that triggers a `library.sync.requested` event, letting the active plugins intercept the event and push their updated `EchosyncTrack` payloads to the core `bulk_import` pipeline.
+
+
+### Task 5: The Rust Sub-Project
+
+**1. `core/pyproject.toml` (`maturin`)**
+- **Issue:** A `pyproject.toml` configured to build a Rust extension using `maturin` exists in the `core/` directory, but there are no Rust source files (`.rs`) or `Cargo.toml` manifests present anywhere inside `core/`.
+- **Trace:** The presence of this file indicates an aborted or migrated attempt to compile a Python native extension (likely the Matching Engine or Fingerprinting logic) in Rust.
+- **Refactor Strategy:** Since there is no actual Rust source code to compile within `core/`, this `pyproject.toml` file is confusing the build pipeline and package managers. Delete `core/pyproject.toml` immediately.
