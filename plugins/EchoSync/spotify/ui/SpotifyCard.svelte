@@ -343,11 +343,11 @@
 
 <style>
   .plugin-card {
-    background: var(--bg-surface);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-surface, #0f172a);
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
     border-radius: var(--radius, 16px);
     padding: 28px;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
     font-family: 'Inter', sans-serif;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
     transition: transform 0.2s ease;
@@ -359,7 +359,7 @@
     align-items: center;
     margin-bottom: 28px;
     padding-bottom: 20px;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
   }
 
   .header-left {
@@ -382,7 +382,7 @@
     font-size: 10px;
     padding: 4px 10px;
     background: rgba(20, 184, 166, 0.1);
-    color: var(--color-primary);
+    color: var(--color-primary, #14b8a6);
     border: 1px solid rgba(20, 184, 166, 0.2);
     border-radius: 20px;
     font-weight: 700;
@@ -405,7 +405,7 @@
     margin: 0;
     font-size: 14px;
     font-weight: 700;
-    color: var(--text-secondary);
+    color: var(--text-secondary, #94a3b8);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -434,24 +434,24 @@
   .field-label {
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text-secondary, #94a3b8);
     opacity: 0.8;
   }
 
   .input-field {
     width: 100%;
     padding: 14px 18px;
-    background: var(--bg-input, #0f172a);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-input, #1e293b);
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
     border-radius: 12px;
-    color: var(--text-primary);
+    color: var(--text-primary, #f8fafc);
     font-size: 14px;
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .input-field:focus {
     outline: none;
-    border-color: var(--color-primary);
+    border-color: var(--color-primary, #14b8a6);
     box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.15);
     background: rgba(255, 255, 255, 0.03);
   }
@@ -464,14 +464,14 @@
 
   .helper-text {
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--text-muted, #64748b);
     margin-top: 6px;
     font-style: italic;
   }
 
   .btn-primary {
     padding: 12px 28px;
-    background: var(--color-primary);
+    background: var(--color-primary, #14b8a6);
     color: #000;
     border: none;
     border-radius: 12px;
@@ -501,8 +501,8 @@
   .btn-ghost {
     padding: 10px 18px;
     background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--border-subtle);
-    color: var(--text-primary);
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+    color: var(--text-primary, #f8fafc);
     border-radius: 10px;
     font-size: 13px;
     font-weight: 600;
@@ -518,7 +518,7 @@
 
   .divider {
     border: none;
-    border-top: 1px solid var(--border-subtle);
+    border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
     margin: 32px 0;
     opacity: 0.3;
   }
@@ -535,7 +535,7 @@
     align-items: center;
     padding: 20px;
     background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
     border-radius: 16px;
     transition: all 0.3s ease;
   }
@@ -586,7 +586,7 @@
 
   .status-badge.active {
     background: rgba(20, 184, 166, 0.1);
-    color: var(--color-primary);
+    color: var(--color-primary, #14b8a6);
     border: 1px solid rgba(20, 184, 166, 0.2);
   }
 
@@ -599,7 +599,7 @@
   .link-btn {
     background: none;
     border: none;
-    color: var(--color-primary);
+    color: var(--color-primary, #14b8a6);
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
@@ -656,7 +656,7 @@
     bottom: 0;
     background-color: rgba(255, 255, 255, 0.1);
     transition: .4s;
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
   }
 
   .slider:before {
@@ -672,8 +672,8 @@
   }
 
   input:checked + .slider {
-    background-color: var(--color-primary);
-    border-color: var(--color-primary);
+    background-color: var(--color-primary, #14b8a6);
+    border-color: var(--color-primary, #14b8a6);
   }
 
   input:checked + .slider:before {
@@ -695,14 +695,14 @@
     align-items: center;
     gap: 20px;
     padding: 60px;
-    color: var(--text-muted);
+    color: var(--text-muted, #64748b);
   }
 
   .spinner {
     width: 40px;
     height: 40px;
     border: 4px solid rgba(20, 184, 166, 0.1);
-    border-top-color: var(--color-primary);
+    border-top-color: var(--color-primary, #14b8a6);
     border-radius: 50%;
     animation: spin 0.8s cubic-bezier(0.5, 0, 0.5, 1) infinite;
   }
@@ -715,7 +715,7 @@
     background: rgba(255, 255, 255, 0.02);
     padding: 20px;
     border-radius: 16px;
-    border: 1px dashed var(--border-subtle);
+    border: 1px dashed var(--border-subtle, rgba(255, 255, 255, 0.1));
     margin-bottom: 24px;
     animation: fadeIn 0.3s ease-out;
   }
@@ -730,8 +730,8 @@
     padding: 40px;
     background: rgba(255, 255, 255, 0.02);
     border-radius: 16px;
-    border: 1px dashed var(--border-subtle);
-    color: var(--text-muted);
+    border: 1px dashed var(--border-subtle, rgba(255, 255, 255, 0.1));
+    color: var(--text-muted, #64748b);
     font-style: italic;
   }
 </style>

@@ -153,20 +153,26 @@ class PluginLoader:
         self.plugins_dir = config_manager.get_plugins_dir()
         self.loaded_blueprints: List[Blueprint] = []
 
-    def reload_plugin(self, plugin_id: str):
+    def reload_plugin(self, plugin_id: int):
         """Perform a true Zero-Downtime hot reload of a plugin."""
         logger.info(f"🔄 HOT-SWAP INITIATED: {plugin_id}")
         
         # 1. Normalize ID and determine channel
-        # Strip prefixes
-        base_ns = plugin_id.split('@')[0].replace('core.', '').replace('plugin.', '')
+        from database.config_database import get_config_database
+        db = get_config_database()
+        base_ns_from_db = db.get_service_name(plugin_id)
+
+        if not base_ns_from_db:
+             raise ValueError(f"Plugin ID {plugin_id} not found in database for reload")
+
+        # Extract namespace and path
+        base_ns = base_ns_from_db.split('@')[0].replace('core.', '').replace('plugin.', '')
         
         # Check channel preference from database if not in ID
         channel = config_manager.get_plugin_channel(base_ns) or 'stable'
-        if '@beta' in plugin_id:
+        if '@beta' in base_ns_from_db:
             channel = 'beta'
 
-        # Split namespace (e.g., EchoSync.spotify -> EchoSync, spotify)
         ns_parts = base_ns.split('.')
         if len(ns_parts) >= 2:
             author = ns_parts[0]
@@ -176,22 +182,13 @@ class PluginLoader:
             plugin_name = base_ns
 
         # 2. Resolve Path
-        # The base_ns can be flat (spotify) or namespaced (EchoSync.spotify)
-        # Author-nested: plugins/EchoSync/spotify
-        # Flat (Legacy): plugins/spotify
-        
-        ns_parts = base_ns.split('.')
-        author = ns_parts[0] if len(ns_parts) > 1 else None
-        plugin_name = ".".join(ns_parts[1:]) if author else base_ns
-        
-        # Candidate 1: Author-nested (Standard)
-        if author:
+        if author and author != "unknown":
             plugin_dir = self.plugins_dir / author / plugin_name
         else:
             plugin_dir = self.plugins_dir / base_ns
-            
+
         # Candidate 2: Flat fallback if author-nested doesn't exist
-        if author and not plugin_dir.exists():
+        if author and author != "unknown" and not plugin_dir.exists():
              plugin_dir = self.plugins_dir / base_ns
 
         # Handle Beta Folder Nesting
@@ -859,7 +856,26 @@ class PluginRegistry:
         return cls._provider_sources.get(name.lower())
 
     @classmethod
-    def create_instance(cls, name: str, *args, **kwargs) -> PluginBase:
+    def create_instance(cls, name, *args, **kwargs) -> PluginBase:
+        # Phase 2: Translation Bridge
+        # If the incoming identifier is an integer (plugin_id), resolve it to its namespace
+        original_name = name
+        try:
+            # Check if name is an int or a string representation of an int
+            if isinstance(name, int) or (isinstance(name, str) and name.isdigit()):
+                plugin_id = int(name)
+                from database.config_database import get_config_database
+                db = get_config_database()
+                resolved_name = db.get_service_name(plugin_id)
+                if not resolved_name:
+                    raise ValueError(f"Provider with plugin_id '{plugin_id}' not found in database")
+                name = resolved_name
+        except Exception as e:
+            if isinstance(e, ValueError) and "not found in database" in str(e):
+                raise
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to resolve integer plugin_id '{original_name}': {e}")
+
         # Double check against config manager to ensure latest state
         # (The set_disabled_providers might be stale if config reloaded)
         from core.settings import config_manager

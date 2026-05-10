@@ -524,11 +524,13 @@ class PluginStore:
                 # Hot-Swap Architecture: Perform Zero-Downtime Reload instead of setting restart_pending
                 try:
                     from core.plugin_loader import PluginLoader
+                    import zlib
+                    int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
                     app_root = Path(__file__).parent.parent
                     loader = PluginLoader(app_root)
-                    loader.reload_plugin(plugin_id)
+                    loader.reload_plugin(int_plugin_id)
                     restart_required = False
-                    logger.info(f"Live-swap successful for {plugin_id}. No restart required.")
+                    logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}). No restart required.")
                 except Exception as e:
                     logger.warning(f"Hot-swap failed, falling back to restart requirement: {e}")
                     system_state.restart_pending = True
