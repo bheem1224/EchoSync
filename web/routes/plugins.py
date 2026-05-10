@@ -206,8 +206,7 @@ def install_plugin():
     data = request.json or {}
     plugin_info = data.get('plugin')
     channel = data.get('channel') or (plugin_info.get('channel') if plugin_info else 'stable')
-    if channel == 'release': channel = 'stable' # Normalize internal naming
-    
+    if channel == 'release': channel = 'stable'
     force_consent = request.args.get('force_consent') == 'true'
     
     if not plugin_info:
@@ -217,18 +216,76 @@ def install_plugin():
         success = plugin_store.download_plugin(plugin_info, channel=channel, force_consent=force_consent)
         if success:
             return jsonify({"success": True})
-        else:
-            return jsonify({"error": f"Failed to install plugin on channel {channel}"}), 500
+        return jsonify({"error": f"Failed to install plugin on channel {channel}"}), 500
     except PrivilegeEscalationError as e:
-        return jsonify({
-            "requires_consent": True, 
-            "escalations": e.escalations,
-            "message": "This update requires elevated permissions."
-        }), 403
+        return jsonify({"requires_consent": True, "escalations": e.escalations, "message": "This update requires elevated permissions."}), 403
     except Exception as e:
         logger.error(f"Install error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@bp.route('/update', methods=['POST'])
+@require_auth
+def update_plugin():
+    from core.plugin_store import PrivilegeEscalationError
+    data = request.json or {}
+    plugin_info = data.get('plugin')
+    channel = data.get('channel') or (plugin_info.get('channel') if plugin_info else 'stable')
+    if channel == 'release': channel = 'stable'
+    force_consent = request.args.get('force_consent') == 'true'
+    
+    if not plugin_info:
+        return jsonify({"error": "Plugin info required"}), 400
+
+    try:
+        success = plugin_store.download_plugin(plugin_info, channel=channel, force_consent=force_consent)
+        if success:
+            return jsonify({"success": True})
+        return jsonify({"error": f"Failed to update plugin on channel {channel}"}), 500
+    except PrivilegeEscalationError as e:
+        return jsonify({"requires_consent": True, "escalations": e.escalations, "message": "This update requires elevated permissions."}), 403
+    except Exception as e:
+        logger.error(f"Update error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@bp.route('/rollback', methods=['POST'])
+@require_auth
+def rollback_plugin():
+    from core.plugin_store import PrivilegeEscalationError
+    data = request.json or {}
+    plugin_info = data.get('plugin')
+    channel = 'stable' # Rollback always goes back to stable
+    force_consent = request.args.get('force_consent') == 'true'
+    
+    if not plugin_info:
+        return jsonify({"error": "Plugin info required"}), 400
+
+    try:
+        success = plugin_store.download_plugin(plugin_info, channel=channel, force_consent=force_consent)
+        if success:
+            return jsonify({"success": True})
+        return jsonify({"error": "Failed to rollback plugin to stable"}), 500
+    except PrivilegeEscalationError as e:
+        return jsonify({"requires_consent": True, "escalations": e.escalations, "message": "This rollback requires elevated permissions."}), 403
+    except Exception as e:
+        logger.error(f"Rollback error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@bp.route('/uninstall', methods=['POST'])
+@require_auth
+def uninstall_plugin_route():
+    data = request.json or {}
+    plugin_id = data.get('id')
+    if not plugin_id:
+        return jsonify({"error": "Plugin ID required"}), 400
+
+    try:
+        success = plugin_store.uninstall_plugin(plugin_id)
+        if success:
+            return jsonify({"success": True})
+        return jsonify({"error": "Failed to uninstall plugin"}), 500
+    except Exception as e:
+        logger.error(f"Uninstall error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @bp.route('/<plugin_id>/toggle', methods=['POST'])

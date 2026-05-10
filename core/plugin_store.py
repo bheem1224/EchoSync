@@ -505,6 +505,22 @@ class PluginStore:
                     except Exception as e:
                         logger.error(f"Failed to cutover namespace for {plugin_id}: {e}")
 
+                # State Synchronization: Synchronize with the authoritative SQLite registry
+                try:
+                    from database.config_database import get_config_database
+                    db = get_config_database()
+                    db.register_service(
+                        name=clean_id,
+                        display_name=plugin_info.get("name", clean_id),
+                        service_type=plugin_info.get("category", "provider"),
+                        description=plugin_info.get("description", ""),
+                        namespace=plugin_id,
+                        plugin_id=plugin_info.get("plugin_id")
+                    )
+                    logger.info(f"Synchronized database state for plugin {plugin_id}")
+                except Exception as e:
+                    logger.error(f"Failed to synchronize database state for {plugin_id}: {e}")
+
                 # Hot-Swap Architecture: Perform Zero-Downtime Reload instead of setting restart_pending
                 try:
                     from core.plugin_loader import PluginLoader
