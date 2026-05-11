@@ -60,13 +60,13 @@ def list_plugins() -> List[Dict]:
             try:
                 caps = get_plugin_capabilities(name)
                 search_caps = {
-                    'tracks': caps.search.tracks,
-                    'artists': caps.search.artists,
-                    'albums': caps.search.albums,
-                    'playlists': caps.search.playlists,
+                    'tracks': caps.search.tracks if caps.search else False,
+                    'artists': caps.search.artists if caps.search else False,
+                    'albums': caps.search.albums if caps.search else False,
+                    'playlists': caps.search.playlists if caps.search else False,
                 }
                 plugin_dict['capabilities'] = {
-                    'metadata_richness': caps.metadata.name,
+                    'metadata_richness': caps.metadata.name if caps.metadata else 'MEDIUM',
                     'supports_streaming': caps.supports_streaming,
                     'supports_downloads': caps.supports_downloads,
                     'supports_cover_art': caps.supports_cover_art,

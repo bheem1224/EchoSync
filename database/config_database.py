@@ -153,7 +153,18 @@ class ConfigDatabase:
                     )
                 """)
 
-                # Drop deprecated Config KVS
+                # Migration: Add missing columns to services table if they don't exist
+                cursor.execute("PRAGMA table_info(services)")
+                columns = [row[1] for row in cursor.fetchall()]
+                if 'namespace' not in columns:
+                    cursor.execute("ALTER TABLE services ADD COLUMN namespace TEXT NOT NULL DEFAULT 'legacy'")
+                if 'plugin_id' not in columns:
+                    cursor.execute("ALTER TABLE services ADD COLUMN plugin_id INTEGER")
+                if 'version' not in columns:
+                    cursor.execute("ALTER TABLE services ADD COLUMN version TEXT")
+                
+                # Cleanup: Drop deprecated tables
+                cursor.execute("DROP TABLE IF EXISTS accounts_metadata")
                 cursor.execute("DROP TABLE IF EXISTS config_kvs")
 
                 # Indexes

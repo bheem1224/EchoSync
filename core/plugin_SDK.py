@@ -79,6 +79,30 @@ class _AccountsSDKFacade:
         from database.config_database import get_config_database
         get_config_database().save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at)
 
+    def get_all(self):
+        """Return all accounts associated with the calling plugin."""
+        from database.config_database import get_config_database
+        db = get_config_database()
+        
+        # Get plugin_id from stack inspection (similar to _get_plugin_id)
+        frame = inspect.currentframe().f_back
+        caller_mod = frame.f_globals.get('__name__', '')
+        
+        plugin_id_str = ""
+        if caller_mod.startswith('plugins.'):
+            parts = caller_mod.split('.')
+            if len(parts) >= 3:
+                plugin_id_str = f"{parts[1]}.{parts[2]}"
+            else:
+                plugin_id_str = parts[1]
+        elif caller_mod.startswith('core.providers.'):
+            plugin_id_str = caller_mod.split('.')[2]
+        else:
+            plugin_id_str = caller_mod
+
+        service_id = db.get_or_create_service_id(plugin_id_str)
+        return db.get_accounts(service_id=service_id)
+
 class _PluginsSDKFacade:
     def invoke(self, target_plugin_id: str, action: str, payload: dict):
         # Determine if target is enabled/exists
@@ -223,9 +247,21 @@ class _SDK:
     def __init__(self):
         # We don't know the plugin_id here yet as it's a global singleton,
         # but facade methods will verify caller.
-        self.accounts = _AccountsSDKFacade()
+        self._accounts = _AccountsSDKFacade()
         self.plugins = _PluginsSDKFacade()
         self.file = _FileSDKFacade()
+
+    @property
+    def config(self):
+        return _ConfigFacade(self._get_plugin_id())
+
+    @property
+    def secrets(self):
+        return _SecretsFacade(self._get_plugin_id())
+
+    @property
+    def accounts(self):
+        return self._accounts
         
     @property
     def quality(self):
@@ -448,8 +484,12 @@ class PluginBase(ABC):
 
         # Sandbox API facades for Plugin Architecture
         self._name = self.name
+        self.sdk = sdk
         self.config = _ConfigFacade(self.name)
         self.secrets = _SecretsFacade(self.name)
+        self.accounts = _AccountsSDKFacade()
+        self.plugins = _PluginsSDKFacade()
+        self.file = _FileSDKFacade()
 
         self.models = _PluginModelFacade()
 
