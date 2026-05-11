@@ -18,14 +18,14 @@ COPY webui ./
 RUN npm run build
 
 # ---- Python Stage: Final Application Image ----
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /app
 
 # Install runtime system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-curl \
+    curl \
     gosu \
     ffmpeg \
     libchromaprint-tools \
@@ -41,6 +41,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Copy backend dependency files
 COPY pyproject.toml uv.lock .python-version ./
+
+ENV UV_PYTHON_DOWNLOADS="never"
 
 # 1. Force uv to build the environment OUTSIDE of /app
 ENV UV_PROJECT_ENVIRONMENT="/opt/venv"
