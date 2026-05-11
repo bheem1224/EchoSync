@@ -535,24 +535,25 @@ class PluginLoader:
                 added_to_path = True
             
             try:
-                # Support bridge for absolute imports in channel-based plugins
-                # Task: Dynamic Import Pathing Patch (Namespace Injection)
+                # MISSION: Dynamic Import Pathing Patch (Namespace Injection)
                 # When a plugin executes an absolute import (e.g., from plugins.EchoSync.slskd.client import SlskdProvider)
-                # python resolves the file from disk if the submodule is not loaded.
-                # We need to ensure the active channel's directory is the first entry in the base module's __path__.
+                # Python attempts to resolve the file from the disk because the submodule is not yet loaded.
+                # We fix this by injecting the channel's directory into the base namespace's __path__.
                 base_module_name = f"{parent_dir_name}.{clean_name}"
                 try:
                     # 1. Implicitly load the base namespace package
                     base_module = importlib.import_module(base_module_name)
 
                     # 2. Inject the active channel folder into the base module's search path
-                    channel_dir = str(package_dir) # This handles both stable and beta paths since package_dir already includes "/beta" if is_beta is True
+                    channel_dir = str(package_dir.absolute())
                     if hasattr(base_module, '__path__'):
+                        # Ensure we are working with a list-like structure for insertion (supports _NamespacePath)
                         if channel_dir not in base_module.__path__:
+                            # Inject at index 0 so the active channel takes priority
                             base_module.__path__.insert(0, channel_dir)
-                            logger.debug(f"Injected {channel_dir} into {base_module_name} __path__")
+                            logger.debug(f"Path Patch: Injected {channel_dir} into {base_module_name} __path__")
                 except Exception as bridge_err:
-                    logger.debug(f"Could not bridge base module path: {bridge_err}")
+                    logger.debug(f"Path Patch failed for {base_module_name}: {bridge_err}")
 
                 micro_venv_dir = package_dir / "micro-venv"
                 micro_venv_str = str(micro_venv_dir)
