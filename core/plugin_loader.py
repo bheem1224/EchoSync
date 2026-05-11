@@ -21,6 +21,11 @@ from core.tiered_logger import get_logger
 from core.settings import config_manager
 
 logger = get_logger("plugin_loader")
+import zlib
+
+def generate_plugin_id(name: str) -> int:
+    """Generate a consistent 32-bit integer ID from a plugin namespace."""
+    return zlib.crc32(name.encode('utf-8')) & 0xFFFFFFFF
 
 # ---------------------------------------------------------------------------
 # Zero-Trust Plugin Security Scanner
@@ -526,6 +531,23 @@ class PluginLoader:
                 added_to_path = True
             
             try:
+                # Support bridge for absolute imports in channel-based plugins
+                # If we are loading plugins.EchoSync.tidal.beta, we want plugins.EchoSync.tidal.client 
+                # to look inside the beta folder too.
+                if is_beta:
+                    parent_module_name = f"{parent_dir_name}.{clean_name}"
+                    try:
+                        # Ensure parent module exists in sys.modules
+                        importlib.import_module(parent_module_name)
+                        parent_module = sys.modules.get(parent_module_name)
+                        if parent_module and hasattr(parent_module, '__path__'):
+                            beta_path = str(self.plugins_dir / path_name / "beta")
+                            if beta_path not in parent_module.__path__:
+                                logger.debug(f"Bridging {parent_module_name} __path__ to include {beta_path}")
+                                parent_module.__path__.insert(0, beta_path)
+                    except Exception as bridge_err:
+                        logger.debug(f"Could not bridge parent module path: {bridge_err}")
+
                 module = importlib.import_module(module_path)
             finally:
                 if added_to_path and plugins_parent_str in sys.path:

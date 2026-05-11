@@ -532,7 +532,12 @@ class PluginStore:
                 try:
                     from core.plugin_loader import PluginLoader
                     import zlib
-                    int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
+                    
+                    # Ensure we use the SAME ID that was just registered in the database
+                    int_plugin_id = plugin_info.get("plugin_id")
+                    if int_plugin_id is None:
+                        int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
+                    
                     app_root = Path(__file__).parent.parent
                     loader = PluginLoader(app_root)
                     loader.reload_plugin(int_plugin_id)

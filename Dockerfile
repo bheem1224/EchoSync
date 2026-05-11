@@ -54,7 +54,7 @@ RUN uv sync --frozen --no-dev
 RUN chmod -R 755 /opt/venv
 
 # Put the uv virtual environment in the PATH so 'python' automatically uses it
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/opt/venv/bin:$PATH"
 # ------------------------------------------
 
 # Create necessary directories
