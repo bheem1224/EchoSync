@@ -272,14 +272,22 @@ class ConfigDatabase:
         try:
             execute_write_sql(
                 str(self.database_path), 
-                "INSERT OR IGNORE INTO services(name, display_name, service_type, description, namespace, plugin_id, version) VALUES(?,?,?,?,?,?,?)", 
+                """
+                INSERT INTO services(name, display_name, service_type, description, namespace, plugin_id, version, is_active) 
+                VALUES(?,?,?,?,?,?,?,1)
+                ON CONFLICT(name) DO UPDATE SET 
+                    namespace=excluded.namespace,
+                    plugin_id=excluded.plugin_id,
+                    version=excluded.version,
+                    display_name=excluded.display_name,
+                    is_active=1,
+                    updated_at=strftime('%s','now')
+                """, 
                 (name, display_name, service_type, description, namespace, plugin_id, version)
             )
         except Exception as e:
             logger.error(f"Error registering service '{name}': {e}")
         
-        # We don't call get_or_create_service_id here to avoid recursion.
-        # If the caller wants the ID, they should use get_or_create_service_id directly.
         return 0
 
     def set_service_config(self, service_id: int, key: str, value: Any, is_sensitive: bool = False) -> bool:

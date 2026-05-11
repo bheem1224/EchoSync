@@ -565,28 +565,14 @@ class PluginStore:
                 # State Synchronization: Synchronize with the authoritative SQLite registry
                 try:
                     from database.config_database import get_config_database
-                    db = get_config_database()
-                    db.register_service(
-                        name=clean_id,
-                        display_name=plugin_info.get("name", clean_id),
-                        service_type=plugin_info.get("category", "provider"),
-                        description=plugin_info.get("description", ""),
-                        namespace=plugin_id,
-                        plugin_id=plugin_info.get("plugin_id")
-                    )
-                    logger.info(f"Synchronized database state for plugin {plugin_id}")
-                except Exception as e:
-                    logger.error(f"Failed to synchronize database state for {plugin_id}: {e}")
-
-                # Hot-Swap Architecture: Perform Zero-Downtime Reload
-                try:
-                    from core.plugin_loader import PluginLoader
                     import zlib
-                    int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
-
-                    # Register in DB explicitly before reload to ensure ID resolution works
-                    from database.config_database import get_config_database
                     db = get_config_database()
+                    
+                    # Generate/Verify Integer Plugin ID
+                    int_plugin_id = plugin_info.get("plugin_id")
+                    if int_plugin_id is None:
+                        int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
+
                     db.register_service(
                         name=clean_id,
                         display_name=plugin_info.get("name", clean_id),
@@ -595,7 +581,13 @@ class PluginStore:
                         namespace=plugin_id,
                         plugin_id=int_plugin_id
                     )
+                    logger.info(f"Synchronized database state for plugin {plugin_id} (int: {int_plugin_id})")
+                except Exception as e:
+                    logger.error(f"Failed to synchronize database state for {plugin_id}: {e}")
 
+                # Hot-Swap Architecture: Perform Zero-Downtime Reload
+                try:
+                    from core.plugin_loader import PluginLoader
                     app_root = Path(__file__).parent.parent
                     loader = PluginLoader(app_root)
                     loader.reload_plugin(int_plugin_id)

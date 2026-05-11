@@ -174,7 +174,13 @@ class PluginLoader:
 
         # Clean namespace (remove @channel suffix for path resolution)
         clean_ns = base_ns.split('@')[0]
-        channel = base_ns.split('@')[1] if '@' in base_ns else 'stable'
+        
+        # Determine channel: prioritize @beta suffix, then check config_manager
+        channel = 'stable'
+        if '@beta' in base_ns:
+            channel = 'beta'
+        else:
+            channel = config_manager.get_plugin_channel(clean_ns) or 'stable'
         
         # Determine directory structure (Author.Plugin or Flat)
         folder_path = clean_ns.replace('.', os.sep)
@@ -220,8 +226,6 @@ class PluginLoader:
             
             success = self._load_plugin_package(
                 clean_ns, 
-                self.plugins_dir.name, 
-                'community', 
                 is_beta=(channel == 'beta'), 
                 is_disabled=is_disabled
             )
@@ -306,7 +310,7 @@ class PluginLoader:
                 continue
 
             # Load the package
-            self._load_plugin_package(clean_ns, self.plugins_dir.name, 'community', is_beta=(channel == 'beta'))
+            self._load_plugin_package(clean_ns, is_beta=(channel == 'beta'))
 
         logger.info(f"Plugin discovery complete. Loaded {len(self.loaded_blueprints)} blueprints.")
 

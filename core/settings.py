@@ -792,6 +792,16 @@ class ConfigManager:
             return True
         return False
 
+    def enable_provider(self, provider_id: str) -> bool:
+        """Remove a provider/plugin from the disabled list."""
+        disabled = self.get_disabled_providers()
+        if provider_id in disabled:
+            disabled.remove(provider_id)
+            self.set('disabled_providers', disabled)
+            logger.info(f"Plugin {provider_id} has been enabled.")
+            return True
+        return False
+
     def get_generated_encryption_key(self) -> Optional[str]:
         """Return the auto-generated MASTER_KEY if it was created during this session."""
         if getattr(self, '_auto_generated_key', False):
