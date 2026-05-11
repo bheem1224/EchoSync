@@ -532,12 +532,32 @@ class PluginStore:
                 try:
                     from core.plugin_loader import PluginLoader
                     import zlib
-                    
-                    # Ensure we use the SAME ID that was just registered in the database
-                    int_plugin_id = plugin_info.get("plugin_id")
-                    if int_plugin_id is None:
-                        int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
-                    
+                    int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
+
+                    # Fix Chicken and Egg for fresh installations
+                    from database.config_database import get_config_database
+                    db = get_config_database()
+
+                    # Make sure the plugin namespace is registered in the database before reload
+                    # We pass the int_plugin_id to explicitly bind it if register_service supports it
+                    try:
+                        # get_or_create_service_id implicitly creates it. We should ideally update
+                        # the service entry with the plugin_id, but the simplest way to ensure
+                        # get_service_name works is to have it in the DB.
+                        # Wait, the table structure: id (INTEGER PRIMARY KEY), name (TEXT UNIQUE), namespace (TEXT), plugin_id (INTEGER)
+                        # We should make sure the DB has a row where name=plugin_id and id=int_plugin_id ?
+                        # Actually, `get_service_name` uses `SELECT name FROM services WHERE id=?`
+                        # So we MUST insert a row where `id` == `int_plugin_id` and `name` == `plugin_id`.
+                        # Let's write a small raw SQL execution for this to guarantee it exists with the correct ID.
+                        import contextlib
+                        with contextlib.closing(db._get_connection()) as conn:
+                            c = conn.cursor()
+                            c.execute("INSERT OR IGNORE INTO services (id, name, namespace, display_name, service_type) VALUES (?, ?, ?, ?, ?)",
+                                      (int_plugin_id, plugin_id, 'legacy', plugin_info.get("name", plugin_id), 'plugin'))
+                            conn.commit()
+                    except Exception as db_err:
+                        logger.warning(f"Could not pre-register plugin {plugin_id} in DB: {db_err}")
+
                     app_root = Path(__file__).parent.parent
                     loader = PluginLoader(app_root)
                     loader.reload_plugin(int_plugin_id)
