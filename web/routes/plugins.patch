@@ -1,0 +1,20 @@
+--- web/routes/plugins.py
++++ web/routes/plugins.py
+@@ -213,7 +213,7 @@
+         return jsonify({"error": "Plugin info required"}), 400
+
+     try:
+-        success = plugin_store.download_plugin(plugin_info, channel=channel, force_consent=force_consent)
++        success = plugin_store.install_plugin(plugin_info, channel=channel, force_consent=force_consent)
+         if success:
+             return jsonify({"success": True})
+         return jsonify({"error": f"Failed to install plugin on channel {channel}"}), 500
+@@ -237,7 +237,7 @@
+         return jsonify({"error": "Plugin info required"}), 400
+
+     try:
+-        success = plugin_store.download_plugin(plugin_info, channel=channel, force_consent=force_consent)
++        success = plugin_store.update_plugin(plugin_info, channel=channel, force_consent=force_consent)
+         if success:
+             return jsonify({"success": True})
+         return jsonify({"error": f"Failed to update plugin on channel {channel}"}), 500

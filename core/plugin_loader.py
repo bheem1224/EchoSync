@@ -233,16 +233,20 @@ class PluginLoader:
             is_disabled = base_ns in disabled or plugin_id in disabled
             
             # Re-load
-            self._load_plugin_package(
+            success = self._load_plugin_package(
                 clean_id, 
                 self.plugins_dir.name, 
                 'community', 
                 is_beta=(channel == 'beta'), 
                 is_disabled=is_disabled
             )
+            if success is False:
+                logger.error(f"Live-swap failed to load module for {plugin_id}")
+                raise Exception(f"Live-swap failed to load module for {plugin_id}")
             logger.info(f"✅ Successfully live-swapped: {plugin_id}")
         except Exception as e:
             logger.error(f"Live-swap failed for {plugin_id}: {e}", exc_info=True)
+            raise
 
     def load_all(self):
         """Scan and load all providers and plugins based on database definitions."""
@@ -532,24 +536,43 @@ class PluginLoader:
             
             try:
                 # Support bridge for absolute imports in channel-based plugins
-                # If we are loading plugins.EchoSync.tidal.beta, we want plugins.EchoSync.tidal.client 
-                # to look inside the beta folder too.
-                if is_beta:
-                    parent_module_name = f"{parent_dir_name}.{clean_name}"
-                    try:
-                        # Ensure parent module exists in sys.modules
-                        importlib.import_module(parent_module_name)
-                        parent_module = sys.modules.get(parent_module_name)
-                        if parent_module and hasattr(parent_module, '__path__'):
-                            beta_path = str(self.plugins_dir / path_name / "beta")
-                            if beta_path not in parent_module.__path__:
-                                logger.debug(f"Bridging {parent_module_name} __path__ to include {beta_path}")
-                                parent_module.__path__.insert(0, beta_path)
-                    except Exception as bridge_err:
-                        logger.debug(f"Could not bridge parent module path: {bridge_err}")
+                # Task: Dynamic Import Pathing Patch (Namespace Injection)
+                # When a plugin executes an absolute import (e.g., from plugins.EchoSync.slskd.client import SlskdProvider)
+                # python resolves the file from disk if the submodule is not loaded.
+                # We need to ensure the active channel's directory is the first entry in the base module's __path__.
+                base_module_name = f"{parent_dir_name}.{clean_name}"
+                try:
+                    # 1. Implicitly load the base namespace package
+                    base_module = importlib.import_module(base_module_name)
 
-                module = importlib.import_module(module_path)
+                    # 2. Inject the active channel folder into the base module's search path
+                    channel_dir = str(package_dir) # This handles both stable and beta paths since package_dir already includes "/beta" if is_beta is True
+                    if hasattr(base_module, '__path__'):
+                        if channel_dir not in base_module.__path__:
+                            base_module.__path__.insert(0, channel_dir)
+                            logger.debug(f"Injected {channel_dir} into {base_module_name} __path__")
+                except Exception as bridge_err:
+                    logger.debug(f"Could not bridge base module path: {bridge_err}")
+
+                micro_venv_dir = package_dir / "micro-venv"
+                micro_venv_str = str(micro_venv_dir)
+                added_micro_venv = False
+                if micro_venv_dir.exists():
+                    sys.path.insert(0, micro_venv_str)
+                    added_micro_venv = True
+                    logger.debug(f"Injected micro-venv into sys.path for {module_path}")
+
+                try:
+                    module = importlib.import_module(module_path)
+
+
+                except Exception as import_e:
+                    logger.error(f"Failed to dynamically import plugin module {module_path}: {import_e}", exc_info=True)
+                    return False
             finally:
+                if added_micro_venv and micro_venv_str in sys.path:
+                    sys.path.remove(micro_venv_str)
+                    logger.debug(f"Removed micro-venv from sys.path for {module_path}")
                 if added_to_path and plugins_parent_str in sys.path:
                     sys.path.remove(plugins_parent_str)
 
