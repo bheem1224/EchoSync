@@ -149,8 +149,8 @@ class PluginLoader:
     """
 
     def __init__(self, app_root: Path):
-        self.app_root = app_root
-        self.plugins_dir = config_manager.get_plugins_dir()
+        self.app_root = Path(app_root)
+        self.plugins_dir = Path(config_manager.get_plugins_dir())
         self.loaded_blueprints: List[Blueprint] = []
 
     def reload_plugin(self, plugin_id: int):
@@ -411,7 +411,12 @@ class PluginLoader:
             db = get_config_database()
             with db._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("UPDATE services SET version=? WHERE name=? OR namespace=?", (version, clean_name, provider_id))
+                # Use a flexible match for clean_name/provider_id to catch mismatches in plugin. vs core. prefixes
+                c.execute("""
+                    UPDATE services 
+                    SET version=? 
+                    WHERE name=? OR namespace=? OR name=? OR namespace=?
+                """, (version, clean_name, provider_id, provider_id, clean_name))
                 conn.commit()
         except Exception:
             pass
@@ -447,6 +452,7 @@ class PluginLoader:
                 package_dir = package_dir / "beta"
             
             manifest_file = package_dir / "manifest.json"
+            manifest_data = {}
             if manifest_file.exists():
                 try:
                     manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
@@ -456,9 +462,16 @@ class PluginLoader:
                 except Exception:
                     pass
 
+            # Standardized ID Resolution: Use manifest ID if available, else prefix with source type
+            if manifest_data.get("id"):
+                provider_id = manifest_data["id"]
+            elif source_type == 'community':
+                provider_id = f"plugin.{clean_name}"
+            else:
+                provider_id = clean_name
+
             # If disabled, register a placeholder and return early
             if is_disabled:
-                provider_id = f"plugin.{clean_name}" if source_type == 'community' else clean_name
                 
                 # Create a simple placeholder class instead of importing from legacy core.provider
                 class DisabledPlugin(PluginBase):
@@ -474,10 +487,7 @@ class PluginLoader:
                 logger.info(f"Registered disabled plugin: {provider_id} (v{version})")
                 return
 
-            if source_type == 'community':
-                provider_id = f"plugin.{clean_name}"
-            else:
-                provider_id = clean_name
+
 
             # Handle WASM Plugins
             wasm_file = package_dir / "main.wasm"
@@ -624,7 +634,7 @@ def get_all_plugins() -> list:
     
     import os
     core_dir = Path(os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR', Path(__file__).parent.parent / "plugins"))
-    community_dir = config_manager.get_plugins_dir()
+    community_dir = Path(config_manager.get_plugins_dir())
 
     # Process core first, then community. Community plugins with the same ID will shadow core ones.
     for source_type, directory in [('core', core_dir), ('community', community_dir)]:
