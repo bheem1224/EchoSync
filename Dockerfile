@@ -48,6 +48,9 @@ ENV UV_PROJECT_ENVIRONMENT="/opt/venv"
 # Use uv to sync the environment exactly as it is in uv.lock
 RUN uv sync --frozen --no-dev
 
+# fix unraid permissions error
+RUN chmod -R 755 /opt/venv
+
 # Put the uv virtual environment in the PATH so 'python' automatically uses it
 ENV PATH="/app/.venv/bin:$PATH"
 # ------------------------------------------
