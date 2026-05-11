@@ -123,6 +123,7 @@ def get_ui_manifest():
         uri_path = folder_name.replace('.', '/')
         ui_plugins.append({
             'id':         folder_name,
+            'plugin_id':  plugin.get('id'), # The full namespace ID
             'api_base':   f'/api/plugins/{uri_path}',
             'components': normalized_components,
             'assets':     raw_assets,
@@ -316,13 +317,21 @@ def toggle_plugin(plugin_id):
 
     config_manager.save_settings(config_manager.get_settings())
 
-    # Hot-Reload if enabled, otherwise restart pending
+    # Hot-Reload if enabled
     try:
         from core.plugin_loader import PluginLoader
-        app_root = Path(__file__).parent.parent.parent
-        loader = PluginLoader(app_root)
-        loader.reload_plugin(plugin_id)
-        logger.info(f"Hot-reloaded plugin {plugin_id} after toggle")
+        from database.config_database import get_config_database
+        db = get_config_database()
+        
+        # Resolve to integer ID
+        int_id = db.get_service_id(plugin_id)
+        if int_id:
+            app_root = Path(__file__).parent.parent.parent
+            loader = PluginLoader(app_root)
+            loader.reload_plugin(int_id)
+            logger.info(f"Hot-reloaded plugin {plugin_id} (int: {int_id}) after toggle")
+        else:
+            logger.warning(f"Could not resolve {plugin_id} to an integer ID for hot-reload")
     except Exception as e:
         logger.warning(f"Hot-reload failed for {plugin_id}, marking restart pending: {e}")
         from core.state import system_state
@@ -340,15 +349,8 @@ def serve_plugin_ui(plugin_id, filename):
     
     logger.debug(f"[UISearch] Request for {plugin_id}/{filename} (Cleaned ID: {clean_id})")
     
-    # Possible base directories for plugins
-    base_dirs = [
-        str(plugins_dir),
-        str(Path(__file__).parent.parent.parent / "plugins"), # Fallback for core plugins
-    ]
-    # Check for env override
-    core_env = os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR')
-    if core_env:
-        base_dirs.append(str(core_env))
+    # Canonical base directory for plugins
+    base_dirs = [str(plugins_dir)]
 
     ui_dir = None
     for base in base_dirs:
@@ -394,15 +396,8 @@ def serve_plugin_static(plugin_id, filename):
     
     logger.debug(f"[AssetSearch] Request for {plugin_id}/{filename} (Cleaned ID: {clean_id})")
     
-    # Possible base directories for plugins
-    base_dirs = [
-        str(plugins_dir),
-        str(Path(__file__).parent.parent.parent / "plugins"), # Fallback for core plugins
-    ]
-    # Check for env override
-    core_env = os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR')
-    if core_env:
-        base_dirs.append(str(core_env))
+    # Canonical base directory for plugins
+    base_dirs = [str(plugins_dir)]
 
     static_dir = None
     for base in base_dirs:

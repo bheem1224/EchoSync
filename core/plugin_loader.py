@@ -153,6 +153,8 @@ class PluginLoader:
     Registers them with the PluginRegistry and collects Flask blueprints.
     """
 
+    _load_lock = threading.Lock()
+
     def __init__(self, app_root: Path):
         self.app_root = Path(app_root)
         self.plugins_dir = Path(config_manager.get_plugins_dir())
@@ -162,86 +164,68 @@ class PluginLoader:
         """Perform a true Zero-Downtime hot reload of a plugin."""
         logger.info(f"🔄 HOT-SWAP INITIATED: {plugin_id}")
         
-        # 1. Normalize ID and determine channel
+        # 1. Resolve Namespace and Channel from DB
         from database.config_database import get_config_database
         db = get_config_database()
-        base_ns_from_db = db.get_service_name(plugin_id)
+        base_ns = db.get_service_name(plugin_id)
 
-        if not base_ns_from_db:
+        if not base_ns:
              raise ValueError(f"Plugin ID {plugin_id} not found in database for reload")
 
-        # Extract namespace and path
-        base_ns = base_ns_from_db.split('@')[0].replace('core.', '').replace('plugin.', '')
+        # Clean namespace (remove @channel suffix for path resolution)
+        clean_ns = base_ns.split('@')[0]
+        channel = base_ns.split('@')[1] if '@' in base_ns else 'stable'
         
-        # Check channel preference from database if not in ID
-        channel = config_manager.get_plugin_channel(base_ns) or 'stable'
-        if '@beta' in base_ns_from_db:
-            channel = 'beta'
-
-        ns_parts = base_ns.split('.')
-        if len(ns_parts) >= 2:
-            author = ns_parts[0]
-            plugin_name = ".".join(ns_parts[1:])
-        else:
-            author = "unknown"
-            plugin_name = base_ns
-
-        # 2. Resolve Path
-        if author and author != "unknown":
-            plugin_dir = self.plugins_dir / author / plugin_name
-        else:
-            plugin_dir = self.plugins_dir / base_ns
-
+        # Determine directory structure (Author.Plugin or Flat)
+        folder_path = clean_ns.replace('.', os.sep)
+        plugin_dir = self.plugins_dir / folder_path
+        
         # Candidate 2: Flat fallback if author-nested doesn't exist
-        if author and author != "unknown" and not plugin_dir.exists():
-             plugin_dir = self.plugins_dir / base_ns
+        if not plugin_dir.exists():
+             plugin_dir = self.plugins_dir / clean_ns.split('.')[-1]
 
         # Handle Beta Folder Nesting
         if channel == 'beta' and (plugin_dir / 'beta').exists():
             plugin_dir = plugin_dir / 'beta'
 
         if not plugin_dir.exists():
-            # Final exhaustive search if all else fails
             logger.error(f"Cannot reload {plugin_id}: path does not exist (Searched {plugin_dir})")
             return
 
         logger.info(f"Reloading {plugin_id} ({channel}) from {plugin_dir}")
 
-        # 3. Kill Workers
+        # 2. Kill Workers
         try:
             from core.job_queue import job_queue
             job_queue.kill_jobs_by_plugin(plugin_id)
         except Exception as e:
             logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
 
-        # 4. Purge Memory
-        clean_id = f"{author}/{plugin_name}" if author != "unknown" else base_ns
-        module_names = [f"plugins.{clean_id.replace('/', '.')}", f"plugins.{base_ns}"]
+        # 3. Purge Memory (Recursive)
+        # We purge both the potential namespace variants
+        module_names = [f"plugins.{clean_ns}", f"plugins.{clean_ns.replace('.', '_')}"]
         
         for module_name in module_names:
             if module_name in sys.modules:
-                logger.debug(f"Purging {module_name} from sys.modules")
-                submodules = [m for m in sys.modules if m.startswith(module_name + ".")]
+                logger.debug(f"Purging {module_name} and submodules from sys.modules")
+                submodules = [m for m in list(sys.modules.keys()) if m.startswith(module_name + ".")]
                 for m in submodules:
                     del sys.modules[m]
                 del sys.modules[module_name]
 
-        # 5. Reload Package
+        # 4. Reload Package
         try:
-            # Determine if disabled
             disabled = config_manager.get_disabled_providers()
-            is_disabled = base_ns in disabled or plugin_id in disabled
+            is_disabled = clean_ns in disabled or str(plugin_id) in disabled
             
-            # Re-load
             success = self._load_plugin_package(
-                clean_id, 
+                clean_ns, 
                 self.plugins_dir.name, 
                 'community', 
                 is_beta=(channel == 'beta'), 
                 is_disabled=is_disabled
             )
             if success is False:
-                logger.error(f"Live-swap failed to load module for {plugin_id}")
                 raise Exception(f"Live-swap failed to load module for {plugin_id}")
             logger.info(f"✅ Successfully live-swapped: {plugin_id}")
         except Exception as e:
@@ -249,63 +233,44 @@ class PluginLoader:
             raise
 
     def load_all(self):
-        """Scan and load all providers and plugins based on database definitions."""
-        logger.info("Starting plugin discovery...")
-        logger.debug(f"Using plugins directory: {self.plugins_dir}")
-
+        """Scan and load all plugins based on database definitions."""
+        logger.info("Starting plugin discovery from database...")
+        
         safe_mode = os.environ.get('ECHOSYNC_SAFE_MODE') == '1' or config_manager.get('safe_mode') == True
         if safe_mode:
-            logger.critical("SAFE MODE is active. Skipping discovery of community plugins.")
+            logger.critical("SAFE MODE is active. Skipping community plugin discovery.")
             return
 
         import sqlite3
-        import json
+        from database.config_database import get_config_database
+        db = get_config_database()
         
+        active_services = []
         try:
-            conn = sqlite3.connect(str(config_manager.database_path))
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
-            c.execute("SELECT namespace, plugin_id FROM services WHERE is_active = 1")
-            active_services = c.fetchall()
-            conn.close()
+            with db._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
+                c.execute("SELECT namespace, plugin_id FROM services WHERE is_active = 1")
+                active_services = c.fetchall()
         except Exception as e:
-            logger.error(f"Failed to query active services from database: {e}")
+            logger.error(f"Failed to query active services: {e}")
             return
-
-        all_requirements = set()
-
-        def _collect_requirements(manifest_file: Path):
-            if manifest_file.exists():
-                try:
-                    manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                    reqs = manifest_data.get("requirements", [])
-                    for req in reqs:
-                        all_requirements.add(req)
-                except Exception as e:
-                    logger.error(f"Failed to read manifest {manifest_file}: {e}")
-
-        # List of plugins to load
-        plugins_to_load = []
 
         for row in active_services:
             namespace = row['namespace']
-            if not namespace:
-                continue
+            if not namespace: continue
             
-            # e.g., EchoSync.spotify@beta
-            parts = namespace.split('@')
-            base_ns = parts[0]
-            channel = parts[1] if len(parts) > 1 else 'stable'
+            # e.g., EchoSync.tidal@beta
+            clean_ns = namespace.split('@')[0]
+            channel = namespace.split('@')[1] if '@' in namespace else 'stable'
 
-            ns_parts = base_ns.split('.')
-            if len(ns_parts) >= 2:
-                author = ns_parts[0]
-                plugin_name = ".".join(ns_parts[1:])
-            else:
-                author = "unknown"
-                plugin_name = base_ns
+            folder_path = clean_ns.replace('.', os.sep)
+            plugin_dir = self.plugins_dir / folder_path
+            
+            # Fallback for flat structure
+            if not plugin_dir.exists():
+                plugin_dir = self.plugins_dir / clean_ns.split('.')[-1]
 
-            plugin_dir = self.plugins_dir / author / plugin_name
             if channel == 'beta':
                 plugin_dir = plugin_dir / 'beta'
 
@@ -314,61 +279,34 @@ class PluginLoader:
                 continue
 
             manifest_file = plugin_dir / "manifest.json"
-            _collect_requirements(manifest_file)
-
-            plugins_to_load.append({
-                'namespace': namespace,
-                'author': author,
-                'plugin_name': plugin_name,
-                'channel': channel,
-                'plugin_dir': plugin_dir,
-                'manifest_file': manifest_file
-            })
-
-        # 0. Set up Plugin VENV and install dependencies
-        try:
-            if all_requirements:
-                setup_plugin_venv(self.plugins_dir, all_requirements)
-        except Exception as e:
-            logger.critical(f"Failed to setup plugin virtual environment: {e}")
-            sys.exit(1) # Fatal error if we can't setup venv
-
-        # 1. Load Plugins from DB
-        for p in plugins_to_load:
-            provider_name = f"{p['author']}/{p['plugin_name']}"
-            is_beta = (p['channel'] == 'beta')
-            plugin_dir = p['plugin_dir']
-            manifest_file = p['manifest_file']
-            
             init_file = plugin_dir / "__init__.py"
             wasm_file = plugin_dir / "main.wasm"
 
             if not init_file.exists() and not wasm_file.exists():
-                logger.error(f"No entry point (__init__.py or main.wasm) found in {plugin_dir}")
+                logger.error(f"No entry point found in {plugin_dir}")
                 continue
 
             # Security Scan
-            bypass_security = False
             privileged = False
+            bypass_security = False
             if manifest_file.exists():
                 try:
                     manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                    if manifest_data.get("author") == "EchoSync" and manifest_data.get("verified_source") == "official":
+                    if manifest_data.get("verified_source") == "official":
                         bypass_security = True
-                        logger.info(f"Bypassing security scan for official plugin: {provider_name}")
                     privileged = manifest_data.get("privileged") is True
-                except Exception as e:
-                    logger.error(f"Failed to read manifest for {provider_name} during security check: {e}")
+                except Exception:
+                    pass
 
-            if wasm_file.exists() and not init_file.exists():
-                logger.info(f"WASM plugin detected: {provider_name}. Bypassing AST security scan.")
+            if wasm_file.exists():
                 bypass_security = True
 
-            if not bypass_security and not self._security_scan_package(plugin_dir, provider_name, privileged=privileged):
-                logger.warning(f"Plugin '{provider_name}' rejected by security scanner. Skipping.")
+            if not bypass_security and not self._security_scan_package(plugin_dir, clean_ns, privileged=privileged):
+                logger.warning(f"Plugin '{clean_ns}' rejected by security scanner.")
                 continue
 
-            self._load_plugin_package(provider_name, 'plugins', 'community', is_beta=is_beta, is_disabled=False)
+            # Load the package
+            self._load_plugin_package(clean_ns, self.plugins_dir.name, 'community', is_beta=(channel == 'beta'))
 
         logger.info(f"Plugin discovery complete. Loaded {len(self.loaded_blueprints)} blueprints.")
 
@@ -432,227 +370,166 @@ class PluginLoader:
         except Exception as e:
             logger.error(f"Failed to update version in DB for {provider_id}: {e}")
 
-    def _load_plugin_package(self, name: str, parent_dir_name: str, source_type: str, is_beta: bool = False, is_disabled: bool = False):
+    def _load_plugin_package(self, namespace: str, is_beta: bool = False, is_disabled: bool = False):
         """
         Dynamically import a plugin package and register its exports.
-
-        Args:
-            name: The package name or path (e.g., 'plex' or 'EchoSync/listenbrainz').
-            parent_dir_name: The parent directory name (e.g., 'providers' or 'plugins').
-            source_type: 'core' or 'community'.
-            is_beta: True if loading from the 'beta' subfolder.
-            is_disabled: True if the plugin is marked as disabled in config.
         """
-        # Normalize name for module and path
-        # Module uses dots, Path uses slashes
-        clean_name = name.replace('/', '.')
-        path_name = name.replace('.', '/')
-
-        if is_beta:
-            module_path = f"{parent_dir_name}.{clean_name}.beta"
-        else:
-            module_path = f"{parent_dir_name}.{clean_name}"
-        added_vendor_path = False
-        try:
-            # 0. Try to extract metadata from manifest before loading class
-            version = "Unknown"
-            author = "Unknown"
-            category = "provider"
-            package_dir = self.app_root / parent_dir_name / path_name
-            if is_beta:
-                package_dir = package_dir / "beta"
+        with self._load_lock:
+            # Normalize namespace for module and path
+            clean_ns = namespace.replace('/', '.')
+            path_name = clean_ns.replace('.', os.sep)
             
-            manifest_file = package_dir / "manifest.json"
-            manifest_data = {}
-            if manifest_file.exists():
-                try:
-                    manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                    version = manifest_data.get("version", "Unknown")
-                    author = manifest_data.get("author", "Unknown")
-                    category = manifest_data.get("category", "provider")
-                except Exception:
-                    pass
-
-            # Standardized ID Resolution: Use manifest ID if available, else prefix with source type
-            if manifest_data.get("id"):
-                provider_id = manifest_data["id"]
-            elif source_type == 'community':
-                provider_id = f"plugin.{clean_name}"
+            if is_beta:
+                module_path = f"plugins.{clean_ns}.beta"
             else:
-                provider_id = clean_name
+                module_path = f"plugins.{clean_ns}"
 
-            # If disabled, register a placeholder and return early
-            if is_disabled:
+            try:
+                # 0. Extract metadata from manifest
+                version = "Unknown"
+                author = "Unknown"
+                category = "provider"
                 
-                # Create a simple placeholder class instead of importing from legacy core.provider
-                class DisabledPlugin(PluginBase):
-                    name = provider_id
-                    is_enabled = False
-                    
-                DisabledPlugin.version = version
-                DisabledPlugin.author = author
-                DisabledPlugin.category = category
+                package_dir = self.plugins_dir / path_name
+                # Fallback for flat structure
+                if not package_dir.exists():
+                    package_dir = self.plugins_dir / clean_ns.split('.')[-1]
                 
-                PluginRegistry.register(DisabledPlugin, name=provider_id, source_type=source_type)
-                self._update_db_version(provider_id, version, clean_name)
-                logger.info(f"Registered disabled plugin: {provider_id} (v{version})")
-                return
-
-
-
-            # Handle WASM Plugins
-            wasm_file = package_dir / "main.wasm"
-            if wasm_file.exists() and not (package_dir / "__init__.py").exists():
-                logger.info(f"Loading WASM plugin: {name}")
-                from core.plugin_sdk import WasmPluginWrapper
-                wrapper = WasmPluginWrapper(str(wasm_file.absolute()))
-                wrapper.plugin_id_int = generate_plugin_id(provider_id)
-                wrapper.version = version
-                wrapper.author = author
-                wrapper.category = category
-
-                # In order to fit the PluginRegistry generic type expectations, we wrap it in a mock class
-                class WasmClass:
-                    plugin_id_int = wrapper.plugin_id_int
-                    version = wrapper.version
-                    author = wrapper.author
-                    category = wrapper.category
-                    _wrapper_instance = wrapper
-
-                    def __init__(self):
+                if is_beta:
+                    package_dir = package_dir / "beta"
+                
+                manifest_file = package_dir / "manifest.json"
+                manifest_data = {}
+                if manifest_file.exists():
+                    try:
+                        manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                        version = manifest_data.get("version", "Unknown")
+                        author = manifest_data.get("author", "Unknown")
+                        category = manifest_data.get("category", "provider")
+                    except Exception:
                         pass
 
-                PluginRegistry.register(WasmClass, name=provider_id, source_type=source_type)
-                self._update_db_version(provider_id, version, clean_name)
-                logger.info(f"Registered WASM plugin: {provider_id}")
-                return
+                # Standardized ID Resolution
+                provider_id = manifest_data.get("id") or f"plugin.{clean_ns}"
 
-            # Dynamic import
-            plugins_parent_str = str(self.plugins_dir.parent) if source_type == 'community' else str(self.app_root)
-            added_to_path = False
-            if plugins_parent_str not in sys.path:
-                sys.path.insert(0, plugins_parent_str)
-                added_to_path = True
-            
-            try:
-                # MISSION: Dynamic Import Pathing Patch (Namespace Injection)
-                # When a plugin executes an absolute import (e.g., from plugins.EchoSync.slskd.client import SlskdProvider)
-                # Python attempts to resolve the file from the disk because the submodule is not yet loaded.
-                # We fix this by injecting the channel's directory into the base namespace's __path__.
-                base_module_name = f"{parent_dir_name}.{clean_name}"
+                # Handle Disabled State
+                if is_disabled:
+                    class DisabledPlugin(PluginBase):
+                        name = provider_id
+                        is_enabled = False
+                    DisabledPlugin.version = version
+                    DisabledPlugin.author = author
+                    DisabledPlugin.category = category
+                    
+                    PluginRegistry.register(DisabledPlugin, name=provider_id, source_type='community')
+                    self._update_db_version(provider_id, version, clean_ns)
+                    logger.info(f"Registered disabled plugin: {provider_id} (v{version})")
+                    return
+
+                # Handle WASM Plugins
+                wasm_file = package_dir / "main.wasm"
+                if wasm_file.exists() and not (package_dir / "__init__.py").exists():
+                    logger.info(f"Loading WASM plugin: {clean_ns}")
+                    from core.plugin_sdk import WasmPluginWrapper
+                    wrapper = WasmPluginWrapper(str(wasm_file.absolute()))
+                    wrapper.plugin_id_int = generate_plugin_id(provider_id)
+                    wrapper.version = version
+                    wrapper.author = author
+                    wrapper.category = category
+
+                    class WasmClass:
+                        plugin_id_int = wrapper.plugin_id_int
+                        version = wrapper.version
+                        author = wrapper.author
+                        category = wrapper.category
+                        _wrapper_instance = wrapper
+                        def __init__(self): pass
+
+                    PluginRegistry.register(WasmClass, name=provider_id, source_type='community')
+                    self._update_db_version(provider_id, version, clean_ns)
+                    return
+
+                # Dynamic import with Namespace Bridging
+                plugins_parent_str = str(self.plugins_dir.parent)
+                added_to_path = False
+                if plugins_parent_str not in sys.path:
+                    sys.path.insert(0, plugins_parent_str)
+                    added_to_path = True
+                
                 try:
-                    # 1. Implicitly load the base namespace package
-                    # We invalidate caches first to ensure we see newly created directories
-                    importlib.invalidate_caches()
-                    base_module = importlib.import_module(base_module_name)
+                    # MISSION: Dynamic Import Pathing Patch (Namespace Injection)
+                    base_module_name = f"plugins.{clean_ns}"
+                    try:
+                        importlib.invalidate_caches()
+                        base_module = importlib.import_module(base_module_name)
 
-                    # 2. Inject the active channel folder into the base module's search path
-                    channel_dir = str(package_dir.absolute())
-                    if hasattr(base_module, '__path__'):
-                        # Ensure we are working with a list (supports _NamespacePath conversion)
-                        # Some versions of Python/environments prefer a real list for certain operations
-                        if not isinstance(base_module.__path__, list):
-                            base_module.__path__ = list(base_module.__path__)
-                        
-                        if channel_dir not in base_module.__path__:
-                            # Inject at index 0 so the active channel takes priority
-                            base_module.__path__.insert(0, channel_dir)
-                            # Invalidate again after modification to ensure submodules are found in new path
-                            importlib.invalidate_caches()
-                            logger.debug(f"Path Patch: Injected {channel_dir} into {base_module_name} __path__")
-                except Exception as bridge_err:
-                    logger.debug(f"Path Patch failed for {base_module_name}: {bridge_err}")
+                        channel_dir = str(package_dir.absolute())
+                        if hasattr(base_module, '__path__'):
+                            if not isinstance(base_module.__path__, list):
+                                base_module.__path__ = list(base_module.__path__)
+                            
+                            if channel_dir not in base_module.__path__:
+                                base_module.__path__.insert(0, channel_dir)
+                                importlib.invalidate_caches()
+                                logger.debug(f"Path Patch: Injected {channel_dir} into {base_module_name}")
+                    except Exception as bridge_err:
+                        logger.debug(f"Path Patch failed for {base_module_name}: {bridge_err}")
 
-                micro_venv_dir = package_dir / "micro-venv"
-                micro_venv_str = str(micro_venv_dir)
-                added_micro_venv = False
-                if micro_venv_dir.exists():
-                    sys.path.insert(0, micro_venv_str)
-                    added_micro_venv = True
-                    logger.debug(f"Injected micro-venv into sys.path for {module_path}")
+                    # Micro-Venv Injection
+                    micro_venv_dir = package_dir / "micro-venv"
+                    micro_venv_str = str(micro_venv_dir)
+                    added_micro_venv = False
+                    if micro_venv_dir.exists():
+                        sys.path.insert(0, micro_venv_str)
+                        added_micro_venv = True
 
-                try:
-                    module = importlib.import_module(module_path)
+                    try:
+                        module = importlib.import_module(module_path)
+                    except Exception as import_e:
+                        logger.error(f"Failed to import {module_path}: {import_e}")
+                        return False
+                    finally:
+                        if added_micro_venv:
+                            sys.path.remove(micro_venv_str)
+                finally:
+                    if added_to_path:
+                        sys.path.remove(plugins_parent_str)
 
-
-                except Exception as import_e:
-                    logger.error(f"Failed to dynamically import plugin module {module_path}: {import_e}", exc_info=True)
-                    return False
-            finally:
-                if added_micro_venv and micro_venv_str in sys.path:
-                    sys.path.remove(micro_venv_str)
-                    logger.debug(f"Removed micro-venv from sys.path for {module_path}")
-                if added_to_path and plugins_parent_str in sys.path:
-                    sys.path.remove(plugins_parent_str)
-
-            # 1. Register Provider Class (if present)
-            if hasattr(module, 'ProviderClass'):
-                provider_cls = getattr(module, 'ProviderClass')
-                PluginRegistry.register(provider_cls, name=provider_id, source_type=source_type)
-                logger.debug(f"Detected ProviderClass for {provider_id}, updating DB version")
-                self._update_db_version(provider_id, version, clean_name)
-                logger.info(f"Registered PluginClass for {provider_id} (v{version})")
-            else:
-                # Fallback: Look for any ProviderBase subclass if not explicitly exported
-                logger.debug(f"No ProviderClass found in {module_path}, searching for subclasses")
-                found = False
-                for attr_name in dir(module):
-                    attr = getattr(module, attr_name)
-                    if isinstance(attr, type) and issubclass(attr, PluginBase) and attr is not PluginBase and attr.__name__ != "DisabledPlugin":
-                        try:
-                            # Instantiate and register
+                # Registration
+                if hasattr(module, 'ProviderClass'):
+                    provider_cls = getattr(module, 'ProviderClass')
+                    PluginRegistry.register(provider_cls, name=provider_id, source_type='community')
+                    self._update_db_version(provider_id, version, clean_ns)
+                else:
+                    found = False
+                    for attr_name in dir(module):
+                        attr = getattr(module, attr_name)
+                        if isinstance(attr, type) and issubclass(attr, PluginBase) and attr is not PluginBase:
                             provider_instance = attr()
-
-                            # Auto-set the fully qualified name if it didn't
-                            if hasattr(provider_instance, 'name') and provider_instance.name != plugin_id:
-                                logger.debug(f"Overriding plugin internal name '{provider_instance.name}' to strict namespace '{plugin_id}'")
-                                provider_instance.name = plugin_id
-
+                            provider_instance.name = provider_id
                             PluginRegistry.register_provider(provider_instance)
-                            logger.info(f"Loaded Plugin: {plugin_id} ({attr.__name__})")
                             found = True
                             break
-                        except Exception as e:
-                            logger.error(f"Failed to instantiate {attr.__name__} in {plugin_id}: {e}")
-                if not found:
-                    logger.debug(f"No PluginBase class found in {module_path}")
+                    if not found:
+                        logger.debug(f"No PluginBase found in {module_path}")
 
-            # 2. Collect Route Blueprints (primary + optional extras: RouteBlueprint2, RouteBlueprint3 …)
+                # Collect Blueprints
+                for bp_attr in ('RouteBlueprint', 'RouteBlueprint2', 'RouteBlueprint3'):
+                    blueprint = getattr(module, bp_attr, None)
+                    if isinstance(blueprint, Blueprint):
+                        blueprint.name = f"{provider_id}_{bp_attr.lower()}"
+                        blueprint.url_prefix = f"/api/plugins/{clean_ns}"
+                        self.loaded_blueprints.append(blueprint)
 
-            for bp_attr in ('RouteBlueprint', 'RouteBlueprint2', 'RouteBlueprint3'):
-                blueprint = getattr(module, bp_attr, None)
-                if blueprint is None:
-                    continue
-                if isinstance(blueprint, Blueprint):
-                    # Enforce blueprint namespace and URL prefix to avoid collisions
-                    plugin_id = name
-                    if bp_attr != 'RouteBlueprint':
-                        # Append the suffix for secondary blueprints
-                        plugin_id += f"_{bp_attr.lower().replace('routeblueprint', '')}"
-
-                    blueprint.name = plugin_id
-                    blueprint.url_prefix = f"/api/plugins/{name}"
-
-                    self.loaded_blueprints.append(blueprint)
-                    logger.debug(f"Collected {bp_attr} for {name} with namespace {plugin_id}")
-                else:
-                    logger.warning(f"Invalid {bp_attr} in {name}: expected flask.Blueprint, got {type(blueprint)}")
-
-        except Exception as e:
-            logger.error(f"Error loading plugin {module_path}: {e}", exc_info=True)
-            try:
-                from database.config_database import get_config_database
-                db = get_config_database()
-                with db._get_connection() as conn:
-                    c = conn.cursor()
-                    c.execute("UPDATE services SET is_active = 0 WHERE namespace LIKE ?", (f"%{clean_name}%",))
-                    conn.commit()
-            except Exception as db_err:
-                logger.error(f"Could not disable plugin {clean_name} in DB: {db_err}")
-        finally:
-            # Cleanup vendored path
-            if added_vendor_path and 'vendor_dir' in locals() and str(vendor_dir) in sys.path:
-                sys.path.remove(str(vendor_dir))
+            except Exception as e:
+                logger.error(f"Error loading plugin {namespace}: {e}", exc_info=True)
+                # Auto-disable on fatal load error
+                try:
+                    from database.config_database import get_config_database
+                    db = get_config_database()
+                    with db._get_connection() as conn:
+                        conn.execute("UPDATE services SET is_active = 0 WHERE namespace = ?", (namespace,))
+                except Exception: pass
 
     def get_all_blueprints(self) -> List[Blueprint]:
         return self.loaded_blueprints
@@ -688,79 +565,72 @@ def get_plugin(name: str) -> Optional[PluginBase]:
 
 
 def get_all_plugins() -> list:
-    plugins_map = {}  # ID-based map for deduplication and shadowing
-    
-    import os
-    core_dir = Path(os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR', Path(__file__).parent.parent / "plugins"))
+    plugins_map = {}
     community_dir = Path(config_manager.get_plugins_dir())
 
-    # Process core first, then community. Community plugins with the same ID will shadow core ones.
-    for source_type, directory in [('core', core_dir), ('community', community_dir)]:
-        if not directory.exists():
-            continue
+    if not community_dir.exists():
+        return []
 
-        # 1. Identify all plugin candidates (including nested ones)
-        candidates = []
-        for item in directory.iterdir():
-            if not item.is_dir() or item.name.startswith('_'):
-                continue
-            
-            # Check if this is a plugin (has manifest.json, __init__.py or main.wasm)
+    # 1. Identify all plugin candidates (Nexus Schema: plugins/{author}/{plugin})
+    candidates = []
+    for item in community_dir.iterdir():
+        if not item.is_dir() or item.name.startswith('_'):
+            continue
+        
+        # Case 1: Author/Plugin structure
+        found_nested = False
+        for subitem in item.iterdir():
+            if subitem.is_dir() and not subitem.name.startswith('_'):
+                if (subitem / "manifest.json").exists() or (subitem / "__init__.py").exists() or (subitem / "main.wasm").exists():
+                    candidates.append((subitem, f"{item.name}.{subitem.name}"))
+                    found_nested = True
+        
+        # Case 2: Flat structure (legacy/fallback)
+        if not found_nested:
             if (item / "manifest.json").exists() or (item / "__init__.py").exists() or (item / "main.wasm").exists():
                 candidates.append((item, item.name))
-            else:
-                # Check 1 level deeper (Nexus Schema: plugins/{author}/{plugin})
-                for subitem in item.iterdir():
-                    if subitem.is_dir() and not subitem.name.startswith('_'):
-                        if (subitem / "manifest.json").exists() or (subitem / "__init__.py").exists() or (subitem / "main.wasm").exists():
-                            candidates.append((subitem, f"{item.name}/{subitem.name}"))
 
-        for item, folder_name in candidates:
-            current_item = item
-            # Use the folder name for channel check, same as _scan_directory
-            channel = config_manager.get_plugin_channel(folder_name)
-            if channel == 'beta' and (item / 'beta').exists():
-                current_item = item / 'beta'
+    for item, namespace in candidates:
+        current_item = item
+        channel = config_manager.get_plugin_channel(namespace)
+        if channel == 'beta' and (item / 'beta').exists():
+            current_item = item / 'beta'
 
-            dot_id = folder_name.replace('/', '.')
-            plugin_info = {
-                "id": f"{source_type}.{dot_id}" if source_type == 'core' else f"plugin.{dot_id}",
-                "name": folder_name.capitalize() if source_type == 'core' else folder_name,
-                "description": f"Core provider for {folder_name}" if source_type == 'core' else "Community plugin",
-                "type": source_type,
-                "folder_name": folder_name,
-                "abs_path": str(current_item.absolute()) # Track physical location
-            }
+        plugin_info = {
+            "id": f"plugin.{namespace}",
+            "name": namespace.split('.')[-1].capitalize(),
+            "description": "Community plugin",
+            "type": "community",
+            "namespace": namespace,
+            "abs_path": str(current_item.absolute())
+        }
 
-            json_file = current_item / "manifest.json"
-            if json_file.exists():
-                try:
-                    data = json.loads(json_file.read_text(encoding="utf-8"))
-                    plugin_info.update({
-                        "name": data.get("name", plugin_info["name"]),
-                        "description": data.get("description", plugin_info["description"]),
-                        "version": data.get("version", "Unknown"),
-                        "author": data.get("author", "Unknown"),
-                        "id": data.get("id", plugin_info["id"])
-                    })
-                except Exception:
-                    pass
+        json_file = current_item / "manifest.json"
+        if json_file.exists():
+            try:
+                data = json.loads(json_file.read_text(encoding="utf-8"))
+                plugin_info.update({
+                    "name": data.get("name", plugin_info["name"]),
+                    "description": data.get("description", plugin_info["description"]),
+                    "version": data.get("version", "Unknown"),
+                    "author": data.get("author", "Unknown"),
+                    "id": data.get("id", plugin_info["id"])
+                })
+            except Exception:
+                pass
 
-            ui_manifest_file = current_item / "ui_manifest.json"
-            if ui_manifest_file.exists():
-                try:
-                    plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
+        ui_manifest_file = current_item / "ui_manifest.json"
+        if ui_manifest_file.exists():
+            try:
+                plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
 
-            # Shadowing: Store by ID. Community will overwrite Core if IDs match.
-            plugins_map[plugin_info["id"]] = plugin_info
+        plugins_map[plugin_info["id"]] = plugin_info
 
-    # Determine enabled status based on config
     disabled = config_manager.get_disabled_providers()
     final_plugins = list(plugins_map.values())
     for p in final_plugins:
-        # Check against full ID (e.g. plugin.plex or plex)
         p["enabled"] = p["id"].lower() not in [d.lower() for d in disabled]
 
     return final_plugins

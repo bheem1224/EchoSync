@@ -170,6 +170,8 @@ class ConfigDatabase:
 
                 # Indexes
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_namespace ON services(namespace)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_plugin_id ON services(plugin_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_account ON account_tokens(account_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)")
@@ -347,11 +349,25 @@ class ConfigDatabase:
 
     # Accounts
     def get_service_name(self, service_id: int) -> Optional[str]:
+        """Resolve a service ID (PK or plugin_id) to its canonical namespace or name."""
         with self._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT name FROM services WHERE id=? OR plugin_id=?", (service_id, service_id))
+            c.execute("SELECT namespace, name FROM services WHERE id=? OR plugin_id=?", (service_id, service_id))
             row = c.fetchone()
-            return row[0] if row else None
+            if not row: return None
+            ns, name = row['namespace'], row['name']
+            return ns if ns and ns != 'legacy' else name
+
+    def get_service_id(self, identifier: Any) -> Optional[int]:
+        """Resolve a name, namespace, or plugin_id to the primary integer ID."""
+        with self._get_connection() as conn:
+            c = conn.cursor()
+            if isinstance(identifier, (int, str)) and str(identifier).isdigit():
+                c.execute("SELECT id FROM services WHERE id=? OR plugin_id=?", (int(identifier), int(identifier)))
+            else:
+                c.execute("SELECT id FROM services WHERE name=? OR namespace=?", (identifier, identifier))
+            row = c.fetchone()
+            return int(row[0]) if row else None
 
     def get_accounts(self, service_id: Optional[int] = None, is_active: Optional[bool] = None) -> List[Dict[str, Any]]:
         try:

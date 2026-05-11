@@ -265,23 +265,21 @@ class PluginStore:
                 plugin["verified_source"] = "official"
                 plugin["author"] = "EchoSync"
 
-            # Task 1: Resolve Active Version from Core or Community
-            # Precedence: Community (/data/plugins) > Core (/app/plugins)
+            # Resolve Active Version from Community (/data/plugins)
             clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
-            folder_path = clean_id.replace('.', '/')
+            folder_path = clean_id.replace('.', os.sep)
             comm_dir = self.plugins_dir / folder_path
-            # Resolve core directory dynamically (ENV > Fallback)
-            core_root = Path(os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR', Path(__file__).parent.parent / "plugins"))
-            core_dir = core_root / folder_path
+            
+            # Fallback for flat structure
+            if not comm_dir.exists():
+                comm_dir = self.plugins_dir / clean_id.split('.')[-1]
             
             comm_manifest = comm_dir / "manifest.json"
-            core_manifest = core_dir / "manifest.json"
             
             plugin["_installed"] = False
             plugin["installed_version"] = None
             plugin["installed_channel"] = config_manager.get_plugin_channel(plugin_id)
             
-            # Check community first (updates/overrides)
             if comm_dir.exists():
                 beta_manifest = comm_dir / "beta" / "manifest.json"
                 if plugin["installed_channel"] == "beta" and beta_manifest.exists():
@@ -292,10 +290,6 @@ class PluginStore:
                     active_manifest_path = comm_manifest
                 else:
                     active_manifest_path = None
-            # Check core second (bundled)
-            elif core_dir.exists() and core_manifest.exists():
-                plugin["_installed"] = True
-                active_manifest_path = core_manifest
             else:
                 active_manifest_path = None
             plugin["update_available"] = False
@@ -584,43 +578,31 @@ class PluginStore:
                 except Exception as e:
                     logger.error(f"Failed to synchronize database state for {plugin_id}: {e}")
 
-                # Hot-Swap Architecture: Perform Zero-Downtime Reload instead of setting restart_pending
+                # Hot-Swap Architecture: Perform Zero-Downtime Reload
                 try:
                     from core.plugin_loader import PluginLoader
                     import zlib
                     int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
 
-                    # Fix Chicken and Egg for fresh installations
+                    # Register in DB explicitly before reload to ensure ID resolution works
                     from database.config_database import get_config_database
                     db = get_config_database()
-
-                    # Make sure the plugin namespace is registered in the database before reload
-                    # We pass the int_plugin_id to explicitly bind it if register_service supports it
-                    try:
-                        # get_or_create_service_id implicitly creates it. We should ideally update
-                        # the service entry with the plugin_id, but the simplest way to ensure
-                        # get_service_name works is to have it in the DB.
-                        # Wait, the table structure: id (INTEGER PRIMARY KEY), name (TEXT UNIQUE), namespace (TEXT), plugin_id (INTEGER)
-                        # We should make sure the DB has a row where name=plugin_id and id=int_plugin_id ?
-                        # Actually, `get_service_name` uses `SELECT name FROM services WHERE id=?`
-                        # So we MUST insert a row where `id` == `int_plugin_id` and `name` == `plugin_id`.
-                        # Let's write a small raw SQL execution for this to guarantee it exists with the correct ID.
-                        import contextlib
-                        with contextlib.closing(db._get_connection()) as conn:
-                            c = conn.cursor()
-                            c.execute("INSERT OR IGNORE INTO services (id, name, namespace, display_name, service_type) VALUES (?, ?, ?, ?, ?)",
-                                      (int_plugin_id, plugin_id, 'legacy', plugin_info.get("name", plugin_id), 'plugin'))
-                            conn.commit()
-                    except Exception as db_err:
-                        logger.warning(f"Could not pre-register plugin {plugin_id} in DB: {db_err}")
+                    db.register_service(
+                        name=clean_id,
+                        display_name=plugin_info.get("name", clean_id),
+                        service_type=plugin_info.get("category", "provider"),
+                        description=plugin_info.get("description", ""),
+                        namespace=plugin_id,
+                        plugin_id=int_plugin_id
+                    )
 
                     app_root = Path(__file__).parent.parent
                     loader = PluginLoader(app_root)
                     loader.reload_plugin(int_plugin_id)
                     restart_required = False
-                    logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}). No restart required.")
+                    logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}).")
                 except Exception as e:
-                    logger.warning(f"Hot-swap failed, falling back to restart requirement: {e}")
+                    logger.warning(f"Hot-swap failed, falling back to restart: {e}")
                     system_state.restart_pending = True
                     restart_required = True
 
