@@ -552,6 +552,14 @@ class PluginLoader:
                     except Exception as bridge_err:
                         logger.debug(f"Could not bridge parent module path: {bridge_err}")
 
+                micro_venv_dir = package_dir / "micro-venv"
+                micro_venv_str = str(micro_venv_dir)
+                added_micro_venv = False
+                if micro_venv_dir.exists():
+                    sys.path.insert(0, micro_venv_str)
+                    added_micro_venv = True
+                    logger.debug(f"Injected micro-venv into sys.path for {module_path}")
+
                 try:
                     module = importlib.import_module(module_path)
 
@@ -569,6 +577,9 @@ class PluginLoader:
                     logger.error(f"Failed to dynamically import plugin module {module_path}: {import_e}", exc_info=True)
                     return False
             finally:
+                if added_micro_venv and micro_venv_str in sys.path:
+                    sys.path.remove(micro_venv_str)
+                    logger.debug(f"Removed micro-venv from sys.path for {module_path}")
                 if added_to_path and plugins_parent_str in sys.path:
                     sys.path.remove(plugins_parent_str)
 

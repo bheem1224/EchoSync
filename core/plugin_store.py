@@ -528,6 +528,27 @@ class PluginStore:
                 os.rename(str(tmp_dir), str(target_dir))
                 logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
 
+                # Task 1: Localized Dependency Installation (Micro-Venv)
+                requirements_file = target_dir / "requirements.txt"
+                if requirements_file.exists():
+                    logger.info(f"Found requirements.txt for {plugin_id}, installing into micro-venv")
+                    micro_venv_dir = target_dir / "micro-venv"
+                    import subprocess
+                    try:
+                        # Use uv pip install --target to isolate dependencies
+                        subprocess.run(
+                            ["uv", "pip", "install", "--target", str(micro_venv_dir), "-r", str(requirements_file)],
+                            check=True,
+                            capture_output=True,
+                            text=True
+                        )
+                        logger.info(f"Successfully installed micro-venv dependencies for {plugin_id}")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Failed to install micro-venv dependencies for {plugin_id}: {e.stderr}")
+                        # Depending on strictness, we could return False here, but we will let it continue
+                        # and log the error. Usually a broken requirements.txt means the plugin might fail to load.
+
+
                 # Task 5: Persist Channel Preference (Nexus normalization)
                 clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
                 config_manager.set(f'plugins.{clean_id}.channel', channel)
