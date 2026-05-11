@@ -542,15 +542,23 @@ class PluginLoader:
                 base_module_name = f"{parent_dir_name}.{clean_name}"
                 try:
                     # 1. Implicitly load the base namespace package
+                    # We invalidate caches first to ensure we see newly created directories
+                    importlib.invalidate_caches()
                     base_module = importlib.import_module(base_module_name)
 
                     # 2. Inject the active channel folder into the base module's search path
                     channel_dir = str(package_dir.absolute())
                     if hasattr(base_module, '__path__'):
-                        # Ensure we are working with a list-like structure for insertion (supports _NamespacePath)
+                        # Ensure we are working with a list (supports _NamespacePath conversion)
+                        # Some versions of Python/environments prefer a real list for certain operations
+                        if not isinstance(base_module.__path__, list):
+                            base_module.__path__ = list(base_module.__path__)
+                        
                         if channel_dir not in base_module.__path__:
                             # Inject at index 0 so the active channel takes priority
                             base_module.__path__.insert(0, channel_dir)
+                            # Invalidate again after modification to ensure submodules are found in new path
+                            importlib.invalidate_caches()
                             logger.debug(f"Path Patch: Injected {channel_dir} into {base_module_name} __path__")
                 except Exception as bridge_err:
                     logger.debug(f"Path Patch failed for {base_module_name}: {bridge_err}")
