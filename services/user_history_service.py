@@ -42,7 +42,7 @@ class UserHistoryService:
     
     def sync_baseline_history(self) -> Dict[str, int]:
         """
-        Synchronize baseline user history from active media server to working.db.
+        Synchronize baseline user history from active media servers to working.db.
         
         This should run after music_database.db has been populated with library metadata
         but before the Suggestion Engine starts making recommendations.
@@ -50,7 +50,7 @@ class UserHistoryService:
         Returns:
             Statistics dict with keys:
             - accounts_processed: Number of accounts synced
-            - interactions_fetched: Total interactions received from provider
+            - interactions_fetched: Total interactions received from providers
             - matches_found: Interactions successfully matched to local tracks
             - ratings_imported: UserRating records created
             - errors: List of error messages encountered
@@ -66,97 +66,107 @@ class UserHistoryService:
         }
         
         try:
-            # Get all active Plex accounts (currently only Plex supports history fetching)
-            plex_plugin_id = self.config_db.get_or_create_service_id('plex')
-            accounts = self.config_db.get_accounts(service_id=plex_plugin_id, is_active=True)
+            # Get all active media servers
+            from core.plugin_loader import PluginRegistry
+            active_servers = PluginRegistry.get_active_services_by_type('media_server')
             
-            if not accounts:
-                self.logger.info("No active Plex accounts found for history sync")
+            if not active_servers:
+                self.logger.info("No active media servers found for history sync")
                 return stats
 
-            # Day-1 bootstrap: ensure all active Plex managed users exist before history sync.
-            stats['users_synced'] = self.sync_active_plex_users_to_working_db(accounts)
-            
-            # Get Plex provider to call fetch_user_history()
-            try:
-                from core.plugin_loader import PluginRegistry, ServiceRegistry
-                plex_provider = PluginRegistry.create_instance('plex')
-            except Exception as e:
-                error_msg = f"Failed to create Plex provider instance: {e}"
-                self.logger.error(error_msg)
-                stats['errors'].append(error_msg)
-                return stats
-            
-            # Check if provider supports history fetching
-            if not hasattr(plex_provider, 'fetch_user_history'):
-                error_msg = "Plex provider does not support fetch_user_history()"
-                self.logger.error(error_msg)
-                stats['errors'].append(error_msg)
-                return stats
-            
-            # Sync history for each account
-            for account in accounts:
-                account_id_raw = account['id']
-                account_name = account.get('display_name') or account.get('account_name') or 'Unknown'
-
-                # Explicit int cast: PlexAPI silently falls back to global admin history
-                # when accountID is a string — guard here so a misconfigured config DB
-                # row (e.g. after a JSON round-trip) never poisons the data.
+            for server_name in active_servers:
                 try:
-                    account_id = int(account_id_raw)
-                except (TypeError, ValueError):
-                    self.logger.error(
-                        f"Skipping account '{account_name}': account_id {account_id_raw!r} "
-                        "cannot be cast to int — would risk leaking admin history"
-                    )
-                    stats['errors'].append(f"Bad account_id for {account_name}: {account_id_raw!r}")
-                    continue
-
-                try:
-                    self.logger.info(f"Syncing history for account {account_name} (ID: {account_id})")
+                    plugin_id = self.config_db.get_or_create_service_id(server_name)
+                    accounts = self.config_db.get_accounts(service_id=plugin_id, is_active=True)
                     
-                    # Fetch history from provider
-                    interactions = plex_provider.fetch_user_history(account_id)
-                    stats['interactions_fetched'] += len(interactions)
-                    
-                    if not interactions:
-                        self.logger.info(f"No history items found for account {account_name}")
-                        stats['accounts_processed'] += 1
+                    if not accounts:
+                        self.logger.debug(f"No active accounts found for {server_name}")
                         continue
+
+                    # Ensure all active managed users exist before history sync.
+                    stats['users_synced'] += self.sync_active_media_server_users(server_name, accounts)
                     
-                    # Get or create user in working_db
-                    working_user = self._get_or_create_working_user(
-                        account_id,
-                        account_name,
-                        account.get('user_id'),
-                        account.get('account_email')
-                    )
-                    
-                    if not working_user:
-                        error_msg = f"Failed to create working user for account {account_name}"
+                    # Create provider instance
+                    try:
+                        provider = PluginRegistry.create_instance(server_name)
+                    except Exception as e:
+                        error_msg = f"Failed to create provider instance for {server_name}: {e}"
                         self.logger.error(error_msg)
                         stats['errors'].append(error_msg)
                         continue
                     
-                    # Process each interaction
-                    matched_count = self._process_interactions(
-                        working_user.id,
-                        interactions,
-                        stats,
-                        plugin_id=plex_plugin_id
-                    )
+                    # Check if provider supports history fetching
+                    if not hasattr(provider, 'fetch_user_history'):
+                        self.logger.debug(f"Provider {server_name} does not support fetch_user_history()")
+                        continue
                     
-                    self.logger.info(
-                        f"Completed history sync for {account_name}: "
-                        f"{len(interactions)} interactions, {matched_count} matched to local tracks"
-                    )
-                    stats['accounts_processed'] += 1
-                    stats['matches_found'] += matched_count
-                    
+                    # Sync history for each account
+                    for account in accounts:
+                        account_id_raw = account['id']
+                        account_name = account.get('display_name') or account.get('account_name') or 'Unknown'
+
+                        # Handle provider-specific account ID casting/validation
+                        try:
+                            # For Plex, we need an int ID. For others, keep as is.
+                            if server_name.lower() == 'plex':
+                                account_id = int(account_id_raw)
+                            else:
+                                account_id = account_id_raw
+                        except (TypeError, ValueError):
+                            self.logger.error(
+                                f"Skipping account '{account_name}' on {server_name}: "
+                                f"account_id {account_id_raw!r} invalid"
+                            )
+                            stats['errors'].append(f"Bad account_id for {account_name} on {server_name}")
+                            continue
+
+                        try:
+                            self.logger.info(f"Syncing history from {server_name} for account {account_name}")
+                            
+                            # Fetch history from provider
+                            interactions = provider.fetch_user_history(account_id)
+                            stats['interactions_fetched'] += len(interactions)
+                            
+                            if not interactions:
+                                self.logger.info(f"No history items found for account {account_name}")
+                                stats['accounts_processed'] += 1
+                                continue
+                            
+                            # Get or create user in working_db
+                            working_user = self._get_or_create_working_user(
+                                account_id=account_id,
+                                account_name=account_name,
+                                provider_user_id=account.get('user_id'),
+                                provider=server_name
+                            )
+                            
+                            if not working_user:
+                                error_msg = f"Failed to create working user for account {account_name}"
+                                self.logger.error(error_msg)
+                                stats['errors'].append(error_msg)
+                                continue
+                            
+                            # Process each interaction
+                            matched_count = self._process_interactions(
+                                account_id=working_user.id,
+                                interactions=interactions,
+                                stats=stats,
+                                plugin_id=plugin_id
+                            )
+                            
+                            self.logger.info(
+                                f"Completed history sync for {account_name}: "
+                                f"{len(interactions)} interactions, {matched_count} matched to local tracks"
+                            )
+                            stats['accounts_processed'] += 1
+                            stats['matches_found'] += matched_count
+                            
+                        except Exception as e:
+                            error_msg = f"Error syncing history for account {account_name} on {server_name}: {e}"
+                            self.logger.error(error_msg, exc_info=True)
+                            stats['errors'].append(error_msg)
                 except Exception as e:
-                    error_msg = f"Error syncing history for account {account_name}: {e}"
-                    self.logger.error(error_msg, exc_info=True)
-                    stats['errors'].append(error_msg)
+                    self.logger.error(f"Failed to process history sync for {server_name}: {e}", exc_info=True)
         
         except Exception as e:
             error_msg = f"Fatal error in sync_baseline_history: {e}"
@@ -168,36 +178,32 @@ class UserHistoryService:
     
     def _get_or_create_working_user(
         self,
-        account_id: int,
+        account_id: object,
         account_name: str,
-        plex_user_id: Optional[str] = None,
-        account_email: Optional[str] = None
+        provider_user_id: Optional[str] = None,
+        provider: str = 'unknown'
     ) -> Optional[User]:
         """
         Get or create user record in working.db.
         
-        Args:
-            account_id: Config database account ID
-            account_name: Display name for the user
-            plex_user_id: Plex user ID (for linking)
-            account_email: User's email address
-            
         Returns:
             User object from working_db, or None if creation failed
         """
         try:
             with self.working_db.session_scope() as session:
                 # Try to find existing user by provider_identifier
-                if plex_user_id:
+                if provider_user_id:
                     user = session.query(User).filter(
-                        User.provider_identifier == plex_user_id
+                        User.provider_identifier == provider_user_id,
+                        User.provider == provider
                     ).first()
                     if user:
                         return user
                 
-                # Try to find by username (account_name)
+                # Try to find by username + provider
                 user = session.query(User).filter(
-                    User.username == account_name
+                    User.username == account_name,
+                    User.provider == provider
                 ).first()
                 
                 if user:
@@ -206,8 +212,8 @@ class UserHistoryService:
                 # Create new user
                 user = User(
                     username=account_name,
-                    provider_identifier=plex_user_id,
-                    provider='plex'
+                    provider_identifier=provider_user_id,
+                    provider=provider
                 )
                 session.add(user)
                 session.commit()
@@ -217,26 +223,26 @@ class UserHistoryService:
             self.logger.error(f"Failed to get/create working user: {e}", exc_info=True)
             return None
 
-    def sync_active_plex_users_to_working_db(self, accounts: Optional[List[Dict]] = None) -> int:
-        """Ensure all active Plex accounts in config.db exist in working.db users."""
+    def sync_active_media_server_users(self, server_name: str, accounts: Optional[List[Dict]] = None) -> int:
+        """Ensure all active accounts for a server in config.db exist in working.db users."""
         users_synced = 0
         try:
             if accounts is None:
-                plex_plugin_id = self.config_db.get_or_create_service_id('plex')
-                accounts = self.config_db.get_accounts(service_id=plex_plugin_id, is_active=True)
+                plugin_id = self.config_db.get_or_create_service_id(server_name)
+                accounts = self.config_db.get_accounts(service_id=plugin_id, is_active=True)
 
             for account in accounts or []:
                 account_name = account.get('display_name') or account.get('account_name') or 'Unknown'
                 user = self._get_or_create_working_user(
                     account_id=account.get('id'),
                     account_name=account_name,
-                    plex_user_id=account.get('user_id'),
-                    account_email=account.get('account_email'),
+                    provider_user_id=account.get('user_id'),
+                    provider=server_name,
                 )
                 if user:
                     users_synced += 1
         except Exception as e:
-            self.logger.error(f"Failed syncing active Plex users to working DB: {e}", exc_info=True)
+            self.logger.error(f"Failed syncing active users for {server_name} to working DB: {e}", exc_info=True)
 
         return users_synced
     

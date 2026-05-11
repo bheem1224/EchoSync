@@ -49,27 +49,32 @@ def _get_top_listened_artists(limit: int = 5):
     config_db = get_config_database()
     working_db = get_working_database()
 
-    plex_service_id = config_db.get_or_create_service_id("plex")
-    active_accounts = config_db.get_accounts(service_id=plex_service_id, is_active=True)
-    if not active_accounts:
+    # Get all active media servers
+    from core.plugin_loader import PluginRegistry
+    active_servers = PluginRegistry.get_active_services_by_type('media_server')
+    if not active_servers:
         return []
 
+    active_user_ids = set()
     artist_play_counts = defaultdict(int)
 
     with working_db.session_scope() as session:
-        active_user_ids = set()
-        for account in active_accounts:
-            plex_user_id = str(account.get("user_id") or "").strip()
-            account_name = str(account.get("display_name") or account.get("account_name") or "").strip()
+        for server_name in active_servers:
+            service_id = config_db.get_or_create_service_id(server_name)
+            active_accounts = config_db.get_accounts(service_id=service_id, is_active=True)
+            
+            for account in active_accounts:
+                provider_user_id = str(account.get("user_id") or "").strip()
+                account_name = str(account.get("display_name") or account.get("account_name") or "").strip()
 
-            user = None
-            if plex_user_id:
-                user = session.query(User).filter(User.provider_identifier == plex_user_id).first()
-            if not user and account_name:
-                user = session.query(User).filter(User.username == account_name).first()
+                user = None
+                if provider_user_id:
+                    user = session.query(User).filter(User.provider_identifier == provider_user_id).first()
+                if not user and account_name:
+                    user = session.query(User).filter(User.username == account_name).first()
 
-            if user:
-                active_user_ids.add(user.id)
+                if user:
+                    active_user_ids.add(user.id)
 
         if not active_user_ids:
             return []
@@ -110,7 +115,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             try:
                 from core.plugin_loader import PluginRegistry
                 active_servers = PluginRegistry.get_active_services_by_type('media_server')
-                active_server = int(active_servers[0]) if active_servers else 'plex'
+                active_server = active_servers[0] if active_servers else None
             except Exception as e:
                 logger.error(f"Failed to get active media server: {e}")
                 return
@@ -213,7 +218,7 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
             from core.plugin_loader import PluginRegistry, ServiceRegistry
 
             active_servers = PluginRegistry.get_active_services_by_type('media_server')
-            active_server = int(active_servers[0]) if active_servers else 'plex'
+            active_server = active_servers[0] if active_servers else None
             if not active_server:
                 logger.warning("No active media server configured, skipping media scan")
                 return
