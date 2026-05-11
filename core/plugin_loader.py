@@ -233,16 +233,20 @@ class PluginLoader:
             is_disabled = base_ns in disabled or plugin_id in disabled
             
             # Re-load
-            self._load_plugin_package(
+            success = self._load_plugin_package(
                 clean_id, 
                 self.plugins_dir.name, 
                 'community', 
                 is_beta=(channel == 'beta'), 
                 is_disabled=is_disabled
             )
+            if success is False:
+                logger.error(f"Live-swap failed to load module for {plugin_id}")
+                raise Exception(f"Live-swap failed to load module for {plugin_id}")
             logger.info(f"✅ Successfully live-swapped: {plugin_id}")
         except Exception as e:
             logger.error(f"Live-swap failed for {plugin_id}: {e}", exc_info=True)
+            raise
 
     def load_all(self):
         """Scan and load all providers and plugins based on database definitions."""
@@ -548,7 +552,22 @@ class PluginLoader:
                     except Exception as bridge_err:
                         logger.debug(f"Could not bridge parent module path: {bridge_err}")
 
-                module = importlib.import_module(module_path)
+                try:
+                    module = importlib.import_module(module_path)
+
+                    # Task 3: The Dynamic Import Namespace Fix
+                    # When a plugin is in the beta channel, it might internally use absolute imports
+                    # like `from plugins.EchoSync.slskd.client import ...`. Because the module is actually
+                    # loaded from `plugins.EchoSync.slskd.beta`, python's sys.modules won't have the non-beta alias
+                    # available, causing an import error for internal files.
+                    if is_beta:
+                        base_module_path = module_path.replace(".beta", "")
+                        if base_module_path not in sys.modules:
+                            sys.modules[base_module_path] = sys.modules[module_path]
+                            logger.debug(f"Injected alias for {base_module_path} pointing to {module_path}")
+                except Exception as import_e:
+                    logger.error(f"Failed to dynamically import plugin module {module_path}: {import_e}", exc_info=True)
+                    return False
             finally:
                 if added_to_path and plugins_parent_str in sys.path:
                     sys.path.remove(plugins_parent_str)

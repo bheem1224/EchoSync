@@ -1,0 +1,50 @@
+--- core/plugin_store.py
++++ core/plugin_store.py
+@@ -647,20 +647,44 @@
+         config_manager.save_settings(config_manager.get_settings())
+         return results
+
+     def uninstall_plugin(self, plugin_id: str) -> bool:
+         import re
+         import shutil
+         import os
++        import sys
+         # Nexus Framework: Resolve nested path by converting dots to slashes
+         clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+         folder_path = clean_id.replace('.', os.sep)
+         dest_dir = self.plugins_dir / folder_path
+-        if not dest_dir.exists():
+-            return False
+
+         try:
+             from database.working_database import get_working_database
+-            from database.config_database import get_config_database
++            from web.db.config_db import get_config_database
++
++            # 1. Disable and remove jobs
++            try:
++                from core.job_queue import job_queue
++                job_queue.kill_jobs_by_plugin(plugin_id)
++            except Exception as e:
++                logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
++
++            # 2. Hot-Unload (Purge from sys.modules)
++            ns_parts = clean_id.split('.')
++            if len(ns_parts) >= 2:
++                author = ns_parts[0]
++                plugin_name = ".".join(ns_parts[1:])
++            else:
++                author = "unknown"
++                plugin_name = clean_id
++
++            purge_id = f"{author}/{plugin_name}" if author != "unknown" else clean_id
++            module_names = [f"plugins.{purge_id.replace('/', '.')}", f"plugins.{clean_id}"]
++            for module_name in module_names:
++                if module_name in sys.modules:
++                    submodules = [m for m in list(sys.modules.keys()) if m.startswith(module_name + ".")]
++                    for m in submodules:
++                        sys.modules.pop(m, None)
++                    sys.modules.pop(module_name, None)
+
+             # Use clean_id (Author.Name) but replace dots with underscores for DB safety
+             safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', clean_id.replace('.', '_')).lower()
