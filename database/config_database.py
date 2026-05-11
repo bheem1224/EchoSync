@@ -54,7 +54,8 @@ class ConfigDatabase:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT UNIQUE NOT NULL,
                         namespace TEXT NOT NULL,
-                        plugin_id TEXT,
+                        plugin_id INTEGER,
+                        version TEXT,
                         display_name TEXT,
                         service_type TEXT,
                         description TEXT,
@@ -170,7 +171,8 @@ class ConfigDatabase:
             logger.info("Config database schema ensured")
 
             def _migrate_legacy_services(cursor):
-                cursor.execute("SELECT id, name FROM services WHERE namespace = 'legacy' OR plugin_id IS NULL")
+                import binascii
+                cursor.execute("SELECT id, name FROM services WHERE namespace = 'legacy' OR plugin_id IS NULL OR typeof(plugin_id) = 'text'")
                 rows = cursor.fetchall()
                 if not rows: return
                 try:
@@ -179,13 +181,18 @@ class ConfigDatabase:
                     for r in rows:
                         s_id, s_name = r[0], r[1]
                         resolved_namespace = 'legacy'
-                        resolved_plugin_id = s_name
+                        resolved_plugin_id_str = s_name
+                        resolved_version = '1.0.0'
                         for p in all_plugins:
                             if s_name.lower() in p.get('folder_name', '').lower() or s_name.lower() == p.get('name', '').lower():
                                 resolved_namespace = p.get('id', 'legacy')
-                                resolved_plugin_id = p.get('folder_name', s_name).split('/')[-1]
+                                resolved_plugin_id_str = p.get('folder_name', s_name).split('/')[-1]
+                                resolved_version = p.get('version', '1.0.0')
                                 break
-                        cursor.execute("UPDATE services SET namespace = ?, plugin_id = ? WHERE id = ?", (resolved_namespace, resolved_plugin_id, s_id))
+                        plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
+                        
+                        # Add version column if it doesn't exist yet via pragma logic or rely on schema upgrade
+                        cursor.execute("UPDATE services SET namespace = ?, plugin_id = ? WHERE id = ?", (resolved_namespace, plugin_id_int, s_id))
                 except Exception as e:
                     pass
 
@@ -206,8 +213,10 @@ class ConfigDatabase:
                 return int(row[0])
 
         # 2. Register if missing
+        import binascii
         resolved_namespace = 'legacy'
-        resolved_plugin_id = name
+        resolved_plugin_id_str = name
+        resolved_version = '1.0.0'
         try:
             from core.plugin_loader import get_all_plugins
             for p in get_all_plugins():
@@ -215,12 +224,14 @@ class ConfigDatabase:
                 if name.lower() in p.get('folder_name', '').lower() or name.lower() == p.get('name', '').lower():
                     resolved_namespace = p.get('id', 'legacy')
                     # e.g. EchoSync/spotify -> spotify
-                    resolved_plugin_id = p.get('folder_name', name).split('/')[-1]
+                    resolved_plugin_id_str = p.get('folder_name', name).split('/')[-1]
+                    resolved_version = p.get('version', '1.0.0')
                     break
         except Exception as e:
             logger.error(f"Failed to resolve plugin details for {name}: {e}")
 
-        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", namespace=resolved_namespace, plugin_id=resolved_plugin_id)
+        plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
+        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", namespace=resolved_namespace, plugin_id=plugin_id_int, version=resolved_version)
 
         # 3. Try to find again after registration
         with contextlib.closing(self._get_connection()) as conn:
@@ -233,12 +244,12 @@ class ConfigDatabase:
         logger.error(f"Failed to get or create service ID for '{name}' after registration attempt.")
         return 0
 
-    def register_service(self, name: str, display_name: str, service_type: str, description: str, namespace: str = 'legacy', plugin_id: Optional[str] = None) -> int:
+    def register_service(self, name: str, display_name: str, service_type: str, description: str, namespace: str = 'legacy', plugin_id: Optional[int] = None, version: Optional[str] = None) -> int:
         try:
             execute_write_sql(
                 str(self.database_path), 
-                "INSERT OR IGNORE INTO services(name, display_name, service_type, description, namespace, plugin_id) VALUES(?,?,?,?,?,?)", 
-                (name, display_name, service_type, description, namespace, plugin_id)
+                "INSERT OR IGNORE INTO services(name, display_name, service_type, description, namespace, plugin_id, version) VALUES(?,?,?,?,?,?,?)", 
+                (name, display_name, service_type, description, namespace, plugin_id, version)
             )
         except Exception as e:
             logger.error(f"Error registering service '{name}': {e}")
