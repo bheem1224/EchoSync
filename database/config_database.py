@@ -54,7 +54,7 @@ class ConfigDatabase:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT UNIQUE NOT NULL,
                         namespace TEXT NOT NULL,
-                        plugin_id INTEGER,
+                        plugin_id TEXT,
                         display_name TEXT,
                         service_type TEXT,
                         description TEXT,
@@ -109,19 +109,8 @@ class ConfigDatabase:
                         FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
                     )
                 """)
-                # Account metadata (optional)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS account_metadata (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        account_id INTEGER NOT NULL,
-                        metadata_key TEXT NOT NULL,
-                        metadata_value TEXT,
-                        created_at INTEGER DEFAULT (strftime('%s','now')),
-                        updated_at INTEGER DEFAULT (strftime('%s','now')),
-                        UNIQUE(account_id, metadata_key),
-                        FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
-                    )
-                """)
+                # Drop deprecated Account metadata
+                cursor.execute("DROP TABLE IF EXISTS account_metadata")
                 # PKCE sessions
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS pkce_sessions (
@@ -163,18 +152,8 @@ class ConfigDatabase:
                     )
                 """)
 
-                # Config KVS (Namespace isolation for plugins)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS config_kvs (
-                        namespace TEXT NOT NULL,
-                        key TEXT NOT NULL,
-                        value TEXT,
-                        is_sensitive INTEGER DEFAULT 0,
-                        created_at INTEGER DEFAULT (strftime('%s','now')),
-                        updated_at INTEGER DEFAULT (strftime('%s','now')),
-                        PRIMARY KEY(namespace, key)
-                    )
-                """)
+                # Drop deprecated Config KVS
+                cursor.execute("DROP TABLE IF EXISTS config_kvs")
 
                 # Indexes
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
@@ -189,6 +168,29 @@ class ConfigDatabase:
             # Run schema creation on writer thread to avoid concurrent-writes
             execute_write(str(self.database_path), _schema)
             logger.info("Config database schema ensured")
+
+            def _migrate_legacy_services(cursor):
+                cursor.execute("SELECT id, name FROM services WHERE namespace = 'legacy' OR plugin_id IS NULL")
+                rows = cursor.fetchall()
+                if not rows: return
+                try:
+                    from core.plugin_loader import get_all_plugins
+                    all_plugins = get_all_plugins()
+                    for r in rows:
+                        s_id, s_name = r[0], r[1]
+                        resolved_namespace = 'legacy'
+                        resolved_plugin_id = s_name
+                        for p in all_plugins:
+                            if s_name.lower() in p.get('folder_name', '').lower() or s_name.lower() == p.get('name', '').lower():
+                                resolved_namespace = p.get('id', 'legacy')
+                                resolved_plugin_id = p.get('folder_name', s_name).split('/')[-1]
+                                break
+                        cursor.execute("UPDATE services SET namespace = ?, plugin_id = ? WHERE id = ?", (resolved_namespace, resolved_plugin_id, s_id))
+                except Exception as e:
+                    pass
+
+            execute_write(str(self.database_path), _migrate_legacy_services)
+            logger.info("Legacy services migrated")
         except Exception as e:
             logger.error(f"Failed to initialize config schema: {e}")
 
@@ -204,8 +206,21 @@ class ConfigDatabase:
                 return int(row[0])
 
         # 2. Register if missing
-        # Note: we use 'legacy' as default namespace for auto-registered services
-        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", namespace='legacy')
+        resolved_namespace = 'legacy'
+        resolved_plugin_id = name
+        try:
+            from core.plugin_loader import get_all_plugins
+            for p in get_all_plugins():
+                # name is usually like 'plex', 'spotify', 'tidal'. We match against folder_name or name
+                if name.lower() in p.get('folder_name', '').lower() or name.lower() == p.get('name', '').lower():
+                    resolved_namespace = p.get('id', 'legacy')
+                    # e.g. EchoSync/spotify -> spotify
+                    resolved_plugin_id = p.get('folder_name', name).split('/')[-1]
+                    break
+        except Exception as e:
+            logger.error(f"Failed to resolve plugin details for {name}: {e}")
+
+        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", namespace=resolved_namespace, plugin_id=resolved_plugin_id)
 
         # 3. Try to find again after registration
         with contextlib.closing(self._get_connection()) as conn:
@@ -218,7 +233,7 @@ class ConfigDatabase:
         logger.error(f"Failed to get or create service ID for '{name}' after registration attempt.")
         return 0
 
-    def register_service(self, name: str, display_name: str, service_type: str, description: str, namespace: str = 'legacy', plugin_id: Optional[int] = None) -> int:
+    def register_service(self, name: str, display_name: str, service_type: str, description: str, namespace: str = 'legacy', plugin_id: Optional[str] = None) -> int:
         try:
             execute_write_sql(
                 str(self.database_path), 
@@ -606,78 +621,7 @@ class ConfigDatabase:
             logger.error(f"Error getting account token: {e}")
             return None
 
-    # Account metadata (per-account configuration like client_id, client_secret)
-    def set_account_metadata(self, account_id: int, key: str, value: str, is_sensitive: bool = False) -> bool:
-        """Set per-account metadata (credentials, etc)."""
-        try:
-            logger.info(f"ConfigDB.set_account_metadata: account_id={account_id}, key={key}, value_length={len(value) if value else 0}, is_sensitive={is_sensitive}")
-            logger.info(f"ConfigDB: Database path = {self.database_path}")
-            
-            from core.security import encrypt_string
-            if is_sensitive and value is not None:
-                value = encrypt_string(str(value))
-
-            # Store the value
-            logger.info(f"ConfigDB: Executing SQL INSERT/UPDATE on account_metadata table")
-            rowcount = execute_write_sql(
-                str(self.database_path),
-                """
-                    INSERT INTO account_metadata(account_id, metadata_key, metadata_value, updated_at)
-                    VALUES(?,?,?, strftime('%s','now'))
-                    ON CONFLICT(account_id, metadata_key) DO UPDATE SET
-                        metadata_value = excluded.metadata_value,
-                        updated_at = strftime('%s','now')
-                """,
-                (account_id, key, value),
-            )
-            logger.info(f"ConfigDB: Rows affected = {rowcount}")
-            
-            # Verify it was saved
-            import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
-                c = conn.cursor()
-                c.execute("SELECT metadata_value FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
-                row = c.fetchone()
-                logger.info(f"ConfigDB: Verification read - row exists: {row is not None}, stored_value_length: {len(row[0]) if row and row[0] else 0}")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error setting account metadata: {e}", exc_info=True)
-            return False
-
-    def get_account_metadata(self, account_id: int, key: str) -> Optional[str]:
-        """Get per-account metadata (credentials, etc)."""
-        try:
-            logger.info(f"ConfigDB.get_account_metadata: account_id={account_id}, key={key}")
-            logger.info(f"ConfigDB: Database path = {self.database_path}")
-            import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
-                c = conn.cursor()
-                c.execute("SELECT metadata_value FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
-                row = c.fetchone()
-                logger.info(f"ConfigDB: Row found: {row is not None}, value_length: {len(row[0]) if row and row[0] else 0}")
-                if not row or row[0] is None:
-                    return None
-                value = row[0]
-
-                if value and value.startswith('enc:'):
-                    from core.security import decrypt_string
-                    value = decrypt_string(value)
-
-                logger.info(f"ConfigDB: Returning value length: {len(value) if value else 0}")
-                return value
-        except Exception as e:
-            logger.error(f"Error getting account metadata: {e}", exc_info=True)
-            return None
-
-    def delete_account_metadata(self, account_id: int, key: str) -> bool:
-        """Delete per-account metadata."""
-        try:
-            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
-            return (rowcount and rowcount > 0)
-        except Exception as e:
-            logger.error(f"Error deleting account metadata: {e}")
-            return False
+    # Removed account_metadata methods
 
     # PKCE sessions
     def store_pkce_session(self, pkce_id: str, service: str, account_id: int, code_verifier: str, code_challenge: str, redirect_uri: str, client_id: str, ttl_seconds: int = 600) -> bool:

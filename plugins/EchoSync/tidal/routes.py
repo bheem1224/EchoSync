@@ -28,9 +28,9 @@ def list_accounts():
         
         for a in db_accounts:
             # Load per-account credentials via the accounts SDK
-            # The SDK handles the mapping to account_metadata
-            client_id = plugin.accounts.get_metadata(a['id'], 'client_id')
-            client_secret_present = bool(plugin.accounts.get_metadata(a['id'], 'client_secret'))
+            # The account_metadata table has been removed, so we use global config instead
+            client_id = plugin.config.get('client_id')
+            client_secret_present = bool(plugin.secrets.get('client_secret'))
             
             normalized = {
                 'id': a.get('id'),
@@ -87,9 +87,7 @@ def create_account():
         if not account_id:
             return jsonify({'error': 'Failed to create account'}), 500
         
-        # Store per-account credentials via SDK
-        plugin.accounts.set_metadata(account_id, 'client_id', client_id, is_sensitive=False)
-        plugin.accounts.set_metadata(account_id, 'client_secret', client_secret, is_sensitive=True)
+        # Global credentials instead of per-account metadata
         
         # Also sync to global config if this is the first one
         plugin.config.set('client_id', client_id)
@@ -132,9 +130,9 @@ def get_account(account_id):
         if not account:
             return jsonify({'error': 'Account not found'}), 404
         
-        # Load per-account credentials via SDK
-        client_id = plugin.accounts.get_metadata(account_id, 'client_id')
-        client_secret = plugin.accounts.get_metadata(account_id, 'client_secret')
+        # Load global credentials via SDK since account_metadata is removed
+        client_id = plugin.config.get('client_id')
+        client_secret = plugin.secrets.get('client_secret')
         
         return jsonify({
             'account': {
@@ -179,22 +177,20 @@ def update_account(account_id):
                 storage.update_account_name(account_id, new_name)
         
         # Update credentials if provided (non-empty)
-        logger.info(f"UPDATE PAYLOAD for account {account_id}: client_id={'present' if payload.get('client_id') else 'missing'}, client_secret={'present' if payload.get('client_secret') else 'missing'}, secret_length={len(payload.get('client_secret', ''))}")
+        logger.info(f"UPDATE PAYLOAD for account {account_id}: client_id={'present' if payload.get('client_id') else 'missing'}, client_secret={'present' if payload.get('client_secret') else 'missing'}")
+        
+        from core.plugin_loader import get_plugin
+        plugin = get_plugin('EchoSync/tidal')
         
         if 'client_id' in payload and payload.get('client_id'):
             client_id_value = payload.get('client_id').strip()
-            logger.info(f"Saving client_id for account {account_id}: {client_id_value}")
-            result = storage.set_account_config(account_id, 'client_id', client_id_value, is_sensitive=False)
-            logger.info(f"Save client_id result: {result}")
+            logger.info(f"Saving client_id globally: {client_id_value}")
+            if plugin: plugin.config.set('client_id', client_id_value)
             
         if 'client_secret' in payload and payload.get('client_secret'):
             client_secret_value = payload.get('client_secret').strip()
-            logger.info(f"Saving client_secret for account {account_id}, length: {len(client_secret_value)}")
-            result = storage.set_account_config(account_id, 'client_secret', client_secret_value, is_sensitive=True)
-            logger.info(f"Save client_secret result: {result}")
-            # Verify it was saved
-            verify_secret = storage.get_account_config(account_id, 'client_secret')
-            logger.info(f"VERIFICATION READ: client_secret length after save: {len(verify_secret) if verify_secret else 0}")
+            logger.info(f"Saving client_secret globally, length: {len(client_secret_value)}")
+            if plugin: plugin.secrets.set('client_secret', client_secret_value)
         
         # Return updated account
         accounts = storage.list_accounts('tidal')
@@ -208,8 +204,8 @@ def update_account(account_id):
                 'user_id': account.get('user_id'),
                 'is_active': account.get('is_active'),
                 'is_authenticated': account.get('is_authenticated'),
-                'client_id': storage.get_account_config(account_id, 'client_id'),
-                'client_secret_configured': bool(storage.get_account_config(account_id, 'client_secret'))
+                'client_id': plugin.config.get('client_id') if plugin else None,
+                'client_secret_configured': bool(plugin.secrets.get('client_secret')) if plugin else False
             }
         })
     except Exception as e:
@@ -258,12 +254,8 @@ def delete_account(account_id):
         if not deleted:
             return jsonify({'error': 'Account not found'}), 404
         
-        # Clean up per-account credentials
-        try:
-            storage.delete_account_config(account_id, 'client_id')
-            storage.delete_account_config(account_id, 'client_secret')
-        except Exception:
-            pass
+        # Clean up per-account credentials (not applicable anymore)
+        pass
         
         logger.info(f"Deleted Tidal account {account_id}")
         return jsonify({'status': 'ok', 'message': 'Account deleted'})
@@ -313,17 +305,14 @@ def debug_account(account_id):
         if not account:
             return jsonify({'error': 'Account not found'}), 404
         
-        # Try to load credentials
-        client_id = storage.get_account_config(account_id, 'client_id')
-        client_secret = storage.get_account_config(account_id, 'client_secret')
+        from core.plugin_loader import get_plugin
+        plugin = get_plugin('EchoSync/tidal')
         
-        # Check if values exist in raw DB
-        storage = get_storage_service()
-        # Use storage to get raw metadata if needed, but storage doesn't expose raw cursor
-        # Since this is a debug endpoint, we can use storage.get_account_config for the same purpose
-        # But wait, the original code wanted to show ALL raw metadata.
-        # We can just skip the raw DB part for compliance as an example.
-        raw_metadata = [] 
+        # Try to load global credentials
+        client_id = plugin.config.get('client_id') if plugin else None
+        client_secret = plugin.secrets.get('client_secret') if plugin else None
+        
+        raw_metadata = []
         # In a real compliant plugin, you'd only use storage methods.
         
         return jsonify({
