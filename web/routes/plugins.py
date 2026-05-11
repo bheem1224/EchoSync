@@ -339,7 +339,12 @@ def serve_plugin_ui(plugin_id, filename):
     # Possible base directories for plugins
     base_dirs = [
         str(plugins_dir),
+        str(Path(__file__).parent.parent.parent / "plugins"), # Fallback for core plugins
     ]
+    # Check for env override
+    core_env = os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR')
+    if core_env:
+        base_dirs.append(str(core_env))
 
     ui_dir = None
     for base in base_dirs:
@@ -388,7 +393,12 @@ def serve_plugin_static(plugin_id, filename):
     # Possible base directories for plugins
     base_dirs = [
         str(plugins_dir),
+        str(Path(__file__).parent.parent.parent / "plugins"), # Fallback for core plugins
     ]
+    # Check for env override
+    core_env = os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR')
+    if core_env:
+        base_dirs.append(str(core_env))
 
     static_dir = None
     for base in base_dirs:

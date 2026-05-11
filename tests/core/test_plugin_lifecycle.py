@@ -169,13 +169,18 @@ def test_version_stamping_on_load(plugin_loader, mock_db, temp_plugins_dir):
         mock_module.ProviderClass = MockProvider
         mock_import.return_value = mock_module
         
-        with patch('database.config_database.get_config_database', return_value=mock_db):
+        import database.config_database
+        old_db = database.config_database._config_db
+        database.config_database._config_db = mock_db
+        try:
             # We must ensure PluginLoader.app_root is the parent of temp_plugins_dir for path resolution
             plugin_loader.app_root = temp_plugins_dir.parent
             plugin_loader.plugins_dir = temp_plugins_dir
             
             # Simulate _load_plugin_package which calls _update_db_version
             plugin_loader._load_plugin_package("EchoSync/version_test", "plugins", "community")
+        finally:
+            database.config_database._config_db = old_db
             
             # Verify version was stamped
             with mock_db._get_connection() as conn:

@@ -415,11 +415,13 @@ class PluginLoader:
                 c.execute("""
                     UPDATE services 
                     SET version=? 
-                    WHERE name=? OR namespace=? OR name=? OR namespace=?
+                    WHERE LOWER(name)=LOWER(?) OR LOWER(namespace)=LOWER(?) OR LOWER(name)=LOWER(?) OR LOWER(namespace)=LOWER(?)
                 """, (version, clean_name, provider_id, provider_id, clean_name))
+                updated = c.rowcount
                 conn.commit()
-        except Exception:
-            pass
+                logger.info(f"Stamped version {version} for {provider_id}")
+        except Exception as e:
+            logger.error(f"Failed to update version in DB for {provider_id}: {e}")
 
     def _load_plugin_package(self, name: str, parent_dir_name: str, source_type: str, is_beta: bool = False, is_disabled: bool = False):
         """
@@ -533,10 +535,12 @@ class PluginLoader:
             if hasattr(module, 'ProviderClass'):
                 provider_cls = getattr(module, 'ProviderClass')
                 PluginRegistry.register(provider_cls, name=provider_id, source_type=source_type)
+                logger.debug(f"Detected ProviderClass for {provider_id}, updating DB version")
                 self._update_db_version(provider_id, version, clean_name)
-                logger.debug(f"Registered PluginClass for {provider_id} (v{version})")
+                logger.info(f"Registered PluginClass for {provider_id} (v{version})")
             else:
                 # Fallback: Look for any ProviderBase subclass if not explicitly exported
+                logger.debug(f"No ProviderClass found in {module_path}, searching for subclasses")
                 found = False
                 for attr_name in dir(module):
                     attr = getattr(module, attr_name)
