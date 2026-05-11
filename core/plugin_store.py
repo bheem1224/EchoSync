@@ -345,6 +345,41 @@ class PluginStore:
             
         return all_plugins
 
+    def install_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False) -> bool:
+        """Downloads the plugin artifact, registers it in DB, and loads it."""
+        # Task 1 & 2 integration
+        if not self.download_plugin(plugin_info, channel, force_consent):
+            return False
+
+        # Need to explicitly write to the services table for a fresh install
+        plugin_id = plugin_info.get("id", plugin_info.get("plugin_id", "unknown_plugin"))
+        import zlib
+        int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
+        plugin_name = plugin_info.get("name", "Unknown Plugin")
+        plugin_type = plugin_info.get("type", "community")
+        plugin_version = plugin_info.get("version", "1.0.0")
+
+        from web.db.config_db import get_config_database
+        db = get_config_database()
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT OR REPLACE INTO services
+                (plugin_id, name, namespace, type, is_active, version)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (int_plugin_id, plugin_name, plugin_id, plugin_type, 1, plugin_version))
+            conn.commit()
+
+        from core.plugin_loader import PluginLoader
+        app_root = Path(__file__).parent.parent
+        loader = PluginLoader(app_root)
+        loader.reload_plugin(int_plugin_id)
+        return True
+
+    def update_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False) -> bool:
+        """Downloads the update and hot swaps it."""
+        return self.download_plugin(plugin_info, channel, force_consent)
+
     def download_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False) -> bool:
         """
         Direct Artifact Downloader.
@@ -493,6 +528,27 @@ class PluginStore:
                 os.rename(str(tmp_dir), str(target_dir))
                 logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
 
+                # Task 1: Localized Dependency Installation (Micro-Venv)
+                requirements_file = target_dir / "requirements.txt"
+                if requirements_file.exists():
+                    logger.info(f"Found requirements.txt for {plugin_id}, installing into micro-venv")
+                    micro_venv_dir = target_dir / "micro-venv"
+                    import subprocess
+                    try:
+                        # Use uv pip install --target to isolate dependencies
+                        subprocess.run(
+                            ["uv", "pip", "install", "--target", str(micro_venv_dir), "-r", str(requirements_file)],
+                            check=True,
+                            capture_output=True,
+                            text=True
+                        )
+                        logger.info(f"Successfully installed micro-venv dependencies for {plugin_id}")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Failed to install micro-venv dependencies for {plugin_id}: {e.stderr}")
+                        # Depending on strictness, we could return False here, but we will let it continue
+                        # and log the error. Usually a broken requirements.txt means the plugin might fail to load.
+
+
                 # Task 5: Persist Channel Preference (Nexus normalization)
                 clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
                 config_manager.set(f'plugins.{clean_id}.channel', channel)
@@ -635,16 +691,40 @@ class PluginStore:
         import re
         import shutil
         import os
+        import sys
         # Nexus Framework: Resolve nested path by converting dots to slashes
         clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
         folder_path = clean_id.replace('.', os.sep)
         dest_dir = self.plugins_dir / folder_path
-        if not dest_dir.exists():
-            return False
         
         try:
             from database.working_database import get_working_database
-            from database.config_database import get_config_database
+            from web.db.config_db import get_config_database
+
+            # 1. Disable and remove jobs
+            try:
+                from core.job_queue import job_queue
+                job_queue.kill_jobs_by_plugin(plugin_id)
+            except Exception as e:
+                logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
+
+            # 2. Hot-Unload (Purge from sys.modules)
+            ns_parts = clean_id.split('.')
+            if len(ns_parts) >= 2:
+                author = ns_parts[0]
+                plugin_name = ".".join(ns_parts[1:])
+            else:
+                author = "unknown"
+                plugin_name = clean_id
+
+            purge_id = f"{author}/{plugin_name}" if author != "unknown" else clean_id
+            module_names = [f"plugins.{purge_id.replace('/', '.')}", f"plugins.{clean_id}"]
+            for module_name in module_names:
+                if module_name in sys.modules:
+                    submodules = [m for m in list(sys.modules.keys()) if m.startswith(module_name + ".")]
+                    for m in submodules:
+                        sys.modules.pop(m, None)
+                    sys.modules.pop(module_name, None)
             
             # Use clean_id (Author.Name) but replace dots with underscores for DB safety
             safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', clean_id.replace('.', '_')).lower()
@@ -662,10 +742,35 @@ class PluginStore:
                         conn.commit()
                     except Exception:
                         pass
+
+            # 4. Delete config keys
+            config = get_config_database()
+            with config._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("DELETE FROM config_kvs WHERE namespace=?", (plugin_id,))
+                c.execute("DELETE FROM config_kvs WHERE namespace=?", (f"plugin.{plugin_id}",))
+                # 6. Remove from services table
+                c.execute("DELETE FROM services WHERE namespace=?", (plugin_id,))
+                c.execute("DELETE FROM services WHERE namespace=?", (f"plugin.{plugin_id}",))
+                conn.commit()
+
+            # Remove from JSON config if exists
+            from core.settings import config_manager
+            all_settings = config_manager.get_settings()
+            if 'plugins' in all_settings and clean_id in all_settings['plugins']:
+                del all_settings['plugins'][clean_id]
+                config_manager.save_settings(all_settings)
+
         except Exception as e:
-            logger.error(f"Failed to drop tables for {plugin_id}: {e}")
+            logger.error(f"Failed during uninstall for {plugin_id}: {e}")
+
+        # 5. Delete folder
+        if dest_dir.exists():
+            shutil.rmtree(dest_dir, ignore_errors=True)
+
+        from core.state import system_state
+        system_state.restart_pending = True
             
-        shutil.rmtree(dest_dir, ignore_errors=True)
         return True
 
     def get_plugin_channel(self, plugin_id: str) -> str:
@@ -775,6 +880,14 @@ class PluginStore:
 
     def rollback_plugin(self, plugin_id: str) -> bool:
         """Restores a plugin to its previous stable version by aborting beta context."""
+        from core.settings import config_manager
+        clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+        current_channel = config_manager.get(f'plugins.{clean_id}.channel', 'stable')
+
+        if current_channel == 'stable':
+            # Scenario 2: Rollback previous stable (We do not support preserving previous beta)
+            # But right now, we just fetch the stable download from API if needed, handled by API route
+            pass
         import shutil
         
         # 1. Abort side-car data

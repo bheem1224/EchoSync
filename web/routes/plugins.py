@@ -213,7 +213,7 @@ def install_plugin():
         return jsonify({"error": "Plugin info required"}), 400
 
     try:
-        success = plugin_store.download_plugin(plugin_info, channel=channel, force_consent=force_consent)
+        success = plugin_store.install_plugin(plugin_info, channel=channel, force_consent=force_consent)
         if success:
             return jsonify({"success": True})
         return jsonify({"error": f"Failed to install plugin on channel {channel}"}), 500
@@ -237,7 +237,7 @@ def update_plugin():
         return jsonify({"error": "Plugin info required"}), 400
 
     try:
-        success = plugin_store.download_plugin(plugin_info, channel=channel, force_consent=force_consent)
+        success = plugin_store.update_plugin(plugin_info, channel=channel, force_consent=force_consent)
         if success:
             return jsonify({"success": True})
         return jsonify({"error": f"Failed to update plugin on channel {channel}"}), 500
@@ -260,7 +260,11 @@ def rollback_plugin():
         return jsonify({"error": "Plugin info required"}), 400
 
     try:
-        success = plugin_store.download_plugin(plugin_info, channel=channel, force_consent=force_consent)
+        # Call rollback_plugin on the store first to clean up DB/Beta data
+        plugin_store.rollback_plugin(plugin_info.get("id"))
+
+        # Then download and apply the stable artifact
+        success = plugin_store.update_plugin(plugin_info, channel=channel, force_consent=force_consent)
         if success:
             return jsonify({"success": True})
         return jsonify({"error": "Failed to rollback plugin to stable"}), 500
