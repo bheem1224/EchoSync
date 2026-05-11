@@ -32,7 +32,7 @@ def test_media_manager_handles_suggestion_remove_intent_end_to_end(monkeypatch, 
 
     monkeypatch.setattr("services.media_manager.get_database", lambda: mock_db)
     monkeypatch.setattr("services.media_manager.event_bus.subscribe", lambda *_args, **_kwargs: None)
-        monkeypatch.setattr("services.media_manager.PluginRegistry.create_instance", lambda _name: fake_provider)
+    monkeypatch.setattr("services.media_manager.PluginRegistry.create_instance", lambda _name: fake_provider)
 
     manager = MediaManagerService()
 

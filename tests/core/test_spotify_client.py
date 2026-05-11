@@ -6,13 +6,13 @@ from plugins.EchoSync.spotify.client import SpotifyClient
 @pytest.fixture
 def spotify_client():
     # Use a dummy client ID so ConfigCacheHandler doesn't fail if it tries to init
-    if True:
-        mock_config.return_value = {'client_id': 'fake', 'client_secret': 'fake'}
+    with patch('core.settings.ConfigManager.get_service_credentials') as mock_creds:
+        mock_creds.return_value = {'client_id': 'fake', 'client_secret': 'fake'}
         client = SpotifyClient()
         return client
 
 def test_initialization(spotify_client):
-    assert spotify_client.name == 'spotify'
+    assert spotify_client.name == 'EchoSync.spotify'
     assert spotify_client.supports_downloads is False
     # sp may be initialized or None depending on credentials
     assert hasattr(spotify_client, 'sp')

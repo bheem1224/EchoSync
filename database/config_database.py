@@ -15,18 +15,19 @@ from . import execute_write, execute_write_sql, ensure_writer
 
 class ConfigDatabase:
     def __init__(self, db_path: Optional[str] = None):
-        uri = config_manager.get("database.config_uri")
-        if uri:
-            # We assume the config_database.py wrapper is heavily SQLite-dependent right now,
-            # but we still support passing the URI. For SQLite it should extract the path.
-            # If it's a real postgres URI, we'd need SQLAlchemy, but config_database uses sqlite3 module.
-            # Assuming we just parse sqlite:/// path or fallback to the provided URI if it acts as a file.
-            if uri.startswith("sqlite:///"):
-                self.database_path = Path(uri.replace("sqlite:///", ""))
-            else:
-                self.database_path = Path(uri)
+        if db_path:
+            self.database_path = Path(db_path)
         else:
-            self.database_path = Path(db_path) if db_path else Path(config_manager.database_path)
+            uri = config_manager.get("database.config_uri")
+            if uri:
+                # We assume the config_database.py wrapper is heavily SQLite-dependent right now,
+                # but we still support passing the URI. For SQLite it should extract the path.
+                if uri.startswith("sqlite:///"):
+                    self.database_path = Path(uri.replace("sqlite:///", ""))
+                else:
+                    self.database_path = Path(uri)
+            else:
+                self.database_path = Path(config_manager.database_path)
 
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         # Ensure writer queue is running for this DB
@@ -55,6 +56,7 @@ class ConfigDatabase:
                         name TEXT UNIQUE NOT NULL,
                         namespace TEXT NOT NULL,
                         plugin_id INTEGER,
+                        version TEXT,
                         display_name TEXT,
                         service_type TEXT,
                         description TEXT,
@@ -109,19 +111,8 @@ class ConfigDatabase:
                         FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
                     )
                 """)
-                # Account metadata (optional)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS account_metadata (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        account_id INTEGER NOT NULL,
-                        metadata_key TEXT NOT NULL,
-                        metadata_value TEXT,
-                        created_at INTEGER DEFAULT (strftime('%s','now')),
-                        updated_at INTEGER DEFAULT (strftime('%s','now')),
-                        UNIQUE(account_id, metadata_key),
-                        FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
-                    )
-                """)
+                # Drop deprecated Account metadata
+                cursor.execute("DROP TABLE IF EXISTS account_metadata")
                 # PKCE sessions
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS pkce_sessions (
@@ -163,18 +154,19 @@ class ConfigDatabase:
                     )
                 """)
 
-                # Config KVS (Namespace isolation for plugins)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS config_kvs (
-                        namespace TEXT NOT NULL,
-                        key TEXT NOT NULL,
-                        value TEXT,
-                        is_sensitive INTEGER DEFAULT 0,
-                        created_at INTEGER DEFAULT (strftime('%s','now')),
-                        updated_at INTEGER DEFAULT (strftime('%s','now')),
-                        PRIMARY KEY(namespace, key)
-                    )
-                """)
+                # Migration: Add missing columns to services table if they don't exist
+                cursor.execute("PRAGMA table_info(services)")
+                columns = [row[1] for row in cursor.fetchall()]
+                if 'namespace' not in columns:
+                    cursor.execute("ALTER TABLE services ADD COLUMN namespace TEXT NOT NULL DEFAULT 'legacy'")
+                if 'plugin_id' not in columns:
+                    cursor.execute("ALTER TABLE services ADD COLUMN plugin_id INTEGER")
+                if 'version' not in columns:
+                    cursor.execute("ALTER TABLE services ADD COLUMN version TEXT")
+                
+                # Cleanup: Drop deprecated tables
+                cursor.execute("DROP TABLE IF EXISTS accounts_metadata")
+                cursor.execute("DROP TABLE IF EXISTS config_kvs")
 
                 # Indexes
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
@@ -189,6 +181,39 @@ class ConfigDatabase:
             # Run schema creation on writer thread to avoid concurrent-writes
             execute_write(str(self.database_path), _schema)
             logger.info("Config database schema ensured")
+
+            def _migrate_legacy_services(cursor):
+                import binascii
+                cursor.execute("SELECT id, name FROM services WHERE namespace = 'legacy' OR plugin_id IS NULL OR typeof(plugin_id) = 'text'")
+                rows = cursor.fetchall()
+                if not rows: return
+                try:
+                    from core.plugin_loader import get_all_plugins
+                    all_plugins = get_all_plugins()
+                    for r in rows:
+                        s_id, s_name = r[0], r[1]
+                        resolved_namespace = 'legacy'
+                        resolved_plugin_id_str = s_name
+                        resolved_version = '1.0.0'
+                        for p in all_plugins:
+                            p_id = p.get('id', '')
+                            p_name = p.get('name', '')
+                            p_folder = p.get('folder_name', '')
+                            norm_s_name = s_name.replace('.', '/')
+                            if s_name.lower() in p_folder.lower() or norm_s_name.lower() in p_folder.lower() or s_name.lower() == p_name.lower() or s_name.lower() in p_id.lower():
+                                resolved_namespace = p_id
+                                resolved_plugin_id_str = p_folder.split('/')[-1]
+                                resolved_version = p.get('version', '1.0.0')
+                                break
+                        plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
+                        
+                        # Add version column if it doesn't exist yet via pragma logic or rely on schema upgrade
+                        cursor.execute("UPDATE services SET namespace = ?, plugin_id = ? WHERE id = ?", (resolved_namespace, plugin_id_int, s_id))
+                except Exception as e:
+                    pass
+
+            execute_write(str(self.database_path), _migrate_legacy_services)
+            logger.info("Legacy services migrated")
         except Exception as e:
             logger.error(f"Failed to initialize config schema: {e}")
 
@@ -204,8 +229,25 @@ class ConfigDatabase:
                 return int(row[0])
 
         # 2. Register if missing
-        # Note: we use 'legacy' as default namespace for auto-registered services
-        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", namespace='legacy')
+        import binascii
+        resolved_namespace = 'legacy'
+        resolved_plugin_id_str = name
+        resolved_version = '1.0.0'
+        try:
+            from core.plugin_loader import get_all_plugins
+            for p in get_all_plugins():
+                # name is usually like 'plex', 'spotify', 'tidal'. We match against folder_name or name
+                if name.lower() in p.get('folder_name', '').lower() or name.lower() == p.get('name', '').lower():
+                    resolved_namespace = p.get('id', 'legacy')
+                    # e.g. EchoSync/spotify -> spotify
+                    resolved_plugin_id_str = p.get('folder_name', name).split('/')[-1]
+                    resolved_version = p.get('version', '1.0.0')
+                    break
+        except Exception as e:
+            logger.error(f"Failed to resolve plugin details for {name}: {e}")
+
+        plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
+        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", namespace=resolved_namespace, plugin_id=plugin_id_int, version=resolved_version)
 
         # 3. Try to find again after registration
         with contextlib.closing(self._get_connection()) as conn:
@@ -218,12 +260,18 @@ class ConfigDatabase:
         logger.error(f"Failed to get or create service ID for '{name}' after registration attempt.")
         return 0
 
-    def register_service(self, name: str, display_name: str, service_type: str, description: str, namespace: str = 'legacy', plugin_id: Optional[int] = None) -> int:
+    def register_service(self, name: str, display_name: str, service_type: str, description: str, namespace: str = 'legacy', plugin_id: Optional[int] = None, version: Optional[str] = None) -> int:
+        import binascii
+        if plugin_id is None:
+            # Fallback CRC32 generation if not provided
+            folder_name = namespace.split('.')[-1] if '.' in namespace else namespace
+            plugin_id = binascii.crc32(folder_name.encode('utf-8')) & 0xFFFFFFFF
+
         try:
             execute_write_sql(
                 str(self.database_path), 
-                "INSERT OR IGNORE INTO services(name, display_name, service_type, description, namespace, plugin_id) VALUES(?,?,?,?,?,?)", 
-                (name, display_name, service_type, description, namespace, plugin_id)
+                "INSERT OR IGNORE INTO services(name, display_name, service_type, description, namespace, plugin_id, version) VALUES(?,?,?,?,?,?,?)", 
+                (name, display_name, service_type, description, namespace, plugin_id, version)
             )
         except Exception as e:
             logger.error(f"Error registering service '{name}': {e}")
@@ -301,7 +349,7 @@ class ConfigDatabase:
     def get_service_name(self, service_id: int) -> Optional[str]:
         with self._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT name FROM services WHERE id=?", (service_id,))
+            c.execute("SELECT name FROM services WHERE id=? OR plugin_id=?", (service_id, service_id))
             row = c.fetchone()
             return row[0] if row else None
 
@@ -606,78 +654,7 @@ class ConfigDatabase:
             logger.error(f"Error getting account token: {e}")
             return None
 
-    # Account metadata (per-account configuration like client_id, client_secret)
-    def set_account_metadata(self, account_id: int, key: str, value: str, is_sensitive: bool = False) -> bool:
-        """Set per-account metadata (credentials, etc)."""
-        try:
-            logger.info(f"ConfigDB.set_account_metadata: account_id={account_id}, key={key}, value_length={len(value) if value else 0}, is_sensitive={is_sensitive}")
-            logger.info(f"ConfigDB: Database path = {self.database_path}")
-            
-            from core.security import encrypt_string
-            if is_sensitive and value is not None:
-                value = encrypt_string(str(value))
-
-            # Store the value
-            logger.info(f"ConfigDB: Executing SQL INSERT/UPDATE on account_metadata table")
-            rowcount = execute_write_sql(
-                str(self.database_path),
-                """
-                    INSERT INTO account_metadata(account_id, metadata_key, metadata_value, updated_at)
-                    VALUES(?,?,?, strftime('%s','now'))
-                    ON CONFLICT(account_id, metadata_key) DO UPDATE SET
-                        metadata_value = excluded.metadata_value,
-                        updated_at = strftime('%s','now')
-                """,
-                (account_id, key, value),
-            )
-            logger.info(f"ConfigDB: Rows affected = {rowcount}")
-            
-            # Verify it was saved
-            import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
-                c = conn.cursor()
-                c.execute("SELECT metadata_value FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
-                row = c.fetchone()
-                logger.info(f"ConfigDB: Verification read - row exists: {row is not None}, stored_value_length: {len(row[0]) if row and row[0] else 0}")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error setting account metadata: {e}", exc_info=True)
-            return False
-
-    def get_account_metadata(self, account_id: int, key: str) -> Optional[str]:
-        """Get per-account metadata (credentials, etc)."""
-        try:
-            logger.info(f"ConfigDB.get_account_metadata: account_id={account_id}, key={key}")
-            logger.info(f"ConfigDB: Database path = {self.database_path}")
-            import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
-                c = conn.cursor()
-                c.execute("SELECT metadata_value FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
-                row = c.fetchone()
-                logger.info(f"ConfigDB: Row found: {row is not None}, value_length: {len(row[0]) if row and row[0] else 0}")
-                if not row or row[0] is None:
-                    return None
-                value = row[0]
-
-                if value and value.startswith('enc:'):
-                    from core.security import decrypt_string
-                    value = decrypt_string(value)
-
-                logger.info(f"ConfigDB: Returning value length: {len(value) if value else 0}")
-                return value
-        except Exception as e:
-            logger.error(f"Error getting account metadata: {e}", exc_info=True)
-            return None
-
-    def delete_account_metadata(self, account_id: int, key: str) -> bool:
-        """Delete per-account metadata."""
-        try:
-            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM account_metadata WHERE account_id = ? AND metadata_key = ?", (account_id, key))
-            return (rowcount and rowcount > 0)
-        except Exception as e:
-            logger.error(f"Error deleting account metadata: {e}")
-            return False
+    # Removed account_metadata methods
 
     # PKCE sessions
     def store_pkce_session(self, pkce_id: str, service: str, account_id: int, code_verifier: str, code_challenge: str, redirect_uri: str, client_id: str, ttl_seconds: int = 600) -> bool:

@@ -6,13 +6,15 @@ from core.user_history import UserTrackInteraction
 
 @pytest.fixture
 def plex_client():
-    mock_cm = MagicMock()
-    with patch.object(PlexClient, 'kvs', mock_cm, create=True):
-                client = PlexClient()
+    # Patch the facades so they don't hit the DB or fail stack inspection during init
+    with patch('core.plugin_SDK._AccountsSDKFacade.get_all', return_value=[]), \
+         patch('core.plugin_SDK._AccountsSDKFacade.get_token', return_value=None), \
+         patch('core.plugin_SDK._ConfigFacade.get', return_value=None):
+        client = PlexClient()
         return client
 
 def test_initialization(plex_client):
-    assert plex_client.name == 'plex'
+    assert plex_client.name == 'EchoSync.plex'
     assert plex_client.supports_downloads is False
     assert plex_client.server is None
     assert plex_client.music_library is None
@@ -23,39 +25,26 @@ def test_is_configured_false(plex_client):
 
 def test_is_configured_true(plex_client):
     plex_client.account_id = 1
-    with patch('core.file_handling.storage.get_storage_service') as mock_get_storage, \
-         patch('core.settings.config_manager.get') as mock_config_get:
-        mock_storage = MagicMock()
-
-        def mock_get_account_token(acc_id):
-            return {'access_token': 'encrypted_abc'}
-
-        mock_storage.get_account_token.side_effect = mock_get_account_token
-        mock_get_storage.return_value = mock_storage
-
-        def mock_config(key, default=None):
-            if key == 'plex':
-                return {'base_url': 'http://plex'}
-            return default
-
-        plex_client.kvs = MagicMock()
-        plex_client.kvs.get.side_effect = lambda k, **kwargs: 'http://plex' if k in ['base_url', 'server_url'] else None
+    with patch('core.plugin_SDK._AccountsSDKFacade.get_token') as mock_get_token, \
+         patch('core.plugin_SDK._ConfigFacade.get') as mock_config_get:
+        
+        mock_get_token.return_value = {'access_token': 'abc'}
+        mock_config_get.side_effect = lambda k, **kwargs: 'http://plex' if k in ['base_url', 'server_url'] else None
 
         assert plex_client.is_configured() is True
 
-
 def test_auto_detect_prefers_token_backed_account(monkeypatch):
-    fake_storage = MagicMock()
-    fake_storage.list_accounts.return_value = [
-        {'id': 11, 'display_name': 'Managed User'},
-        {'id': 22, 'display_name': 'Admin User'},
-    ]
-    fake_storage.get_account_token.side_effect = lambda account_id: None if account_id == 11 else {'access_token': 'token'}
+    with patch('core.plugin_SDK._AccountsSDKFacade.get_all') as mock_get_all, \
+         patch('core.plugin_SDK._AccountsSDKFacade.get_token') as mock_get_token:
+        
+        mock_get_all.return_value = [
+            {'id': 11, 'display_name': 'Managed User'},
+            {'id': 22, 'display_name': 'Admin User'},
+        ]
+        mock_get_token.side_effect = lambda account_id: None if account_id == 11 else {'access_token': 'token'}
 
-    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
-
-    client = PlexClient()
-    assert client.account_id == 22
+        client = PlexClient()
+        assert client.account_id == 22
 
 
 def test_import_managed_users_upserts_admin_and_managed(monkeypatch):

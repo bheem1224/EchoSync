@@ -141,16 +141,16 @@ class TrackParser:
         # Extract track/disk numbers
         track_number, disc_number = self._extract_track_numbers(working_string)
 
-        # Remove junk before parsing
-        if self.config.remove_junk_chars:
-            working_string = self._remove_junk(working_string)
-
         # Extract quality tags
         quality_tags = []
         if self.config.extract_quality_tags:
             quality_tags = self._extract_quality_tags(working_string)
             # Remove quality info for cleaner parsing
             working_string = self._remove_quality_markers(working_string)
+
+        # Remove junk before parsing
+        if self.config.remove_junk_chars:
+            working_string = self._remove_junk(working_string)
 
         # Extract version/remix info
         version = None
@@ -185,9 +185,11 @@ class TrackParser:
                 album_title=album_title,
                 release_year=year,
                 edition=version,
+                version=version,
                 quality_tags=quality_tags,
                 track_number=track_number,
                 disc_number=disc_number,
+                is_compilation=is_compilation,
                 album_type='compilation' if is_compilation else None
             )
 
@@ -228,6 +230,7 @@ class TrackParser:
         """Extract quality tags from text"""
         tags = []
 
+        # FLAC detection
         if self.PATTERNS['quality_flac'].search(text):
             # Distinguish 24bit vs 16bit FLAC
             if re.search(r'\b24[-_]?bit\b', text, re.IGNORECASE):
@@ -235,19 +238,24 @@ class TrackParser:
             else:
                 tags.append(QualityTag.FLAC_16BIT.value)
 
+        # AAC detection (check before MP3 to avoid '256' matching MP3 when it's 'AAC 256')
+        if self.PATTERNS['quality_aac'].search(text):
+            tags.append(QualityTag.AAC.value)
+        
+        # MP3 detection
         elif self.PATTERNS['quality_mp3_320'].search(text):
             tags.append(QualityTag.MP3_320KBPS.value)
         elif self.PATTERNS['quality_mp3_256'].search(text):
             tags.append(QualityTag.MP3_256KBPS.value)
         elif self.PATTERNS['quality_mp3_192'].search(text):
             tags.append(QualityTag.MP3_192KBPS.value)
-        elif self.PATTERNS['quality_aac'].search(text):
-            tags.append(QualityTag.AAC.value)
-        elif self.PATTERNS['quality_alac'].search(text):
+        
+        # Other formats
+        if self.PATTERNS['quality_alac'].search(text):
             tags.append(QualityTag.ALAC.value)
-        elif self.PATTERNS['quality_ogg'].search(text):
+        if self.PATTERNS['quality_ogg'].search(text):
             tags.append(QualityTag.OGG_VORBIS.value)
-        elif self.PATTERNS['quality_opus'].search(text):
+        if self.PATTERNS['quality_opus'].search(text):
             tags.append(QualityTag.OPUS.value)
 
         return tags

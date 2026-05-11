@@ -671,7 +671,7 @@ class PlaylistSyncService:
                 if self.spotify_client:
                      # Iterate generator directly
                      for p in self.spotify_client.get_user_playlists() or []:
-                         all_playlists.append(SpotifyPlaylist(id=p['id'], name=p['name'], tracks=[]))
+                         all_playlists.append(SpotifyPlaylist(id=p['id'], name=p['name'], tracks=[], account_name="Primary"))
                 return all_playlists
 
             # 2. Iterate through each account (already filtered by is_active=True at DB level)

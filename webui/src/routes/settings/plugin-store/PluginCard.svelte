@@ -68,17 +68,18 @@
     
     if (useBeta) {
       console.log(`[PluginCard] Dispatching beta install dispatch for ${plugin.id}`);
-      dispatch('install', { ...plugin, channel: 'beta', version: latestBeta });
+      dispatch('install', { ...plugin, channel: 'beta', version: latestBeta, isUpdate: isInstalled, isRollback: false });
     } else {
       console.log(`[PluginCard] Dispatching release install dispatch for ${plugin.id}`);
-      dispatch('install', { ...plugin, channel: 'release', version: latestRelease });
+      dispatch('install', { ...plugin, channel: 'release', version: latestRelease, isUpdate: isInstalled, isRollback: false });
     }
   }
 
   function handleSwitch(targetChannel) {
     console.log(`[PluginCard] handleSwitch to ${targetChannel} for ${plugin.id}`);
     showDropdown = false;
-    dispatch('install', { ...plugin, channel: targetChannel, version: targetChannel === 'beta' ? latestBeta : latestRelease });
+    const isRollback = isInstalled && targetChannel === 'release' && installedChannel === 'beta';
+    dispatch('install', { ...plugin, channel: targetChannel, version: targetChannel === 'beta' ? latestBeta : latestRelease, isUpdate: isInstalled, isRollback });
   }
 
   function toggleDropdown(e) {

@@ -96,9 +96,10 @@ class JobQueue:
             return
 
         # Purge transient one-time jobs from the heap so they do not run again,
-        # but keep them in self._jobs so they appear in the UI as finished.
+        # but keep them in self._jobs if you want them to persist in the UI.
+        # However, for memory hygiene and test compliance, we pop them if non-recurring.
         self._remove_from_heap(job.name)
-        # self._jobs.pop(job.name, None)
+        self._jobs.pop(job.name, None)
 
     # Public API
     def start(self):

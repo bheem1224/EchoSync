@@ -1,80 +1,55 @@
-version: '3.8'
-
-# The legacy `legacy/` directory and backend_entry.py have been removed;
-# Docker builds now install dependencies from the project's pyproject.toml.
+version: "3.8"
 
 services:
-  backend:
-    build: .
-    image: echosync:latest
-    container_name: echosync_backend
+  echosync:
+    image: ghcr.io/bheem1224/echosync:latest # Or 'build: .' if building locally
+    container_name: echosync
     environment:
-      # User/Group ID configuration (backend_entry.py is gone, the service now
-      # launches `run_api.py` directly as in the Dockerfile)
       - PUID=1000
       - PGID=1000
       - UMASK=022
-      # API server configuration
-      - UVICORN_PORT=5000
-      - PYTHONPATH=/app
-      # Set the config directory for settings and encrypted secrets
-      - ECHOSYNC_CONFIG_DIR=/config
-      # Set the data directory for database and logs
-      - ECHOSYNC_DATA_DIR=/data
-      # Set timezone
       - TZ=America/New_York
+
+      # ⚠️ CRITICAL: AES Encryption Key for config.db secrets.
+      # Generate a secure string (e.g., `openssl rand -base64 32`) and paste it here.
+      # DO NOT lose this key, or you will lose access to your connected accounts.
+      - MASTER_KEY=YOUR_SECURE_BASE64_KEY_HERE
+
+      # API Server Config
+      - UVICORN_PORT=5000
+      - ECHOSYNC_CONFIG_DIR=/config
+      - ECHOSYNC_DATA_DIR=/data
+
     ports:
-      - "5000:5000"      # Main web app
-      - "5001:5001"      # OAuth callback
+      - "5000:5000" # Main Web UI & API
+      - "5001:5001" # Local Network OAuth Callback (Spotify/Tidal)
+
     volumes:
-      # Configuration and encrypted secrets
-      - ./config:/config
-      # Persistent data, logs, downloads
-      - ./data:/data
-      # Library DIR for whare your media files are stored
-      - /path/to/your/library:/data/library 
-      # Downloads DIR whare your download client stores files before they are moved to the library
-      - /path/to/your/downloads:/data/downloads
-      # optinal define logs DIR if you want to have logs in a separate location
-      - /path/to/your/logs:/data/logs
-      # optinal define plugins dir if you want to have plugins in a separate location
-      - /path/to/your/plugins:/data/plugins
+      # Application Configuration & Databases
+      - /path/to/your/appdata/echosync/config:/config
+      - /path/to/your/appdata/echosync/data:/data
+
+      # Media & Downloads (Mounted separately to avoid shadowing /data)
+      - /path/to/your/library:/library
+      - /path/to/your/downloads:/downloads
+
     extra_hosts:
-      # Allow container to reach host services
       - "host.docker.internal:host-gateway"
+
     restart: unless-stopped
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-    # Resource limits (adjust as needed)
+
     deploy:
       resources:
         limits:
-          cpus: '2.0'
+          cpus: "2.0"
           memory: 2G
         reservations:
-          cpus: '0.5'
+          cpus: "0.5"
           memory: 512M
-    networks:
-      - echosync-network
-
-  frontend:
-    image: node:20-slim
-    container_name: echosync_frontend
-    ports:
-      - "5173:5173"
-    working_dir: /app/webui
-    volumes:
-      - ./webui:/app/webui
-    command: npm run dev
-    depends_on:
-      - backend
-    networks:
-      - echosync-network
-
-networks:
-  echosync-network:
-    driver: bridge

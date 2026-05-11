@@ -98,18 +98,26 @@
   let escalationData = null;
   let pluginAwaitingConsent = null;
 
-  async function installPlugin(plugin, isUpdate = false, forceConsent = false) {
-    console.log(`[PluginStore] installPlugin called for ${plugin.name} (ID: ${plugin.id}), isUpdate: ${isUpdate}, forceConsent: ${forceConsent}`);
+  async function installPlugin(pluginDetail, forceConsent = false) {
+    const plugin = pluginDetail;
+    const isUpdate = plugin.isUpdate || false;
+    const isRollback = plugin.isRollback || false;
+    
+    console.log(`[PluginStore] installPlugin called for ${plugin.name} (ID: ${plugin.id}), isUpdate: ${isUpdate}, isRollback: ${isRollback}, forceConsent: ${forceConsent}`);
     downloading = plugin.id || plugin.name;
 
     try {
-      const url = forceConsent ? '/system/plugins/install?force_consent=true' : '/system/plugins/install';
+      let endpoint = '/system/plugins/install';
+      if (isRollback) endpoint = '/system/plugins/rollback';
+      else if (isUpdate) endpoint = '/system/plugins/update';
+      
+      const url = forceConsent ? `${endpoint}?force_consent=true` : endpoint;
       await apiClient.post(url, { 
         plugin, 
         channel: plugin.channel || 'release',
         version: plugin.version
       });
-      feedback.addToast(`Successfully ${isUpdate ? 'updated' : 'installed'} ${plugin.name}.`, 'success');
+      feedback.addToast(`Successfully ${isRollback ? 'rolled back' : (isUpdate ? 'updated' : 'installed')} ${plugin.name}.`, 'success');
       
       // Mark as installed locally so UI updates
       plugins = plugins.map(p =>
@@ -141,7 +149,7 @@
 
   async function handleAcceptConsent() {
     if (pluginAwaitingConsent) {
-      await installPlugin(pluginAwaitingConsent, pluginAwaitingConsent.isUpdate, true);
+      await installPlugin(pluginAwaitingConsent, true);
     }
   }
 
@@ -278,7 +286,7 @@
           {plugin} 
           globalBetaEnabled={betaOpt} 
           downloading={downloading === (plugin.id || plugin.name)}
-          on:install={(e) => installPlugin(e.detail, true)}
+          on:install={(e) => installPlugin(e.detail)}
           on:uninstall={(e) => requestUninstall(e.detail)}
         />
       {/each}

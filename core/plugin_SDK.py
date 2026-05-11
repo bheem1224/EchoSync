@@ -13,9 +13,18 @@ from core.request_manager import RequestManager
 class _ConfigFacade:
     def __init__(self, plugin_id: str):
         _verify_caller(plugin_id)
-        self.kvs = KVS(plugin_id)
-    def get(self, key: str, default=None): return self.kvs.get(key, default)
-    def set(self, key: str, value: str): self.kvs.set(key, value, is_sensitive=False)
+        self.plugin_id = plugin_id
+    def get(self, key: str, default=None):
+        from database.config_database import get_config_database
+        db = get_config_database()
+        svc_id = db.get_or_create_service_id(self.plugin_id)
+        val = db.get_service_config(svc_id, key)
+        return val if val is not None else default
+    def set(self, key: str, value: str):
+        from database.config_database import get_config_database
+        db = get_config_database()
+        svc_id = db.get_or_create_service_id(self.plugin_id)
+        db.set_service_config(svc_id, key, value, is_sensitive=False)
 
 class _SecretsFacade:
     def __init__(self, plugin_id: str):
@@ -23,11 +32,15 @@ class _SecretsFacade:
         self.plugin_id = plugin_id
     def get(self, key: str, default=None):
         from database.config_database import get_config_database
-        val = get_config_database().get_account_metadata(0, f"{self.plugin_id}_{key}")
+        db = get_config_database()
+        svc_id = db.get_or_create_service_id(self.plugin_id)
+        val = db.get_service_config(svc_id, key)
         return val if val is not None else default
     def set(self, key: str, value: str):
         from database.config_database import get_config_database
-        get_config_database().set_account_metadata(0, f"{self.plugin_id}_{key}", value, is_sensitive=True)
+        db = get_config_database()
+        svc_id = db.get_or_create_service_id(self.plugin_id)
+        db.set_service_config(svc_id, key, value, is_sensitive=True)
 
 class _AccountsSDKFacade:
     def get_token(self, account_id: int):
@@ -65,6 +78,30 @@ class _AccountsSDKFacade:
     def save_token(self, account_id: int, access_token: str, refresh_token: str, expires_at: int):
         from database.config_database import get_config_database
         get_config_database().save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at)
+
+    def get_all(self):
+        """Return all accounts associated with the calling plugin."""
+        from database.config_database import get_config_database
+        db = get_config_database()
+        
+        # Get plugin_id from stack inspection (similar to _get_plugin_id)
+        frame = inspect.currentframe().f_back
+        caller_mod = frame.f_globals.get('__name__', '')
+        
+        plugin_id_str = ""
+        if caller_mod.startswith('plugins.'):
+            parts = caller_mod.split('.')
+            if len(parts) >= 3:
+                plugin_id_str = f"{parts[1]}.{parts[2]}"
+            else:
+                plugin_id_str = parts[1]
+        elif caller_mod.startswith('core.providers.'):
+            plugin_id_str = caller_mod.split('.')[2]
+        else:
+            plugin_id_str = caller_mod
+
+        service_id = db.get_or_create_service_id(plugin_id_str)
+        return db.get_accounts(service_id=service_id)
 
 class _PluginsSDKFacade:
     def invoke(self, target_plugin_id: str, action: str, payload: dict):
@@ -210,9 +247,21 @@ class _SDK:
     def __init__(self):
         # We don't know the plugin_id here yet as it's a global singleton,
         # but facade methods will verify caller.
-        self.accounts = _AccountsSDKFacade()
+        self._accounts = _AccountsSDKFacade()
         self.plugins = _PluginsSDKFacade()
         self.file = _FileSDKFacade()
+
+    @property
+    def config(self):
+        return _ConfigFacade(self._get_plugin_id())
+
+    @property
+    def secrets(self):
+        return _SecretsFacade(self._get_plugin_id())
+
+    @property
+    def accounts(self):
+        return self._accounts
         
     @property
     def quality(self):
@@ -313,47 +362,7 @@ def _verify_caller(expected_plugin_id: str):
          raise PermissionError(f"Namespace Isolation Violation: {caller_mod} attempted to access {expected_plugin_id}")
 
 
-class KVS:
-    def __init__(self, plugin_id: str):
-        import inspect
-        frame = inspect.currentframe()
-        try:
-            caller_module = inspect.getmodule(frame.f_back)
-            if caller_module and not caller_module.__name__.startswith("core."):
-                if not caller_module.__name__.startswith(f"plugins.{plugin_id}"):
-                    raise PermissionError(f"Cross-namespace data access forbidden. Caller '{caller_module.__name__}' cannot access KVS for '{plugin_id}'.")
-        finally:
-            del frame
-        self.plugin_id = plugin_id
-
-    def get(self, key: str, default=None) -> str:
-        from database.config_database import get_config_database
-        from core.security import decrypt_string
-        db = get_config_database()
-        val = None
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT value, is_sensitive FROM config_kvs WHERE namespace=? AND key=?", (self.plugin_id, key))
-            row = c.fetchone()
-            if row:
-                val, is_sensitive = row[0], row[1]
-                if is_sensitive and val:
-                    try:
-                        val = decrypt_string(val)
-                    except Exception:
-                        pass
-        return val if val is not None else default
-
-    def set(self, key: str, value: str, is_sensitive: bool = False) -> None:
-        from database.config_database import get_config_database
-        from core.security import encrypt_string
-        db = get_config_database()
-        if is_sensitive and value:
-            value = encrypt_string(value)
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("INSERT OR REPLACE INTO config_kvs (namespace, key, value, is_sensitive) VALUES (?, ?, ?, ?)", (self.plugin_id, key, value, is_sensitive))
-            conn.commit()
+# KVS class removed
 
 class StateKVS:
     def __init__(self, plugin_id: str):
@@ -475,8 +484,12 @@ class PluginBase(ABC):
 
         # Sandbox API facades for Plugin Architecture
         self._name = self.name
+        self.sdk = sdk
         self.config = _ConfigFacade(self.name)
         self.secrets = _SecretsFacade(self.name)
+        self.accounts = _AccountsSDKFacade()
+        self.plugins = _PluginsSDKFacade()
+        self.file = _FileSDKFacade()
 
         self.models = _PluginModelFacade()
 

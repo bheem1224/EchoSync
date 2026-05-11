@@ -21,6 +21,11 @@ from core.tiered_logger import get_logger
 from core.settings import config_manager
 
 logger = get_logger("plugin_loader")
+import zlib
+
+def generate_plugin_id(name: str) -> int:
+    """Generate a consistent 32-bit integer ID from a plugin namespace."""
+    return zlib.crc32(name.encode('utf-8')) & 0xFFFFFFFF
 
 # ---------------------------------------------------------------------------
 # Zero-Trust Plugin Security Scanner
@@ -149,8 +154,8 @@ class PluginLoader:
     """
 
     def __init__(self, app_root: Path):
-        self.app_root = app_root
-        self.plugins_dir = config_manager.get_plugins_dir()
+        self.app_root = Path(app_root)
+        self.plugins_dir = Path(config_manager.get_plugins_dir())
         self.loaded_blueprints: List[Blueprint] = []
 
     def reload_plugin(self, plugin_id: int):
@@ -405,6 +410,24 @@ class PluginLoader:
 
         return clean
 
+    def _update_db_version(self, provider_id: str, version: str, clean_name: str):
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                # Use a flexible match for clean_name/provider_id to catch mismatches in plugin. vs core. prefixes
+                c.execute("""
+                    UPDATE services 
+                    SET version=? 
+                    WHERE LOWER(name)=LOWER(?) OR LOWER(namespace)=LOWER(?) OR LOWER(name)=LOWER(?) OR LOWER(namespace)=LOWER(?)
+                """, (version, clean_name, provider_id, provider_id, clean_name))
+                updated = c.rowcount
+                conn.commit()
+                logger.info(f"Stamped version {version} for {provider_id}")
+        except Exception as e:
+            logger.error(f"Failed to update version in DB for {provider_id}: {e}")
+
     def _load_plugin_package(self, name: str, parent_dir_name: str, source_type: str, is_beta: bool = False, is_disabled: bool = False):
         """
         Dynamically import a plugin package and register its exports.
@@ -436,6 +459,7 @@ class PluginLoader:
                 package_dir = package_dir / "beta"
             
             manifest_file = package_dir / "manifest.json"
+            manifest_data = {}
             if manifest_file.exists():
                 try:
                     manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
@@ -445,9 +469,16 @@ class PluginLoader:
                 except Exception:
                     pass
 
+            # Standardized ID Resolution: Use manifest ID if available, else prefix with source type
+            if manifest_data.get("id"):
+                provider_id = manifest_data["id"]
+            elif source_type == 'community':
+                provider_id = f"plugin.{clean_name}"
+            else:
+                provider_id = clean_name
+
             # If disabled, register a placeholder and return early
             if is_disabled:
-                provider_id = f"plugin.{clean_name}" if source_type == 'community' else clean_name
                 
                 # Create a simple placeholder class instead of importing from legacy core.provider
                 class DisabledPlugin(PluginBase):
@@ -459,13 +490,11 @@ class PluginLoader:
                 DisabledPlugin.category = category
                 
                 PluginRegistry.register(DisabledPlugin, name=provider_id, source_type=source_type)
+                self._update_db_version(provider_id, version, clean_name)
                 logger.info(f"Registered disabled plugin: {provider_id} (v{version})")
                 return
 
-            if source_type == 'community':
-                provider_id = f"plugin.{clean_name}"
-            else:
-                provider_id = clean_name
+
 
             # Handle WASM Plugins
             wasm_file = package_dir / "main.wasm"
@@ -490,6 +519,7 @@ class PluginLoader:
                         pass
 
                 PluginRegistry.register(WasmClass, name=provider_id, source_type=source_type)
+                self._update_db_version(provider_id, version, clean_name)
                 logger.info(f"Registered WASM plugin: {provider_id}")
                 return
 
@@ -501,6 +531,23 @@ class PluginLoader:
                 added_to_path = True
             
             try:
+                # Support bridge for absolute imports in channel-based plugins
+                # If we are loading plugins.EchoSync.tidal.beta, we want plugins.EchoSync.tidal.client 
+                # to look inside the beta folder too.
+                if is_beta:
+                    parent_module_name = f"{parent_dir_name}.{clean_name}"
+                    try:
+                        # Ensure parent module exists in sys.modules
+                        importlib.import_module(parent_module_name)
+                        parent_module = sys.modules.get(parent_module_name)
+                        if parent_module and hasattr(parent_module, '__path__'):
+                            beta_path = str(self.plugins_dir / path_name / "beta")
+                            if beta_path not in parent_module.__path__:
+                                logger.debug(f"Bridging {parent_module_name} __path__ to include {beta_path}")
+                                parent_module.__path__.insert(0, beta_path)
+                    except Exception as bridge_err:
+                        logger.debug(f"Could not bridge parent module path: {bridge_err}")
+
                 module = importlib.import_module(module_path)
             finally:
                 if added_to_path and plugins_parent_str in sys.path:
@@ -510,9 +557,12 @@ class PluginLoader:
             if hasattr(module, 'ProviderClass'):
                 provider_cls = getattr(module, 'ProviderClass')
                 PluginRegistry.register(provider_cls, name=provider_id, source_type=source_type)
-                logger.debug(f"Registered PluginClass for {provider_id} (v{version})")
+                logger.debug(f"Detected ProviderClass for {provider_id}, updating DB version")
+                self._update_db_version(provider_id, version, clean_name)
+                logger.info(f"Registered PluginClass for {provider_id} (v{version})")
             else:
                 # Fallback: Look for any ProviderBase subclass if not explicitly exported
+                logger.debug(f"No ProviderClass found in {module_path}, searching for subclasses")
                 found = False
                 for attr_name in dir(module):
                     attr = getattr(module, attr_name)
@@ -610,7 +660,7 @@ def get_all_plugins() -> list:
     
     import os
     core_dir = Path(os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR', Path(__file__).parent.parent / "plugins"))
-    community_dir = config_manager.get_plugins_dir()
+    community_dir = Path(config_manager.get_plugins_dir())
 
     # Process core first, then community. Community plugins with the same ID will shadow core ones.
     for source_type, directory in [('core', core_dir), ('community', community_dir)]:

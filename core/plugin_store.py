@@ -110,7 +110,8 @@ class PluginStore:
                     plugin_id = p.get("id", "")
                     if not plugin_id: continue
                     
-                    folder_name = p.get("path") or plugin_id.split(".")[-1]
+                    clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+                    folder_name = p.get("path") or clean_id.replace('.', '/')
                     p["_folder_path"] = f"{subfolder}/{folder_name}" if subfolder else folder_name
                     
                     repo_raw_base = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{p['_folder_path']}"
@@ -178,7 +179,8 @@ class PluginStore:
                     plugin_id = p.get("id", "")
                     if not plugin_id: continue
                         
-                    folder_name = p.get("path") or plugin_id.split(".")[-1]
+                    clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+                    folder_name = p.get("path") or clean_id.replace('.', '/')
                     p["_folder_path"] = f"{subfolder}/{folder_name}" if subfolder else folder_name
 
                     repo_raw_base = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{p['_folder_path']}"
@@ -265,18 +267,19 @@ class PluginStore:
 
             # Task 1: Resolve Active Version from Core or Community
             # Precedence: Community (/data/plugins) > Core (/app/plugins)
-            folder_id = plugin_id.split(".")[-1]
-            comm_dir = self.plugins_dir / folder_id
+            clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+            folder_path = clean_id.replace('.', '/')
+            comm_dir = self.plugins_dir / folder_path
             # Resolve core directory dynamically (ENV > Fallback)
             core_root = Path(os.environ.get('ECHOSYNC_CORE_PLUGINS_DIR', Path(__file__).parent.parent / "plugins"))
-            core_dir = core_root / folder_id
+            core_dir = core_root / folder_path
             
             comm_manifest = comm_dir / "manifest.json"
             core_manifest = core_dir / "manifest.json"
             
             plugin["_installed"] = False
             plugin["installed_version"] = None
-            plugin["installed_channel"] = config_manager.get_plugin_channel(folder_id)
+            plugin["installed_channel"] = config_manager.get_plugin_channel(plugin_id)
             
             # Check community first (updates/overrides)
             if comm_dir.exists():
@@ -365,8 +368,12 @@ class PluginStore:
             return False
 
         plugin_id = plugin_info.get("id", plugin_info.get("plugin_id", "unknown_plugin"))
-        # Nexus Framework: Use explicit path (e.g. EchoSync/listenbrainz) if provided
-        folder_path = plugin_info.get("path") or plugin_id.split(".")[-1]
+        # Nexus Framework: Resolve nested path (dots to slashes)
+        folder_path = plugin_info.get("path")
+        if not folder_path:
+            clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+            folder_path = clean_id.replace('.', '/')
+            
         dest_dir = self.plugins_dir / folder_path
         beta_dir = dest_dir / "beta"
 
@@ -480,8 +487,8 @@ class PluginStore:
                 if target_dir.exists():
                     shutil.rmtree(target_dir, ignore_errors=True)
 
-                if target_dir == beta_dir and not dest_dir.exists():
-                    dest_dir.mkdir(parents=True, exist_ok=True)
+                if not target_dir.parent.exists():
+                    target_dir.parent.mkdir(parents=True, exist_ok=True)
 
                 os.rename(str(tmp_dir), str(target_dir))
                 logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
@@ -504,6 +511,22 @@ class PluginStore:
                         logger.info(f"Executed data cutover for {plugin_id} (Stable Promotion)")
                     except Exception as e:
                         logger.error(f"Failed to cutover namespace for {plugin_id}: {e}")
+
+                # State Synchronization: Synchronize with the authoritative SQLite registry
+                try:
+                    from database.config_database import get_config_database
+                    db = get_config_database()
+                    db.register_service(
+                        name=clean_id,
+                        display_name=plugin_info.get("name", clean_id),
+                        service_type=plugin_info.get("category", "provider"),
+                        description=plugin_info.get("description", ""),
+                        namespace=plugin_id,
+                        plugin_id=plugin_info.get("plugin_id")
+                    )
+                    logger.info(f"Synchronized database state for plugin {plugin_id}")
+                except Exception as e:
+                    logger.error(f"Failed to synchronize database state for {plugin_id}: {e}")
 
                 # Hot-Swap Architecture: Perform Zero-Downtime Reload instead of setting restart_pending
                 try:
@@ -565,7 +588,9 @@ class PluginStore:
 
     def _cleanup_beta_subfolder(self, folder_id: str) -> bool:
         import shutil
-        beta_path = self.plugins_dir / folder_id / "beta"
+        # Convert dots to slashes for nested path support
+        path_name = folder_id.replace('.', '/')
+        beta_path = self.plugins_dir / path_name / "beta"
         if beta_path.exists():
             shutil.rmtree(beta_path, ignore_errors=True)
             logger.info(f"Removed leftover beta folder for plugin {folder_id}")
@@ -759,9 +784,10 @@ class PluginStore:
             logger.error(f"Failed to abort data namespace for {plugin_id}: {e}")
 
         # 2. Switch Channel to Stable and cleanup beta files
-        folder_id = plugin_id.split(".")[-1]
-        config_manager.set(f'plugins.{folder_id}.channel', 'stable')
-        self._cleanup_beta_subfolder(folder_id)
+        clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+        folder_path = clean_id.replace('.', '/')
+        config_manager.set(f'plugins.{clean_id}.channel', 'stable')
+        self._cleanup_beta_subfolder(folder_path)
 
         from core.state import system_state
         system_state.restart_pending = True

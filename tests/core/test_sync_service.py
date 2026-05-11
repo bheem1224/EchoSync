@@ -70,26 +70,32 @@ def test_get_spotify_playlist_respects_account_id(monkeypatch):
 
 def test_get_all_spotify_playlists_filters_active(monkeypatch):
     # monkeypatch config manager to return account configs including active flag
-                        lambda: [
-                            {'id': 1, 'name': 'First', 'is_active': True},
-                            {'id': 2, 'name': 'Second', 'is_active': False},
-                            {'id': 3, 'name': 'Third', 'enabled': True}
-                        ])
-    service = PlaylistSyncService()
-    # run the async helper
-    import asyncio
+    with patch("database.config_database.ConfigDatabase.get_accounts") as mock_get_accounts:
+        def side_effect(service_id=None, is_active=None):
+            accounts = [
+                {'id': 1, 'name': 'First', 'is_active': True},
+                {'id': 2, 'name': 'Second', 'is_active': False},
+                {'id': 3, 'name': 'Third', 'is_active': True}
+            ]
+            if is_active is not None:
+                return [a for a in accounts if a.get('is_active') == is_active]
+            return accounts
+        mock_get_accounts.side_effect = side_effect
+        service = PlaylistSyncService()
+        # run the async helper
+        import asyncio
 
-    # We need to mock PluginRegistry.create_instance so it doesn't fail trying to instantiate
-    def mock_create_instance(name, account_id=None, **kwargs):
-        class MockClient:
-            def is_configured(self): return True
-            def get_user_playlists(self):
-                return [{'id': f'pl{account_id}', 'name': f'Playlist {account_id}'}]
-        return MockClient()
-    monkeypatch.setattr('core.plugin_loader.PluginRegistry.create_instance', mock_create_instance)
+        # We need to mock PluginRegistry.create_instance so it doesn't fail trying to instantiate
+        def mock_create_instance(name, account_id=None, **kwargs):
+            class MockClient:
+                def is_configured(self): return True
+                def get_user_playlists(self):
+                    return [{'id': f'pl{account_id}', 'name': f'Playlist {account_id}'}]
+            return MockClient()
+        monkeypatch.setattr('core.plugin_loader.PluginRegistry.create_instance', mock_create_instance)
 
-    playlists = asyncio.run(service._get_all_spotify_playlists())
-    # The name no longer contains the account name, so we check account_name instead
-    assert any(p.account_name == 'First' for p in playlists)
-    assert not any(p.account_name == 'Second' for p in playlists)
-    assert any(p.account_name == 'Third' for p in playlists)
+        playlists = asyncio.run(service._get_all_spotify_playlists())
+        # The name no longer contains the account name, so we check account_name instead
+        assert any(p.account_name == 'First' for p in playlists)
+        assert not any(p.account_name == 'Second' for p in playlists)
+        assert any(p.account_name == 'Third' for p in playlists)
