@@ -29,6 +29,7 @@ curl \
     gosu \
     ffmpeg \
     libchromaprint-tools \
+    passwd \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
@@ -48,20 +49,22 @@ RUN uv sync --frozen --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 # ------------------------------------------
 
+# Create necessary directories
+RUN mkdir -p /config /data/logs /data/downloads /data/Transfer /defaults
+
 # Copy application code 
 COPY . .
 
 # Copy built Svelte UI from the node stage
 COPY --from=node /app/webui/build /app/webui/build
 
-# Create necessary directories with proper permissions
-RUN mkdir -p /config /data/logs /data/downloads /data/Transfer && \
-    chown -R echosync:echosync /config /data
+# Setup entrypoint
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Create defaults directory and copy template files
+# Create template files
 # (Using || true to ensure build doesn't fail if example config is missing)
-RUN mkdir -p /defaults && \
-    cp /app/config/config.example.json /defaults/config.json || true && \
+RUN cp /app/config/config.example.json /defaults/config.json || true && \
     chmod 644 /defaults/config.json || true
 
 # Create volume mount points
@@ -75,15 +78,14 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5000/api/health || exit 1
 # Set environment variables
 ENV PYTHONPATH=/app
-ENV PUID=1000
-ENV PGID=1000
+ENV PUID=99
+ENV PGID=100
 ENV UMASK=022
 ENV ECHOSYNC_CONFIG_DIR=/config
 ENV ECHOSYNC_DATA_DIR=/data
 ENV UVICORN_PORT=5000
-# default timezone and log verbosity (can be overridden at runtime)
 ENV TZ=UTC
 ENV ECHOSYNC_LOG_LEVEL=INFO
 
-# Default command; using the uv virtual environment
+# Default command; used as arguments to the entrypoint
 CMD ["python", "run_api.py"]

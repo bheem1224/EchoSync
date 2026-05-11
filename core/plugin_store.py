@@ -279,7 +279,7 @@ class PluginStore:
             
             plugin["_installed"] = False
             plugin["installed_version"] = None
-            plugin["installed_channel"] = config_manager.get_plugin_channel(folder_id)
+            plugin["installed_channel"] = config_manager.get_plugin_channel(plugin_id)
             
             # Check community first (updates/overrides)
             if comm_dir.exists():
@@ -563,7 +563,9 @@ class PluginStore:
 
     def _cleanup_beta_subfolder(self, folder_id: str) -> bool:
         import shutil
-        beta_path = self.plugins_dir / folder_id / "beta"
+        # Convert dots to slashes for nested path support
+        path_name = folder_id.replace('.', '/')
+        beta_path = self.plugins_dir / path_name / "beta"
         if beta_path.exists():
             shutil.rmtree(beta_path, ignore_errors=True)
             logger.info(f"Removed leftover beta folder for plugin {folder_id}")
