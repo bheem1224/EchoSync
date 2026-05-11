@@ -26,6 +26,7 @@ build/
 venv/
 env/
 ENV/
+.venv/
 
 # Data directories (will be mounted as volumes)
 logs/*
