@@ -42,6 +42,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Copy backend dependency files
 COPY pyproject.toml uv.lock .python-version ./
 
+# 1. Force uv to build the environment OUTSIDE of /app
+ENV UV_PROJECT_ENVIRONMENT="/opt/venv"
+
 # Use uv to sync the environment exactly as it is in uv.lock
 RUN uv sync --frozen --no-dev
 
@@ -88,4 +91,4 @@ ENV TZ=UTC
 ENV ECHOSYNC_LOG_LEVEL=INFO
 
 # Default command; used as arguments to the entrypoint
-CMD ["python", "run_api.py"]
+CMD ["/opt/venv/bin/python", "run_api.py"]
