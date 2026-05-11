@@ -405,6 +405,17 @@ class PluginLoader:
 
         return clean
 
+    def _update_db_version(self, provider_id: str, version: str, clean_name: str):
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("UPDATE services SET version=? WHERE name=? OR namespace=?", (version, clean_name, provider_id))
+                conn.commit()
+        except Exception:
+            pass
+
     def _load_plugin_package(self, name: str, parent_dir_name: str, source_type: str, is_beta: bool = False, is_disabled: bool = False):
         """
         Dynamically import a plugin package and register its exports.
@@ -459,6 +470,7 @@ class PluginLoader:
                 DisabledPlugin.category = category
                 
                 PluginRegistry.register(DisabledPlugin, name=provider_id, source_type=source_type)
+                self._update_db_version(provider_id, version, clean_name)
                 logger.info(f"Registered disabled plugin: {provider_id} (v{version})")
                 return
 
@@ -490,6 +502,7 @@ class PluginLoader:
                         pass
 
                 PluginRegistry.register(WasmClass, name=provider_id, source_type=source_type)
+                self._update_db_version(provider_id, version, clean_name)
                 logger.info(f"Registered WASM plugin: {provider_id}")
                 return
 
@@ -510,6 +523,7 @@ class PluginLoader:
             if hasattr(module, 'ProviderClass'):
                 provider_cls = getattr(module, 'ProviderClass')
                 PluginRegistry.register(provider_cls, name=provider_id, source_type=source_type)
+                self._update_db_version(provider_id, version, clean_name)
                 logger.debug(f"Registered PluginClass for {provider_id} (v{version})")
             else:
                 # Fallback: Look for any ProviderBase subclass if not explicitly exported

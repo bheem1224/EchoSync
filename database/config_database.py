@@ -184,9 +184,13 @@ class ConfigDatabase:
                         resolved_plugin_id_str = s_name
                         resolved_version = '1.0.0'
                         for p in all_plugins:
-                            if s_name.lower() in p.get('folder_name', '').lower() or s_name.lower() == p.get('name', '').lower():
-                                resolved_namespace = p.get('id', 'legacy')
-                                resolved_plugin_id_str = p.get('folder_name', s_name).split('/')[-1]
+                            p_id = p.get('id', '')
+                            p_name = p.get('name', '')
+                            p_folder = p.get('folder_name', '')
+                            norm_s_name = s_name.replace('.', '/')
+                            if s_name.lower() in p_folder.lower() or norm_s_name.lower() in p_folder.lower() or s_name.lower() == p_name.lower() or s_name.lower() in p_id.lower():
+                                resolved_namespace = p_id
+                                resolved_plugin_id_str = p_folder.split('/')[-1]
                                 resolved_version = p.get('version', '1.0.0')
                                 break
                         plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
@@ -327,7 +331,7 @@ class ConfigDatabase:
     def get_service_name(self, service_id: int) -> Optional[str]:
         with self._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT name FROM services WHERE id=?", (service_id,))
+            c.execute("SELECT name FROM services WHERE id=? OR plugin_id=?", (service_id, service_id))
             row = c.fetchone()
             return row[0] if row else None
 
