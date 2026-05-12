@@ -358,41 +358,14 @@ class PluginStore:
         return all_plugins
 
     def install_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False) -> bool:
-        """Downloads the plugin artifact, registers it in DB, and loads it."""
-        # Task 1 & 2 integration
-        if not self.download_plugin(plugin_info, channel, force_consent):
-            return False
-
-        # Need to explicitly write to the services table for a fresh install
-        plugin_id = plugin_info.get("id", plugin_info.get("plugin_id", "unknown_plugin"))
-        import zlib
-        int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
-        plugin_name = plugin_info.get("name", "Unknown Plugin")
-        plugin_type = plugin_info.get("type", "community")
-        plugin_version = plugin_info.get("version", "1.0.0")
-
-        from web.db.config_db import get_config_database
-        db = get_config_database()
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("""
-                INSERT OR REPLACE INTO services
-                (plugin_id, name, namespace, type, is_active, version)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (int_plugin_id, plugin_name, plugin_id, plugin_type, 1, plugin_version))
-            conn.commit()
-
-        from core.plugin_loader import PluginLoader
-        app_root = Path(__file__).parent.parent
-        loader = PluginLoader(app_root)
-        loader.reload_plugin(int_plugin_id)
-        return True
+        """First-time installation of a plugin."""
+        return self.download_plugin(plugin_info, channel, force_consent, is_update=False)
 
     def update_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False) -> bool:
         """Downloads the update and hot swaps it."""
-        return self.download_plugin(plugin_info, channel, force_consent)
+        return self.download_plugin(plugin_info, channel, force_consent, is_update=True)
 
-    def download_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False) -> bool:
+    def download_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False, is_update: bool = True) -> bool:
         """
         Direct Artifact Downloader.
         Downloads a cleanly packaged .zip artifact based on the selected channel.
@@ -510,7 +483,8 @@ class PluginStore:
                 # Store parsed and strict fields for later DB insertion
                 manifest_author = new_manifest["author"]
                 manifest_name = new_manifest["name"]
-                strict_namespace = f"{manifest_author}.{manifest_name}".lower()
+                # DO NOT lowercase here to avoid filesystem mismatch with registry
+                strict_namespace = f"{manifest_author}.{manifest_name}"
                 manifest_desc = new_manifest["description"]
                 manifest_version = new_manifest["version"]
                 manifest_type = new_manifest["type"]
@@ -617,19 +591,20 @@ class PluginStore:
                 config_manager.set(f'plugins.{clean_id}.channel', channel)
                 logger.info(f"Persisted channel '{channel}' for plugin {clean_id}")
 
-                # Task 6: Blue/Green Namespace Shifting
-                if channel == "beta":
-                    try:
-                        self._fork_namespace(plugin_id)
-                        logger.info(f"Forked data namespace for {plugin_id} (Blue/Green)")
-                    except Exception as e:
-                        logger.error(f"Failed to fork namespace for {plugin_id}: {e}")
-                elif channel == "stable":
-                    try:
-                        self._cutover_namespace(plugin_id)
-                        logger.info(f"Executed data cutover for {plugin_id} (Stable Promotion)")
-                    except Exception as e:
-                        logger.error(f"Failed to cutover namespace for {plugin_id}: {e}")
+                # Task 6: Blue/Green Namespace Shifting (Only during updates)
+                if is_update:
+                    if channel == "beta":
+                        try:
+                            self._fork_namespace(plugin_id)
+                            logger.info(f"Forked data namespace for {plugin_id} (Blue/Green)")
+                        except Exception as e:
+                            logger.error(f"Failed to fork namespace for {plugin_id}: {e}")
+                    elif channel == "stable":
+                        try:
+                            self._cutover_namespace(plugin_id)
+                            logger.info(f"Executed data cutover for {plugin_id} (Stable Promotion)")
+                        except Exception as e:
+                            logger.error(f"Failed to cutover namespace for {plugin_id}: {e}")
 
                 # State Synchronization: Synchronize with the authoritative SQLite registry
                 try:
@@ -646,33 +621,27 @@ class PluginStore:
                         service_type=manifest_type,
                         description=manifest_desc,
                         namespace=strict_namespace,
-                        plugin_id=int_plugin_id
+                        plugin_id=int_plugin_id,
+                        version=manifest_version
                     )
                     logger.info(f"Synchronized database state for plugin {plugin_id} (int: {int_plugin_id})")
                 except Exception as e:
                     logger.error(f"Failed to synchronize database state for {plugin_id}: {e}")
 
-                # Hot-Swap Architecture: Perform Zero-Downtime Reload
-                try:
-                    from core.plugin_loader import PluginLoader
-                    app_root = Path(__file__).parent.parent
-                    loader = PluginLoader(app_root)
-                    loader.reload_plugin(int_plugin_id)
-                    restart_required = False
-                    logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}).")
-                except Exception as e:
-                    logger.warning(f"Hot-swap failed, falling back to restart: {e}")
-                    system_state.restart_pending = True
-                    restart_required = True
+                # Hot-Swap Architecture: Perform Zero-Downtime Reload (Only during updates)
+                if is_update:
+                    try:
+                        from core.plugin_loader import PluginLoader
+                        app_root = Path(__file__).parent.parent
+                        loader = PluginLoader(app_root)
+                        loader.reload_plugin(int_plugin_id)
+                        logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}).")
+                    except Exception as e:
+                        logger.warning(f"Live-swap failed for {plugin_id}, marking restart pending: {e}")
+                        system_state.restart_pending = True
+                else:
+                    logger.info(f"Fresh installation complete for {plugin_id}. Hot-swap skipped.")
 
-                event_bus.publish("SYSTEM", "PLUGIN_UPDATE_COMPLETE", {
-                    "plugin_id": plugin_id,
-                    "name": plugin_info.get("name"),
-                    "version": plugin_info.get("version"),
-                    "channel": channel,
-                    "restart_required": restart_required
-                })
-                
                 return True
 
             finally:

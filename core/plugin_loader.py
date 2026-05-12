@@ -160,6 +160,35 @@ class PluginLoader:
         self.plugins_dir = Path(config_manager.get_plugins_dir())
         self.loaded_blueprints: List[Blueprint] = []
 
+    def _find_case_insensitive_path(self, base_path: Path, parts: List[str]) -> Optional[Path]:
+        """Helper to find a directory path case-insensitively, part by part."""
+        current = base_path
+        for part in parts:
+            if not current.exists():
+                return None
+            
+            # Direct match first (most efficient)
+            exact = current / part
+            if exact.exists():
+                current = exact
+                continue
+                
+            # Case-insensitive search within the current directory
+            match = None
+            try:
+                for item in current.iterdir():
+                    if item.name.lower() == part.lower():
+                        match = item
+                        break
+            except Exception:
+                return None
+            
+            if match:
+                current = match
+            else:
+                return None
+        return current
+
     def reload_plugin(self, plugin_id: int):
         """Perform a true Zero-Downtime hot reload of a plugin."""
         logger.info(f"🔄 HOT-SWAP INITIATED: {plugin_id}")
@@ -184,11 +213,11 @@ class PluginLoader:
         
         # Determine directory structure (Author.Plugin or Flat)
         parts = clean_ns.split('.')
-        plugin_dir = self.plugins_dir.joinpath(*parts)
+        plugin_dir = self._find_case_insensitive_path(self.plugins_dir, parts)
         
         # Candidate 2: Flat fallback if author-nested doesn't exist
-        if not plugin_dir.exists():
-             plugin_dir = self.plugins_dir / parts[-1]
+        if not plugin_dir or not plugin_dir.exists():
+             plugin_dir = self._find_case_insensitive_path(self.plugins_dir, [parts[-1]])
 
         # Handle Beta Folder Nesting
         if channel == 'beta':
@@ -396,10 +425,14 @@ class PluginLoader:
             try:
                 # 1. Resolve Path
                 parts = clean_ns.split('.')
-                package_dir = self.plugins_dir.joinpath(*parts)
+                package_dir = self._find_case_insensitive_path(self.plugins_dir, parts)
                 
-                if not package_dir.exists():
-                    package_dir = self.plugins_dir / parts[-1]
+                if not package_dir or not package_dir.exists():
+                    package_dir = self._find_case_insensitive_path(self.plugins_dir, [parts[-1]])
+                
+                # If both failed, we have a missing plugin
+                if not package_dir:
+                     raise ValueError(f"Plugin package {namespace} not found in {self.plugins_dir}")
                 
                 if is_beta:
                     package_dir = package_dir / "beta"

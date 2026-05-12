@@ -22,25 +22,25 @@ class MusicDatabaseWrapper:
         self._db = MusicDatabase(database_path)
 
     # === Canonical Track Operations ===
-    def create_track(self, track: Track) -> str:
+    def create_track(self, track: CoreTrack) -> str:
         return self._db.create_track(track)
 
-    def update_track(self, track: Track) -> None:
+    def update_track(self, track: CoreTrack) -> None:
         return self._db.update_track(track)
 
-    def get_track(self, track_id: str) -> Optional[Track]:
+    def get_track(self, track_id: str) -> Optional[DatabaseTrack]:
         return self._db.get_track(track_id)
 
-    def find_track_by_provider_ref(self, provider: str, provider_id: str) -> Optional[Track]:
+    def find_track_by_provider_ref(self, provider: str, provider_id: str) -> Optional[DatabaseTrack]:
         return self._db.find_track_by_provider_ref(provider, provider_id)
 
-    def find_track_by_isrc(self, isrc: str) -> Optional[Track]:
+    def find_track_by_isrc(self, isrc: str) -> Optional[DatabaseTrack]:
         return self._db.find_track_by_isrc(isrc)
 
-    def find_track_by_musicbrainz_id(self, mbid: str) -> Optional[Track]:
+    def find_track_by_musicbrainz_id(self, mbid: str) -> Optional[DatabaseTrack]:
         return self._db.find_track_by_musicbrainz_id(mbid)
 
-    def fuzzy_match_tracks(self, title: str, artists: List[str], album: Optional[str] = None, threshold: float = 0.0) -> List[Track]:
+    def fuzzy_match_tracks(self, title: str, artists: List[str], album: Optional[str] = None, threshold: float = 0.0) -> List[DatabaseTrack]:
         return self._db.fuzzy_match_tracks(title, artists, album, threshold)
 
     # === Statistics ===
@@ -67,10 +67,10 @@ class MusicDatabaseWrapper:
     def insert_or_update_media_artist(self, artist_obj, server_source: str = 'plex') -> bool:
         return self._db.insert_or_update_media_artist(artist_obj, server_source)
 
-    def get_artist(self, artist_id: int) -> Optional[Artist]:
+    def get_artist(self, artist_id: int) -> Optional[DatabaseArtist]:
         return self._db.get_artist(artist_id)
 
-    def search_artists(self, query: str, limit: int = 50) -> List[Artist]:
+    def search_artists(self, query: str, limit: int = 50) -> List[DatabaseArtist]:
         return self._db.search_artists(query, limit)
 
     # === Album Operations ===
@@ -80,28 +80,27 @@ class MusicDatabaseWrapper:
     def insert_or_update_media_album(self, album_obj, artist_id: str, server_source: str = 'plex') -> bool:
         return self._db.insert_or_update_media_album(album_obj, artist_id, server_source)
 
-    def get_albums_by_artist(self, artist_id: int) -> List[Album]:
+    def get_albums_by_artist(self, artist_id: int) -> List[DatabaseAlbum]:
         return self._db.get_albums_by_artist(artist_id)
 
-    def search_albums(self, title: str = "", artist: str = "", limit: int = 50, server_source: Optional[str] = None) -> List[Album]:
+    def search_albums(self, title: str = "", artist: str = "", limit: int = 50, server_source: Optional[str] = None) -> List[DatabaseAlbum]:
         return self._db.search_albums(title, artist, limit, server_source)
 
-    def check_album_exists(self, title: str, artist: str, confidence_threshold: float = 0.8) -> Tuple[Optional[Album], float]:
+    def check_album_exists(self, title: str, artist: str, confidence_threshold: float = 0.8) -> Tuple[Optional[DatabaseAlbum], float]:
         return self._db.check_album_exists(title, artist, confidence_threshold)
 
     def check_album_completeness(self, album_id: int, expected_track_count: Optional[int] = None) -> Tuple[int, int, bool]:
         return self._db.check_album_completeness(album_id, expected_track_count)
 
-    def check_album_exists_with_completeness(self, title: str, artist: str, expected_track_count: Optional[int] = None, confidence_threshold: float = 0.8, server_source: Optional[str] = None) -> Tuple[Optional[Album], float, int, int, bool]:
+    def check_album_exists_with_completeness(self, title: str, artist: str, expected_track_count: Optional[int] = None, confidence_threshold: float = 0.8, server_source: Optional[str] = None) -> Tuple[Optional[DatabaseAlbum], float, int, int, bool]:
         return self._db.check_album_exists_with_completeness(title, artist, expected_track_count, confidence_threshold, server_source)
 
-    def check_album_exists_with_editions(self, title: str, artist: str, confidence_threshold: float = 0.8, expected_track_count: Optional[int] = None, server_source: Optional[str] = None) -> Tuple[Optional[Album], float]:
+    def check_album_exists_with_editions(self, title: str, artist: str, confidence_threshold: float = 0.8, expected_track_count: Optional[int] = None, server_source: Optional[str] = None) -> Tuple[Optional[DatabaseAlbum], float]:
         return self._db.check_album_exists_with_editions(title, artist, confidence_threshold, expected_track_count, server_source)
 
     def get_album_completion_stats(self, artist_name: str) -> Dict[str, int]:
         return self._db.get_album_completion_stats(artist_name)
 
-    # === Track Operations ===
     # === Track Operations ===
     def insert_or_update_echo_sync_track(
         self,
@@ -144,13 +143,13 @@ class MusicDatabaseWrapper:
     def get_track_by_id(self, track_id) -> Optional[DatabaseTrackWithMetadata]:
         return self._db.get_track_by_id(track_id)
 
-    def get_tracks_by_album(self, album_id: int) -> List[Track]:
+    def get_tracks_by_album(self, album_id: int) -> List[DatabaseTrack]:
         return self._db.get_tracks_by_album(album_id)
 
-    def search_tracks(self, title: str = "", artist: str = "", limit: int = 50, server_source: str = None) -> List[Track]:
+    def search_tracks(self, title: str = "", artist: str = "", limit: int = 50, server_source: str = None) -> List[DatabaseTrack]:
         return self._db.search_tracks(title, artist, limit, server_source)
 
-    def check_track_exists(self, title: str, artist: str, confidence_threshold: float = 0.8, server_source: str = None) -> Tuple[Optional[Track], float]:
+    def check_track_exists(self, title: str, artist: str, confidence_threshold: float = 0.8, server_source: str = None) -> Tuple[Optional[DatabaseTrack], float]:
         return self._db.check_track_exists(title, artist, confidence_threshold, server_source)
 
     # === Metadata & Preferences ===
