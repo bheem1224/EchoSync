@@ -612,8 +612,8 @@ class PluginStore:
                     import zlib
                     db = get_config_database()
                     
-                    # Generate/Verify Integer Plugin ID based on the strict namespace
-                    int_plugin_id = zlib.crc32(strict_namespace.encode('utf-8')) & 0xFFFFFFFF
+                    # Generate/Verify Integer Plugin ID based on the strict namespace (ALWAYS lowercase for hash consistency)
+                    int_plugin_id = zlib.crc32(strict_namespace.lower().encode('utf-8')) & 0xFFFFFFFF
 
                     db.register_service(
                         name=clean_id,

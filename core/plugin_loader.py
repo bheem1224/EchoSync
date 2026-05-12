@@ -434,6 +434,19 @@ class PluginLoader:
                 if not package_dir:
                      raise ValueError(f"Plugin package {namespace} not found in {self.plugins_dir}")
                 
+                # DERIVE CORRECT CASING FROM DISK
+                # This ensures module_path matches the filesystem exactly, preventing case-sensitive import errors
+                try:
+                    relative_path = package_dir.relative_to(self.plugins_dir)
+                    actual_ns = ".".join(relative_path.parts)
+                    if is_beta:
+                        module_path = f"plugins.{actual_ns}.beta"
+                    else:
+                        module_path = f"plugins.{actual_ns}"
+                    logger.debug(f"Resolved module path casing: {module_path}")
+                except Exception as e:
+                    logger.warning(f"Could not derive relative path for {package_dir}: {e}")
+
                 if is_beta:
                     package_dir = package_dir / "beta"
                 

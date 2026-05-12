@@ -265,9 +265,8 @@ class ConfigDatabase:
     def register_service(self, name: str, display_name: str, service_type: str, description: str, namespace: str = 'legacy', plugin_id: Optional[int] = None, version: Optional[str] = None) -> int:
         import binascii
         if plugin_id is None:
-            # Fallback CRC32 generation if not provided
-            folder_name = namespace.split('.')[-1] if '.' in namespace else namespace
-            plugin_id = binascii.crc32(folder_name.encode('utf-8')) & 0xFFFFFFFF
+            # Fallback CRC32 generation if not provided (ALWAYS use full lowercase namespace for consistency)
+            plugin_id = binascii.crc32(namespace.lower().encode('utf-8')) & 0xFFFFFFFF
 
         try:
             execute_write_sql(
