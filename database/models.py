@@ -9,7 +9,9 @@ class Service(Base):
     __tablename__ = "services"
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, unique=True, nullable=False)
-    namespace = Column(String, nullable=False)
+    friendly_name = Column(String, nullable=True)
+    absolute_install_path = Column(String, nullable=True)
+    loaded_modules = Column(String, nullable=True)
     plugin_id = Column(Integer, nullable=True)
     display_name = Column(String)
     service_type = Column(String)
@@ -125,7 +127,7 @@ class AccountMapping(Base):
 class PluginSnapshot(Base):
     __tablename__ = "plugin_snapshots"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    namespace = Column(String, nullable=False, unique=True) 
+    plugin_id = Column(Integer, nullable=False, unique=True)
     snapshot_data = Column(Text, nullable=False)
     expires_at = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=func.now())

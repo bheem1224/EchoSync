@@ -110,7 +110,7 @@ class PluginStore:
                     plugin_id = p.get("id", "")
                     if not plugin_id: continue
                     
-                    clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+                    clean_id = str(plugin_id)
                     # Dynamic split of namespace to build `{author}/{name}`
                     parts = clean_id.split('.')
                     if len(parts) >= 2:
@@ -187,7 +187,7 @@ class PluginStore:
                     plugin_id = p.get("id", "")
                     if not plugin_id: continue
                         
-                    clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+                    clean_id = str(plugin_id)
                     # Dynamic split of namespace to build `{author}/{name}`
                     parts = clean_id.split('.')
                     if len(parts) >= 2:
@@ -284,7 +284,7 @@ class PluginStore:
                 plugin["author"] = "EchoSync"
 
             # Resolve Active Version from Community (/data/plugins)
-            clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+            clean_id = str(plugin_id)
             folder_path = clean_id.replace('.', os.sep)
             comm_dir = self.plugins_dir / folder_path
             
@@ -387,7 +387,7 @@ class PluginStore:
         # Fallback Route: If explicit URL is completely missing
         if not download_url:
             plugin_id = plugin_info.get("id", plugin_info.get("plugin_id", "unknown_plugin"))
-            clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+            clean_id = str(plugin_id)
             parts = clean_id.split('.')
             if len(parts) >= 2:
                 author = parts[0]
@@ -410,7 +410,7 @@ class PluginStore:
         # Nexus Framework: Resolve nested path (dots to slashes)
         folder_path = plugin_info.get("path")
         if not folder_path:
-            clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+            clean_id = str(plugin_id)
             folder_path = clean_id.replace('.', '/')
             
         dest_dir = self.plugins_dir / folder_path
@@ -587,7 +587,7 @@ class PluginStore:
 
 
                 # Task 5: Persist Channel Preference (Nexus normalization)
-                clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+                clean_id = str(plugin_id)
                 config_manager.set(f'plugins.{clean_id}.channel', channel)
                 logger.info(f"Persisted channel '{channel}' for plugin {clean_id}")
 
@@ -703,13 +703,13 @@ class PluginStore:
         import os
         import sys
         # Nexus Framework: Resolve nested path by converting dots to slashes
-        clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+        clean_id = str(plugin_id)
         folder_path = clean_id.replace('.', os.sep)
         dest_dir = self.plugins_dir / folder_path
         
         try:
             from database.working_database import get_working_database
-            from web.db.config_db import get_config_database
+            from database.config_database import get_config_database
 
             # 1. Disable and remove jobs
             try:
@@ -740,25 +740,50 @@ class PluginStore:
             safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', clean_id.replace('.', '_')).lower()
             prefix = f"plugin_{safe_id}_%"
             
-            for db_engine in [get_working_database().engine, get_config_database().engine]:
-                with db_engine.connect() as conn:
-                    try:
-                        from sqlalchemy import text
-                        tables = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :prefix"), {"prefix": prefix}).fetchall()
-                        for (table_name,) in tables:
-                            if table_name in ("plugin_state_kvs", "config_kvs"):
-                                continue
-                            conn.execute(text(f"DROP TABLE IF EXISTS \"{table_name}\""))
-                        conn.commit()
-                    except Exception:
-                        pass
+            try:
+                # Some database objects might not expose the engine property directly
+                db_engines = []
+                w_db = get_working_database()
+                if hasattr(w_db, 'engine'): db_engines.append(w_db.engine)
+                c_db = get_config_database()
+                if hasattr(c_db, 'engine'): db_engines.append(c_db.engine)
+
+                for db_engine in db_engines:
+                    with db_engine.connect() as conn:
+                        try:
+                            from sqlalchemy import text
+                            tables = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :prefix"), {"prefix": prefix}).fetchall()
+                            for (table_name,) in tables:
+                                if table_name in ("plugin_state_kvs", "config_kvs"):
+                                    continue
+                                conn.execute(text(f"DROP TABLE IF EXISTS \"{table_name}\""))
+                            conn.commit()
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.warning(f"Failed to teardown dynamic tables for {plugin_id}: {e}")
 
             # 4. Delete config keys
             config = get_config_database()
-            with config._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("DELETE FROM config_kvs WHERE namespace=?", (plugin_id,))
-                c.execute("DELETE FROM config_kvs WHERE namespace=?", (f"plugin.{plugin_id}",))
+            try:
+                # Handle SQLite vs SQLAlchemy connections depending on what get_connection returns
+                conn = getattr(config, "get_connection", getattr(config, "_get_connection", lambda: None))()
+                if not conn: raise Exception("No connection available")
+                try:
+                    c = conn.cursor()
+                    c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (plugin_id,))
+                    c.execute("DELETE FROM services WHERE plugin_id=?", (plugin_id,))
+                    conn.commit()
+                except (AttributeError, TypeError):
+                    # Maybe it's a context manager
+                    with conn as ctx_conn:
+                        c = ctx_conn.cursor()
+                        c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (plugin_id,))
+                        c.execute("DELETE FROM services WHERE plugin_id=?", (plugin_id,))
+                        ctx_conn.commit()
+            except Exception as e:
+                logger.warning(f"Error purging config KVS: {e}")
+
                 # 6. Remove from services table
                 c.execute("DELETE FROM services WHERE namespace=?", (plugin_id,))
                 c.execute("DELETE FROM services WHERE namespace=?", (f"plugin.{plugin_id}",))
@@ -785,7 +810,7 @@ class PluginStore:
 
     def get_plugin_channel(self, plugin_id: str) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
-        clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+        clean_id = str(plugin_id)
         return config_manager.get(f'plugins.{clean_id}.channel', 'stable')
 
     def _fork_namespace(self, plugin_id: str):
@@ -891,7 +916,7 @@ class PluginStore:
     def rollback_plugin(self, plugin_id: str) -> bool:
         """Restores a plugin to its previous stable version by aborting beta context."""
         from core.settings import config_manager
-        clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+        clean_id = str(plugin_id)
         current_channel = config_manager.get(f'plugins.{clean_id}.channel', 'stable')
 
         if current_channel == 'stable':
@@ -907,7 +932,7 @@ class PluginStore:
             logger.error(f"Failed to abort data namespace for {plugin_id}: {e}")
 
         # 2. Switch Channel to Stable and cleanup beta files
-        clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+        clean_id = str(plugin_id)
         folder_path = clean_id.replace('.', '/')
         config_manager.set(f'plugins.{clean_id}.channel', 'stable')
         self._cleanup_beta_subfolder(folder_path)
