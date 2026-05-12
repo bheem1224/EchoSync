@@ -111,7 +111,15 @@ class PluginStore:
                     if not plugin_id: continue
                     
                     clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
-                    folder_name = p.get("path") or clean_id.replace('.', '/')
+                    # Dynamic split of namespace to build `{author}/{name}`
+                    parts = clean_id.split('.')
+                    if len(parts) >= 2:
+                        author = parts[0]
+                        name = ".".join(parts[1:])
+                        folder_name = p.get("path") or f"plugins/{author}/{name}"
+                    else:
+                        folder_name = p.get("path") or clean_id.replace('.', '/')
+
                     p["_folder_path"] = f"{subfolder}/{folder_name}" if subfolder else folder_name
                     
                     repo_raw_base = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{p['_folder_path']}"
@@ -180,10 +188,20 @@ class PluginStore:
                     if not plugin_id: continue
                         
                     clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
-                    folder_name = p.get("path") or clean_id.replace('.', '/')
+                    # Dynamic split of namespace to build `{author}/{name}`
+                    parts = clean_id.split('.')
+                    if len(parts) >= 2:
+                        author = parts[0]
+                        name = ".".join(parts[1:])
+                        folder_name = p.get("path") or f"plugins/{author}/{name}"
+                    else:
+                        folder_name = p.get("path") or clean_id.replace('.', '/')
+
                     p["_folder_path"] = f"{subfolder}/{folder_name}" if subfolder else folder_name
 
                     repo_raw_base = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{p['_folder_path']}"
+
+                    # STEP 1: Update the Scanner (Only fallback if missing)
                     if "download_url" not in p:
                         v = p.get("version", "1.0.0")
                         p["download_url"] = f"{repo_raw_base}/releases/v{v}.zip"
@@ -386,11 +404,30 @@ class PluginStore:
         import tempfile
         import os
 
-        # Task 1: Resolve Direct URL based on Channel
+        # STEP 2: Update the Installer Logic (Manifest URL Priority)
+        # Primary Route: Check if parsed plugin data contains the explicit URL for that channel
         if channel == "beta":
             download_url = plugin_info.get("beta_url") or plugin_info.get("download_url")
         else:
             download_url = plugin_info.get("download_url")
+
+        # Fallback Route: If explicit URL is completely missing
+        if not download_url:
+            plugin_id = plugin_info.get("id", plugin_info.get("plugin_id", "unknown_plugin"))
+            clean_id = plugin_id.replace('plugin.', '').replace('core.', '')
+            parts = clean_id.split('.')
+            if len(parts) >= 2:
+                author = parts[0]
+                name = ".".join(parts[1:])
+                base_url = f"https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/{author}/{name}"
+            else:
+                base_url = f"https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/{clean_id.replace('.', '/')}"
+
+            if channel == "beta":
+                download_url = f"{base_url}/beta.zip"
+            else:
+                v = plugin_info.get("version", "1.0.0")
+                download_url = f"{base_url}/releases/v{v}.zip"
 
         if not download_url:
             logger.error(f"No artifact URL found for plugin {plugin_info.get('id')} on channel {channel}")
@@ -459,6 +496,25 @@ class PluginStore:
                     logger.error(f"Validation failed: Clean artifact missing manifest.json at root for {plugin_id}")
                     # If this happens, we might be downloading a full repo zip by mistake
                     return False
+
+                with open(manifest_file, "r") as f:
+                    new_manifest = json.load(f)
+
+                # Strict Manifest Parsing (Task 2)
+                required_fields = ["author", "name", "description", "version", "type"]
+                missing = [field for field in required_fields if not new_manifest.get(field)]
+                if missing:
+                    logger.error(f"Manifest validation failed: missing required fields {missing}")
+                    return False
+
+                # Store parsed and strict fields for later DB insertion
+                manifest_author = new_manifest["author"]
+                manifest_name = new_manifest["name"]
+                strict_namespace = f"{manifest_author}.{manifest_name}".lower()
+                manifest_desc = new_manifest["description"]
+                manifest_version = new_manifest["version"]
+                manifest_type = new_manifest["type"]
+
 
                 # Security: Pre-Flight Consent Check for Privilege Escalation
                 if not force_consent:
@@ -581,17 +637,15 @@ class PluginStore:
                     import zlib
                     db = get_config_database()
                     
-                    # Generate/Verify Integer Plugin ID
-                    int_plugin_id = plugin_info.get("plugin_id")
-                    if int_plugin_id is None:
-                        int_plugin_id = zlib.crc32(plugin_id.encode('utf-8')) & 0xFFFFFFFF
+                    # Generate/Verify Integer Plugin ID based on the strict namespace
+                    int_plugin_id = zlib.crc32(strict_namespace.encode('utf-8')) & 0xFFFFFFFF
 
                     db.register_service(
                         name=clean_id,
-                        display_name=plugin_info.get("name", clean_id),
-                        service_type=plugin_info.get("category", "provider"),
-                        description=plugin_info.get("description", ""),
-                        namespace=plugin_id,
+                        display_name=manifest_name,
+                        service_type=manifest_type,
+                        description=manifest_desc,
+                        namespace=strict_namespace,
                         plugin_id=int_plugin_id
                     )
                     logger.info(f"Synchronized database state for plugin {plugin_id} (int: {int_plugin_id})")

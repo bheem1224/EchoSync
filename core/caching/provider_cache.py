@@ -20,7 +20,7 @@ import hashlib
 
 from time_utils import utc_now
 from sqlalchemy import text
-from database.music_database import MusicDatabase
+import database.music_database
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class ProviderCache:
             db_path = Path(__file__).parent.parent.parent / "data" / "music_library.db"
 
         self.db_path = db_path
-        self.db = MusicDatabase(db_path)
+        self.db = database.music_database.MusicDatabase(db_path)
         self._ensure_table()
 
     def _ensure_table(self):
