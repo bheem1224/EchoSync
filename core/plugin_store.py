@@ -419,8 +419,21 @@ class PluginStore:
             resp = req_mgr.get(download_url, timeout=30)
             
             if resp.status_code != 200:
-                logger.error(f"Artifact download failed with status {resp.status_code}")
-                return False
+                if channel == "beta" and plugin_info.get("download_url") and plugin_info.get("download_url") != download_url:
+                    stable_url = plugin_info.get("download_url")
+                    logger.warning(
+                        f"Beta artifact unavailable for {plugin_id} at {download_url}; falling back to stable artifact {stable_url}"
+                    )
+                    resp = req_mgr.get(stable_url, timeout=30)
+                    download_url = stable_url
+                    if resp.status_code != 200:
+                        logger.error(
+                            f"Fallback stable artifact download also failed with status {resp.status_code}"
+                        )
+                        return False
+                else:
+                    logger.error(f"Artifact download failed with status {resp.status_code}")
+                    return False
 
             if tmp_dir.exists(): shutil.rmtree(tmp_dir, ignore_errors=True)
             tmp_dir.mkdir(parents=True, exist_ok=True)

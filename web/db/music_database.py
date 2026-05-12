@@ -2,10 +2,9 @@
 from typing import List, Optional, Dict, Any, Tuple
 from database.music_database import (
     MusicDatabase,
-    DatabaseArtist,
-    DatabaseAlbum,
-    DatabaseTrack,
-    DatabaseTrackWithMetadata,
+    Artist as DatabaseArtist,
+    Album as DatabaseAlbum,
+    Track as DatabaseTrack,
     WatchlistArtist,
     SimilarArtist,
     DiscoveryTrack,
@@ -140,7 +139,7 @@ class MusicDatabaseWrapper:
     def track_exists_by_server(self, track_id, server_source: str) -> bool:
         return self._db.track_exists_by_server(track_id, server_source)
 
-    def get_track_by_id(self, track_id) -> Optional[DatabaseTrackWithMetadata]:
+    def get_track_by_id(self, track_id) -> Optional[DatabaseTrack]:
         return self._db.get_track_by_id(track_id)
 
     def get_tracks_by_album(self, album_id: int) -> List[DatabaseTrack]:

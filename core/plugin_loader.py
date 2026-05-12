@@ -183,20 +183,26 @@ class PluginLoader:
             channel = config_manager.get_plugin_channel(clean_ns) or 'stable'
         
         # Determine directory structure (Author.Plugin or Flat)
-        folder_path = clean_ns.replace('.', os.sep)
-        plugin_dir = self.plugins_dir / folder_path
+        parts = clean_ns.split('.')
+        plugin_dir = self.plugins_dir.joinpath(*parts)
         
         # Candidate 2: Flat fallback if author-nested doesn't exist
         if not plugin_dir.exists():
-             plugin_dir = self.plugins_dir / clean_ns.split('.')[-1]
+             plugin_dir = self.plugins_dir / parts[-1]
 
         # Handle Beta Folder Nesting
-        if channel == 'beta' and (plugin_dir / 'beta').exists():
-            plugin_dir = plugin_dir / 'beta'
+        if channel == 'beta':
+            beta_plugin_dir = plugin_dir / 'beta'
+            if beta_plugin_dir.exists():
+                plugin_dir = beta_plugin_dir
+            else:
+                logger.warning(f"Plugin {plugin_id} is on beta channel but {beta_plugin_dir} does not exist. Falling back to root: {plugin_dir}")
 
         if not plugin_dir.exists():
-            logger.error(f"Cannot reload {plugin_id}: path does not exist (Searched {plugin_dir})")
-            return
+            # Final fallback check (very rare: plugin ID might be just the end name)
+            if not plugin_dir.exists():
+                 logger.error(f"Cannot reload {plugin_id}: path does not exist. Checked nested: {self.plugins_dir.joinpath(*parts)}, flat: {self.plugins_dir / parts[-1]}")
+                 return
 
         logger.info(f"Reloading {plugin_id} ({channel}) from {plugin_dir}")
 
@@ -381,7 +387,6 @@ class PluginLoader:
         with self._load_lock:
             # Normalize namespace for module and path
             clean_ns = namespace.replace('/', '.')
-            path_name = clean_ns.replace('.', os.sep)
             
             if is_beta:
                 module_path = f"plugins.{clean_ns}.beta"
@@ -389,18 +394,20 @@ class PluginLoader:
                 module_path = f"plugins.{clean_ns}"
 
             try:
-                # 0. Extract metadata from manifest
-                version = "Unknown"
-                author = "Unknown"
-                category = "provider"
+                # 1. Resolve Path
+                parts = clean_ns.split('.')
+                package_dir = self.plugins_dir.joinpath(*parts)
                 
-                package_dir = self.plugins_dir / path_name
-                # Fallback for flat structure
                 if not package_dir.exists():
-                    package_dir = self.plugins_dir / clean_ns.split('.')[-1]
+                    package_dir = self.plugins_dir / parts[-1]
                 
                 if is_beta:
                     package_dir = package_dir / "beta"
+                
+                # 2. Extract metadata from manifest
+                version = "Unknown"
+                author = "Unknown"
+                category = "provider"
                 
                 manifest_file = package_dir / "manifest.json"
                 manifest_data = {}
