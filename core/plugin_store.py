@@ -348,7 +348,7 @@ class PluginStore:
             
             # 2. Check for active Grace Period (Snapshots)
             from database.config_database import get_config_database
-            snapshot = get_config_database().get_plugin_snapshot(namespace=plugin_id)
+            snapshot = get_config_database().get_plugin_snapshot(plugin_id=plugin_id)
             if snapshot:
                 # Convert unix timestamp to ISO format for frontend compatibility
                 import datetime
@@ -620,7 +620,8 @@ class PluginStore:
                         display_name=manifest_name,
                         service_type=manifest_type,
                         description=manifest_desc,
-                        namespace=strict_namespace,
+                        friendly_name=clean_id,
+                        absolute_install_path=str(dest_dir.resolve()),
                         plugin_id=int_plugin_id,
                         version=manifest_version
                     )
@@ -785,8 +786,8 @@ class PluginStore:
                 logger.warning(f"Error purging config KVS: {e}")
 
                 # 6. Remove from services table
-                c.execute("DELETE FROM services WHERE namespace=?", (plugin_id,))
-                c.execute("DELETE FROM services WHERE namespace=?", (f"plugin.{plugin_id}",))
+                c.execute("DELETE FROM services WHERE plugin_id=?", (plugin_id,))
+
                 conn.commit()
 
             # Remove from JSON config if exists
@@ -825,12 +826,12 @@ class PluginStore:
         with db_config._get_connection() as conn:
             c = conn.cursor()
             # Ensure table exists before querying
-            c.execute("CREATE TABLE IF NOT EXISTS config_kvs (namespace TEXT, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(namespace, key))")
+            c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")
             # Clean first to avoid duplicates if re-forking
-            c.execute("DELETE FROM config_kvs WHERE namespace=?", (beta_id,))
+            c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (beta_id,))
             c.execute("""
-                INSERT INTO config_kvs (namespace, key, value, is_sensitive) 
-                SELECT ?, key, value, is_sensitive FROM config_kvs WHERE namespace=?
+                INSERT INTO config_kvs (plugin_id, key, value, is_sensitive)
+                SELECT ?, key, value, is_sensitive FROM config_kvs WHERE plugin_id=?
             """, (beta_id, plugin_id))
             conn.commit()
 
@@ -838,10 +839,10 @@ class PluginStore:
         db_working = get_working_database()
         with db_working.session_scope() as session:
             from sqlalchemy import text
-            session.execute(text("DELETE FROM plugin_state_kvs WHERE namespace=:beta"), {"beta": beta_id})
+            session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:beta"), {"beta": beta_id})
             session.execute(text("""
-                INSERT INTO plugin_state_kvs (namespace, key, value, is_sensitive)
-                SELECT :beta, key, value, is_sensitive FROM plugin_state_kvs WHERE namespace=:orig
+                INSERT INTO plugin_state_kvs (plugin_id, key, value, is_sensitive)
+                SELECT :beta, key, value, is_sensitive FROM plugin_state_kvs WHERE plugin_id=:orig
             """), {"beta": beta_id, "orig": plugin_id})
 
     def _abort_namespace(self, plugin_id: str):
@@ -855,14 +856,14 @@ class PluginStore:
         db_config = get_config_database()
         with db_config._get_connection() as conn:
             c = conn.cursor()
-            c.execute("DELETE FROM config_kvs WHERE namespace=?", (beta_id,))
+            c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (beta_id,))
             conn.commit()
 
         # 2. Abort Working State KVS
         db_working = get_working_database()
         with db_working.session_scope() as session:
             from sqlalchemy import text
-            session.execute(text("DELETE FROM plugin_state_kvs WHERE namespace=:beta"), {"beta": beta_id})
+            session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:beta"), {"beta": beta_id})
 
     def _cutover_namespace(self, plugin_id: str):
         """The Cutover: Archives current stable and promotes @beta to active."""
@@ -877,23 +878,23 @@ class PluginStore:
         with db_config._get_connection() as conn:
             c = conn.cursor()
             # Ensure table exists before querying
-            c.execute("CREATE TABLE IF NOT EXISTS config_kvs (namespace TEXT, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(namespace, key))")
+            c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")
             # Cleanup old archive
-            c.execute("DELETE FROM config_kvs WHERE namespace=?", (archive_id,))
+            c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (archive_id,))
             
             # Check if beta exists
-            c.execute("SELECT 1 FROM config_kvs WHERE namespace=? LIMIT 1", (beta_id,))
+            c.execute("SELECT 1 FROM config_kvs WHERE plugin_id=? LIMIT 1", (beta_id,))
             has_beta = c.fetchone() is not None
             
             if has_beta:
                 # Beta -> Stable: Rename primary to archive, then beta to primary
-                c.execute("UPDATE config_kvs SET namespace=? WHERE namespace=?", (archive_id, plugin_id))
-                c.execute("UPDATE config_kvs SET namespace=? WHERE namespace=?", (plugin_id, beta_id))
+                c.execute("UPDATE config_kvs SET plugin_id=? WHERE plugin_id=?", (archive_id, plugin_id))
+                c.execute("UPDATE config_kvs SET plugin_id=? WHERE plugin_id=?", (plugin_id, beta_id))
             else:
                 # Stable -> Stable: Copy primary to archive
                 c.execute("""
-                    INSERT INTO config_kvs (namespace, key, value, is_sensitive)
-                    SELECT ?, key, value, is_sensitive FROM config_kvs WHERE namespace=?
+                    INSERT INTO config_kvs (plugin_id, key, value, is_sensitive)
+                    SELECT ?, key, value, is_sensitive FROM config_kvs WHERE plugin_id=?
                 """, (archive_id, plugin_id))
             conn.commit()
 
@@ -901,16 +902,16 @@ class PluginStore:
         db_working = get_working_database()
         with db_working.session_scope() as session:
             from sqlalchemy import text
-            session.execute(text("DELETE FROM plugin_state_kvs WHERE namespace=:arch"), {"arch": archive_id})
+            session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:arch"), {"arch": archive_id})
             
-            res = session.execute(text("SELECT 1 FROM plugin_state_kvs WHERE namespace=:beta LIMIT 1"), {"beta": beta_id}).fetchone()
+            res = session.execute(text("SELECT 1 FROM plugin_state_kvs WHERE plugin_id=:beta LIMIT 1"), {"beta": beta_id}).fetchone()
             if res:
-                session.execute(text("UPDATE plugin_state_kvs SET namespace=:arch WHERE namespace=:orig"), {"arch": archive_id, "orig": plugin_id})
-                session.execute(text("UPDATE plugin_state_kvs SET namespace=:orig WHERE namespace=:beta"), {"orig": plugin_id, "beta": beta_id})
+                session.execute(text("UPDATE plugin_state_kvs SET plugin_id=:arch WHERE plugin_id=:orig"), {"arch": archive_id, "orig": plugin_id})
+                session.execute(text("UPDATE plugin_state_kvs SET plugin_id=:orig WHERE plugin_id=:beta"), {"orig": plugin_id, "beta": beta_id})
             else:
                 session.execute(text("""
-                    INSERT INTO plugin_state_kvs (namespace, key, value, is_sensitive)
-                    SELECT :arch, key, value, is_sensitive FROM plugin_state_kvs WHERE namespace=:orig
+                    INSERT INTO plugin_state_kvs (plugin_id, key, value, is_sensitive)
+                    SELECT :arch, key, value, is_sensitive FROM plugin_state_kvs WHERE plugin_id=:orig
                 """), {"arch": archive_id, "orig": plugin_id})
 
     def rollback_plugin(self, plugin_id: str) -> bool:
