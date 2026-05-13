@@ -54,8 +54,10 @@ class ConfigDatabase:
                     CREATE TABLE IF NOT EXISTS services (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT UNIQUE NOT NULL,
-                        namespace TEXT NOT NULL,
                         plugin_id INTEGER,
+                        friendly_name TEXT,
+                        absolute_install_path TEXT,
+                        loaded_modules TEXT,
                         version TEXT,
                         display_name TEXT,
                         service_type TEXT,
@@ -147,7 +149,7 @@ class ConfigDatabase:
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS plugin_snapshots (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        namespace TEXT NOT NULL UNIQUE,
+                        plugin_id INTEGER NOT NULL UNIQUE,
                         snapshot_data TEXT NOT NULL,
                         expires_at INTEGER NOT NULL,
                         created_at INTEGER DEFAULT (strftime('%s','now'))
@@ -157,8 +159,10 @@ class ConfigDatabase:
                 # Migration: Add missing columns to services table if they don't exist
                 cursor.execute("PRAGMA table_info(services)")
                 columns = [row[1] for row in cursor.fetchall()]
-                if 'namespace' not in columns:
-                    cursor.execute("ALTER TABLE services ADD COLUMN namespace TEXT NOT NULL DEFAULT 'legacy'")
+                if 'friendly_name' not in columns:
+                    cursor.execute("ALTER TABLE services ADD COLUMN friendly_name TEXT")
+                    cursor.execute("ALTER TABLE services ADD COLUMN absolute_install_path TEXT")
+                    cursor.execute("ALTER TABLE services ADD COLUMN loaded_modules TEXT")
                 if 'plugin_id' not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN plugin_id INTEGER")
                 if 'version' not in columns:
@@ -170,14 +174,14 @@ class ConfigDatabase:
 
                 # Indexes
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_namespace ON services(namespace)")
+
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_plugin_id ON services(plugin_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_account ON account_tokens(account_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_source ON account_mappings(source_account_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_mapped ON account_mappings(mapped_account_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_ns ON plugin_snapshots(namespace)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_plugin_id ON plugin_snapshots(plugin_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_expires ON plugin_snapshots(expires_at)")
 
             # Run schema creation on writer thread to avoid concurrent-writes
@@ -186,7 +190,7 @@ class ConfigDatabase:
 
             def _migrate_legacy_services(cursor):
                 import binascii
-                cursor.execute("SELECT id, name FROM services WHERE namespace = 'legacy' OR plugin_id IS NULL OR typeof(plugin_id) = 'text'")
+                cursor.execute("SELECT id, name FROM services WHERE plugin_id IS NULL OR typeof(plugin_id) = 'text'")
                 rows = cursor.fetchall()
                 if not rows: return
                 try:
@@ -210,7 +214,7 @@ class ConfigDatabase:
                         plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
                         
                         # Add version column if it doesn't exist yet via pragma logic or rely on schema upgrade
-                        cursor.execute("UPDATE services SET namespace = ?, plugin_id = ? WHERE id = ?", (resolved_namespace, plugin_id_int, s_id))
+                        cursor.execute("UPDATE services SET friendly_name = ?, plugin_id = ? WHERE id = ?", (resolved_plugin_id_str, plugin_id_int, s_id))
                 except Exception as e:
                     pass
 
@@ -249,7 +253,7 @@ class ConfigDatabase:
             logger.error(f"Failed to resolve plugin details for {name}: {e}")
 
         plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
-        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", namespace=resolved_namespace, plugin_id=plugin_id_int, version=resolved_version)
+        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", friendly_name=name, plugin_id=plugin_id_int, version=resolved_version)
 
         # 3. Try to find again after registration
         with contextlib.closing(self._get_connection()) as conn:
@@ -262,27 +266,29 @@ class ConfigDatabase:
         logger.error(f"Failed to get or create service ID for '{name}' after registration attempt.")
         return 0
 
-    def register_service(self, name: str, display_name: str, service_type: str, description: str, namespace: str = 'legacy', plugin_id: Optional[int] = None, version: Optional[str] = None) -> int:
+    def register_service(self, name: str, display_name: str, service_type: str, description: str, friendly_name: Optional[str] = None, absolute_install_path: Optional[str] = None, plugin_id: Optional[int] = None, version: Optional[str] = None, loaded_modules: Optional[str] = None) -> int:
         import binascii
         if plugin_id is None:
             # Fallback CRC32 generation if not provided (ALWAYS use full lowercase namespace for consistency)
-            plugin_id = binascii.crc32(namespace.lower().encode('utf-8')) & 0xFFFFFFFF
+            plugin_id = binascii.crc32(name.lower().encode('utf-8')) & 0xFFFFFFFF
 
         try:
             execute_write_sql(
                 str(self.database_path), 
                 """
-                INSERT INTO services(name, display_name, service_type, description, namespace, plugin_id, version, is_active) 
-                VALUES(?,?,?,?,?,?,?,1)
+                INSERT INTO services(name, display_name, service_type, description, friendly_name, absolute_install_path, loaded_modules, plugin_id, version, is_active)
+                VALUES(?,?,?,?,?,?,?,?,?,1)
                 ON CONFLICT(name) DO UPDATE SET 
-                    namespace=excluded.namespace,
+                    friendly_name=excluded.friendly_name,
+                    absolute_install_path=excluded.absolute_install_path,
+                    loaded_modules=excluded.loaded_modules,
                     plugin_id=excluded.plugin_id,
                     version=excluded.version,
                     display_name=excluded.display_name,
                     is_active=1,
                     updated_at=strftime('%s','now')
                 """, 
-                (name, display_name, service_type, description, namespace, plugin_id, version)
+                (name, display_name, service_type, description, friendly_name, absolute_install_path, loaded_modules, plugin_id, version)
             )
         except Exception as e:
             logger.error(f"Error registering service '{name}': {e}")
@@ -359,11 +365,11 @@ class ConfigDatabase:
         """Resolve a service ID (PK or plugin_id) to its canonical namespace or name."""
         with self._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT namespace, name FROM services WHERE id=? OR plugin_id=?", (service_id, service_id))
+            c.execute("SELECT friendly_name, name FROM services WHERE id=? OR plugin_id=?", (service_id, service_id))
             row = c.fetchone()
             if not row: return None
-            ns, name = row['namespace'], row['name']
-            return ns if ns and ns != 'legacy' else name
+            friendly_name, name = row['friendly_name'], row['name']
+            return friendly_name if friendly_name else name
 
     def get_service_id(self, identifier: Any) -> Optional[int]:
         """Resolve a name, namespace, or plugin_id to the primary integer ID."""
@@ -372,7 +378,7 @@ class ConfigDatabase:
             if isinstance(identifier, (int, str)) and str(identifier).isdigit():
                 c.execute("SELECT id FROM services WHERE id=? OR plugin_id=?", (int(identifier), int(identifier)))
             else:
-                c.execute("SELECT id FROM services WHERE name=? OR namespace=?", (identifier, identifier))
+                c.execute("SELECT id FROM services WHERE name=?", (identifier,))
             row = c.fetchone()
             return int(row[0]) if row else None
 
@@ -885,33 +891,33 @@ class ConfigDatabase:
             logger.error(f"Error purging account mappings for account {account_id}: {e}")
 
     # ── Plugin Snapshot Helpers ──────────────────────────────────────────
-    def create_plugin_snapshot(self, namespace: str, snapshot_data: str, ttl_hours: int = 24) -> bool:
+    def create_plugin_snapshot(self, plugin_id: int, snapshot_data: str, ttl_hours: int = 24) -> bool:
         try:
             expires_at = int(time.time()) + (ttl_hours * 3600)
             execute_write_sql(
                 str(self.database_path),
                 """
-                    INSERT INTO plugin_snapshots(namespace, snapshot_data, expires_at)
+                    INSERT INTO plugin_snapshots(plugin_id, snapshot_data, expires_at)
                     VALUES(?,?,?)
-                    ON CONFLICT(namespace) DO UPDATE SET
+                    ON CONFLICT(plugin_id) DO UPDATE SET
                         snapshot_data = excluded.snapshot_data,
                         expires_at = excluded.expires_at,
                         created_at = strftime('%s','now')
                 """,
-                (namespace, snapshot_data, expires_at),
+                (plugin_id, snapshot_data, expires_at),
             )
             return True
         except Exception as e:
-            logger.error(f"Error creating plugin snapshot for {namespace}: {e}")
+            logger.error(f"Error creating plugin snapshot for {plugin_id}: {e}")
             return False
 
-    def get_plugin_snapshot(self, namespace: str) -> Optional[Dict[str, Any]]:
+    def get_plugin_snapshot(self, plugin_id: int) -> Optional[Dict[str, Any]]:
         try:
             import contextlib
             import json
             with contextlib.closing(self._get_connection()) as conn:
                 c = conn.cursor()
-                c.execute("SELECT snapshot_data, expires_at FROM plugin_snapshots WHERE namespace = ?", (namespace,))
+                c.execute("SELECT snapshot_data, expires_at FROM plugin_snapshots WHERE plugin_id = ?", (namespace,))
                 row = c.fetchone()
                 if not row:
                     return None
@@ -926,15 +932,15 @@ class ConfigDatabase:
                     'expires_at': row[1]
                 }
         except Exception as e:
-            logger.error(f"Error getting plugin snapshot for {namespace}: {e}")
+            logger.error(f"Error getting plugin snapshot for {plugin_id}: {e}")
             return None
 
-    def delete_plugin_snapshot(self, namespace: str) -> bool:
+    def delete_plugin_snapshot(self, plugin_id: int) -> bool:
         try:
-            execute_write_sql(str(self.database_path), "DELETE FROM plugin_snapshots WHERE namespace = ?", (namespace,))
+            execute_write_sql(str(self.database_path), "DELETE FROM plugin_snapshots WHERE plugin_id = ?", (namespace,))
             return True
         except Exception as e:
-            logger.error(f"Error deleting plugin snapshot for {namespace}: {e}")
+            logger.error(f"Error deleting plugin snapshot for {plugin_id}: {e}")
             return False
 
     def cleanup_expired_snapshots(self) -> None:
@@ -962,14 +968,14 @@ def close_config_database() -> None:
         # No explicit dispose on sqlite3 Connection, but we can set to None
         _config_db = None
 
-from sqlalchemy import Column, String, Boolean
+from sqlalchemy import Column, String, Boolean, Integer
 from sqlalchemy.orm import declarative_base
 
 ConfigBase = declarative_base()
 
 class ConfigKVS(ConfigBase):
     __tablename__ = "config_kvs"
-    namespace = Column(String, primary_key=True)
+    plugin_id = Column(Integer, primary_key=True)
     key = Column(String, primary_key=True)
     value = Column(String, nullable=True)
     is_sensitive = Column(Boolean, default=False, nullable=False)

@@ -585,7 +585,7 @@ class PluginLoader:
                     from database.config_database import get_config_database
                     db = get_config_database()
                     with db._get_connection() as conn:
-                        conn.execute("UPDATE services SET is_active = 0 WHERE namespace = ?", (namespace,))
+                        conn.execute("UPDATE services SET is_active = 0 WHERE friendly_name = ?", (namespace,))
                 except Exception: pass
 
     def get_all_blueprints(self) -> List[Blueprint]:

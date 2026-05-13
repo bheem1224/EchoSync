@@ -1,6 +1,14 @@
 """Wrapper for music_database - ensures clean separation and easier debugging."""
 from typing import List, Optional, Dict, Any, Tuple
 from database.music_database import (
+    Artist as DatabaseArtist,
+    Album as DatabaseAlbum,
+
+
+
+
+
+    Track as DatabaseTrack,
     MusicDatabase,
     Artist,
     Album,
@@ -22,10 +30,10 @@ class MusicDatabaseWrapper:
         self._db = MusicDatabase(database_path)
 
     # === Canonical Track Operations ===
-    def create_track(self, track: CoreTrack) -> str:
+    def create_track(self, track: DatabaseTrack) -> str:
         return self._db.create_track(track)
 
-    def update_track(self, track: CoreTrack) -> None:
+    def update_track(self, track: DatabaseTrack) -> None:
         return self._db.update_track(track)
 
     def get_track(self, track_id: str) -> Optional[DatabaseTrack]:
@@ -140,7 +148,7 @@ class MusicDatabaseWrapper:
     def track_exists_by_server(self, track_id, server_source: str) -> bool:
         return self._db.track_exists_by_server(track_id, server_source)
 
-    def get_track_by_id(self, track_id) -> Optional[DatabaseTrackWithMetadata]:
+    def get_track_by_id(self, track_id) -> Any:
         return self._db.get_track_by_id(track_id)
 
     def get_tracks_by_album(self, album_id: int) -> List[DatabaseTrack]:
@@ -203,7 +211,7 @@ class MusicDatabaseWrapper:
     def is_artist_in_watchlist(self, spotify_artist_id: str) -> bool:
         return self._db.is_artist_in_watchlist(spotify_artist_id)
 
-    def get_watchlist_artists(self) -> List[WatchlistArtist]:
+    def get_watchlist_artists(self) -> List[Any]:
         return self._db.get_watchlist_artists()
 
     def get_watchlist_count(self) -> int:
@@ -216,13 +224,13 @@ class MusicDatabaseWrapper:
     def add_or_update_similar_artist(self, source_artist_id: str, similar_artist_spotify_id: str, similar_artist_name: str) -> bool:
         return self._db.add_or_update_similar_artist(source_artist_id, similar_artist_spotify_id, similar_artist_name)
 
-    def get_similar_artists_for_source(self, source_artist_id: str) -> List[SimilarArtist]:
+    def get_similar_artists_for_source(self, source_artist_id: str) -> List[Any]:
         return self._db.get_similar_artists_for_source(source_artist_id)
 
     def has_fresh_similar_artists(self, source_artist_id: str, days_threshold: int = 30) -> bool:
         return self._db.has_fresh_similar_artists(source_artist_id, days_threshold)
 
-    def get_top_similar_artists(self, limit: int = 50) -> List[SimilarArtist]:
+    def get_top_similar_artists(self, limit: int = 50) -> List[Any]:
         return self._db.get_top_similar_artists(limit)
 
     # === Discovery Pool ===
@@ -232,7 +240,7 @@ class MusicDatabaseWrapper:
     def rotate_discovery_pool(self, max_tracks: int = 2000, remove_count: int = 500):
         return self._db.rotate_discovery_pool(max_tracks, remove_count)
 
-    def get_discovery_pool_tracks(self, limit: int = 100, new_releases_only: bool = False) -> List[DiscoveryTrack]:
+    def get_discovery_pool_tracks(self, limit: int = 100, new_releases_only: bool = False) -> List[Any]:
         return self._db.get_discovery_pool_tracks(limit, new_releases_only)
 
     def should_populate_discovery_pool(self, hours_threshold: int = 24) -> bool:
@@ -248,7 +256,7 @@ class MusicDatabaseWrapper:
     def add_recent_release(self, watchlist_artist_id: int, album_data: Dict[str, Any]) -> bool:
         return self._db.add_recent_release(watchlist_artist_id, album_data)
 
-    def get_recent_releases(self, limit: int = 50) -> List[RecentRelease]:
+    def get_recent_releases(self, limit: int = 50) -> List[Any]:
         return self._db.get_recent_releases(limit)
 
     # === Database Info ===

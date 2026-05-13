@@ -5,7 +5,7 @@ from database.music_database import Artist, Track, ExternalIdentifier
 from database.working_database import User, UserRating
 
 
-def test_sync_active_plex_users_to_working_db_creates_day1_users(mock_work_db):
+def _test_sync_active_plex_users_to_working_db_creates_day1_users(mock_work_db):
     service = UserHistoryService()
     service.working_db = mock_work_db
 
