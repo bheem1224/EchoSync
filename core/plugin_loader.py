@@ -260,7 +260,7 @@ class PluginLoader:
             is_disabled = clean_ns in disabled or str(plugin_id) in disabled
             
             success = self._load_plugin_package(
-                clean_ns, 
+                plugin_id,
                 is_beta=(channel == 'beta'), 
                 is_disabled=is_disabled
             )

@@ -698,15 +698,14 @@ class PluginStore:
         config_manager.save_settings(config_manager.get_settings())
         return results
 
-    def uninstall_plugin(self, plugin_id: str) -> bool:
+    def uninstall_plugin(self, plugin_id: int) -> bool:
         import re
         import shutil
         import os
         import sys
         # Nexus Framework: Resolve nested path by converting dots to slashes
         clean_id = str(plugin_id)
-        folder_path = clean_id.replace('.', os.sep)
-        dest_dir = self.plugins_dir / folder_path
+        dest_dir = self.plugins_dir / str(plugin_id)
         
         try:
             from database.working_database import get_working_database
@@ -719,25 +718,41 @@ class PluginStore:
             except Exception as e:
                 logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
 
-            # 2. Hot-Unload (Purge from sys.modules)
-            ns_parts = clean_id.split('.')
-            if len(ns_parts) >= 2:
-                author = ns_parts[0]
-                plugin_name = ".".join(ns_parts[1:])
-            else:
-                author = "unknown"
-                plugin_name = clean_id
+                        # 2. Hot-Unload (Purge from sys.modules)
+            # Find the plugin's install path from the database
+            from database.config_database import get_config_database
+            db = get_config_database()
+            c = getattr(db, "_get_connection", getattr(db, "get_connection", lambda: None))().cursor()
+            c.execute("SELECT absolute_install_path, loaded_modules FROM services WHERE plugin_id=?", (plugin_id,))
+            row = c.fetchone()
 
-            purge_id = f"{author}/{plugin_name}" if author != "unknown" else clean_id
-            module_names = [f"plugins.{purge_id.replace('/', '.')}", f"plugins.{clean_id}"]
-            for module_name in module_names:
-                if module_name in sys.modules:
-                    submodules = [m for m in list(sys.modules.keys()) if m.startswith(module_name + ".")]
-                    for m in submodules:
-                        sys.modules.pop(m, None)
-                    sys.modules.pop(module_name, None)
+            absolute_install_path = row['absolute_install_path'] if row else None
+            loaded_modules_str = row['loaded_modules'] if row else None
             
-            # Use clean_id (Author.Name) but replace dots with underscores for DB safety
+            modules_to_purge = set()
+
+            if loaded_modules_str:
+                import json
+                try:
+                    modules_to_purge.update(json.loads(loaded_modules_str))
+                except json.JSONDecodeError:
+                    pass
+
+            # Fallback/Additional check: inspect sys.modules
+            if absolute_install_path:
+                from pathlib import Path
+                plugin_path_str = str(Path(absolute_install_path).resolve())
+                for mod_name, mod in list(sys.modules.items()):
+                    mod_file = getattr(mod, '__file__', None)
+                    if mod_file and mod_file.startswith(plugin_path_str):
+                        modules_to_purge.add(mod_name)
+
+            for module_name in modules_to_purge:
+                if module_name in sys.modules:
+                    sys.modules.pop(module_name)
+                    logger.debug(f"Hot-unloaded zombie module: {module_name}")
+
+            # 3. Dynamic Database and Config Teardown
             safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', clean_id.replace('.', '_')).lower()
             prefix = f"plugin_{safe_id}_%"
             
@@ -809,12 +824,12 @@ class PluginStore:
             
         return True
 
-    def get_plugin_channel(self, plugin_id: str) -> str:
+    def get_plugin_channel(self, plugin_id: int) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
         clean_id = str(plugin_id)
         return config_manager.get(f'plugins.{clean_id}.channel', 'stable')
 
-    def _fork_namespace(self, plugin_id: str):
+    def _fork_namespace(self, plugin_id: int):
         """The Fork: Copies current stable data to a @beta side-car."""
         from database.config_database import get_config_database
         from database.working_database import get_working_database
@@ -845,7 +860,7 @@ class PluginStore:
                 SELECT :beta, key, value, is_sensitive FROM plugin_state_kvs WHERE plugin_id=:orig
             """), {"beta": beta_id, "orig": plugin_id})
 
-    def _abort_namespace(self, plugin_id: str):
+    def _abort_namespace(self, plugin_id: int):
         """The Abort: Physically deletes the @beta side-car."""
         from database.config_database import get_config_database
         from database.working_database import get_working_database
@@ -865,7 +880,7 @@ class PluginStore:
             from sqlalchemy import text
             session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:beta"), {"beta": beta_id})
 
-    def _cutover_namespace(self, plugin_id: str):
+    def _cutover_namespace(self, plugin_id: int):
         """The Cutover: Archives current stable and promotes @beta to active."""
         from database.config_database import get_config_database
         from database.working_database import get_working_database
@@ -914,7 +929,7 @@ class PluginStore:
                     SELECT :arch, key, value, is_sensitive FROM plugin_state_kvs WHERE plugin_id=:orig
                 """), {"arch": archive_id, "orig": plugin_id})
 
-    def rollback_plugin(self, plugin_id: str) -> bool:
+    def rollback_plugin(self, plugin_id: int) -> bool:
         """Restores a plugin to its previous stable version by aborting beta context."""
         from core.settings import config_manager
         clean_id = str(plugin_id)
