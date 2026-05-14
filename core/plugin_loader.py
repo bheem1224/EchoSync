@@ -260,7 +260,7 @@ class PluginLoader:
             is_disabled = clean_ns in disabled or str(plugin_id) in disabled
             
             success = self._load_plugin_package(
-                clean_ns, 
+                plugin_id,
                 is_beta=(channel == 'beta'), 
                 is_disabled=is_disabled
             )
@@ -289,19 +289,20 @@ class PluginLoader:
             with db._get_connection() as conn:
                 conn.row_factory = sqlite3.Row
                 c = conn.cursor()
-                c.execute("SELECT namespace, plugin_id FROM services WHERE is_active = 1")
+                c.execute("SELECT friendly_name, plugin_id, absolute_install_path, loaded_modules FROM services WHERE is_active = 1")
                 active_services = c.fetchall()
         except Exception as e:
             logger.error(f"Failed to query active services: {e}")
             return
 
         for row in active_services:
-            namespace = row['namespace']
-            if not namespace: continue
+
+            p_id = row['plugin_id']
+            install_path = row['absolute_install_path']
             
             # e.g., EchoSync.tidal@beta
-            clean_ns = namespace.split('@')[0]
-            channel = namespace.split('@')[1] if '@' in namespace else 'stable'
+            clean_ns = str(p_id)
+            channel = 'stable'
 
             folder_path = clean_ns.replace('.', os.sep)
             plugin_dir = self.plugins_dir / folder_path
@@ -314,7 +315,7 @@ class PluginLoader:
                 plugin_dir = plugin_dir / 'beta'
 
             if not plugin_dir.exists():
-                logger.error(f"Plugin directory not found for {namespace}: {plugin_dir}")
+                logger.error(f"Plugin directory not found for {p_id}: {plugin_dir}")
                 continue
 
             manifest_file = plugin_dir / "manifest.json"
@@ -401,7 +402,7 @@ class PluginLoader:
                 c.execute("""
                     UPDATE services 
                     SET version=? 
-                    WHERE LOWER(name)=LOWER(?) OR LOWER(namespace)=LOWER(?) OR LOWER(name)=LOWER(?) OR LOWER(namespace)=LOWER(?)
+                    WHERE LOWER(name)=LOWER(?) OR LOWER(friendly_name)=LOWER(?) OR LOWER(name)=LOWER(?) OR LOWER(friendly_name)=LOWER(?)
                 """, (version, clean_name, provider_id, provider_id, clean_name))
                 updated = c.rowcount
                 conn.commit()
@@ -409,13 +410,13 @@ class PluginLoader:
         except Exception as e:
             logger.error(f"Failed to update version in DB for {provider_id}: {e}")
 
-    def _load_plugin_package(self, namespace: str, is_beta: bool = False, is_disabled: bool = False):
+    def _load_plugin_package(self, plugin_id: int, is_beta: bool = False, is_disabled: bool = False):
         """
         Dynamically import a plugin package and register its exports.
         """
         with self._load_lock:
             # Normalize namespace for module and path
-            clean_ns = namespace.replace('/', '.')
+            clean_ns = str(plugin_id)
             
             if is_beta:
                 module_path = f"plugins.{clean_ns}.beta"
@@ -432,7 +433,7 @@ class PluginLoader:
                 
                 # If both failed, we have a missing plugin
                 if not package_dir:
-                     raise ValueError(f"Plugin package {namespace} not found in {self.plugins_dir}")
+                     raise ValueError(f"Plugin package {plugin_id} not found in {self.plugins_dir}")
                 
                 # DERIVE CORRECT CASING FROM DISK
                 # This ensures module_path matches the filesystem exactly, preventing case-sensitive import errors
@@ -579,13 +580,13 @@ class PluginLoader:
                         self.loaded_blueprints.append(blueprint)
 
             except Exception as e:
-                logger.error(f"Error loading plugin {namespace}: {e}", exc_info=True)
+                logger.error(f"Error loading plugin {plugin_id}: {e}", exc_info=True)
                 # Auto-disable on fatal load error
                 try:
                     from database.config_database import get_config_database
                     db = get_config_database()
                     with db._get_connection() as conn:
-                        conn.execute("UPDATE services SET is_active = 0 WHERE friendly_name = ?", (namespace,))
+                        conn.execute("UPDATE services SET is_active = 0 WHERE plugin_id = ?", (plugin_id,))
                 except Exception: pass
 
     def get_all_blueprints(self) -> List[Blueprint]:
@@ -647,18 +648,18 @@ def get_all_plugins() -> list:
             if (item / "manifest.json").exists() or (item / "__init__.py").exists() or (item / "main.wasm").exists():
                 candidates.append((item, item.name))
 
-    for item, namespace in candidates:
+    for item, p_id in candidates:
         current_item = item
-        channel = config_manager.get_plugin_channel(namespace)
+        channel = config_manager.get_plugin_channel(p_id)
         if channel == 'beta' and (item / 'beta').exists():
             current_item = item / 'beta'
 
         plugin_info = {
-            "id": f"plugin.{namespace}",
-            "name": namespace.split('.')[-1].capitalize(),
+            "id": p_id,
+            "name": str(p_id),
             "description": "Community plugin",
             "type": "community",
-            "namespace": namespace,
+
             "abs_path": str(current_item.absolute())
         }
 

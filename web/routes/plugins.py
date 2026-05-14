@@ -278,10 +278,22 @@ def rollback_plugin():
 @bp.route('/uninstall', methods=['POST'])
 @require_auth
 def uninstall_plugin_route():
+    import binascii
     data = request.json or {}
-    plugin_id = data.get('id')
-    if not plugin_id:
+    plugin_id_raw = data.get('id')
+    plugin_name = data.get('name')
+    author = data.get('author')
+
+    if not plugin_id_raw and not (plugin_name and author):
         return jsonify({"error": "Plugin ID required"}), 400
+
+    if isinstance(plugin_id_raw, int):
+        plugin_id = plugin_id_raw
+    elif author and plugin_name:
+        plugin_id = binascii.crc32(f"{author}.{plugin_name}".lower().encode('utf-8')) & 0xFFFFFFFF
+    else:
+        plugin_id = binascii.crc32(str(plugin_id_raw).lower().encode('utf-8')) & 0xFFFFFFFF
+
 
     try:
         success = plugin_store.uninstall_plugin(plugin_id)

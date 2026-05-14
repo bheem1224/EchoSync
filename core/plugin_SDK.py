@@ -384,7 +384,7 @@ class StateKVS:
         val = None
         with db.session_scope() as session:
             from sqlalchemy.sql import text
-            res = session.execute(text("SELECT value, is_sensitive FROM plugin_state_kvs WHERE namespace=:ns AND key=:k"), {"ns": self.plugin_id, "k": key}).fetchone()
+            res = session.execute(text("SELECT value, is_sensitive FROM plugin_state_kvs WHERE plugin_id=:ns AND key=:k"), {"ns": self.plugin_id, "k": key}).fetchone()
             if res:
                 val, is_sensitive = res[0], res[1]
                 if is_sensitive and val:
@@ -402,7 +402,7 @@ class StateKVS:
             value = encrypt_string(value)
         with db.session_scope() as session:
             from sqlalchemy.sql import text
-            session.execute(text("INSERT OR REPLACE INTO plugin_state_kvs (namespace, key, value, is_sensitive) VALUES (:ns, :k, :v, :sens)"), {"ns": self.plugin_id, "k": key, "v": value, "sens": is_sensitive})
+            session.execute(text("INSERT OR REPLACE INTO plugin_state_kvs (plugin_id, key, value, is_sensitive) VALUES (:ns, :k, :v, :sens)"), {"ns": self.plugin_id, "k": key, "v": value, "sens": is_sensitive})
 
 class _PluginModelFacade:
     def __init__(self):

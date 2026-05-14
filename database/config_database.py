@@ -198,7 +198,7 @@ class ConfigDatabase:
                     all_plugins = get_all_plugins()
                     for r in rows:
                         s_id, s_name = r[0], r[1]
-                        resolved_namespace = 'legacy'
+
                         resolved_plugin_id_str = s_name
                         resolved_version = '1.0.0'
                         for p in all_plugins:
@@ -207,7 +207,7 @@ class ConfigDatabase:
                             p_folder = p.get('folder_name', '')
                             norm_s_name = s_name.replace('.', '/')
                             if s_name.lower() in p_folder.lower() or norm_s_name.lower() in p_folder.lower() or s_name.lower() == p_name.lower() or s_name.lower() in p_id.lower():
-                                resolved_namespace = p_id
+
                                 resolved_plugin_id_str = p_folder.split('/')[-1]
                                 resolved_version = p.get('version', '1.0.0')
                                 break
@@ -236,7 +236,7 @@ class ConfigDatabase:
 
         # 2. Register if missing
         import binascii
-        resolved_namespace = 'legacy'
+
         resolved_plugin_id_str = name
         resolved_version = '1.0.0'
         try:
@@ -244,7 +244,7 @@ class ConfigDatabase:
             for p in get_all_plugins():
                 # name is usually like 'plex', 'spotify', 'tidal'. We match against folder_name or name
                 if name.lower() in p.get('folder_name', '').lower() or name.lower() == p.get('name', '').lower():
-                    resolved_namespace = p.get('id', 'legacy')
+
                     # e.g. EchoSync/spotify -> spotify
                     resolved_plugin_id_str = p.get('folder_name', name).split('/')[-1]
                     resolved_version = p.get('version', '1.0.0')
@@ -917,14 +917,14 @@ class ConfigDatabase:
             import json
             with contextlib.closing(self._get_connection()) as conn:
                 c = conn.cursor()
-                c.execute("SELECT snapshot_data, expires_at FROM plugin_snapshots WHERE plugin_id = ?", (namespace,))
+                c.execute("SELECT snapshot_data, expires_at FROM plugin_snapshots WHERE plugin_id = ?", (plugin_id,))
                 row = c.fetchone()
                 if not row:
                     return None
                 
                 # Check expiry
                 if row[1] < int(time.time()):
-                    self.delete_plugin_snapshot(namespace)
+                    self.delete_plugin_snapshot(plugin_id)
                     return None
 
                 return {
@@ -937,7 +937,7 @@ class ConfigDatabase:
 
     def delete_plugin_snapshot(self, plugin_id: int) -> bool:
         try:
-            execute_write_sql(str(self.database_path), "DELETE FROM plugin_snapshots WHERE plugin_id = ?", (namespace,))
+            execute_write_sql(str(self.database_path), "DELETE FROM plugin_snapshots WHERE plugin_id = ?", (plugin_id,))
             return True
         except Exception as e:
             logger.error(f"Error deleting plugin snapshot for {plugin_id}: {e}")
