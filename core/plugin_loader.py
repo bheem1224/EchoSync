@@ -24,7 +24,7 @@ logger = get_logger("plugin_loader")
 import zlib
 
 def generate_plugin_id(name: str) -> int:
-    """Generate a consistent 32-bit integer ID from a plugin namespace."""
+    """Generate a consistent 32-bit integer ID from a plugin name."""
     return zlib.crc32(name.encode('utf-8')) & 0xFFFFFFFF
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,9 @@ class PluginSecurityScanner(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             base_module = alias.name.split('.')[0]
-            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
+            if base_module in ("os", "subprocess", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
+                if base_module == "database" and self.privileged:
+                    continue # Allow core database if privileged
                 if base_module in ("subprocess", "ctypes") and self.privileged:
                     continue
                 self.violations.append((node.lineno, f"forbidden import '{alias.name}'"))
@@ -105,8 +107,10 @@ class PluginSecurityScanner(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.module:
             base_module = node.module.split('.')[0]
-            if base_module in ("os", "subprocess", "sqlite3", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
-                if base_module in ("subprocess", "ctypes") and self.privileged:
+            if base_module in ("os", "subprocess", "sys", "importlib", "database", "inspect", "ctypes", "gc", "builtins"):
+                if base_module == "database" and self.privileged:
+                    pass # Allow core database if privileged
+                elif base_module in ("subprocess", "ctypes") and self.privileged:
                     pass
                 else:
                     self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
@@ -201,7 +205,7 @@ class PluginLoader:
         if not base_ns:
              raise ValueError(f"Plugin ID {plugin_id} not found in database for reload")
 
-        # Clean namespace (remove @channel suffix for path resolution)
+        # Clean name (remove @channel suffix for path resolution)
         clean_ns = base_ns.split('@')[0]
         
         # Determine channel: prioritize @beta suffix, then check config_manager
@@ -243,7 +247,7 @@ class PluginLoader:
             logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
 
         # 3. Purge Memory (Recursive)
-        # We purge both the potential namespace variants
+        # We purge both the potential name variants
         module_names = [f"plugins.{clean_ns}", f"plugins.{clean_ns.replace('.', '_')}"]
         
         for module_name in module_names:
@@ -289,7 +293,7 @@ class PluginLoader:
             with db._get_connection() as conn:
                 conn.row_factory = sqlite3.Row
                 c = conn.cursor()
-                c.execute("SELECT friendly_name, plugin_id, absolute_install_path, loaded_modules FROM services WHERE is_active = 1")
+                c.execute("SELECT name, plugin_id, absolute_install_path, loaded_modules FROM services WHERE is_active = 1")
                 active_services = c.fetchall()
         except Exception as e:
             logger.error(f"Failed to query active services: {e}")
@@ -402,7 +406,7 @@ class PluginLoader:
                 c.execute("""
                     UPDATE services 
                     SET version=? 
-                    WHERE LOWER(name)=LOWER(?) OR LOWER(friendly_name)=LOWER(?) OR LOWER(name)=LOWER(?) OR LOWER(friendly_name)=LOWER(?)
+                    WHERE LOWER(name)=LOWER(?) OR LOWER(name)=LOWER(?)
                 """, (version, clean_name, provider_id, provider_id, clean_name))
                 updated = c.rowcount
                 conn.commit()
@@ -415,7 +419,7 @@ class PluginLoader:
         Dynamically import a plugin package and register its exports.
         """
         with self._load_lock:
-            # Normalize namespace for module and path
+            # Normalize name for module and path
             clean_ns = str(plugin_id)
             
             if is_beta:
@@ -868,7 +872,7 @@ class PluginRegistry:
     @classmethod
     def create_instance(cls, name, *args, **kwargs) -> PluginBase:
         # Phase 2: Translation Bridge
-        # If the incoming identifier is an integer (plugin_id), resolve it to its namespace
+        # If the incoming identifier is an integer (plugin_id), resolve it to its name
         original_name = name
         try:
             # Check if name is an int or a string representation of an int

@@ -52,7 +52,7 @@ def save_config():
     try:
         payload = request.get_json(force=True) or {}
         storage = get_storage_service()
-        storage.ensure_service("musicbrainz", display_name="MusicBrainz", service_type="metadata")
+        storage.ensure_service("musicbrainz", service_type="metadata")
 
         if "user_token" in payload and payload["user_token"].strip():
             from core.security import encrypt_string
@@ -93,7 +93,6 @@ def list_accounts():
         storage = get_storage_service()
         storage.ensure_service(
             "musicbrainz",
-            display_name="MusicBrainz",
             service_type="metadata",
             description="Open music encyclopedia providing comprehensive metadata",
         )
@@ -142,7 +141,7 @@ def create_account():
             return jsonify({"error": "account_name is required"}), 400
 
         storage = get_storage_service()
-        storage.ensure_service("musicbrainz", display_name="MusicBrainz", service_type="metadata")
+        storage.ensure_service("musicbrainz", service_type="metadata")
 
         account_id = storage.ensure_account(
             "musicbrainz",

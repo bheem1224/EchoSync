@@ -595,16 +595,19 @@ class PluginStore:
                 if is_update:
                     if channel == "beta":
                         try:
-                            self._fork_namespace(plugin_id)
-                            logger.info(f"Forked data namespace for {plugin_id} (Blue/Green)")
+                            self._fork_namespace(int_plugin_id)
+                            logger.info(f"Forked data namespace for {int_plugin_id} (Blue/Green)")
                         except Exception as e:
-                            logger.error(f"Failed to fork namespace for {plugin_id}: {e}")
+                            logger.error(f"Failed to fork namespace for {int_plugin_id}: {e}")
                     elif channel == "stable":
                         try:
-                            self._cutover_namespace(plugin_id)
-                            logger.info(f"Executed data cutover for {plugin_id} (Stable Promotion)")
+                            self._cutover_namespace(int_plugin_id)
+                            logger.info(f"Executed data cutover for {int_plugin_id} (Stable Promotion)")
                         except Exception as e:
-                            logger.error(f"Failed to cutover namespace for {plugin_id}: {e}")
+                            logger.error(f"Failed to cutover namespace for {int_plugin_id}: {e}")
+
+
+
 
                 # State Synchronization: Synchronize with the authoritative SQLite registry
                 try:
@@ -617,10 +620,8 @@ class PluginStore:
 
                     db.register_service(
                         name=clean_id,
-                        display_name=manifest_name,
                         service_type=manifest_type,
                         description=manifest_desc,
-                        friendly_name=clean_id,
                         absolute_install_path=str(dest_dir.resolve()),
                         plugin_id=int_plugin_id,
                         version=manifest_version
@@ -829,57 +830,6 @@ class PluginStore:
         clean_id = str(plugin_id)
         return config_manager.get(f'plugins.{clean_id}.channel', 'stable')
 
-    def _fork_namespace(self, plugin_id: int):
-        """The Fork: Copies current stable data to a @beta side-car."""
-        from database.config_database import get_config_database
-        from database.working_database import get_working_database
-        
-        beta_id = f"{plugin_id}@beta"
-        
-        # 1. Fork Config KVS
-        db_config = get_config_database()
-        with db_config._get_connection() as conn:
-            c = conn.cursor()
-            # Ensure table exists before querying
-            c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")
-            # Clean first to avoid duplicates if re-forking
-            c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (beta_id,))
-            c.execute("""
-                INSERT INTO config_kvs (plugin_id, key, value, is_sensitive)
-                SELECT ?, key, value, is_sensitive FROM config_kvs WHERE plugin_id=?
-            """, (beta_id, plugin_id))
-            conn.commit()
-
-        # 2. Fork Working State KVS
-        db_working = get_working_database()
-        with db_working.session_scope() as session:
-            from sqlalchemy import text
-            session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:beta"), {"beta": beta_id})
-            session.execute(text("""
-                INSERT INTO plugin_state_kvs (plugin_id, key, value, is_sensitive)
-                SELECT :beta, key, value, is_sensitive FROM plugin_state_kvs WHERE plugin_id=:orig
-            """), {"beta": beta_id, "orig": plugin_id})
-
-    def _abort_namespace(self, plugin_id: int):
-        """The Abort: Physically deletes the @beta side-car."""
-        from database.config_database import get_config_database
-        from database.working_database import get_working_database
-        
-        beta_id = f"{plugin_id}@beta"
-        
-        # 1. Abort Config KVS
-        db_config = get_config_database()
-        with db_config._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (beta_id,))
-            conn.commit()
-
-        # 2. Abort Working State KVS
-        db_working = get_working_database()
-        with db_working.session_scope() as session:
-            from sqlalchemy import text
-            session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:beta"), {"beta": beta_id})
-
     def _cutover_namespace(self, plugin_id: int):
         """The Cutover: Archives current stable and promotes @beta to active."""
         from database.config_database import get_config_database
@@ -956,6 +906,35 @@ class PluginStore:
         from core.state import system_state
         system_state.restart_pending = True
         return True
+
+
+    def _fork_namespace(self, plugin_id: int):
+        """The Fork: Copies current stable DB file to a @beta side-car file."""
+        import os
+        import shutil
+        stable_db_path = f"/data/plugins/data/{plugin_id}.db"
+        beta_db_path = f"/data/plugins/data/{plugin_id}@beta.db"
+        if os.path.exists(stable_db_path):
+            shutil.copy2(stable_db_path, beta_db_path)
+
+    def _abort_namespace(self, plugin_id: int):
+        """The Abort: Physically deletes the @beta side-car file."""
+        import os
+        beta_db_path = f"/data/plugins/data/{plugin_id}@beta.db"
+        if os.path.exists(beta_db_path):
+            try:
+                os.remove(beta_db_path)
+            except OSError:
+                pass
+
+    def _cutover_namespace(self, plugin_id: int):
+        """The Cutover: Promotes the @beta file to stable."""
+        import os
+        import shutil
+        stable_db_path = f"/data/plugins/data/{plugin_id}.db"
+        beta_db_path = f"/data/plugins/data/{plugin_id}@beta.db"
+        if os.path.exists(beta_db_path):
+            shutil.move(beta_db_path, stable_db_path)
 
 
 plugin_store = PluginStore()

@@ -214,7 +214,7 @@ class ConfigDatabase:
                         plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
                         
                         # Add version column if it doesn't exist yet via pragma logic or rely on schema upgrade
-                        cursor.execute("UPDATE services SET friendly_name = ?, plugin_id = ? WHERE id = ?", (resolved_plugin_id_str, plugin_id_int, s_id))
+                        cursor.execute("UPDATE services SET plugin_id = ? WHERE id = ?", (plugin_id_int, s_id))
                 except Exception as e:
                     pass
 
@@ -253,7 +253,7 @@ class ConfigDatabase:
             logger.error(f"Failed to resolve plugin details for {name}: {e}")
 
         plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
-        self.register_service(name, name.capitalize(), 'streaming', f"{name.capitalize()} service", friendly_name=name, plugin_id=plugin_id_int, version=resolved_version)
+        self.register_service(name, 'streaming', f"{name.capitalize()} service", plugin_id=plugin_id_int, version=resolved_version)
 
         # 3. Try to find again after registration
         with contextlib.closing(self._get_connection()) as conn:
@@ -266,7 +266,7 @@ class ConfigDatabase:
         logger.error(f"Failed to get or create service ID for '{name}' after registration attempt.")
         return 0
 
-    def register_service(self, name: str, display_name: str, service_type: str, description: str, friendly_name: Optional[str] = None, absolute_install_path: Optional[str] = None, plugin_id: Optional[int] = None, version: Optional[str] = None, loaded_modules: Optional[str] = None) -> int:
+    def register_service(self, name: str, service_type: str, description: str, absolute_install_path: Optional[str] = None, plugin_id: Optional[int] = None, version: Optional[str] = None, loaded_modules: Optional[str] = None) -> int:
         import binascii
         if plugin_id is None:
             # Fallback CRC32 generation if not provided (ALWAYS use full lowercase namespace for consistency)
@@ -276,19 +276,17 @@ class ConfigDatabase:
             execute_write_sql(
                 str(self.database_path), 
                 """
-                INSERT INTO services(name, display_name, service_type, description, friendly_name, absolute_install_path, loaded_modules, plugin_id, version, is_active)
-                VALUES(?,?,?,?,?,?,?,?,?,1)
+                INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active)
+                VALUES(?,?,?,?,?,?,?,1)
                 ON CONFLICT(name) DO UPDATE SET 
-                    friendly_name=excluded.friendly_name,
                     absolute_install_path=excluded.absolute_install_path,
                     loaded_modules=excluded.loaded_modules,
                     plugin_id=excluded.plugin_id,
                     version=excluded.version,
-                    display_name=excluded.display_name,
                     is_active=1,
                     updated_at=strftime('%s','now')
                 """, 
-                (name, display_name, service_type, description, friendly_name, absolute_install_path, loaded_modules, plugin_id, version)
+                (name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version)
             )
         except Exception as e:
             logger.error(f"Error registering service '{name}': {e}")
@@ -362,7 +360,7 @@ class ConfigDatabase:
 
     # Accounts
     def get_service_name(self, service_id: int) -> Optional[str]:
-        """Resolve a service ID (PK or plugin_id) to its canonical namespace or name."""
+        """Resolve a service ID (PK or plugin_id) to its canonical name."""
         with self._get_connection() as conn:
             c = conn.cursor()
             c.execute("SELECT friendly_name, name FROM services WHERE id=? OR plugin_id=?", (service_id, service_id))
@@ -372,7 +370,7 @@ class ConfigDatabase:
             return friendly_name if friendly_name else name
 
     def get_service_id(self, identifier: Any) -> Optional[int]:
-        """Resolve a name, namespace, or plugin_id to the primary integer ID."""
+        """Resolve a name or plugin_id to the primary integer ID."""
         with self._get_connection() as conn:
             c = conn.cursor()
             if isinstance(identifier, (int, str)) and str(identifier).isdigit():

@@ -29,7 +29,7 @@ def save_config():
     try:
         payload = request.get_json(force=True) or {}
         storage = get_storage_service()
-        storage.ensure_service("acoustid", display_name="AcoustID", service_type="metadata")
+        storage.ensure_service("acoustid", service_type="metadata")
 
         if "api_key" in payload and payload["api_key"].strip():
             from core.security import encrypt_string

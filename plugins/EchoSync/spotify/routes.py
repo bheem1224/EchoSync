@@ -25,7 +25,7 @@ def _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_
         # Seed into storage if we have app credentials
         if client_id and client_secret:
             try:
-                storage.ensure_service('spotify', display_name='Spotify', service_type='streaming', description='Spotify music streaming service')
+                storage.ensure_service('spotify', service_type='streaming', description='Spotify music streaming service')
                 storage.set_service_config('spotify', 'client_id', client_id, is_sensitive=False)
                 storage.set_service_config('spotify', 'client_secret', client_secret, is_sensitive=True)
                 if redirect_uri:

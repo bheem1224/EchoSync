@@ -493,6 +493,53 @@ class PluginBase(ABC):
 
         self.models = _PluginModelFacade()
 
+    def get_database_connection(self):
+        """
+        Returns an SQLAlchemy engine connected to the plugin's isolated SQLite database.
+        It also securely mounts the core databases (music_library.db, working.db) as read-only attached databases.
+        """
+        import os
+        from sqlalchemy import create_engine
+        from sqlalchemy import event
+        from database.config_database import get_config_database
+        from core.settings import config_manager
+
+        # Resolve the strict plugin_id integer
+        db = get_config_database()
+        plugin_id_int = db.get_service_id(self.name)
+        if not plugin_id_int:
+            # Fallback to crc32 of name if not yet registered during boot
+            import binascii
+            plugin_id_int = binascii.crc32(self.name.lower().encode('utf-8')) & 0xFFFFFFFF
+
+        # Determine the correct db file name based on the channel
+        # We can use config_manager.get_plugin_channel or check if self.version implies beta.
+        # It's safer to use the exact same logic plugin_loader uses: config_manager.get_plugin_channel
+        channel = config_manager.get_plugin_channel(self.name) or 'stable'
+        db_file_name = f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
+
+        # Ensure directory exists
+        plugin_data_dir = "/data/plugins/data/"
+        os.makedirs(plugin_data_dir, exist_ok=True)
+
+        db_path = os.path.join(plugin_data_dir, db_file_name)
+        engine = create_engine(f"sqlite:///{db_path}")
+
+        @event.listens_for(engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+
+            # Attach core databases
+            try:
+                cursor.execute("ATTACH DATABASE '/data/music.db' AS music_lib")
+                cursor.execute("ATTACH DATABASE '/data/working.db' AS working")
+            except Exception as e:
+                pass
+            cursor.close()
+
+        return engine
+
+
     @property
     def logger(self):
         from core.tiered_logger import get_logger
@@ -1038,29 +1085,6 @@ class MediaServerProvider(PluginBase):
 
 
 def provision_plugin_table(plugin_id: int, table_schema: str) -> None:
-    """
-    Dynamically provision a high-speed relational cache table for a plugin inside working.db.
-    The SDK forcefully prefixes the table name with `cache_{plugin_id}_` to ensure sandbox safety.
-    """
-    import re
-    from database.working_database import get_working_database
-    from sqlalchemy import text
+    """Deprecated: Plugins must provision their own isolated SQLite databases."""
+    raise NotImplementedError("provision_plugin_table is deprecated. Use raw sqlite3/sqlalchemy to a local plugin .db file instead.")
 
-    # Simple regex to find the CREATE TABLE statement and inject the prefix
-    match = re.search(r'CREATE TABLE (IF NOT EXISTS )?([a-zA-Z0-9_]+)', table_schema, re.IGNORECASE)
-    if not match:
-        raise ValueError("Invalid DDL: Could not find CREATE TABLE statement.")
-
-    if_not_exists = match.group(1) or ""
-    table_name = match.group(2)
-
-    # Strip any existing prefix if the plugin tried to be smart
-    clean_table_name = table_name.replace(f"cache_{plugin_id}_", "")
-
-    enforced_table_name = f"cache_{plugin_id}_{clean_table_name}"
-
-    sanitized_ddl = table_schema[:match.start()] + f"CREATE TABLE {if_not_exists}{enforced_table_name}" + table_schema[match.end():]
-
-    engine = get_working_database().engine
-    with engine.begin() as conn:
-        conn.execute(text(sanitized_ddl))

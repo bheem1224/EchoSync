@@ -56,7 +56,6 @@ class StorageService:
     def ensure_service(
         self,
         service_name: str,
-        display_name: Optional[str] = None,
         service_type: Optional[str] = None,
         description: Optional[str] = None,
     ) -> bool:

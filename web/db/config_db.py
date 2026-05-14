@@ -13,8 +13,8 @@ class ConfigDatabaseWrapper:
     def get_or_create_service_id(self, name: str) -> int:
         return self._db.get_or_create_service_id(name)
 
-    def register_service(self, name: str, display_name: str, service_type: str, description: str) -> int:
-        return self._db.register_service(name, display_name, service_type, description)
+    def register_service(self, name: str, service_type: str, description: str, plugin_id: Optional[int] = None, version: Optional[str] = None) -> int:
+        return self._db.register_service(name=name, service_type=service_type, description=description, plugin_id=plugin_id, version=version)
 
     def set_service_config(self, service_id: int, key: str, value: Any, is_sensitive: bool = False) -> bool:
         return self._db.set_service_config(service_id, key, value, is_sensitive)
