@@ -9,7 +9,8 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 
 from typing import List, Optional
 from core.tiered_logger import get_logger
-from core.models import ProviderType, Track
+from database.music_database import Track
+from core.models import ProviderType
 from core.file_handling.storage import get_storage_service
 from typing import Any
 

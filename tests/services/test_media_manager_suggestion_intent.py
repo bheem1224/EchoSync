@@ -48,7 +48,7 @@ def test_media_manager_handles_suggestion_remove_intent_end_to_end(monkeypatch, 
         session.add(
             ExternalIdentifier(
                 track_id=track.id,
-                plugin_id=1,
+                plugin_id=5,
                 provider_item_id="12345",
             )
         )

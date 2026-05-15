@@ -123,7 +123,7 @@ def get_ui_manifest():
         uri_path = folder_name.replace('.', '/')
         ui_plugins.append({
             'id':         folder_name,
-            'plugin_id':  plugin.get('id'), # The full namespace ID
+            'plugin_id':  plugin.get('id'),
             'api_base':   f'/api/plugins/{uri_path}',
             'components': normalized_components,
             'assets':     raw_assets,

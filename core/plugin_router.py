@@ -12,10 +12,10 @@ class PluginProxyRouter:
     Sitting at /api/plugins/{plugin_id}/*, it dynamically routes traffic 
     to whatever blueprint is currently registered in memory for that ID.
     """
-    _routers: Dict[str, Blueprint] = {}
+    _routers: Dict[int, Blueprint] = {}
 
     @classmethod
-    def mount_router(cls, plugin_id: str, router: Blueprint):
+    def mount_router(cls, plugin_id: int, router: Blueprint):
         """Register (or overwrite) a plugin's router in the proxy registry."""
         prefix = f"/api/plugins/{plugin_id}"
         router.url_prefix = prefix

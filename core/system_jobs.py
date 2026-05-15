@@ -560,6 +560,53 @@ def register_plugin_update_check_job(interval_seconds: int = 43200, enabled: boo
         f"Plugin update check job registered (interval: {interval_seconds}s = {interval_seconds / 3600:.1f}h, enabled={enabled})"
     )
 
+def cleanup_orphaned_plugin_databases():
+    """
+    Scans /data/plugins/data/ for any .db files and aggressively deletes them
+    if their filename (plugin_id) does not match an active plugin in the services registry.
+    It also checks the actual plugin folders and removes registry records if the plugin was physically deleted.
+    """
+    import os
+    from pathlib import Path
+    from core.tiered_logger import get_logger
+    from database.config_database import get_config_database
+
+    logger = get_logger("plugin_sweeper")
+    plugin_data_dir = Path("/data/plugins/data/")
+
+    db = get_config_database()
+    active_ids = set()
+
+    # 1. Clean Registry of missing folders (Ghost entries)
+    with db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, plugin_id, absolute_install_path FROM services WHERE is_active = 1 AND absolute_install_path IS NOT NULL")
+        records = c.fetchall()
+        for row in records:
+            service_id, plugin_id, absolute_path = row[0], row[1], row[2]
+            if absolute_path and not Path(absolute_path).exists():
+                logger.warning(f"Sweeper detected missing plugin folder for plugin_id {plugin_id}. Removing ghost registry entry.")
+                # We could delete the service, or just mark it inactive. Safest is to delete completely if the folder is gone.
+                c.execute("DELETE FROM services WHERE id=?", (service_id,))
+            elif plugin_id:
+                active_ids.add(str(plugin_id))
+        conn.commit()
+
+    # 2. Clean orphaned databases
+    if not plugin_data_dir.exists():
+        return
+
+    for db_file in plugin_data_dir.glob("*.db"):
+        file_id = db_file.stem.split('@')[0] # handle @beta files too
+        if file_id not in active_ids:
+            try:
+                logger.warning(f"Sweeper detected orphaned database {db_file.name}. Removing it.")
+                os.remove(db_file)
+            except OSError as e:
+                logger.error(f"Sweeper failed to remove orphaned database {db_file.name}: {e}")
+
+
+
 def register_all_system_jobs():
     """
     Register all system jobs with the global job_queue.
@@ -594,6 +641,7 @@ def register_all_system_jobs():
         register_retroactive_metadata_enhancement_job(interval_seconds=86400, enabled=True)
 
         # 12-hour plugin update check
+        cleanup_orphaned_plugin_databases()
         register_plugin_update_check_job(interval_seconds=43200, enabled=True)
 
         logger.info("All system jobs registered successfully")
