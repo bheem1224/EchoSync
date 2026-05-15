@@ -53,6 +53,11 @@ class TestForbiddenImports:
         assert violations, "Expected a violation for 'import subprocess'"
         assert _has_violation(violations, "subprocess")
 
+
+    def test_blocks_config_db_string(self):
+        violations = _scan('engine = create_engine("sqlite:////config/config.db")')
+        assert _has_violation(violations, "config.db")
+
     def test_allows_import_sqlite3(self):
         violations = _scan("import sqlite3")
         assert not violations, "Expected NO violation for 'import sqlite3' (now unblocked)"

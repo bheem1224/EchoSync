@@ -116,6 +116,12 @@ class PluginSecurityScanner(ast.NodeVisitor):
                     self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
         self.generic_visit(node)
 
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if isinstance(node.value, str):
+            if "config.db" in node.value:
+                self.violations.append((node.lineno, "forbidden string literal containing 'config.db'"))
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
         func = node.func
 
@@ -164,34 +170,6 @@ class PluginLoader:
         self.plugins_dir = Path(config_manager.get_plugins_dir())
         self.loaded_blueprints: List[Blueprint] = []
 
-    def _find_case_insensitive_path(self, base_path: Path, parts: List[str]) -> Optional[Path]:
-        """Helper to find a directory path case-insensitively, part by part."""
-        current = base_path
-        for part in parts:
-            if not current.exists():
-                return None
-            
-            # Direct match first (most efficient)
-            exact = current / part
-            if exact.exists():
-                current = exact
-                continue
-                
-            # Case-insensitive search within the current directory
-            match = None
-            try:
-                for item in current.iterdir():
-                    if item.name.lower() == part.lower():
-                        match = item
-                        break
-            except Exception:
-                return None
-            
-            if match:
-                current = match
-            else:
-                return None
-        return current
 
     def reload_plugin(self, plugin_id: int):
         """Perform a true Zero-Downtime hot reload of a plugin."""
@@ -200,44 +178,25 @@ class PluginLoader:
         # 1. Resolve Namespace and Channel from DB
         from database.config_database import get_config_database
         db = get_config_database()
-        base_ns = db.get_service_name(plugin_id)
-
-        if not base_ns:
-             raise ValueError(f"Plugin ID {plugin_id} not found in database for reload")
-
-        # Clean name (remove @channel suffix for path resolution)
-        clean_ns = base_ns.split('@')[0]
         
-        # Determine channel: prioritize @beta suffix, then check config_manager
-        channel = 'stable'
-        if '@beta' in base_ns:
-            channel = 'beta'
-        else:
-            channel = config_manager.get_plugin_channel(clean_ns) or 'stable'
-        
-        # Determine directory structure (Author.Plugin or Flat)
-        parts = clean_ns.split('.')
-        plugin_dir = self._find_case_insensitive_path(self.plugins_dir, parts)
-        
-        # Candidate 2: Flat fallback if author-nested doesn't exist
-        if not plugin_dir or not plugin_dir.exists():
-             plugin_dir = self._find_case_insensitive_path(self.plugins_dir, [parts[-1]])
-
-        # Handle Beta Folder Nesting
-        if channel == 'beta':
-            beta_plugin_dir = plugin_dir / 'beta'
-            if beta_plugin_dir.exists():
-                plugin_dir = beta_plugin_dir
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT absolute_install_path, name FROM services WHERE plugin_id=?", (plugin_id,))
+            row = c.fetchone()
+            if row and row[0]:
+                plugin_dir = Path(row[0])
+                base_ns = row[1]
             else:
-                logger.warning(f"Plugin {plugin_id} is on beta channel but {beta_plugin_dir} does not exist. Falling back to root: {plugin_dir}")
+                raise ValueError(f"Plugin ID {plugin_id} not found in database for reload or missing absolute_install_path")
+
+        clean_ns = base_ns.split('@')[0]
+        channel = config_manager.get_plugin_channel(clean_ns) or 'stable'
 
         if not plugin_dir.exists():
-            # Final fallback check (very rare: plugin ID might be just the end name)
-            if not plugin_dir.exists():
-                 logger.error(f"Cannot reload {plugin_id}: path does not exist. Checked nested: {self.plugins_dir.joinpath(*parts)}, flat: {self.plugins_dir / parts[-1]}")
-                 return
+            raise ValueError(f"Plugin directory {plugin_dir} does not exist.")
 
         logger.info(f"Reloading {plugin_id} ({channel}) from {plugin_dir}")
+
 
         # 2. Kill Workers
         try:
@@ -414,43 +373,50 @@ class PluginLoader:
         except Exception as e:
             logger.error(f"Failed to update version in DB for {provider_id}: {e}")
 
-    def _load_plugin_package(self, plugin_id: int, is_beta: bool = False, is_disabled: bool = False):
+    def _load_plugin_package(self, plugin_id: int, is_beta: bool = False, is_disabled: bool = False, absolute_install_path: str = None):
         """
         Dynamically import a plugin package and register its exports.
         """
         with self._load_lock:
-            # Normalize name for module and path
-            clean_ns = str(plugin_id)
-            
-            if is_beta:
-                module_path = f"plugins.{clean_ns}.beta"
-            else:
-                module_path = f"plugins.{clean_ns}"
-
-            try:
-                # 1. Resolve Path
-                parts = clean_ns.split('.')
-                package_dir = self._find_case_insensitive_path(self.plugins_dir, parts)
-                
-                if not package_dir or not package_dir.exists():
-                    package_dir = self._find_case_insensitive_path(self.plugins_dir, [parts[-1]])
-                
-                # If both failed, we have a missing plugin
-                if not package_dir:
-                     raise ValueError(f"Plugin package {plugin_id} not found in {self.plugins_dir}")
-                
-                # DERIVE CORRECT CASING FROM DISK
-                # This ensures module_path matches the filesystem exactly, preventing case-sensitive import errors
-                try:
-                    relative_path = package_dir.relative_to(self.plugins_dir)
-                    actual_ns = ".".join(relative_path.parts)
-                    if is_beta:
-                        module_path = f"plugins.{actual_ns}.beta"
+            # Query the database for the path if not provided
+            if not absolute_install_path:
+                from database.config_database import get_config_database
+                db = get_config_database()
+                with db._get_connection() as conn:
+                    c = conn.cursor()
+                    c.execute("SELECT absolute_install_path, name FROM services WHERE plugin_id=?", (plugin_id,))
+                    row = c.fetchone()
+                    if row and row[0]:
+                        absolute_install_path = row[0]
+                        plugin_name = row[1]
                     else:
-                        module_path = f"plugins.{actual_ns}"
-                    logger.debug(f"Resolved module path casing: {module_path}")
-                except Exception as e:
-                    logger.warning(f"Could not derive relative path for {package_dir}: {e}")
+                        raise ValueError(f"Plugin package for plugin_id {plugin_id} not found in database registry or has no path.")
+            else:
+                plugin_name = str(plugin_id) # Fallback
+
+            from pathlib import Path
+            package_dir = Path(absolute_install_path)
+
+            if not package_dir.exists():
+                raise ValueError(f"Plugin package {plugin_id} path {package_dir} does not exist on disk")
+
+            # Determine module_path dynamically from path.
+            # We must load it as 'plugins.{plugin_name}' or something. Wait, the Python module system might be tricky.
+            # "By standardizing the schema and using absolute_install_path, the Plugin Loader will stop trying to guess folder names"
+
+            # Keep original module_path logic but use plugin_name instead of plugin_id as string
+            try:
+                relative_path = package_dir.relative_to(self.plugins_dir)
+                actual_ns = ".".join(relative_path.parts)
+                if is_beta:
+                    module_path = f"plugins.{actual_ns}.beta"
+                else:
+                    module_path = f"plugins.{actual_ns}"
+                logger.debug(f"Resolved module path casing: {module_path}")
+            except Exception as e:
+                logger.warning(f"Could not derive relative path for {package_dir}: {e}")
+                # Fallback if not inside plugins_dir
+                module_path = f"plugins.{plugin_name}"
 
                 if is_beta:
                     package_dir = package_dir / "beta"

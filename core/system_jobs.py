@@ -560,6 +560,42 @@ def register_plugin_update_check_job(interval_seconds: int = 43200, enabled: boo
         f"Plugin update check job registered (interval: {interval_seconds}s = {interval_seconds / 3600:.1f}h, enabled={enabled})"
     )
 
+def cleanup_orphaned_plugin_databases():
+    """
+    Scans /data/plugins/data/ for any .db files and aggressively deletes them
+    if their filename (plugin_id) does not match an active plugin in the services registry.
+    """
+    import os
+    from pathlib import Path
+    from core.tiered_logger import get_logger
+    from database.config_database import get_config_database
+
+    logger = get_logger("plugin_sweeper")
+    plugin_data_dir = Path("/data/plugins/data/")
+
+    if not plugin_data_dir.exists():
+        return
+
+    db = get_config_database()
+    active_ids = set()
+
+    # Fetch all active plugins
+    with db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT plugin_id FROM services WHERE is_active = 1 AND plugin_id IS NOT NULL")
+        for row in c.fetchall():
+            active_ids.add(str(row[0]))
+
+    for db_file in plugin_data_dir.glob("*.db"):
+        file_id = db_file.stem.split('@')[0] # handle @beta files too
+        if file_id not in active_ids:
+            try:
+                logger.warning(f"Sweeper detected orphaned database {db_file.name}. Removing it.")
+                os.remove(db_file)
+            except OSError as e:
+                logger.error(f"Sweeper failed to remove orphaned database {db_file.name}: {e}")
+
+
 def register_all_system_jobs():
     """
     Register all system jobs with the global job_queue.
@@ -594,6 +630,7 @@ def register_all_system_jobs():
         register_retroactive_metadata_enhancement_job(interval_seconds=86400, enabled=True)
 
         # 12-hour plugin update check
+        cleanup_orphaned_plugin_databases()
         register_plugin_update_check_job(interval_seconds=43200, enabled=True)
 
         logger.info("All system jobs registered successfully")

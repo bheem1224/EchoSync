@@ -531,8 +531,8 @@ class PluginBase(ABC):
 
             # Attach core databases
             try:
-                cursor.execute("ATTACH DATABASE '/data/music.db' AS music_lib")
-                cursor.execute("ATTACH DATABASE '/data/working.db' AS working")
+                cursor.execute("ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib")
+                cursor.execute("ATTACH DATABASE 'file:/data/working.db?mode=ro' AS working")
             except Exception as e:
                 pass
             cursor.close()
