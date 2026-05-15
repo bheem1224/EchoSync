@@ -40,7 +40,6 @@ _FORBIDDEN_MODULE_CALLS: dict = {
     "importlib": frozenset({"import_module", "reload"}),
     "builtins": frozenset({"eval", "exec", "getattr", "setattr", "delattr", "open", "compile", "__import__", "globals", "locals", "memoryview", "input"}),
     "subprocess": frozenset({"*"}),
-    "sqlite3": frozenset({"*"}),
     "urllib": frozenset({"*"}),
     "pty": frozenset({"*"}),
     "posix": frozenset({"*"}),

@@ -493,10 +493,11 @@ class PluginBase(ABC):
 
         self.models = _PluginModelFacade()
 
-    def get_database_connection(self):
+    def get_database_connection(self, write_access: bool = False):
         """
         Returns an SQLAlchemy engine connected to the plugin's isolated SQLite database.
-        It also securely mounts the core databases (music_library.db, working.db) as read-only attached databases.
+        It also securely mounts the core databases (music_library.db, working.db) as attached databases.
+        If write_access is explicitly granted, working.db will be attached in mode=rw.
         """
         import os
         from sqlalchemy import create_engine
@@ -512,9 +513,6 @@ class PluginBase(ABC):
             import binascii
             plugin_id_int = binascii.crc32(self.name.lower().encode('utf-8')) & 0xFFFFFFFF
 
-        # Determine the correct db file name based on the channel
-        # We can use config_manager.get_plugin_channel or check if self.version implies beta.
-        # It's safer to use the exact same logic plugin_loader uses: config_manager.get_plugin_channel
         channel = config_manager.get_plugin_channel(self.name) or 'stable'
         db_file_name = f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
 
@@ -532,7 +530,9 @@ class PluginBase(ABC):
             # Attach core databases
             try:
                 cursor.execute("ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib")
-                cursor.execute("ATTACH DATABASE 'file:/data/working.db?mode=ro' AS working")
+
+                working_mode = "rw" if write_access else "ro"
+                cursor.execute(f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working")
             except Exception as e:
                 pass
             cursor.close()

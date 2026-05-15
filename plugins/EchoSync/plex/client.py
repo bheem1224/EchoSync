@@ -57,25 +57,22 @@ class PlexClient(PluginBase):
         """Initialize Plex provider."""
         super().__init__()
 
-        # Provision the high-speed relational cache
+        # Provision the high-speed relational cache using the isolated db
         try:
-            from core.plugin_SDK import provision_plugin_table
-            # Hardcoded to 5 for now based on the prompt's example: cache_5_plex_media
-            plugin_db_id = 5
-
-            provision_plugin_table(plugin_db_id, """
-                CREATE TABLE IF NOT EXISTS plex_media (
-                    id INTEGER PRIMARY KEY,
-                    rating_key TEXT UNIQUE NOT NULL,
-                    title TEXT,
-                    artist TEXT,
-                    album TEXT,
-                    duration INTEGER,
-                    last_synced TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-        except ImportError:
-            pass
+            from sqlalchemy import text
+            engine = self.sdk.get_database_connection()
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS plex_media (
+                        id INTEGER PRIMARY KEY,
+                        rating_key TEXT UNIQUE NOT NULL,
+                        title TEXT,
+                        artist TEXT,
+                        album TEXT,
+                        duration INTEGER,
+                        last_synced TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
         except Exception as e:
             logger.error(f"Failed to provision Plex cache table: {e}")
 

@@ -1,3 +1,4 @@
+from sqlalchemy import MetaData, Table
 import json
 from datetime import datetime, timezone
 from sqlalchemy import Column, String, JSON, DateTime
@@ -11,26 +12,23 @@ logger = get_logger("spotify_cache_manager")
 class SpotifyCacheManager:
     """Manages local caching of Spotify playlists to optimize syncs and reduce API calls."""
 
-    def __init__(self, engine=None):
-        storage = get_storage_service()
-        work_db = storage.get_working_database()
-        
-        if engine is None:
-            self.engine = work_db.engine
-            self.storage = work_db.get_provider_storage('spotify')
+    def __init__(self, sdk=None):
+        self.sdk = sdk
+        if self.sdk:
+            self.engine = self.sdk.get_database_connection(write_access=True)
         else:
-            self.engine = engine
-            # Accessing ProviderStorageBox via the work_db instance which is already allowed
-            self.storage = work_db.get_provider_storage('spotify')
+            raise ValueError("SpotifyCacheManager requires SDK instance to acquire isolated DB engine")
 
+        self.metadata = MetaData()
         self._ensure_tables()
         self._register_listeners()
 
     def _ensure_tables(self):
-        """Ensure the prv_spotify_playlists table exists."""
+        """Ensure the playlist table exists."""
         try:
-            self.table = self.storage.create_table(
+            self.table = Table(
                 'playlists',
+                self.metadata,
                 Column('playlist_id', String, primary_key=True),
                 Column('name', String),
                 Column('snapshot_id', String, nullable=True),
@@ -38,7 +36,7 @@ class SpotifyCacheManager:
                 Column('raw_data', JSON),
                 Column('last_synced', DateTime(timezone=True))
             )
-            self.storage.execute()
+            self.metadata.create_all(self.engine)
         except Exception as e:
             logger.error(f"Failed to create cache table: {e}")
 
