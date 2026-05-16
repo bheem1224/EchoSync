@@ -14,12 +14,21 @@ def upgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     columns = [c['name'] for c in inspector.get_columns('services')]
+    indexes = [idx['name'] for idx in inspector.get_indexes('services')]
 
     # Defensive drop for orphaned batch tables from previously failed runs
     op.execute("DROP TABLE IF EXISTS _alembic_tmp_services")
 
     # Block 1: Drop legacy columns (only if they exist)
     with op.batch_alter_table('services', schema=None) as batch_op:
+        # Explicitly drop indexes tied to dropped columns first!
+        if 'idx_services_namespace' in indexes:
+            batch_op.drop_index('idx_services_namespace')
+        if 'idx_services_display_name' in indexes:
+            batch_op.drop_index('idx_services_display_name')
+        if 'idx_services_friendly_name' in indexes:
+            batch_op.drop_index('idx_services_friendly_name')
+
         if 'namespace' in columns:
             batch_op.drop_column('namespace')
         if 'display_name' in columns:
