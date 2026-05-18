@@ -488,7 +488,9 @@ class PluginStore:
                 manifest_desc = new_manifest["description"]
                 manifest_version = new_manifest["version"]
                 manifest_type = new_manifest["type"]
-
+                
+                import zlib
+                int_plugin_id = zlib.crc32(strict_namespace.lower().encode('utf-8')) & 0xFFFFFFFF
 
                 # Security: Pre-Flight Consent Check for Privilege Escalation
                 if not force_consent:
@@ -612,11 +614,7 @@ class PluginStore:
                 # State Synchronization: Synchronize with the authoritative SQLite registry
                 try:
                     from database.config_database import get_config_database
-                    import zlib
                     db = get_config_database()
-                    
-                    # Generate/Verify Integer Plugin ID based on the strict namespace (ALWAYS lowercase for hash consistency)
-                    int_plugin_id = zlib.crc32(strict_namespace.lower().encode('utf-8')) & 0xFFFFFFFF
 
                     db.register_service(
                         name=clean_id,
