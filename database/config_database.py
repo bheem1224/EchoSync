@@ -144,6 +144,11 @@ class ConfigDatabase:
                 """)
 
                 # Plugin Snapshots (24h Grace Period)
+                cursor.execute("PRAGMA table_info(plugin_snapshots)")
+                ps_columns = [row[1] for row in cursor.fetchall()]
+                if ps_columns and 'plugin_id' not in ps_columns:
+                    cursor.execute("DROP TABLE IF EXISTS plugin_snapshots")
+
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS plugin_snapshots (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -215,7 +220,7 @@ class ConfigDatabase:
             execute_write(str(self.database_path), _schema)
             logger.info("Config database schema ensured and legacy services migrated")
         except Exception as e:
-            logger.error(f"Failed to initialize config schema: {e}")
+            logger.error(f"Failed to initialize config schema: {e}", exc_info=True)
 
     # Service helpers
     def get_or_create_service_id(self, name: str) -> int:
