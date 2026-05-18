@@ -11,7 +11,7 @@ function n() {
 n();
 //#endregion
 //#region node_modules/svelte/src/constants.js
-var r = {}, i = Symbol(), a = "http://www.w3.org/1999/xhtml", o = Array.isArray, s = Array.prototype.indexOf, c = Array.prototype.includes, l = Array.from, u = Object.keys, d = Object.defineProperty, f = Object.getOwnPropertyDescriptor, p = Object.getOwnPropertyDescriptors, m = Object.prototype, h = Array.prototype, g = Object.getPrototypeOf, _ = Object.isExtensible, v = () => {};
+var r = {}, i = Symbol("uninitialized"), a = "http://www.w3.org/1999/xhtml", o = Array.isArray, s = Array.prototype.indexOf, c = Array.prototype.includes, l = Array.from, u = Object.keys, d = Object.defineProperty, f = Object.getOwnPropertyDescriptor, p = Object.getOwnPropertyDescriptors, m = Object.prototype, h = Array.prototype, g = Object.getPrototypeOf, _ = Object.isExtensible, v = () => {};
 function y(e) {
 	return e();
 }
@@ -906,7 +906,7 @@ function Vt(e) {
 }
 function Ht(e) {
 	var t, n = W, r = e.parent;
-	if (!Kn && r !== null && r.f & 24576) return Fe(), e.v;
+	if (!Kn && r !== null && e.v !== i && r.f & 24576) return Fe(), e.v;
 	Jn(r);
 	try {
 		e.f &= ~ce, Vt(e), t = ir(e);
@@ -924,10 +924,10 @@ function Ut(e) {
 	Kn || (M === null ? rt(e) : (Sn() || j?.is_fork) && M.set(e, t));
 }
 function Wt(e) {
-	if (e.effects !== null) for (let t of e.effects) (t.teardown || t.ac) && (t.teardown?.(), t.ac?.abort(be), t.teardown = v, t.ac = null, or(t, 0), Fn(t));
+	if (e.effects !== null) for (let t of e.effects) (t.teardown || t.ac) && (t.teardown?.(), t.ac?.abort(be), t.fn !== null && (t.teardown = v), t.ac = null, or(t, 0), Fn(t));
 }
 function Gt(e) {
-	if (e.effects !== null) for (let t of e.effects) t.teardown && sr(t);
+	if (e.effects !== null) for (let t of e.effects) t.teardown && t.fn !== null && sr(t);
 }
 //#endregion
 //#region node_modules/svelte/src/internal/client/reactivity/sources.js
