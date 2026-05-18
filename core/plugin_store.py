@@ -361,11 +361,31 @@ class PluginStore:
         """First-time installation of a plugin."""
         return self.download_plugin(plugin_info, channel, force_consent, is_update=False)
 
-    def update_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False) -> bool:
+    def update_plugin(self, plugin_id: int, force_consent: bool = False) -> bool:
         """Downloads the update and hot swaps it."""
-        return self.download_plugin(plugin_info, channel, force_consent, is_update=True)
+        from database.config_database import get_config_database
+        db = get_config_database()
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT name, beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,))
+            row = c.fetchone()
+            if not row:
+                logger.error(f"Cannot update plugin: ID {plugin_id} not found in database.")
+                return False
+                
+            plugin_name = row[0]
+            channel = "beta" if row[1] else "stable"
+            
+        store_plugins = self.get_all_store_plugins()
+        plugin_info = next((p for p in store_plugins if p.get("id") == plugin_name or p.get("name") == plugin_name), None)
+                
+        if not plugin_info:
+            logger.error(f"Cannot update plugin: {plugin_name} not found in store.")
+            return False
+            
+        return self.download_plugin(plugin_info, channel, force_consent, is_update=True, target_plugin_id=plugin_id)
 
-    def download_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False, is_update: bool = True) -> bool:
+    def download_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False, is_update: bool = True, target_plugin_id: int = None) -> bool:
         """
         Direct Artifact Downloader.
         Downloads a cleanly packaged .zip artifact based on the selected channel.
@@ -453,6 +473,21 @@ class PluginStore:
                 tmp_zip_path = tmp_file.name
 
             try:
+                # Rollback Pathing: Right before extracting a new update
+                if is_update and target_plugin_id:
+                    try:
+                        from database.config_database import get_config_database
+                        db = get_config_database()
+                        with db._get_connection() as conn:
+                            c = conn.cursor()
+                            c.execute("SELECT absolute_install_path FROM services WHERE plugin_id=?", (target_plugin_id,))
+                            row = c.fetchone()
+                            if row and row[0]:
+                                c.execute("UPDATE services SET previous_version_path=? WHERE plugin_id=?", (row[0], target_plugin_id))
+                                conn.commit()
+                    except Exception as e:
+                        logger.error(f"Failed to set previous_version_path: {e}")
+
                 # Task 2: Artifact Extraction (Direct Root Level)
                 with zipfile.ZipFile(tmp_zip_path, 'r') as z:
                     # Security: Zip Slip Check
@@ -488,9 +523,6 @@ class PluginStore:
                 manifest_desc = new_manifest["description"]
                 manifest_version = new_manifest["version"]
                 manifest_type = new_manifest["type"]
-                
-                import zlib
-                int_plugin_id = zlib.crc32(strict_namespace.lower().encode('utf-8')) & 0xFFFFFFFF
 
                 # Security: Pre-Flight Consent Check for Privilege Escalation
                 if not force_consent:
@@ -595,6 +627,19 @@ class PluginStore:
 
                 # Task 6: Blue/Green Namespace Shifting (Only during updates)
                 if is_update:
+                    if target_plugin_id:
+                        int_plugin_id = target_plugin_id
+                    else:
+                        from database.config_database import get_config_database
+                        db = get_config_database()
+                        with db._get_connection() as conn:
+                            c = conn.cursor()
+                            c.execute("SELECT plugin_id FROM services WHERE LOWER(name)=LOWER(?)", (clean_id,))
+                            row = c.fetchone()
+                            if not row:
+                                raise ValueError(f"Plugin {clean_id} not found in services table")
+                            int_plugin_id = row[0]
+
                     if channel == "beta":
                         try:
                             self._fork_namespace(int_plugin_id)
@@ -615,16 +660,32 @@ class PluginStore:
                 try:
                     from database.config_database import get_config_database
                     db = get_config_database()
+                    
+                    is_official = "raw.githubusercontent.com/bheem1224/EchoSync" in download_url
 
                     db.register_service(
                         name=clean_id,
                         service_type=manifest_type,
                         description=manifest_desc,
                         absolute_install_path=str(dest_dir.resolve()),
-                        plugin_id=int_plugin_id,
                         version=manifest_version
                     )
-                    logger.info(f"Synchronized database state for plugin {plugin_id} (int: {int_plugin_id})")
+                    
+                    with db._get_connection() as conn:
+                        c = conn.cursor()
+                        if target_plugin_id:
+                            pid = target_plugin_id
+                        else:
+                            c.execute("SELECT plugin_id FROM services WHERE LOWER(name)=LOWER(?)", (clean_id,))
+                            row = c.fetchone()
+                            pid = row[0] if row else None
+                        
+                        if pid:
+                            c.execute("UPDATE services SET verified_source=?, beta_opt_in=? WHERE plugin_id=?", 
+                                     (1 if is_official else 0, 1 if channel == "beta" else 0, pid))
+                            conn.commit()
+                            
+                    logger.info(f"Synchronized database state for plugin {plugin_id}")
                 except Exception as e:
                     logger.error(f"Failed to synchronize database state for {plugin_id}: {e}")
 
@@ -825,8 +886,18 @@ class PluginStore:
 
     def get_plugin_channel(self, plugin_id: int) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
-        clean_id = str(plugin_id)
-        return config_manager.get(f'plugins.{clean_id}.channel', 'stable')
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,))
+                row = c.fetchone()
+                if row and row[0]:
+                    return "beta"
+        except Exception:
+            pass
+        return "stable"
 
     def _fork_namespace(self, plugin_id: int):
         """The Fork: Copies current stable DB file and KVS to a @beta side-car."""
@@ -940,27 +1011,39 @@ class PluginStore:
 
     def rollback_plugin(self, plugin_id: int) -> bool:
         """Restores a plugin to its previous stable version by aborting beta context."""
-        from core.settings import config_manager
-        clean_id = str(plugin_id)
-        current_channel = config_manager.get(f'plugins.{clean_id}.channel', 'stable')
-
-        if current_channel == 'stable':
-            # Scenario 2: Rollback previous stable (We do not support preserving previous beta)
-            # But right now, we just fetch the stable download from API if needed, handled by API route
-            pass
         import shutil
+        import os
+        from database.config_database import get_config_database
         
+        db = get_config_database()
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT previous_version_path, absolute_install_path FROM services WHERE plugin_id=?", (plugin_id,))
+            row = c.fetchone()
+            if not row:
+                logger.error(f"Cannot rollback plugin {plugin_id}: Not found in DB.")
+                return False
+                
+            prev_path = row[0]
+            curr_path = row[1]
+            
+            c.execute("UPDATE services SET beta_opt_in=0 WHERE plugin_id=?", (plugin_id,))
+            if prev_path:
+                c.execute("UPDATE services SET absolute_install_path=? WHERE plugin_id=?", (prev_path, plugin_id))
+            conn.commit()
+
         # 1. Abort side-car data
         try:
             self._abort_namespace(plugin_id)
         except Exception as e:
             logger.error(f"Failed to abort data namespace for {plugin_id}: {e}")
 
-        # 2. Switch Channel to Stable and cleanup beta files
-        clean_id = str(plugin_id)
-        folder_path = clean_id.replace('.', '/')
-        config_manager.set(f'plugins.{clean_id}.channel', 'stable')
-        self._cleanup_beta_subfolder(folder_path)
+        # 2. Cleanup beta subfolder based on current absolute install path
+        if curr_path:
+            beta_path = Path(curr_path) / "beta"
+            if beta_path.exists():
+                shutil.rmtree(beta_path, ignore_errors=True)
+                logger.info(f"Removed leftover beta folder at {beta_path}")
 
         from core.state import system_state
         system_state.restart_pending = True

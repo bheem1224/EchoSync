@@ -180,16 +180,17 @@ class PluginLoader:
         
         with db._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT absolute_install_path, name FROM services WHERE plugin_id=?", (plugin_id,))
+            c.execute("SELECT absolute_install_path, name, beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,))
             row = c.fetchone()
             if row and row[0]:
                 plugin_dir = Path(row[0])
                 base_ns = row[1]
+                is_beta = bool(row[2])
             else:
                 raise ValueError(f"Plugin ID {plugin_id} not found in database for reload or missing absolute_install_path")
 
         clean_ns = base_ns.split('@')[0]
-        channel = config_manager.get_plugin_channel(clean_ns) or 'stable'
+        channel = 'beta' if is_beta else 'stable'
 
         if not plugin_dir.exists():
             raise ValueError(f"Plugin directory {plugin_dir} does not exist.")
@@ -374,6 +375,29 @@ class PluginLoader:
             
             conn.commit()
             
+            # Prune orphaned KVS records
+            try:
+                c.execute("SELECT plugin_id FROM services")
+                valid_ids = [str(row['plugin_id']) for row in c.fetchall()]
+                
+                # Construct valid beta and archive suffixes
+                valid_suffixes = set(valid_ids)
+                for vid in valid_ids:
+                    valid_suffixes.add(f"{vid}@beta")
+                    valid_suffixes.add(f"{vid}@archive")
+                
+                from database.working_database import get_working_database
+                from sqlalchemy import text
+                w_db = get_working_database()
+                with w_db.session_scope() as session:
+                    all_kvs = session.execute(text("SELECT DISTINCT plugin_id FROM plugin_state_kvs")).fetchall()
+                    for (pid,) in all_kvs:
+                        if str(pid) not in valid_suffixes:
+                            logger.info(f"Pruning orphaned plugin_state_kvs records for plugin_id: {pid}")
+                            session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": pid})
+            except Exception as e:
+                logger.error(f"Failed to prune orphaned KVS records: {e}")
+            
         logger.info("Authoritative services registry reconciliation complete!")
 
     def load_all(self):
@@ -518,7 +542,7 @@ class PluginLoader:
                     UPDATE services 
                     SET version=? 
                     WHERE LOWER(name)=LOWER(?) OR LOWER(name)=LOWER(?)
-                """, (version, clean_name, provider_id, provider_id, clean_name))
+                """, (version, clean_name, provider_id))
                 updated = c.rowcount
                 conn.commit()
                 logger.info(f"Stamped version {version} for {provider_id}")

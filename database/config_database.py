@@ -61,6 +61,11 @@ class ConfigDatabase:
                         service_type TEXT,
                         description TEXT,
                         is_active INTEGER DEFAULT 1,
+                        beta_opt_in INTEGER DEFAULT 0,
+                        previous_version_path TEXT,
+                        verified_source INTEGER DEFAULT 0,
+                        privileged_mode INTEGER DEFAULT 0,
+                        permissions TEXT DEFAULT '[]',
                         created_at INTEGER DEFAULT (strftime('%s','now')),
                         updated_at INTEGER DEFAULT (strftime('%s','now'))
                     )
