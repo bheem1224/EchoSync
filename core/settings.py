@@ -664,18 +664,20 @@ class ConfigManager:
 
     def get_plugin_channel(self, plugin_id: str) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
-        clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
+        clean_id = plugin_id.replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
         try:
             from database.config_database import get_config_database
             db = get_config_database()
             with db._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT beta_opt_in FROM services WHERE LOWER(name)=LOWER(?)", (clean_id,))
-                row = c.fetchone()
-                if row:
-                    local_beta = row[0]
-                    if local_beta is not None:
-                        return "beta" if local_beta else "stable"
+                c.execute("SELECT name, beta_opt_in FROM services")
+                for row in c.fetchall():
+                    row_clean = row[0].replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
+                    if row_clean == clean_id:
+                        local_beta = row[1]
+                        if local_beta is not None:
+                            return "beta" if local_beta else "stable"
+                        break
         except Exception:
             pass
         return "beta" if self.get('ui.beta_plugin_ui', False) else "stable"

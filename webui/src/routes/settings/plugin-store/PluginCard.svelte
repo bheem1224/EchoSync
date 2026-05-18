@@ -113,10 +113,36 @@
     return Math.max(0, Math.floor(remainingMs / (1000 * 60 * 60)));
   }
 
+  let showChannelModal = false;
+  let selectedChannelPref = 'global';
+  
+  $: if (plugin.beta_opt_in === 1) {
+    selectedChannelPref = 'beta';
+  } else if (plugin.beta_opt_in === 0) {
+    selectedChannelPref = 'stable';
+  } else {
+    selectedChannelPref = 'global';
+  }
+
+  async function saveChannelPreference() {
+    let val = null;
+    if (selectedChannelPref === 'beta') val = true;
+    else if (selectedChannelPref === 'stable') val = false;
+    
+    try {
+      await apiClient.post(`/system/plugins/${plugin.id}/beta-opt`, { beta_opt_in: val });
+      showChannelModal = false;
+      window.location.reload();
+    } catch (err) {
+      console.error("Failed to save channel preference:", err);
+      alert(`Failed to save channel preference: ${err.response?.data?.error || err.message}`);
+    }
+  }
+
   async function handleUndoUpdate() {
     if (confirm("Are you sure you want to restore the previous stable version? Your current beta settings and state will be replaced by the snapshot taken before the update.")) {
       try {
-        await apiClient.post(`/plugins/${plugin.id}/rollback`);
+        await apiClient.post(`/system/plugins/${plugin.id}/rollback`);
         window.location.reload();
       } catch (err) {
         console.error("Rollback failed:", err);
@@ -128,7 +154,7 @@
 
   async function handleRevertToStable() {
     try {
-      await apiClient.post(`/plugins/${plugin.id}/beta-opt`, { beta_opt_in: false });
+      await apiClient.post(`/system/plugins/${plugin.id}/beta-opt`, { beta_opt_in: false });
       window.location.reload();
     } catch (err) {
       console.error("Revert to stable failed:", err);
@@ -138,7 +164,7 @@
 
   async function handleOptInBeta() {
     try {
-      await apiClient.post(`/plugins/${plugin.id}/beta-opt`, { beta_opt_in: true });
+      await apiClient.post(`/system/plugins/${plugin.id}/beta-opt`, { beta_opt_in: true });
       if (confirm("Successfully opted-in to Beta. Would you like to check and download the Beta update now?")) {
         dispatch('install', { ...plugin, channel: 'beta', version: latestBeta, isUpdate: true, isRollback: false });
       } else {
@@ -152,7 +178,7 @@
 
   async function handleClearLocalBeta() {
     try {
-      await apiClient.post(`/plugins/${plugin.id}/beta-opt`, { beta_opt_in: null });
+      await apiClient.post(`/system/plugins/${plugin.id}/beta-opt`, { beta_opt_in: null });
       window.location.reload();
     } catch (err) {
       console.error("Clearing local beta failed:", err);
@@ -196,23 +222,12 @@
             </button>
             {#if openMenuId === plugin.id}
               <div class="absolute right-0 top-8 w-44 bg-slate-900 border border-white/10 shadow-2xl rounded-xl z-[110] overflow-hidden py-1">
-                {#if installedChannel === 'stable'}
-                  <button 
-                    class="w-full text-left px-4 py-2.5 text-xs text-purple-400 hover:bg-purple-500/10 border-none bg-transparent cursor-pointer whitespace-nowrap" 
-                    on:click={() => { handleOptInBeta(); openMenuId = null; }}
-                  >
-                    🚀 Opt-in to Beta Channel
-                  </button>
-                {/if}
-                
-                {#if plugin.beta_opt_in !== null}
-                  <button 
-                    class="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:bg-white/5 border-none bg-transparent cursor-pointer whitespace-nowrap" 
-                    on:click={() => { handleClearLocalBeta(); openMenuId = null; }}
-                  >
-                    ⚙️ Use Global Channel
-                  </button>
-                {/if}
+                <button 
+                  class="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:bg-white/5 border-none bg-transparent cursor-pointer whitespace-nowrap" 
+                  on:click={() => { showChannelModal = true; openMenuId = null; }}
+                >
+                  ⚙️ Edit Channel Preference
+                </button>
 
                 <button 
                   class="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-red-500/10 border-none bg-transparent cursor-pointer whitespace-nowrap" 
@@ -233,27 +248,6 @@
   <p class="text-sm text-slate-400 line-clamp-2 mb-6 h-10 leading-relaxed">
     {plugin.description || 'No description provided.'}
   </p>
-
-  <!-- Local Management Buttons -->
-  {#if isInstalled && (installedChannel === 'beta' || plugin.previous_version_path)}
-    <div class="flex flex-wrap gap-2 mb-4 p-3 bg-white/5 rounded-xl border border-white/10">
-      {#if installedChannel === 'beta'}
-        <button 
-          on:click={handleRevertToStable}
-          class="flex-1 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold rounded-lg text-[10px] uppercase tracking-wider transition-all border border-red-500/20 cursor-pointer whitespace-nowrap text-center">
-          Revert to Stable Channel
-        </button>
-      {/if}
-      
-      {#if plugin.previous_version_path}
-        <button 
-          on:click={handleUndoUpdate}
-          class="flex-1 px-3 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 font-bold rounded-lg text-[10px] uppercase tracking-wider transition-all border border-yellow-500/20 cursor-pointer whitespace-nowrap text-center">
-          Rollback
-        </button>
-      {/if}
-    </div>
-  {/if}
 
   <!-- Grace Period Block -->
   {#if plugin.archive_expiry_date && getRemainingHours(plugin.archive_expiry_date) > 0}
@@ -288,6 +282,14 @@
       
       {#if isInstalled && installedChannel === 'beta'}
         <span class="px-2 py-1 bg-purple-500/20 text-purple-400 text-[10px] font-bold uppercase rounded border border-purple-500/30">Beta Track</span>
+      {/if}
+
+      {#if plugin.previous_version_path}
+        <button 
+          on:click={handleUndoUpdate}
+          class="px-2 py-1 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 text-[10px] font-bold uppercase rounded border border-yellow-500/30 cursor-pointer whitespace-nowrap transition-all duration-200">
+          ↩️ Rollback
+        </button>
       {/if}
     </div>
 
@@ -360,3 +362,49 @@
     </div>
   </div>
 </div>
+
+{#if showChannelModal}
+  <div class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+    <div class="w-full max-w-sm bg-slate-900/95 border border-white/10 rounded-2xl p-6 shadow-2xl backdrop-blur-xl relative">
+      <button 
+        class="absolute right-4 top-4 text-slate-400 hover:text-white transition-colors bg-transparent border-none text-lg cursor-pointer"
+        on:click={() => showChannelModal = false}
+      >
+        ✕
+      </button>
+      <h4 class="text-md font-bold text-white mb-2 flex items-center gap-2">
+        ⚙️ Edit Channel Preference
+      </h4>
+      <p class="text-xs text-slate-400 mb-4">
+        Configure the active update and loading channel for <span class="text-white font-semibold">{plugin.name}</span>.
+      </p>
+      
+      <div class="mb-5">
+        <label class="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Channel Preference</label>
+        <select 
+          bind:value={selectedChannelPref}
+          class="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-blue-500 transition-all cursor-pointer"
+        >
+          <option value="beta">🚀 Opt-in to Beta Channel</option>
+          <option value="stable">🛡️ Revert to Stable Channel</option>
+          <option value="global">⚙️ Use Global Settings ({globalBetaEnabled ? 'Beta' : 'Stable'})</option>
+        </select>
+      </div>
+
+      <div class="flex gap-3">
+        <button 
+          on:click={() => showChannelModal = false}
+          class="flex-1 px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold rounded-lg transition-colors border-none cursor-pointer"
+        >
+          Cancel
+        </button>
+        <button 
+          on:click={saveChannelPreference}
+          class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors border-none cursor-pointer"
+        >
+          Save Preference
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

@@ -239,14 +239,23 @@ def update_plugin():
         from database.config_database import get_config_database
         db = get_config_database()
         plugin_name = plugin_info.get("id") or plugin_info.get("name")
+        clean_target = str(plugin_name).replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
         
         with db._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT plugin_id FROM services WHERE LOWER(name)=LOWER(?)", (plugin_name,))
-            row = c.fetchone()
-            if not row:
+            c.execute("SELECT plugin_id, name FROM services")
+            rows = c.fetchall()
+            
+            plugin_id = None
+            for row in rows:
+                row_name = row['name']
+                clean_row = row_name.replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
+                if clean_row == clean_target:
+                    plugin_id = row['plugin_id']
+                    break
+                    
+            if not plugin_id:
                 return jsonify({"error": f"Plugin {plugin_name} not found in database registry."}), 404
-            plugin_id = row[0]
 
         success = plugin_store.update_plugin(plugin_id, force_consent=force_consent)
         if success:
@@ -271,14 +280,23 @@ def rollback_plugin():
         from database.config_database import get_config_database
         db = get_config_database()
         plugin_name = plugin_info.get("id") or plugin_info.get("name")
+        clean_target = str(plugin_name).replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
         
         with db._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT plugin_id FROM services WHERE LOWER(name)=LOWER(?)", (plugin_name,))
-            row = c.fetchone()
-            if not row:
+            c.execute("SELECT plugin_id, name FROM services")
+            rows = c.fetchall()
+            
+            plugin_id = None
+            for row in rows:
+                row_name = row['name']
+                clean_row = row_name.replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
+                if clean_row == clean_target:
+                    plugin_id = row['plugin_id']
+                    break
+                    
+            if not plugin_id:
                 return jsonify({"error": f"Plugin {plugin_name} not found in database registry."}), 404
-            plugin_id = row[0]
 
         success = plugin_store.rollback_plugin(plugin_id)
         if success:
@@ -298,12 +316,15 @@ def rollback_plugin_direct(plugin_id):
             int_id = int(plugin_id)
         except ValueError:
             int_id = None
+            clean_target = str(plugin_id).replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
             with db._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT plugin_id FROM services WHERE LOWER(name)=LOWER(?)", (plugin_id,))
-                row = c.fetchone()
-                if row:
-                    int_id = row[0]
+                c.execute("SELECT plugin_id, name FROM services")
+                for row in c.fetchall():
+                    row_clean = row['name'].replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
+                    if row_clean == clean_target:
+                        int_id = row['plugin_id']
+                        break
                     
         if not int_id:
             return jsonify({"error": f"Plugin {plugin_id} not found"}), 404
@@ -334,12 +355,15 @@ def set_plugin_beta_opt(plugin_id):
             int_id = int(plugin_id)
         except ValueError:
             int_id = None
+            clean_target = str(plugin_id).replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
             with db._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT plugin_id FROM services WHERE LOWER(name)=LOWER(?)", (plugin_id,))
-                row = c.fetchone()
-                if row:
-                    int_id = row[0]
+                c.execute("SELECT plugin_id, name FROM services")
+                for row in c.fetchall():
+                    row_clean = row['name'].replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
+                    if row_clean == clean_target:
+                        int_id = row['plugin_id']
+                        break
                     
         if not int_id:
             return jsonify({"error": f"Plugin {plugin_id} not found"}), 404

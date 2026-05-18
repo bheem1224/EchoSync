@@ -304,14 +304,17 @@ class PluginStore:
             try:
                 from database.config_database import get_config_database
                 db = get_config_database()
+                clean_target = str(plugin_id).replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
                 with db._get_connection() as conn:
                     c = conn.cursor()
-                    c.execute("SELECT beta_opt_in, previous_version_path, plugin_id FROM services WHERE LOWER(name)=LOWER(?)", (str(plugin_id),))
-                    row = c.fetchone()
-                    if row:
-                        plugin["beta_opt_in"] = row[0]
-                        plugin["previous_version_path"] = row[1]
-                        plugin["int_plugin_id"] = row[2]
+                    c.execute("SELECT name, beta_opt_in, previous_version_path, plugin_id FROM services")
+                    for row in c.fetchall():
+                        row_clean = row[0].replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
+                        if row_clean == clean_target:
+                            plugin["beta_opt_in"] = row[1]
+                            plugin["previous_version_path"] = row[2]
+                            plugin["int_plugin_id"] = row[3]
+                            break
             except Exception:
                 pass
             
