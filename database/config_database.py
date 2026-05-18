@@ -157,9 +157,9 @@ class ConfigDatabase:
                 # Migration: Add missing columns to services table if they don't exist
                 cursor.execute("PRAGMA table_info(services)")
                 columns = [row[1] for row in cursor.fetchall()]
-                if 'friendly_name' not in columns:
-                    cursor.execute("ALTER TABLE services ADD COLUMN friendly_name TEXT")
+                if 'absolute_install_path' not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN absolute_install_path TEXT")
+                if 'loaded_modules' not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN loaded_modules TEXT")
                 if 'plugin_id' not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN plugin_id INTEGER")
@@ -361,11 +361,10 @@ class ConfigDatabase:
         """Resolve a service ID (PK or plugin_id) to its canonical name."""
         with self._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT friendly_name, name FROM services WHERE id=? OR plugin_id=?", (service_id, service_id))
+            c.execute("SELECT name FROM services WHERE id=? OR plugin_id=?", (service_id, service_id))
             row = c.fetchone()
             if not row: return None
-            friendly_name, name = row['friendly_name'], row['name']
-            return friendly_name if friendly_name else name
+            return row['name']
 
     def get_service_id(self, identifier: Any) -> Optional[int]:
         """Resolve a name or plugin_id to the primary integer ID."""
