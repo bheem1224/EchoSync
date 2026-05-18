@@ -722,8 +722,9 @@ class PluginStore:
                         loader.reload_plugin(int_plugin_id)
                         logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}).")
                     except Exception as e:
-                        logger.warning(f"Live-swap failed for {plugin_id}, marking restart pending: {e}")
+                        logger.error(f"Live-swap failed for {plugin_id}: {e}")
                         system_state.restart_pending = True
+                        raise RuntimeError(f"Live-swap failed: {e}")
                 else:
                     logger.info(f"Fresh installation complete for {plugin_id}. Hot-swap skipped.")
 
@@ -787,14 +788,13 @@ class PluginStore:
         import shutil
         import os
         import sys
-        # Nexus Framework: Resolve nested path by converting dots to slashes
-        clean_id = str(plugin_id)
-        dest_dir = self.plugins_dir / str(plugin_id)
+        from pathlib import Path
         
         try:
             from database.working_database import get_working_database
             from database.config_database import get_config_database
-
+            db = get_config_database()
+            
             # 1. Disable and remove jobs
             try:
                 from core.job_queue import job_queue
@@ -802,29 +802,28 @@ class PluginStore:
             except Exception as e:
                 logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
 
-                        # 2. Hot-Unload (Purge from sys.modules)
-            # Find the plugin's install path from the database
-            from database.config_database import get_config_database
-            db = get_config_database()
-            c = getattr(db, "_get_connection", getattr(db, "get_connection", lambda: None))().cursor()
-            c.execute("SELECT absolute_install_path, loaded_modules FROM services WHERE plugin_id=?", (plugin_id,))
-            row = c.fetchone()
-
-            absolute_install_path = row['absolute_install_path'] if row else None
-            loaded_modules_str = row['loaded_modules'] if row else None
-            
+            # 2. Get install path and modules to purge before deleting services row
+            absolute_install_path = None
             modules_to_purge = set()
-
-            if loaded_modules_str:
-                import json
-                try:
-                    modules_to_purge.update(json.loads(loaded_modules_str))
-                except json.JSONDecodeError:
-                    pass
+            clean_id = str(plugin_id)
+            
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT name, absolute_install_path, loaded_modules FROM services WHERE plugin_id=?", (plugin_id,))
+                row = c.fetchone()
+                if row:
+                    clean_id = row['name']
+                    absolute_install_path = row['absolute_install_path']
+                    loaded_modules_str = row['loaded_modules']
+                    if loaded_modules_str:
+                        import json
+                        try:
+                            modules_to_purge.update(json.loads(loaded_modules_str))
+                        except Exception:
+                            pass
 
             # Fallback/Additional check: inspect sys.modules
             if absolute_install_path:
-                from pathlib import Path
                 plugin_path_str = str(Path(absolute_install_path).resolve())
                 for mod_name, mod in list(sys.modules.items()):
                     mod_file = getattr(mod, '__file__', None)
@@ -837,11 +836,10 @@ class PluginStore:
                     logger.debug(f"Hot-unloaded zombie module: {module_name}")
 
             # 3. Dynamic Database and Config Teardown
-            safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', clean_id.replace('.', '_')).lower()
+            safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', str(plugin_id).replace('.', '_')).lower()
             prefix = f"plugin_{safe_id}_%"
             
             try:
-                # Some database objects might not expose the engine property directly
                 db_engines = []
                 w_db = get_working_database()
                 if hasattr(w_db, 'engine'): db_engines.append(w_db.engine)
@@ -863,45 +861,49 @@ class PluginStore:
             except Exception as e:
                 logger.warning(f"Failed to teardown dynamic tables for {plugin_id}: {e}")
 
-            # 4. Delete config keys
-            config = get_config_database()
-            try:
-                # Handle SQLite vs SQLAlchemy connections depending on what get_connection returns
-                conn = getattr(config, "get_connection", getattr(config, "_get_connection", lambda: None))()
-                if not conn: raise Exception("No connection available")
-                try:
-                    c = conn.cursor()
-                    c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (plugin_id,))
-                    c.execute("DELETE FROM services WHERE plugin_id=?", (plugin_id,))
-                    conn.commit()
-                except (AttributeError, TypeError):
-                    # Maybe it's a context manager
-                    with conn as ctx_conn:
-                        c = ctx_conn.cursor()
-                        c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (plugin_id,))
-                        c.execute("DELETE FROM services WHERE plugin_id=?", (plugin_id,))
-                        ctx_conn.commit()
-            except Exception as e:
-                logger.warning(f"Error purging config KVS: {e}")
-
-                # 6. Remove from services table
+            # 4. Delete config keys and remove from services table
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")
+                c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (plugin_id,))
                 c.execute("DELETE FROM services WHERE plugin_id=?", (plugin_id,))
-
                 conn.commit()
 
+            # 4b. Delete working state KVS entries to prevent orphaned data
+            try:
+                from database.working_database import get_working_database
+                w_db = get_working_database()
+                with w_db.session_scope() as session:
+                    from sqlalchemy import text
+                    session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": str(plugin_id)})
+            except Exception as e:
+                logger.warning(f"Error purging working state KVS for {plugin_id}: {e}")
+
             # Remove from JSON config if exists
-            from core.settings import config_manager
-            all_settings = config_manager.get_settings()
-            if 'plugins' in all_settings and clean_id in all_settings['plugins']:
-                del all_settings['plugins'][clean_id]
-                config_manager.save_settings(all_settings)
+            try:
+                from core.settings import config_manager
+                all_settings = config_manager.get_settings()
+                clean_target = clean_id.replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
+                if 'plugins' in all_settings and clean_target in all_settings['plugins']:
+                    del all_settings['plugins'][clean_target]
+                    config_manager.save_settings(all_settings)
+            except Exception as e:
+                logger.warning(f"Error removing from json config: {e}")
+
+            # 5. Delete physical folder
+            if absolute_install_path:
+                dest_dir = Path(absolute_install_path)
+                if dest_dir.exists():
+                    shutil.rmtree(dest_dir, ignore_errors=True)
+                    logger.info(f"Successfully deleted plugin directory: {dest_dir}")
+            else:
+                dest_dir = self.plugins_dir / str(plugin_id)
+                if dest_dir.exists():
+                    shutil.rmtree(dest_dir, ignore_errors=True)
 
         except Exception as e:
             logger.error(f"Failed during uninstall for {plugin_id}: {e}")
-
-        # 5. Delete folder
-        if dest_dir.exists():
-            shutil.rmtree(dest_dir, ignore_errors=True)
+            return False
 
         from core.state import system_state
         system_state.restart_pending = True
@@ -990,6 +992,8 @@ class PluginStore:
         """The Cutover: Archives current stable and promotes @beta to active."""
         from database.config_database import get_config_database
         from database.working_database import get_working_database
+        import os
+        import shutil
         
         beta_id = f"{plugin_id}@beta"
         archive_id = f"{plugin_id}@archive"
@@ -1035,6 +1039,37 @@ class PluginStore:
                     SELECT :arch, key, value, is_sensitive FROM plugin_state_kvs WHERE plugin_id=:orig
                 """), {"arch": archive_id, "orig": plugin_id})
 
+        # 3. Cutover Physical Database File
+        stable_db_path = f"/data/plugins/data/{plugin_id}.db"
+        beta_db_path = f"/data/plugins/data/{plugin_id}@beta.db"
+        archive_db_path = f"/data/plugins/data/{plugin_id}@archive.db"
+        
+        # Ensure directories exist
+        os.makedirs(os.path.dirname(stable_db_path), exist_ok=True)
+
+        if os.path.exists(beta_db_path):
+            if os.path.exists(stable_db_path):
+                # Archive current stable
+                try:
+                    if os.path.exists(archive_db_path):
+                        os.remove(archive_db_path)
+                    os.rename(stable_db_path, archive_db_path)
+                except OSError:
+                    pass
+            try:
+                os.rename(beta_db_path, stable_db_path)
+            except OSError:
+                pass
+        else:
+            # Stable to Stable: copy current to archive
+            if os.path.exists(stable_db_path):
+                try:
+                    if os.path.exists(archive_db_path):
+                        os.remove(archive_db_path)
+                    shutil.copy2(stable_db_path, archive_db_path)
+                except (OSError, IOError):
+                    pass
+
     def rollback_plugin(self, plugin_id: int) -> bool:
         """Restores a plugin to its previous stable version by aborting beta context."""
         import shutil
@@ -1066,10 +1101,15 @@ class PluginStore:
 
         # 2. Cleanup beta subfolder based on current absolute install path
         if curr_path:
-            beta_path = Path(curr_path) / "beta"
-            if beta_path.exists():
-                shutil.rmtree(beta_path, ignore_errors=True)
-                logger.info(f"Removed leftover beta folder at {beta_path}")
+            p = Path(curr_path)
+            if p.name == "beta":
+                shutil.rmtree(p, ignore_errors=True)
+                logger.info(f"Removed beta folder at {p}")
+            else:
+                beta_path = p / "beta"
+                if beta_path.exists():
+                    shutil.rmtree(beta_path, ignore_errors=True)
+                    logger.info(f"Removed leftover beta folder at {beta_path}")
 
         from core.state import system_state
         system_state.restart_pending = True
