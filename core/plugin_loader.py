@@ -698,8 +698,40 @@ class PluginLoader:
                         sys.path.insert(0, micro_venv_str)
                         added_micro_venv = True
 
+                    before_modules = set(sys.modules.keys())
                     try:
                         module = importlib.import_module(module_path)
+                        
+                        # MISSION: Live Memory Module Tracking (Persist loaded modules to services table)
+                        after_modules = set(sys.modules.keys())
+                        newly_loaded = after_modules - before_modules
+                        newly_loaded.add(module_path)
+                        
+                        plugin_modules = set()
+                        plugin_path_str = str(Path(absolute_install_path).resolve())
+                        for mod_name in newly_loaded:
+                            if mod_name.startswith(f"plugins.{clean_ns}"):
+                                plugin_modules.add(mod_name)
+                            else:
+                                mod = sys.modules.get(mod_name)
+                                mod_file = getattr(mod, '__file__', None)
+                                if mod_file and str(Path(mod_file).resolve()).startswith(plugin_path_str):
+                                    plugin_modules.add(mod_name)
+                                    
+                        try:
+                            from database.config_database import get_config_database
+                            db_conf = get_config_database()
+                            with db_conf._get_connection() as conn:
+                                c = conn.cursor()
+                                c.execute(
+                                    "UPDATE services SET loaded_modules = ? WHERE plugin_id = ?",
+                                    (json.dumps(list(plugin_modules)), plugin_id)
+                                )
+                                conn.commit()
+                            logger.info(f"Dynamically tracked and saved {len(plugin_modules)} loaded modules in services registry for plugin ID {plugin_id}")
+                        except Exception as db_e:
+                            logger.warning(f"Failed to persist dynamically tracked loaded modules in database for plugin ID {plugin_id}: {db_e}")
+
                     except Exception as import_e:
                         logger.error(f"Failed to import {module_path}: {import_e}")
                         return False

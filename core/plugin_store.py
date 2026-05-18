@@ -904,9 +904,6 @@ class PluginStore:
         except Exception as e:
             logger.error(f"Failed during uninstall for {plugin_id}: {e}")
             return False
-
-        from core.state import system_state
-        system_state.restart_pending = True
             
         return True
 

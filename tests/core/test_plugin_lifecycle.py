@@ -358,4 +358,52 @@ def test_uninstall_flow(temp_plugins_env):
 
     # 4. Assert physical folder was completely deleted
     assert not plugin_path.exists()
-    assert system_state.restart_pending is True
+    assert system_state.restart_pending is False
+
+
+def test_dynamic_module_tracking(temp_plugins_env):
+    """
+    Verifies that loading a plugin dynamically registers and persists 
+    the loaded modules in the services table as JSON.
+    """
+    config_db = temp_plugins_env["config_db"]
+    plugins_dir = temp_plugins_env["plugins_dir"]
+    monkeypatch = temp_plugins_env["monkeypatch"]
+
+    # 1. Setup physical plugin
+    plugin_path = _create_mock_plugin_folder(plugins_dir, "custom_plugin", "1.0.0")
+    config_db.register_service(
+        name="EchoSync.custom_plugin",
+        service_type="provider",
+        description="Custom plugin",
+        absolute_install_path=str(plugin_path.resolve()),
+        version="1.0.0",
+        plugin_id=123456789
+    )
+
+    # 2. Trigger loading using the PluginLoader
+    from core.plugin_loader import PluginLoader
+    app_root = Path(__file__).parent.parent
+    loader = PluginLoader(app_root)
+    
+    # Force sys.modules to simulate that a module was loaded
+    import sys
+    sys.modules["plugins.EchoSync.custom_plugin"] = MagicMock()
+    sys.modules["plugins.EchoSync.custom_plugin.submodule"] = MagicMock()
+
+    success = loader._load_plugin_package(123456789, absolute_install_path=str(plugin_path.resolve()))
+    assert success is True
+
+    # 3. Verify that loaded_modules has been successfully persisted as JSON
+    with config_db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT loaded_modules FROM services WHERE plugin_id=123456789")
+        row = c.fetchone()
+        assert row is not None
+        
+        loaded_modules_str = row["loaded_modules"]
+        assert loaded_modules_str is not None
+        
+        loaded_modules = json.loads(loaded_modules_str)
+        assert "plugins.EchoSync.custom_plugin" in loaded_modules
+
