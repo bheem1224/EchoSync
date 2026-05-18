@@ -233,6 +233,149 @@ class PluginLoader:
             logger.error(f"Live-swap failed for {plugin_id}: {e}", exc_info=True)
             raise
 
+    def reconcile_services(self):
+        """
+        Authoritative startup reconciliation to enforce schema integrity,
+        prune orphaned records/duplicates, and synchronize physically installed plugins.
+        """
+        logger.info("Starting authoritative services registry reconciliation...")
+        
+        import sqlite3
+        import binascii
+        from database.config_database import get_config_database
+        db = get_config_database()
+        
+        # 1. Physical Scan of Plugins
+        physical_plugins = get_all_plugins()
+        physical_plugin_map = {p['id']: p for p in physical_plugins}
+        
+        # Consistent core services
+        core_services = {'system', 'plex', 'soulseek', 'spotify', 'jellyfin', 'navidrome'}
+        
+        # Get absolute path of the core directory
+        app_root = self.app_root
+        core_path = str((app_root / "core").resolve())
+        
+        with db._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            
+            # Fetch existing records
+            c.execute("SELECT id, name, plugin_id, service_type, absolute_install_path, is_active, version FROM services")
+            existing_rows = c.fetchall()
+            
+            seen_plugin_ids = set()
+            seen_names = set()
+            
+            for row in existing_rows:
+                db_id = row['id']
+                name = row['name']
+                p_id = row['plugin_id']
+                service_type = row['service_type']
+                install_path = row['absolute_install_path']
+                version = row['version']
+                is_active = row['is_active']
+                
+                # Check for duplicates or invalid names
+                is_duplicate = False
+                if p_id in seen_plugin_ids or name.lower() in seen_names:
+                    is_duplicate = True
+                
+                seen_plugin_ids.add(p_id)
+                seen_names.add(name.lower())
+                
+                # Core Service handling
+                if name in core_services:
+                    # Clean up duplicate core services if any
+                    if is_duplicate:
+                        logger.info(f"Pruning duplicate core service: {name} (ID: {db_id})")
+                        c.execute("DELETE FROM services WHERE id=?", (db_id,))
+                        continue
+                    
+                    # Ensure ALL columns are populated for core service
+                    target_plugin_id = binascii.crc32(name.lower().encode('utf-8')) & 0xFFFFFFFF
+                    logger.info(f"Overwriting and populating core service: {name} (install path -> {core_path})")
+                    c.execute("""
+                        UPDATE services 
+                        SET plugin_id=?, absolute_install_path=?, version=?, service_type=?, is_active=?, description=?, updated_at=strftime('%s','now')
+                        WHERE id=?
+                    """, (target_plugin_id, core_path, '2.5.2', 'streaming', is_active if is_active is not None else 1, f"{name.capitalize()} service", db_id))
+                    continue
+                
+                # Community Plugin handling
+                # Check if it has a physical match
+                plugin_info = physical_plugin_map.get(name)
+                if not plugin_info:
+                    # Try matching by folder name
+                    for p in physical_plugins:
+                        if name.lower() in p.get('folder_name', '').lower() or name.lower() == p.get('name', '').lower():
+                            plugin_info = p
+                            break
+                
+                # Determine if orphaned
+                is_orphaned = False
+                if is_duplicate:
+                    is_orphaned = True
+                    logger.info(f"Pruning duplicate record: {name} (ID: {db_id})")
+                elif not install_path or not os.path.exists(install_path):
+                    is_orphaned = True
+                    logger.info(f"Pruning orphaned record (missing or empty install path): {name} (ID: {db_id})")
+                elif not plugin_info:
+                    is_orphaned = True
+                    logger.info(f"Pruning orphaned record (not physically present on disk): {name} (ID: {db_id})")
+                
+                if is_orphaned:
+                    c.execute("DELETE FROM services WHERE id=?", (db_id,))
+                    # Also clean up configuration for this service
+                    c.execute("DELETE FROM service_config WHERE service_id=?", (db_id,))
+                    continue
+                
+                # Valid physical plugin: overwrite/update details to ensure consistency and prevent stale data
+                target_plugin_id = binascii.crc32(name.lower().encode('utf-8')) & 0xFFFFFFFF
+                manifest_version = plugin_info.get('version', '1.0.0')
+                manifest_desc = plugin_info.get('description', 'Community plugin')
+                manifest_type = plugin_info.get('type') or service_type or 'provider'
+                manifest_path = plugin_info.get('abs_path') or install_path
+                
+                c.execute("""
+                    UPDATE services 
+                    SET plugin_id=?, absolute_install_path=?, version=?, service_type=?, description=?, updated_at=strftime('%s','now')
+                    WHERE id=?
+                """, (target_plugin_id, manifest_path, manifest_version, manifest_type, manifest_desc, db_id))
+            
+            # 5. Now register any physical plugins that are NOT yet in the database!
+            c.execute("SELECT name FROM services")
+            registered_names = {r['name'].lower() for r in c.fetchall()}
+            
+            for p_id, p_info in physical_plugin_map.items():
+                if p_id.lower() not in registered_names:
+                    # New physically present plugin not yet in DB, register it!
+                    target_plugin_id = binascii.crc32(p_id.lower().encode('utf-8')) & 0xFFFFFFFF
+                    manifest_version = p_info.get('version', '1.0.0')
+                    manifest_desc = p_info.get('description', 'Community plugin')
+                    manifest_type = p_info.get('type') or 'provider'
+                    manifest_path = p_info.get('abs_path')
+                    
+                    logger.info(f"Registering newly discovered physical plugin: {p_id} (path: {manifest_path})")
+                    c.execute("""
+                        INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, created_at, updated_at)
+                        VALUES(?, ?, ?, ?, ?, ?, 1, strftime('%s','now'), strftime('%s','now'))
+                    """, (p_id, target_plugin_id, manifest_type, manifest_desc, manifest_path, manifest_version))
+            
+            # 6. Ensure all core services are present in the database (bootstrap if missing)
+            for name in core_services:
+                if name.lower() not in registered_names and name.lower() not in seen_names:
+                    target_plugin_id = binascii.crc32(name.lower().encode('utf-8')) & 0xFFFFFFFF
+                    logger.info(f"Bootstrapping missing core service: {name} (install path -> {core_path})")
+                    c.execute("""
+                        INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, created_at, updated_at)
+                        VALUES(?, ?, 'streaming', ?, ?, '2.5.2', 1, strftime('%s','now'), strftime('%s','now'))
+                    """, (name, target_plugin_id, f"{name.capitalize()} service", core_path))
+            
+            conn.commit()
+            
+        logger.info("Authoritative services registry reconciliation complete!")
+
     def load_all(self):
         """Scan and load all plugins based on database definitions."""
         logger.info("Starting plugin discovery from database...")
@@ -241,6 +384,12 @@ class PluginLoader:
         if safe_mode:
             logger.critical("SAFE MODE is active. Skipping community plugin discovery.")
             return
+
+        # Perform authoritative services reconciliation first to prune duplicates/orphans and sync physical plugins
+        try:
+            self.reconcile_services()
+        except Exception as err:
+            logger.error(f"Failed to reconcile services registry at startup: {err}", exc_info=True)
 
         import sqlite3
         from database.config_database import get_config_database
@@ -258,26 +407,30 @@ class PluginLoader:
             return
 
         for row in active_services:
-
             p_id = row['plugin_id']
+            name = row['name']
             install_path = row['absolute_install_path']
             
-            # e.g., EchoSync.tidal@beta
-            clean_ns = str(p_id)
-            channel = 'stable'
+            # Skip core/built-in streaming services
+            if name in {'system', 'plex', 'soulseek', 'spotify', 'jellyfin', 'navidrome'}:
+                continue
 
-            folder_path = clean_ns.replace('.', os.sep)
-            plugin_dir = self.plugins_dir / folder_path
-            
-            # Fallback for flat structure
+            # Determine plugin channel
+            channel = config_manager.get_plugin_channel(name) or 'stable'
+
+            if install_path and os.path.exists(install_path):
+                plugin_dir = Path(install_path)
+            else:
+                clean_ns = name
+                folder_path = clean_ns.replace('.', os.sep)
+                plugin_dir = self.plugins_dir / folder_path
+                
+                # Fallback for flat structure
+                if not plugin_dir.exists():
+                    plugin_dir = self.plugins_dir / clean_ns.split('.')[-1]
+
             if not plugin_dir.exists():
-                plugin_dir = self.plugins_dir / clean_ns.split('.')[-1]
-
-            if channel == 'beta':
-                plugin_dir = plugin_dir / 'beta'
-
-            if not plugin_dir.exists():
-                logger.error(f"Plugin directory not found for {p_id}: {plugin_dir}")
+                logger.error(f"Plugin directory not found for {name}: {plugin_dir}")
                 continue
 
             manifest_file = plugin_dir / "manifest.json"
@@ -303,12 +456,12 @@ class PluginLoader:
             if wasm_file.exists():
                 bypass_security = True
 
-            if not bypass_security and not self._security_scan_package(plugin_dir, clean_ns, privileged=privileged):
-                logger.warning(f"Plugin '{clean_ns}' rejected by security scanner.")
+            if not bypass_security and not self._security_scan_package(plugin_dir, name, privileged=privileged):
+                logger.warning(f"Plugin '{name}' rejected by security scanner.")
                 continue
 
             # Load the package
-            self._load_plugin_package(clean_ns, is_beta=(channel == 'beta'))
+            self._load_plugin_package(p_id, is_beta=(channel == 'beta'), absolute_install_path=str(plugin_dir.absolute()))
 
         logger.info(f"Plugin discovery complete. Loaded {len(self.loaded_blueprints)} blueprints.")
 
@@ -377,49 +530,60 @@ class PluginLoader:
         Dynamically import a plugin package and register its exports.
         """
         with self._load_lock:
-            # Query the database for the path if not provided
-            if not absolute_install_path:
-                from database.config_database import get_config_database
-                db = get_config_database()
-                with db._get_connection() as conn:
-                    c = conn.cursor()
-                    c.execute("SELECT absolute_install_path, name FROM services WHERE plugin_id=?", (plugin_id,))
-                    row = c.fetchone()
-                    if row and row[0]:
-                        absolute_install_path = row[0]
-                        plugin_name = row[1]
-                    else:
-                        raise ValueError(f"Plugin package for plugin_id {plugin_id} not found in database registry or has no path.")
-            else:
-                plugin_name = str(plugin_id) # Fallback
-
-            from pathlib import Path
-            package_dir = Path(absolute_install_path)
-
-            if not package_dir.exists():
-                raise ValueError(f"Plugin package {plugin_id} path {package_dir} does not exist on disk")
-
-            # Determine module_path dynamically from path.
-            # We must load it as 'plugins.{plugin_name}' or something. Wait, the Python module system might be tricky.
-            # "By standardizing the schema and using absolute_install_path, the Plugin Loader will stop trying to guess folder names"
-
-            # Keep original module_path logic but use plugin_name instead of plugin_id as string
             try:
-                relative_path = package_dir.relative_to(self.plugins_dir)
-                actual_ns = ".".join(relative_path.parts)
-                if is_beta:
-                    module_path = f"plugins.{actual_ns}.beta"
+                # Query the database for the path if not provided
+                if not absolute_install_path:
+                    from database.config_database import get_config_database
+                    db = get_config_database()
+                    with db._get_connection() as conn:
+                        c = conn.cursor()
+                        c.execute("SELECT absolute_install_path, name FROM services WHERE plugin_id=?", (plugin_id,))
+                        row = c.fetchone()
+                        if row and row[0]:
+                            absolute_install_path = row[0]
+                            plugin_name = row[1]
+                        else:
+                            raise ValueError(f"Plugin package for plugin_id {plugin_id} not found in database registry or has no path.")
                 else:
-                    module_path = f"plugins.{actual_ns}"
-                logger.debug(f"Resolved module path casing: {module_path}")
-            except Exception as e:
-                logger.warning(f"Could not derive relative path for {package_dir}: {e}")
-                # Fallback if not inside plugins_dir
-                module_path = f"plugins.{plugin_name}"
+                    plugin_name = str(plugin_id) # Fallback
+                    try:
+                        from database.config_database import get_config_database
+                        db = get_config_database()
+                        with db._get_connection() as conn:
+                            c = conn.cursor()
+                            c.execute("SELECT name FROM services WHERE plugin_id=?", (plugin_id,))
+                            row = c.fetchone()
+                            if row and row[0]:
+                                plugin_name = row[0]
+                    except Exception:
+                        pass
+
+                clean_ns = plugin_name
+
+                from pathlib import Path
+                package_dir = Path(absolute_install_path)
+
+                if not package_dir.exists():
+                    raise ValueError(f"Plugin package {plugin_id} path {package_dir} does not exist on disk")
+
+                # Resolve module path
+                try:
+                    relative_path = package_dir.relative_to(self.plugins_dir)
+                    actual_ns = ".".join(relative_path.parts)
+                    if is_beta:
+                        module_path = f"plugins.{actual_ns}.beta"
+                    else:
+                        module_path = f"plugins.{actual_ns}"
+                    logger.debug(f"Resolved module path casing: {module_path}")
+                except Exception as e:
+                    logger.warning(f"Could not derive relative path for {package_dir}: {e}")
+                    # Fallback if not inside plugins_dir
+                    module_path = f"plugins.{plugin_name}"
 
                 if is_beta:
-                    package_dir = package_dir / "beta"
-                
+                    if not package_dir.name == "beta" and (package_dir / "beta").exists():
+                        package_dir = package_dir / "beta"
+                    
                 # 2. Extract metadata from manifest
                 version = "Unknown"
                 author = "Unknown"
@@ -451,7 +615,7 @@ class PluginLoader:
                     PluginRegistry.register(DisabledPlugin, name=provider_id, source_type='community')
                     self._update_db_version(provider_id, version, clean_ns)
                     logger.info(f"Registered disabled plugin: {provider_id} (v{version})")
-                    return
+                    return True
 
                 # Handle WASM Plugins
                 wasm_file = package_dir / "main.wasm"
@@ -474,7 +638,7 @@ class PluginLoader:
 
                     PluginRegistry.register(WasmClass, name=provider_id, source_type='community')
                     self._update_db_version(provider_id, version, clean_ns)
-                    return
+                    return True
 
                 # Dynamic import with Namespace Bridging
                 plugins_parent_str = str(self.plugins_dir.parent)
@@ -548,6 +712,8 @@ class PluginLoader:
                         blueprint.url_prefix = f"/api/plugins/{clean_ns}"
                         self.loaded_blueprints.append(blueprint)
 
+                return True
+
             except Exception as e:
                 logger.error(f"Error loading plugin {plugin_id}: {e}", exc_info=True)
                 # Auto-disable on fatal load error
@@ -557,6 +723,7 @@ class PluginLoader:
                     with db._get_connection() as conn:
                         conn.execute("UPDATE services SET is_active = 0 WHERE plugin_id = ?", (plugin_id,))
                 except Exception: pass
+                return False
 
     def get_all_blueprints(self) -> List[Blueprint]:
         return self.loaded_blueprints

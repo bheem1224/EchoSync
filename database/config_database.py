@@ -182,42 +182,38 @@ class ConfigDatabase:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_plugin_id ON plugin_snapshots(plugin_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_expires ON plugin_snapshots(expires_at)")
 
-            # Run schema creation on writer thread to avoid concurrent-writes
+                # Inline legacy services migration to avoid schema cache latency on separate connection
+                cursor.execute("PRAGMA table_info(services)")
+                current_columns = [row[1] for row in cursor.fetchall()]
+                if 'plugin_id' in current_columns:
+                    import binascii
+                    cursor.execute("SELECT id, name FROM services WHERE plugin_id IS NULL OR typeof(plugin_id) = 'text'")
+                    rows = cursor.fetchall()
+                    if rows:
+                        try:
+                            from core.plugin_loader import get_all_plugins
+                            all_plugins = get_all_plugins()
+                            for r in rows:
+                                s_id, s_name = r[0], r[1]
+                                resolved_plugin_id_str = s_name
+                                resolved_version = '1.0.0'
+                                for p in all_plugins:
+                                    p_id = p.get('id', '')
+                                    p_name = p.get('name', '')
+                                    p_folder = p.get('folder_name', '')
+                                    norm_s_name = s_name.replace('.', '/')
+                                    if s_name.lower() in p_folder.lower() or norm_s_name.lower() in p_folder.lower() or s_name.lower() == p_name.lower() or s_name.lower() in p_id.lower():
+                                        resolved_plugin_id_str = p_folder.split('/')[-1]
+                                        resolved_version = p.get('version', '1.0.0')
+                                        break
+                                plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
+                                cursor.execute("UPDATE services SET plugin_id = ? WHERE id = ?", (plugin_id_int, s_id))
+                        except Exception:
+                            pass
+
+            # Run schema creation and inline migrations on writer thread to avoid concurrent-writes
             execute_write(str(self.database_path), _schema)
-            logger.info("Config database schema ensured")
-
-            def _migrate_legacy_services(cursor):
-                import binascii
-                cursor.execute("SELECT id, name FROM services WHERE plugin_id IS NULL OR typeof(plugin_id) = 'text'")
-                rows = cursor.fetchall()
-                if not rows: return
-                try:
-                    from core.plugin_loader import get_all_plugins
-                    all_plugins = get_all_plugins()
-                    for r in rows:
-                        s_id, s_name = r[0], r[1]
-
-                        resolved_plugin_id_str = s_name
-                        resolved_version = '1.0.0'
-                        for p in all_plugins:
-                            p_id = p.get('id', '')
-                            p_name = p.get('name', '')
-                            p_folder = p.get('folder_name', '')
-                            norm_s_name = s_name.replace('.', '/')
-                            if s_name.lower() in p_folder.lower() or norm_s_name.lower() in p_folder.lower() or s_name.lower() == p_name.lower() or s_name.lower() in p_id.lower():
-
-                                resolved_plugin_id_str = p_folder.split('/')[-1]
-                                resolved_version = p.get('version', '1.0.0')
-                                break
-                        plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
-                        
-                        # Add version column if it doesn't exist yet via pragma logic or rely on schema upgrade
-                        cursor.execute("UPDATE services SET plugin_id = ? WHERE id = ?", (plugin_id_int, s_id))
-                except Exception as e:
-                    pass
-
-            execute_write(str(self.database_path), _migrate_legacy_services)
-            logger.info("Legacy services migrated")
+            logger.info("Config database schema ensured and legacy services migrated")
         except Exception as e:
             logger.error(f"Failed to initialize config schema: {e}")
 
@@ -269,6 +265,14 @@ class ConfigDatabase:
         if plugin_id is None:
             # Fallback CRC32 generation if not provided (ALWAYS use full lowercase namespace for consistency)
             plugin_id = binascii.crc32(name.lower().encode('utf-8')) & 0xFFFFFFFF
+
+        if absolute_install_path is None:
+            # Check if name is a core streaming/built-in service
+            core_services = {'system', 'plex', 'soulseek', 'spotify', 'jellyfin', 'navidrome'}
+            if name in core_services:
+                from pathlib import Path
+                app_root = Path(__file__).parent.parent
+                absolute_install_path = str((app_root / "core").resolve())
 
         try:
             execute_write_sql(
