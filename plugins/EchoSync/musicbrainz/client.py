@@ -506,6 +506,7 @@ class MusicBrainzClient(PluginBase):
 
                 # Cache successful results
                 if best_matches:
+                    try:
                         storage = self.sdk.storage
                         working_db = storage.get_working_database()
                         with working_db.session_scope() as session:

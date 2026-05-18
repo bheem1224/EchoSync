@@ -45,10 +45,14 @@ def test_media_manager_handles_suggestion_remove_intent_end_to_end(monkeypatch, 
         session.add(track)
         session.flush()
 
+        from database.config_database import get_config_database
+        from core.settings import config_manager
+        active_server = config_manager.get('active_media_server', 'plex')
+        p_id = get_config_database().get_or_create_service_id(active_server)
         session.add(
             ExternalIdentifier(
                 track_id=track.id,
-                plugin_id=5,
+                plugin_id=p_id,
                 provider_item_id="12345",
             )
         )
