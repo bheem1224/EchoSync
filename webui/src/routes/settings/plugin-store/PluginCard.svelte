@@ -125,6 +125,41 @@
       }
     }
   }
+
+  async function handleRevertToStable() {
+    try {
+      await apiClient.post(`/plugins/${plugin.id}/beta-opt`, { beta_opt_in: false });
+      window.location.reload();
+    } catch (err) {
+      console.error("Revert to stable failed:", err);
+      alert(`Failed to revert to stable: ${err.response?.data?.error || err.message}`);
+    }
+  }
+
+  async function handleOptInBeta() {
+    try {
+      await apiClient.post(`/plugins/${plugin.id}/beta-opt`, { beta_opt_in: true });
+      if (confirm("Successfully opted-in to Beta. Would you like to check and download the Beta update now?")) {
+        dispatch('install', { ...plugin, channel: 'beta', version: latestBeta, isUpdate: true, isRollback: false });
+      } else {
+        window.location.reload();
+      }
+    } catch (err) {
+      console.error("Opt-in to beta failed:", err);
+      alert(`Failed to opt-in to beta: ${err.response?.data?.error || err.message}`);
+    }
+  }
+
+  async function handleClearLocalBeta() {
+    try {
+      await apiClient.post(`/plugins/${plugin.id}/beta-opt`, { beta_opt_in: null });
+      window.location.reload();
+    } catch (err) {
+      console.error("Clearing local beta failed:", err);
+      alert(`Failed to reset channel: ${err.response?.data?.error || err.message}`);
+    }
+  }
+
   $: targetVersion = (useBeta && hasBetaUpdate) 
     ? latestBeta 
     : (hasStableUpdate ? latestRelease : installedVersion);
@@ -160,12 +195,30 @@
               ⋮
             </button>
             {#if openMenuId === plugin.id}
-              <div class="absolute right-0 top-8 w-32 bg-slate-900 border border-white/10 shadow-2xl rounded-xl z-[110] overflow-hidden">
+              <div class="absolute right-0 top-8 w-44 bg-slate-900 border border-white/10 shadow-2xl rounded-xl z-[110] overflow-hidden py-1">
+                {#if installedChannel === 'stable'}
+                  <button 
+                    class="w-full text-left px-4 py-2.5 text-xs text-purple-400 hover:bg-purple-500/10 border-none bg-transparent cursor-pointer whitespace-nowrap" 
+                    on:click={() => { handleOptInBeta(); openMenuId = null; }}
+                  >
+                    🚀 Opt-in to Beta Channel
+                  </button>
+                {/if}
+                
+                {#if plugin.beta_opt_in !== null}
+                  <button 
+                    class="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:bg-white/5 border-none bg-transparent cursor-pointer whitespace-nowrap" 
+                    on:click={() => { handleClearLocalBeta(); openMenuId = null; }}
+                  >
+                    ⚙️ Use Global Channel
+                  </button>
+                {/if}
+
                 <button 
-                  class="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-red-500/10 border-none bg-transparent cursor-pointer" 
+                  class="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-red-500/10 border-none bg-transparent cursor-pointer whitespace-nowrap" 
                   on:click={() => { dispatch('uninstall', plugin); openMenuId = null; }}
                 >
-                  Uninstall
+                  🗑️ Uninstall
                 </button>
               </div>
             {/if}
@@ -180,6 +233,27 @@
   <p class="text-sm text-slate-400 line-clamp-2 mb-6 h-10 leading-relaxed">
     {plugin.description || 'No description provided.'}
   </p>
+
+  <!-- Local Management Buttons -->
+  {#if isInstalled && (installedChannel === 'beta' || plugin.previous_version_path)}
+    <div class="flex flex-wrap gap-2 mb-4 p-3 bg-white/5 rounded-xl border border-white/10">
+      {#if installedChannel === 'beta'}
+        <button 
+          on:click={handleRevertToStable}
+          class="flex-1 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold rounded-lg text-[10px] uppercase tracking-wider transition-all border border-red-500/20 cursor-pointer whitespace-nowrap text-center">
+          Revert to Stable Channel
+        </button>
+      {/if}
+      
+      {#if plugin.previous_version_path}
+        <button 
+          on:click={handleUndoUpdate}
+          class="flex-1 px-3 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 font-bold rounded-lg text-[10px] uppercase tracking-wider transition-all border border-yellow-500/20 cursor-pointer whitespace-nowrap text-center">
+          Rollback
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   <!-- Grace Period Block -->
   {#if plugin.archive_expiry_date && getRemainingHours(plugin.archive_expiry_date) > 0}

@@ -665,7 +665,20 @@ class ConfigManager:
     def get_plugin_channel(self, plugin_id: str) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
         clean_id = plugin_id.replace('core.', '').replace('plugin.', '')
-        return self.get(f'plugins.{clean_id}.channel', 'stable')
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT beta_opt_in FROM services WHERE LOWER(name)=LOWER(?)", (clean_id,))
+                row = c.fetchone()
+                if row:
+                    local_beta = row[0]
+                    if local_beta is not None:
+                        return "beta" if local_beta else "stable"
+        except Exception:
+            pass
+        return "beta" if self.get('ui.beta_plugin_ui', False) else "stable"
 
     def get_settings(self) -> Dict[str, Any]:
         """Return the full non-secret configuration (alias for get_all)."""

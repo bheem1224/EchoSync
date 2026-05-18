@@ -297,6 +297,23 @@ class PluginStore:
             plugin["_installed"] = False
             plugin["installed_version"] = None
             plugin["installed_channel"] = config_manager.get_plugin_channel(plugin_id)
+            plugin["beta_opt_in"] = None
+            plugin["previous_version_path"] = None
+            plugin["int_plugin_id"] = None
+            
+            try:
+                from database.config_database import get_config_database
+                db = get_config_database()
+                with db._get_connection() as conn:
+                    c = conn.cursor()
+                    c.execute("SELECT beta_opt_in, previous_version_path, plugin_id FROM services WHERE LOWER(name)=LOWER(?)", (str(plugin_id),))
+                    row = c.fetchone()
+                    if row:
+                        plugin["beta_opt_in"] = row[0]
+                        plugin["previous_version_path"] = row[1]
+                        plugin["int_plugin_id"] = row[2]
+            except Exception:
+                pass
             
             if comm_dir.exists():
                 beta_manifest = comm_dir / "beta" / "manifest.json"
@@ -374,7 +391,11 @@ class PluginStore:
                 return False
                 
             plugin_name = row[0]
-            channel = "beta" if row[1] else "stable"
+            local_beta = row[1]
+            if local_beta is not None:
+                channel = "beta" if local_beta else "stable"
+            else:
+                channel = "beta" if config_manager.get('ui.beta_plugin_ui', False) else "stable"
             
         store_plugins = self.get_all_store_plugins()
         plugin_info = next((p for p in store_plugins if p.get("id") == plugin_name or p.get("name") == plugin_name), None)
@@ -893,11 +914,13 @@ class PluginStore:
                 c = conn.cursor()
                 c.execute("SELECT beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,))
                 row = c.fetchone()
-                if row and row[0]:
-                    return "beta"
+                if row:
+                    local_beta = row[0]
+                    if local_beta is not None:
+                        return "beta" if local_beta else "stable"
         except Exception:
             pass
-        return "stable"
+        return "beta" if config_manager.get('ui.beta_plugin_ui', False) else "stable"
 
     def _fork_namespace(self, plugin_id: int):
         """The Fork: Copies current stable DB file and KVS to a @beta side-car."""

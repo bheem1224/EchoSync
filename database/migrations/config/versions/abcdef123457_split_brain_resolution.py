@@ -8,7 +8,7 @@ depends_on = None
 
 def upgrade() -> None:
     with op.batch_alter_table('services', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('beta_opt_in', sa.Boolean(), server_default='0', nullable=False))
+        batch_op.add_column(sa.Column('beta_opt_in', sa.Boolean(), nullable=True))
         batch_op.add_column(sa.Column('previous_version_path', sa.String(), nullable=True))
         batch_op.add_column(sa.Column('verified_source', sa.Boolean(), server_default='0', nullable=False))
         batch_op.add_column(sa.Column('privileged_mode', sa.Boolean(), server_default='0', nullable=False))

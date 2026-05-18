@@ -18,7 +18,7 @@ class Service(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     is_active = Column(Boolean, default=True) 
-    beta_opt_in = Column(Boolean, default=False, server_default='0')
+    beta_opt_in = Column(Boolean, nullable=True, default=None)
     previous_version_path = Column(String, nullable=True)
     verified_source = Column(Boolean, default=False, server_default='0')
     privileged_mode = Column(Boolean, default=False, server_default='0')
