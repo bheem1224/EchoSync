@@ -49,12 +49,64 @@ class ConfigDatabase:
     def _initialize_schema(self):
         try:
             def _schema(cursor):
+                # Check if services table exists and has UNIQUE name constraint
+                cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='services'")
+                row = cursor.fetchone()
+                if row and "UNIQUE" in row[0].upper() and "NAME" in row[0].upper():
+                    logger.info("Migrating services table to remove UNIQUE constraint from name column...")
+                    try:
+                        cursor.execute("ALTER TABLE services RENAME TO services_old")
+                        cursor.execute("""
+                            CREATE TABLE services (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                name TEXT NOT NULL,
+                                plugin_id INTEGER UNIQUE,
+                                absolute_install_path TEXT,
+                                loaded_modules TEXT,
+                                version TEXT,
+                                service_type TEXT,
+                                description TEXT,
+                                is_active INTEGER DEFAULT 1,
+                                beta_opt_in INTEGER,
+                                previous_version_path TEXT,
+                                verified_source INTEGER DEFAULT 0,
+                                privileged_mode INTEGER DEFAULT 0,
+                                permissions TEXT DEFAULT '[]',
+                                created_at INTEGER DEFAULT (strftime('%s','now')),
+                                updated_at INTEGER DEFAULT (strftime('%s','now'))
+                            )
+                        """)
+                        cursor.execute("""
+                            INSERT INTO services (
+                                id, name, plugin_id, absolute_install_path, loaded_modules, 
+                                version, service_type, description, is_active, beta_opt_in, 
+                                previous_version_path, verified_source, privileged_mode, permissions, 
+                                created_at, updated_at
+                            )
+                            SELECT 
+                                id, name, plugin_id, absolute_install_path, loaded_modules, 
+                                version, service_type, description, is_active, beta_opt_in, 
+                                previous_version_path, verified_source, privileged_mode, permissions, 
+                                created_at, updated_at
+                            FROM services_old
+                        """)
+                        cursor.execute("DROP TABLE services_old")
+                        logger.info("Successfully migrated services table (removed UNIQUE constraint on name)")
+                    except Exception as me:
+                        logger.error(f"Failed to migrate services table (UNIQUE removal): {me}")
+                        # Safe fallback recovery
+                        try:
+                            cursor.execute("DROP TABLE IF EXISTS services")
+                            cursor.execute("ALTER TABLE services_old RENAME TO services")
+                        except Exception:
+                            pass
+
                 # Services
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS services (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT UNIQUE NOT NULL,
-                        plugin_id INTEGER,
+                        name TEXT NOT NULL,
+                        plugin_id INTEGER UNIQUE,
                         absolute_install_path TEXT,
                         loaded_modules TEXT,
                         version TEXT,
@@ -229,14 +281,10 @@ class ConfigDatabase:
 
     # Service helpers
     def get_or_create_service_id(self, name: str) -> int:
-        # 1. Try to find existing
-        import contextlib
-        with contextlib.closing(self._get_connection()) as conn:
-            c = conn.cursor()
-            c.execute("SELECT id FROM services WHERE name = ?", (name,))
-            row = c.fetchone()
-            if row:
-                return int(row[0])
+        # 1. Try to find existing using the extremely robust get_service_id
+        existing_id = self.get_service_id(name)
+        if existing_id:
+            return existing_id
 
         # 2. Register if missing
         import binascii
@@ -248,7 +296,6 @@ class ConfigDatabase:
             for p in get_all_plugins():
                 # name is usually like 'plex', 'spotify', 'tidal'. We match against folder_name or name
                 if name.lower() in p.get('folder_name', '').lower() or name.lower() == p.get('name', '').lower():
-
                     # e.g. EchoSync/spotify -> spotify
                     resolved_plugin_id_str = p.get('folder_name', name).split('/')[-1]
                     resolved_version = p.get('version', '1.0.0')
@@ -260,12 +307,9 @@ class ConfigDatabase:
         self.register_service(name, 'streaming', f"{name.capitalize()} service", plugin_id=plugin_id_int, version=resolved_version)
 
         # 3. Try to find again after registration
-        with contextlib.closing(self._get_connection()) as conn:
-            c = conn.cursor()
-            c.execute("SELECT id FROM services WHERE name = ?", (name,))
-            row = c.fetchone()
-            if row:
-                return int(row[0])
+        existing_id = self.get_service_id(name)
+        if existing_id:
+            return existing_id
 
         logger.error(f"Failed to get or create service ID for '{name}' after registration attempt.")
         return 0
@@ -290,10 +334,10 @@ class ConfigDatabase:
                 """
                 INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active)
                 VALUES(?,?,?,?,?,?,?,1)
-                ON CONFLICT(name) DO UPDATE SET 
+                ON CONFLICT(plugin_id) DO UPDATE SET 
+                    name=excluded.name,
                     absolute_install_path=excluded.absolute_install_path,
                     loaded_modules=excluded.loaded_modules,
-                    plugin_id=excluded.plugin_id,
                     version=excluded.version,
                     is_active=1,
                     updated_at=strftime('%s','now')
@@ -382,14 +426,34 @@ class ConfigDatabase:
 
     def get_service_id(self, identifier: Any) -> Optional[int]:
         """Resolve a name or plugin_id to the primary integer ID."""
+        if identifier is None: return None
         with self._get_connection() as conn:
             c = conn.cursor()
             if isinstance(identifier, (int, str)) and str(identifier).isdigit():
                 c.execute("SELECT id FROM services WHERE id=? OR plugin_id=?", (int(identifier), int(identifier)))
+                row = c.fetchone()
+                if row: return int(row[0])
             else:
+                # 1. Check exact name
                 c.execute("SELECT id FROM services WHERE name=?", (identifier,))
-            row = c.fetchone()
-            return int(row[0]) if row else None
+                row = c.fetchone()
+                if row: return int(row[0])
+                
+                # 2. Check by CRC32 of the identifier (e.g. EchoSync.spotify)
+                import binascii
+                crc = binascii.crc32(str(identifier).lower().encode('utf-8')) & 0xFFFFFFFF
+                c.execute("SELECT id FROM services WHERE plugin_id=? OR name=?", (crc, identifier))
+                row = c.fetchone()
+                if row: return int(row[0])
+                
+                # 3. Suffix matching/normalized translation bridge
+                norm_name = str(identifier).lower().replace(' ', '_').replace('-', '_')
+                c.execute("SELECT id, name FROM services")
+                for r in c.fetchall():
+                    row_name = r['name'].lower().replace(' ', '_').replace('-', '_')
+                    if row_name == norm_name or norm_name.endswith(f".{row_name}") or row_name.endswith(f".{norm_name}"):
+                        return int(r['id'])
+            return None
 
     def get_accounts(self, service_id: Optional[int] = None, is_active: Optional[bool] = None) -> List[Dict[str, Any]]:
         try:

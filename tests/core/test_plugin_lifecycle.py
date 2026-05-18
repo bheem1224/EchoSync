@@ -407,3 +407,73 @@ def test_dynamic_module_tracking(temp_plugins_env):
         loaded_modules = json.loads(loaded_modules_str)
         assert "plugins.EchoSync.custom_plugin" in loaded_modules
 
+
+def test_plugin_id_reconciliation_and_orphaning(temp_plugins_env):
+    """
+    Verifies that reconcile_services:
+    1. Uses display names from the manifest.
+    2. Matches physical scan by CRC32 plugin_id.
+    3. Successfully prunes orphans (where the path is missing/invalid or not physically present).
+    """
+    config_db = temp_plugins_env["config_db"]
+    plugins_dir = temp_plugins_env["plugins_dir"]
+
+    # 1. Setup a valid physical plugin in folder
+    plugin_path = _create_mock_plugin_folder(plugins_dir, "spotify", "2.4.2")
+    import binascii
+    spotify_crc = binascii.crc32("EchoSync.spotify".lower().encode('utf-8')) & 0xFFFFFFFF
+
+    # Register in DB under display name Spotify with the correct CRC32 plugin_id
+    config_db.register_service(
+        name="Spotify",
+        service_type="provider",
+        description="Official Spotify provider",
+        absolute_install_path=str(plugin_path.resolve()),
+        version="2.4.2",
+        plugin_id=spotify_crc
+    )
+
+    # 2. Setup an ORPHANED plugin in DB (valid path but deleted from disk)
+    deleted_path = plugins_dir / "EchoSync" / "nonexistent"
+    nonexistent_crc = binascii.crc32("EchoSync.nonexistent".lower().encode('utf-8')) & 0xFFFFFFFF
+    config_db.register_service(
+        name="Nonexistent",
+        service_type="provider",
+        description="Nonexistent provider",
+        absolute_install_path=str(deleted_path.resolve()),
+        version="1.0.0",
+        plugin_id=nonexistent_crc
+    )
+
+    # 3. Create a PluginLoader instance and run reconcile_services
+    from core.plugin_loader import PluginLoader
+    app_root = Path(__file__).parent.parent.parent
+    loader = PluginLoader(app_root)
+    # Patch get_all_plugins to return our simulated scanned plugin
+    scanned_plugins = [
+        {
+            "id": "EchoSync.spotify",
+            "name": "Spotify Premium",
+            "version": "2.4.2",
+            "description": "Premium Spotify provider",
+            "type": "provider",
+            "abs_path": str(plugin_path.resolve())
+        }
+    ]
+    with patch("core.plugin_loader.get_all_plugins", return_value=scanned_plugins):
+        loader.reconcile_services()
+
+    # 4. Verify that:
+    # - Spotify display name was updated to "Spotify Premium" (manifest.json name)
+    # - Nonexistent service was fully pruned (orphaned)
+    with config_db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT name FROM services WHERE plugin_id=?", (spotify_crc,))
+        spotify_row = c.fetchone()
+        assert spotify_row is not None
+        assert spotify_row["name"] == "Spotify Premium"
+
+        c.execute("SELECT name FROM services WHERE plugin_id=?", (nonexistent_crc,))
+        nonexistent_row = c.fetchone()
+        assert nonexistent_row is None
+

@@ -248,10 +248,17 @@ class PluginLoader:
         
         # 1. Physical Scan of Plugins
         physical_plugins = get_all_plugins()
-        physical_plugin_map = {p['id']: p for p in physical_plugins}
+        import binascii
+        # Map physical plugins by their CRC32 integer of lowercase ID to match database plugin_id perfectly
+        physical_plugin_map = {}
+        for p in physical_plugins:
+            p_id_str = p.get('id')
+            if p_id_str:
+                p_crc = binascii.crc32(p_id_str.lower().encode('utf-8')) & 0xFFFFFFFF
+                physical_plugin_map[p_crc] = p
         
-        # Consistent core services
-        core_services = {'system', 'plex', 'soulseek', 'spotify', 'jellyfin', 'navidrome'}
+        # Consistent core services - only 'system' is core now, others are community
+        core_services = {'system'}
         
         # Get absolute path of the core directory
         app_root = self.app_root
@@ -279,14 +286,15 @@ class PluginLoader:
                 
                 # Check for duplicates or invalid names
                 is_duplicate = False
-                if p_id in seen_plugin_ids or name.lower() in seen_names:
+                if p_id in seen_plugin_ids or (name.lower() in seen_names and name.lower() == 'system'):
                     is_duplicate = True
                 
-                seen_plugin_ids.add(p_id)
+                if p_id is not None:
+                    seen_plugin_ids.add(p_id)
                 seen_names.add(name.lower())
                 
                 # Core Service handling
-                if name in core_services:
+                if name.lower() in core_services:
                     # Clean up duplicate core services if any
                     if is_duplicate:
                         logger.info(f"Pruning duplicate core service: {name} (ID: {db_id})")
@@ -305,25 +313,29 @@ class PluginLoader:
                 
                 # Community Plugin handling
                 # Check if it has a physical match
-                plugin_info = physical_plugin_map.get(name)
-                if not plugin_info:
-                    # Try matching by folder name
-                    for p in physical_plugins:
-                        if name.lower() in p.get('folder_name', '').lower() or name.lower() == p.get('name', '').lower():
-                            plugin_info = p
-                            break
+                plugin_info = physical_plugin_map.get(p_id) if p_id is not None else None
+                
+                # Path verification: it must exist, and if it's not the 'system' service,
+                # it should either be in plugins_dir or be a valid plugin directory (having manifest.json, __init__.py, or main.wasm).
+                # If it's outside plugins_dir and is NOT a valid plugin directory, it must be deleted!
+                is_valid_plugin_path = False
+                if install_path and os.path.exists(install_path):
+                    install_path_obj = Path(install_path)
+                    if (install_path_obj / "manifest.json").exists() or (install_path_obj / "__init__.py").exists() or (install_path_obj / "main.wasm").exists():
+                        is_valid_plugin_path = True
                 
                 # Determine if orphaned
                 is_orphaned = False
                 if is_duplicate:
                     is_orphaned = True
                     logger.info(f"Pruning duplicate record: {name} (ID: {db_id})")
-                elif not install_path or not os.path.exists(install_path):
-                    is_orphaned = True
-                    logger.info(f"Pruning orphaned record (missing or empty install path): {name} (ID: {db_id})")
-                elif not plugin_info:
-                    is_orphaned = True
-                    logger.info(f"Pruning orphaned record (not physically present on disk): {name} (ID: {db_id})")
+                elif name.lower() != 'system':
+                    if not install_path or not os.path.exists(install_path) or not is_valid_plugin_path:
+                        is_orphaned = True
+                        logger.info(f"Pruning orphaned record (invalid or missing install path): {name} (ID: {db_id}, path: {install_path})")
+                    elif not plugin_info:
+                        is_orphaned = True
+                        logger.info(f"Pruning orphaned record (not physically scanned): {name} (ID: {db_id})")
                 
                 if is_orphaned:
                     c.execute("DELETE FROM services WHERE id=?", (db_id,))
@@ -332,7 +344,7 @@ class PluginLoader:
                     continue
                 
                 # Valid physical plugin: overwrite/update details to ensure consistency and prevent stale data
-                target_plugin_id = binascii.crc32(name.lower().encode('utf-8')) & 0xFFFFFFFF
+                manifest_display_name = plugin_info.get('name') or name
                 manifest_version = plugin_info.get('version', '1.0.0')
                 manifest_desc = plugin_info.get('description', 'Community plugin')
                 manifest_type = plugin_info.get('type') or service_type or 'provider'
@@ -340,33 +352,34 @@ class PluginLoader:
                 
                 c.execute("""
                     UPDATE services 
-                    SET plugin_id=?, absolute_install_path=?, version=?, service_type=?, description=?, updated_at=strftime('%s','now')
+                    SET name=?, plugin_id=?, absolute_install_path=?, version=?, service_type=?, description=?, updated_at=strftime('%s','now')
                     WHERE id=?
-                """, (target_plugin_id, manifest_path, manifest_version, manifest_type, manifest_desc, db_id))
+                """, (manifest_display_name, p_id, manifest_path, manifest_version, manifest_type, manifest_desc, db_id))
             
             # 5. Now register any physical plugins that are NOT yet in the database!
-            c.execute("SELECT name FROM services")
-            registered_names = {r['name'].lower() for r in c.fetchall()}
+            c.execute("SELECT plugin_id FROM services")
+            registered_plugin_ids = {r['plugin_id'] for r in c.fetchall() if r['plugin_id'] is not None}
             
-            for p_id, p_info in physical_plugin_map.items():
-                if p_id.lower() not in registered_names:
+            for p_crc, p_info in physical_plugin_map.items():
+                if p_crc not in registered_plugin_ids:
                     # New physically present plugin not yet in DB, register it!
-                    target_plugin_id = binascii.crc32(p_id.lower().encode('utf-8')) & 0xFFFFFFFF
+                    manifest_display_name = p_info.get('name') or p_info.get('id')
                     manifest_version = p_info.get('version', '1.0.0')
                     manifest_desc = p_info.get('description', 'Community plugin')
                     manifest_type = p_info.get('type') or 'provider'
                     manifest_path = p_info.get('abs_path')
                     
-                    logger.info(f"Registering newly discovered physical plugin: {p_id} (path: {manifest_path})")
+                    logger.info(f"Registering newly discovered physical plugin: {p_info.get('id')} (path: {manifest_path})")
                     c.execute("""
                         INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, created_at, updated_at)
                         VALUES(?, ?, ?, ?, ?, ?, 1, strftime('%s','now'), strftime('%s','now'))
-                    """, (p_id, target_plugin_id, manifest_type, manifest_desc, manifest_path, manifest_version))
+                    """, (manifest_display_name, p_crc, manifest_type, manifest_desc, manifest_path, manifest_version))
             
             # 6. Ensure all core services are present in the database (bootstrap if missing)
             for name in core_services:
-                if name.lower() not in registered_names and name.lower() not in seen_names:
-                    target_plugin_id = binascii.crc32(name.lower().encode('utf-8')) & 0xFFFFFFFF
+                target_plugin_id = binascii.crc32(name.lower().encode('utf-8')) & 0xFFFFFFFF
+                c.execute("SELECT id FROM services WHERE plugin_id=?", (target_plugin_id,))
+                if not c.fetchone():
                     logger.info(f"Bootstrapping missing core service: {name} (install path -> {core_path})")
                     c.execute("""
                         INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, created_at, updated_at)
@@ -435,8 +448,8 @@ class PluginLoader:
             name = row['name']
             install_path = row['absolute_install_path']
             
-            # Skip core/built-in streaming services
-            if name in {'system', 'plex', 'soulseek', 'spotify', 'jellyfin', 'navidrome'}:
+            # Skip core/built-in services (only 'system' is core now, others are community)
+            if name.lower() in {'system'}:
                 continue
 
             # Determine plugin channel

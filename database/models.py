@@ -8,7 +8,7 @@ Base = declarative_base()
 class Service(Base):
     __tablename__ = "services"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
     absolute_install_path = Column(String, nullable=True)
     loaded_modules = Column(String, nullable=True)
     version = Column(String, nullable=True)

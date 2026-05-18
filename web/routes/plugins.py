@@ -239,25 +239,29 @@ def update_plugin():
         from database.config_database import get_config_database
         db = get_config_database()
         plugin_name = plugin_info.get("id") or plugin_info.get("name")
-        clean_target = str(plugin_name).replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
         
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT plugin_id, name FROM services")
-            rows = c.fetchall()
-            
-            plugin_id = None
-            for row in rows:
-                row_name = row['name']
-                clean_row = row_name.replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
-                if clean_row == clean_target:
-                    plugin_id = row['plugin_id']
-                    break
+        # 1. Resolve to CRC32 integer plugin_id using get_service_id
+        plugin_id_int = db.get_service_id(plugin_name)
+        if not plugin_id_int:
+            try:
+                plugin_id_int = int(plugin_info.get("plugin_id") or plugin_info.get("id"))
+            except (ValueError, TypeError):
+                pass
+                
+        # 2. Retrieve the plugin_id column from the database
+        db_plugin_id = None
+        if plugin_id_int is not None:
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
+                row = c.fetchone()
+                if row:
+                    db_plugin_id = row['plugin_id']
                     
-            if not plugin_id:
-                return jsonify({"error": f"Plugin {plugin_name} not found in database registry."}), 404
+        if not db_plugin_id:
+            return jsonify({"error": f"Plugin {plugin_name} not found in database registry."}), 404
 
-        success = plugin_store.update_plugin(plugin_id, force_consent=force_consent)
+        success = plugin_store.update_plugin(db_plugin_id, force_consent=force_consent)
         if success:
             return jsonify({"success": True})
         return jsonify({"error": f"Failed to update plugin {plugin_name}"}), 500
@@ -280,25 +284,29 @@ def rollback_plugin():
         from database.config_database import get_config_database
         db = get_config_database()
         plugin_name = plugin_info.get("id") or plugin_info.get("name")
-        clean_target = str(plugin_name).replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
         
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT plugin_id, name FROM services")
-            rows = c.fetchall()
-            
-            plugin_id = None
-            for row in rows:
-                row_name = row['name']
-                clean_row = row_name.replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
-                if clean_row == clean_target:
-                    plugin_id = row['plugin_id']
-                    break
+        # 1. Resolve to CRC32 integer plugin_id using get_service_id
+        plugin_id_int = db.get_service_id(plugin_name)
+        if not plugin_id_int:
+            try:
+                plugin_id_int = int(plugin_info.get("plugin_id") or plugin_info.get("id"))
+            except (ValueError, TypeError):
+                pass
+                
+        # 2. Retrieve the plugin_id column from the database
+        db_plugin_id = None
+        if plugin_id_int is not None:
+            with db._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
+                row = c.fetchone()
+                if row:
+                    db_plugin_id = row['plugin_id']
                     
-            if not plugin_id:
-                return jsonify({"error": f"Plugin {plugin_name} not found in database registry."}), 404
+        if not db_plugin_id:
+            return jsonify({"error": f"Plugin {plugin_name} not found in database registry."}), 404
 
-        success = plugin_store.rollback_plugin(plugin_id)
+        success = plugin_store.rollback_plugin(db_plugin_id)
         if success:
             return jsonify({"success": True})
         return jsonify({"error": "Failed to rollback plugin"}), 500
@@ -312,24 +320,28 @@ def rollback_plugin_direct(plugin_id):
     try:
         from database.config_database import get_config_database
         db = get_config_database()
-        try:
-            int_id = int(plugin_id)
-        except ValueError:
-            int_id = None
-            clean_target = str(plugin_id).replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
+        
+        # Resolve to CRC32 integer plugin_id using get_service_id
+        plugin_id_int = db.get_service_id(plugin_id)
+        if not plugin_id_int:
+            try:
+                plugin_id_int = int(plugin_id)
+            except (ValueError, TypeError):
+                pass
+                
+        db_plugin_id = None
+        if plugin_id_int is not None:
             with db._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT plugin_id, name FROM services")
-                for row in c.fetchall():
-                    row_clean = row['name'].replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
-                    if row_clean == clean_target:
-                        int_id = row['plugin_id']
-                        break
+                c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
+                row = c.fetchone()
+                if row:
+                    db_plugin_id = row['plugin_id']
                     
-        if not int_id:
+        if not db_plugin_id:
             return jsonify({"error": f"Plugin {plugin_id} not found"}), 404
             
-        success = plugin_store.rollback_plugin(int_id)
+        success = plugin_store.rollback_plugin(db_plugin_id)
         if success:
             return jsonify({"success": True})
         return jsonify({"error": "Failed to rollback plugin"}), 500
@@ -351,36 +363,39 @@ def set_plugin_beta_opt(plugin_id):
         from database.config_database import get_config_database
         db = get_config_database()
         
-        try:
-            int_id = int(plugin_id)
-        except ValueError:
-            int_id = None
-            clean_target = str(plugin_id).replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
+        # Resolve to CRC32 integer plugin_id using get_service_id
+        plugin_id_int = db.get_service_id(plugin_id)
+        if not plugin_id_int:
+            try:
+                plugin_id_int = int(plugin_id)
+            except (ValueError, TypeError):
+                pass
+                
+        db_plugin_id = None
+        if plugin_id_int is not None:
             with db._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT plugin_id, name FROM services")
-                for row in c.fetchall():
-                    row_clean = row['name'].replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
-                    if row_clean == clean_target:
-                        int_id = row['plugin_id']
-                        break
+                c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
+                row = c.fetchone()
+                if row:
+                    db_plugin_id = row['plugin_id']
                     
-        if not int_id:
+        if not db_plugin_id:
             return jsonify({"error": f"Plugin {plugin_id} not found"}), 404
             
         with db._get_connection() as conn:
             c = conn.cursor()
-            c.execute("UPDATE services SET beta_opt_in=? WHERE plugin_id=?", (db_val, int_id))
+            c.execute("UPDATE services SET beta_opt_in=? WHERE plugin_id=?", (db_val, db_plugin_id))
             conn.commit()
             
         try:
             from core.plugin_loader import PluginLoader
             app_root = Path(__file__).parent.parent.parent
             loader = PluginLoader(app_root)
-            loader.reload_plugin(int_id)
-            logger.info(f"Hot-reloaded plugin {int_id} after beta-opt change")
+            loader.reload_plugin(db_plugin_id)
+            logger.info(f"Hot-reloaded plugin {db_plugin_id} after beta-opt change")
         except Exception as re:
-            logger.warning(f"Failed to hot-reload plugin {int_id} after beta-opt change: {re}")
+            logger.warning(f"Failed to hot-reload plugin {db_plugin_id} after beta-opt change: {re}")
             
         return jsonify({"success": True})
     except Exception as e:
