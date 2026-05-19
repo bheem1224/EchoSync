@@ -408,10 +408,15 @@ class PluginLoader:
                     # Clean up physical files associated if they exist
                     if install_path:
                         try:
-                            p_path = Path(install_path)
+                            p_path = Path(install_path).resolve()
+                            # Critical safety check: Only prune if the path is safely inside plugins_dir
                             if p_path.exists() and p_path.is_dir():
-                                logger.info(f"Removing invalid plugin files at: {install_path}")
-                                shutil.rmtree(p_path, ignore_errors=True)
+                                try:
+                                    p_path.relative_to(plugins_dir.resolve())
+                                    logger.info(f"Removing invalid plugin files at safely scoped path: {install_path}")
+                                    shutil.rmtree(p_path, ignore_errors=True)
+                                except ValueError:
+                                    logger.warning(f"Refusing to delete physical files at {install_path} as it is outside the plugins directory sandbox.")
                         except Exception as e:
                             logger.error(f"Error pruning physical files at {install_path}: {e}")
                     continue

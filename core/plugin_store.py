@@ -542,6 +542,14 @@ class PluginStore:
                 manifest_desc = new_manifest["description"]
                 manifest_version = new_manifest["version"]
                 manifest_type = new_manifest["type"]
+                
+                # Dynamically calculate target directories based on strict_namespace
+                dest_dir = self.plugins_dir / manifest_author / manifest_name
+                beta_dir = dest_dir / "beta"
+                if channel == "beta":
+                    target_dir = beta_dir
+                else:
+                    target_dir = dest_dir
 
                 # Security: Pre-Flight Consent Check for Privilege Escalation
                 if not force_consent:
@@ -678,35 +686,31 @@ class PluginStore:
                 # State Synchronization: Synchronize with the authoritative SQLite registry
                 try:
                     from database.config_database import get_config_database
+                    import binascii
                     db = get_config_database()
                     
                     is_official = "raw.githubusercontent.com/bheem1224/EchoSync" in download_url
+                    
+                    computed_plugin_id = target_plugin_id if target_plugin_id else binascii.crc32(strict_namespace.lower().encode('utf-8')) & 0xFFFFFFFF
 
                     db.register_service(
-                        name=clean_id,
+                        name=manifest_name,
                         service_type=manifest_type,
                         description=manifest_desc,
-                        absolute_install_path=str(dest_dir.resolve()),
+                        absolute_install_path=str(target_dir.resolve()),
+                        plugin_id=computed_plugin_id,
                         version=manifest_version
                     )
                     
                     with db._get_connection() as conn:
                         c = conn.cursor()
-                        if target_plugin_id:
-                            pid = target_plugin_id
-                        else:
-                            c.execute("SELECT plugin_id FROM services WHERE LOWER(name)=LOWER(?)", (clean_id,))
-                            row = c.fetchone()
-                            pid = row[0] if row else None
-                        
-                        if pid:
-                            c.execute("UPDATE services SET verified_source=?, beta_opt_in=? WHERE plugin_id=?", 
-                                     (1 if is_official else 0, 1 if channel == "beta" else 0, pid))
-                            conn.commit()
+                        c.execute("UPDATE services SET verified_source=?, beta_opt_in=? WHERE plugin_id=?", 
+                                 (1 if is_official else 0, 1 if channel == "beta" else 0, computed_plugin_id))
+                        conn.commit()
                             
-                    logger.info(f"Synchronized database state for plugin {plugin_id}")
+                    logger.info(f"Synchronized database state for plugin {strict_namespace} (CRC32: {computed_plugin_id})")
                 except Exception as e:
-                    logger.error(f"Failed to synchronize database state for {plugin_id}: {e}")
+                    logger.error(f"Failed to synchronize database state for {strict_namespace}: {e}")
 
                 # Hot-Swap Architecture: Perform Zero-Downtime Reload (Only during updates)
                 if is_update:
