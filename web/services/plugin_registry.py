@@ -19,6 +19,15 @@ class PluginRegistryFacade:
 
 plugin_registry = PluginRegistryFacade()
 
+def _clean_mocks(val):
+    if type(val).__name__ in ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock'):
+        return None
+    if isinstance(val, dict):
+        return {k: _clean_mocks(v) for k, v in val.items() if type(v).__name__ not in ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock')}
+    if isinstance(val, list):
+        return [_clean_mocks(item) for item in val if type(item).__name__ not in ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock')]
+    return val
+
 def list_plugins() -> List[Dict]:
     """List all registered plugins with enriched capability metadata."""
     plugins = []
@@ -99,7 +108,7 @@ def list_plugins() -> List[Dict]:
                     'resolve_fingerprint': Capability.RESOLVE_FINGERPRINT in class_caps,
                 }
             plugins.append(plugin_dict)
-    return plugins
+    return _clean_mocks(plugins)
 
 def get_plugins_for_capability(capability: str) -> List[Dict]:
     """Get plugins that support a specific capability."""

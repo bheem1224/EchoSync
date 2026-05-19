@@ -283,20 +283,14 @@ class PluginStore:
                 plugin["verified_source"] = "official"
                 plugin["author"] = "EchoSync"
 
-            # Resolve Active Version from Community (/data/plugins)
-            clean_id = str(plugin_id)
-            folder_path = clean_id.replace('.', os.sep)
-            comm_dir = self.plugins_dir / folder_path
-            
-            comm_manifest = comm_dir / "manifest.json"
-            
             plugin["_installed"] = False
             plugin["installed_version"] = None
-            plugin["installed_channel"] = config_manager.get_plugin_channel(plugin_id)
+            plugin["installed_channel"] = "stable"
             plugin["beta_opt_in"] = None
             plugin["previous_version_path"] = None
             plugin["int_plugin_id"] = None
             
+            absolute_install_path = None
             try:
                 from database.config_database import get_config_database
                 db = get_config_database()
@@ -304,27 +298,27 @@ class PluginStore:
                 if db_id:
                     with db._get_connection() as conn:
                         c = conn.cursor()
-                        c.execute("SELECT beta_opt_in, previous_version_path, plugin_id FROM services WHERE id=?", (db_id,))
+                        c.execute("SELECT beta_opt_in, previous_version_path, plugin_id, absolute_install_path FROM services WHERE id=?", (db_id,))
                         row = c.fetchone()
                         if row:
                             plugin["beta_opt_in"] = row[0]
                             plugin["previous_version_path"] = row[1]
                             plugin["int_plugin_id"] = row[2]
+                            absolute_install_path = row[3]
+                            if row[0] == 1:
+                                plugin["installed_channel"] = "beta"
             except Exception:
                 pass
             
-            if comm_dir.exists():
-                beta_manifest = comm_dir / "beta" / "manifest.json"
-                if plugin["installed_channel"] == "beta" and beta_manifest.exists():
-                    plugin["_installed"] = True
-                    active_manifest_path = beta_manifest
-                elif comm_manifest.exists():
-                    plugin["_installed"] = True
-                    active_manifest_path = comm_manifest
-                else:
-                    active_manifest_path = None
-            else:
-                active_manifest_path = None
+            active_manifest_path = None
+            if absolute_install_path:
+                comm_dir = Path(absolute_install_path)
+                if comm_dir.exists():
+                    comm_manifest = comm_dir / "manifest.json"
+                    if comm_manifest.exists():
+                        plugin["_installed"] = True
+                        active_manifest_path = comm_manifest
+
             plugin["update_available"] = False
 
             if plugin["_installed"] and active_manifest_path:

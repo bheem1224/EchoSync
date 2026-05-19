@@ -515,7 +515,7 @@ class PluginLoader:
             with db._get_connection() as conn:
                 conn.row_factory = sqlite3.Row
                 c = conn.cursor()
-                c.execute("SELECT name, plugin_id, absolute_install_path, loaded_modules FROM services WHERE is_active = 1")
+                c.execute("SELECT name, plugin_id, absolute_install_path, loaded_modules, beta_opt_in FROM services WHERE is_active = 1")
                 active_services = c.fetchall()
         except Exception as e:
             logger.error(f"Failed to query active services: {e}")
@@ -525,27 +525,19 @@ class PluginLoader:
             p_id = row['plugin_id']
             name = row['name']
             install_path = row['absolute_install_path']
+            beta_opt_in = row['beta_opt_in']
             
             # Skip core/built-in services (only 'system' is core now, others are community)
             if name.lower() in {'system'}:
                 continue
 
-            # Determine plugin channel
-            channel = config_manager.get_plugin_channel(name) or 'stable'
+            # Determine plugin channel directly from database record
+            channel = 'beta' if beta_opt_in == 1 else 'stable'
 
             if install_path and os.path.exists(install_path):
                 plugin_dir = Path(install_path)
             else:
-                clean_ns = name
-                folder_path = clean_ns.replace('.', os.sep)
-                plugin_dir = self.plugins_dir / folder_path
-                
-                # Fallback for flat structure
-                if not plugin_dir.exists():
-                    plugin_dir = self.plugins_dir / clean_ns.split('.')[-1]
-
-            if not plugin_dir.exists():
-                logger.error(f"Plugin directory not found for {name}: {plugin_dir}")
+                logger.error(f"Plugin directory not specified or does not exist for {name}: {install_path}")
                 continue
 
             manifest_file = plugin_dir / "manifest.json"

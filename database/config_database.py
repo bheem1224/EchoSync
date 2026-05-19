@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import sqlite3
+import re
 import time
 from typing import Any, Dict, Optional, List
 from pathlib import Path
@@ -36,7 +37,24 @@ class ConfigDatabase:
         except Exception:
             # best-effort; don't fail startup if writer can't be created
             pass
-        self._initialize_schema()
+        
+        try:
+            self._initialize_schema()
+        except sqlite3.DatabaseError as de:
+            if "malformed database schema" in str(de) or "orphan index" in str(de):
+                logger.warning(f"Database schema malformed: {de}. Attempting automatic recovery via VACUUM and REINDEX...")
+                try:
+                    conn = sqlite3.connect(str(self.database_path), timeout=30.0)
+                    conn.execute("VACUUM")
+                    conn.execute("REINDEX")
+                    conn.close()
+                    logger.info("Automatic database recovery completed successfully. Retrying schema initialization...")
+                    self._initialize_schema()
+                except Exception as ree:
+                    logger.error(f"Automatic database recovery failed: {ree}")
+                    raise de
+            else:
+                raise
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.database_path), timeout=30.0)
@@ -49,12 +67,94 @@ class ConfigDatabase:
     def _initialize_schema(self):
         try:
             def _schema(cursor):
+                def heal_table_schemas(cursor):
+                    try:
+                        import re
+                        cursor.execute("SELECT name, sql FROM sqlite_master WHERE type='table'")
+                        tables = cursor.fetchall()
+                        for r in tables:
+                            t_name = r['name']
+                            t_sql = r['sql']
+                            if not t_sql:
+                                continue
+                            
+                            # Find referenced tables in foreign keys
+                            referenced_tables = re.findall(r'REFERENCES\s+[\'"]?([a-zA-Z0-9_]+)[\'"]?\s*\(', t_sql, re.IGNORECASE)
+                            has_corrupted_ref = False
+                            correct_sql = t_sql
+                            
+                            for ref_t in referenced_tables:
+                                ref_t_lower = ref_t.lower()
+                                if ref_t_lower in {'services_old', 'services_temp', 'accounts_old', 'accounts_temp'} or ref_t_lower.endswith('_temp_repair'):
+                                    has_corrupted_ref = True
+                                    clean_ref = 'services' if 'service' in ref_t_lower else 'accounts'
+                                    correct_sql = re.sub(
+                                        rf'REFERENCES\s+[\'"]?{ref_t}[\'"]?\s*\(',
+                                        f'REFERENCES {clean_ref}(',
+                                        correct_sql,
+                                        flags=re.IGNORECASE
+                                    )
+                            
+                            # Check if table name itself has a temp suffix
+                            clean_t_name = re.sub(r'(_temp_repair)+$', '', t_name)
+                            has_corrupted_name = (clean_t_name != t_name)
+                            
+                            if has_corrupted_ref or has_corrupted_name:
+                                logger.warning(f"Repairing corrupted table schema for '{t_name}' (restoring to '{clean_t_name}')...")
+                                # Make sure CREATE TABLE uses the clean name
+                                correct_sql = re.sub(
+                                    rf'\bCREATE\s+TABLE\s+[\'"]?{t_name}[\'"]?\b',
+                                    f'CREATE TABLE {clean_t_name}',
+                                    correct_sql,
+                                    flags=re.IGNORECASE
+                                )
+                                
+                                try:
+                                    cursor.connection.commit()
+                                    cursor.execute("PRAGMA foreign_keys = OFF")
+                                    
+                                    # Rename existing table to a unique temporary name for data migration
+                                    temp_mig_name = f"{t_name}_temp_migration_swap"
+                                    cursor.execute(f"DROP TABLE IF EXISTS {temp_mig_name}")
+                                    cursor.execute(f"ALTER TABLE {t_name} RENAME TO {temp_mig_name}")
+                                    
+                                    # Create target table using clean name and correct schema
+                                    cursor.execute(correct_sql)
+                                    
+                                    # Migrate data
+                                    cursor.execute(f"PRAGMA table_info({temp_mig_name})")
+                                    cols = [col[1] for col in cursor.fetchall()]
+                                    cols_str = ", ".join(cols)
+                                    cursor.execute(f"INSERT INTO {clean_t_name} ({cols_str}) SELECT {cols_str} FROM {temp_mig_name}")
+                                    
+                                    # Drop the temporary migration table
+                                    cursor.execute(f"DROP TABLE {temp_mig_name}")
+                                    cursor.connection.commit()
+                                    logger.info(f"Successfully repaired and restored table '{clean_t_name}'.")
+                                except Exception as err:
+                                    logger.error(f"Failed to repair corrupted table '{t_name}': {err}")
+                                finally:
+                                    cursor.execute("PRAGMA foreign_keys = ON")
+                    except Exception as she:
+                        logger.error(f"Failed during self-healing schema check: {she}")
+
+                # 0. Self-healing: Repair any tables whose foreign keys were rewritten to _old or _temp tables
+                heal_table_schemas(cursor)
+
                 # Check if services table exists and has UNIQUE name constraint
                 cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='services'")
                 row = cursor.fetchone()
-                if row and "UNIQUE" in row[0].upper() and "NAME" in row[0].upper():
+                has_unique_name = False
+                if row:
+                    sql_str = row[0]
+                    col_unique = re.search(r'\bname\b[^,]*\bunique\b', sql_str, re.IGNORECASE) is not None
+                    table_unique = re.search(r'\bunique\s*\(\s*name\s*\)', sql_str, re.IGNORECASE) is not None
+                    has_unique_name = col_unique or table_unique
+                if has_unique_name:
                     logger.info("Migrating services table to remove UNIQUE constraint from name column...")
                     try:
+                        cursor.connection.commit()
+                        cursor.execute("PRAGMA foreign_keys = OFF")
                         cursor.execute("ALTER TABLE services RENAME TO services_old")
                         cursor.execute("""
                             CREATE TABLE services (
@@ -96,10 +196,18 @@ class ConfigDatabase:
                         logger.error(f"Failed to migrate services table (UNIQUE removal): {me}")
                         # Safe fallback recovery
                         try:
-                            cursor.execute("DROP TABLE IF EXISTS services")
-                            cursor.execute("ALTER TABLE services_old RENAME TO services")
-                        except Exception:
-                            pass
+                            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='services_old'")
+                            has_old = cursor.fetchone() is not None
+                            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='services'")
+                            has_new = cursor.fetchone() is not None
+                            if has_old and not has_new:
+                                cursor.execute("ALTER TABLE services_old RENAME TO services")
+                            elif has_old and has_new:
+                                cursor.execute("DROP TABLE services_old")
+                        except Exception as fe:
+                            logger.error(f"Failed fallback services recovery: {fe}")
+                    finally:
+                        cursor.execute("PRAGMA foreign_keys = ON")
 
                 # Services
                 cursor.execute("""
@@ -272,6 +380,9 @@ class ConfigDatabase:
                                 cursor.execute("UPDATE services SET plugin_id = ? WHERE id = ?", (plugin_id_int, s_id))
                         except Exception:
                             pass
+
+                # Final Self-healing: Double check that no table references services_old or accounts_temp
+                heal_table_schemas(cursor)
 
             # Run schema creation and inline migrations on writer thread to avoid concurrent-writes
             execute_write(str(self.database_path), _schema)
