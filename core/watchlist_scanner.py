@@ -565,7 +565,7 @@ class WatchlistScanner:
                 for query_title in unique_title_variations:
                     # Use same database check as modals with server awareness
                     from core.settings import config_manager
-                    from core.plugin_loader import PluginRegistry
+                    from core.nexus_framework.plugin_loader import PluginRegistry
                     active_servers = PluginRegistry.get_active_services_by_type('media_server')
                     active_server = active_servers[0].split('.')[-1] if active_servers else 'plex'
                     db_track, confidence = self.database.check_track_exists(query_title, artist_name, confidence_threshold=0.7, server_source=active_server)

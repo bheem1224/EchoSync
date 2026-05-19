@@ -4,10 +4,10 @@ from typing import Dict, List
 import os
 from pathlib import Path
 from core.settings import config_manager
-from core.plugin_loader import get_provider_capabilities
-from core.plugin_SDK import MetadataRichness
+from core.nexus_framework.plugin_loader import get_provider_capabilities
+from core.nexus_framework.plugin_SDK import MetadataRichness
 
-from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from database.music_database import get_database
 from core.tiered_logger import get_logger
 

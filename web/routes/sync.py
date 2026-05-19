@@ -1,9 +1,9 @@
 from flask import Blueprint, jsonify
 from core.tiered_logger import get_logger
-from core.plugin_loader import get_provider_capabilities
-from core.plugin_SDK import PlaylistSupport
+from core.nexus_framework.plugin_loader import get_provider_capabilities
+from core.nexus_framework.plugin_SDK import PlaylistSupport
 
-from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
 logger = get_logger("sync_route")
 bp = Blueprint("sync", __name__, url_prefix="/api/sync")

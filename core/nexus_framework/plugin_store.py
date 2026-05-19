@@ -709,7 +709,7 @@ class PluginStore:
                 # Hot-Swap Architecture: Perform Zero-Downtime Reload (Only during updates)
                 if is_update:
                     try:
-                        from core.plugin_loader import PluginLoader
+                        from core.nexus_framework.plugin_loader import PluginLoader
                         app_root = Path(__file__).parent.parent
                         loader = PluginLoader(app_root)
                         loader.reload_plugin(int_plugin_id)

@@ -2,7 +2,7 @@ from web.auth import require_auth
 from flask import Blueprint, jsonify, request
 from time_utils import utc_now
 from core.tiered_logger import get_logger
-from core.plugin_store import plugin_store
+from core.nexus_framework.plugin_store import plugin_store
 from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
 from services.metadata_enhancer import get_metadata_enhancer

@@ -6,7 +6,7 @@ from pathlib import Path
 from services.metadata_enhancer import get_metadata_enhancer
 from database.working_database import get_working_database, ReviewTask
 from core.enums import Capability
-from core.plugin_loader import get_provider
+from core.nexus_framework.plugin_loader import get_provider
 from core.tiered_logger import get_logger
 
 logger = get_logger("metadata_route")
@@ -14,7 +14,7 @@ bp = Blueprint("metadata", __name__, url_prefix="/api/metadata")
 
 def _get_provider(capability: Capability):
     """Get the first available provider with the given capability."""
-    from core.plugin_loader import get_provider
+    from core.nexus_framework.plugin_loader import get_provider
     return get_provider(capability)
 
 

@@ -890,7 +890,7 @@ initialize_plugin()
 
 
 # ── Registry Override (WeightedMatchingEngine subclass) ───────────────────────
-from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 
 

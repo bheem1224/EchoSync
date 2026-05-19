@@ -106,7 +106,7 @@ class _AccountsSDKFacade:
 class _PluginsSDKFacade:
     def invoke(self, target_plugin_id: str, action: str, payload: dict):
         # Determine if target is enabled/exists
-        from core.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry
         if PluginRegistry.is_provider_disabled(target_plugin_id):
             raise Exception(f"Plugin {target_plugin_id} is disabled or not found")
         
@@ -181,7 +181,7 @@ class _QualitySDKFacade:
             "choices": choices
         }
         
-        from core.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry
         PluginRegistry.register_quality_option(self.plugin_id, option)
 
 class _NetworkSDKFacade:

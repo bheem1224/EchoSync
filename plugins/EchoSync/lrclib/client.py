@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from core.tiered_logger import get_logger
-from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
 from core.file_handling.base_io import safe_write_text
 from typing import Any
@@ -25,7 +25,7 @@ except Exception:
     LrcLibAPI = None
 
 
-from core.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_SDK import PluginBase
 
 class LRCLibClient(PluginBase):
     """

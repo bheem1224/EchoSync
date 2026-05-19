@@ -10,13 +10,13 @@ import json
 from pathlib import Path
 from typing import Type, TypeVar, Protocol, List, Optional, Dict, Any
 
-from core.plugin_venv import setup_plugin_venv
+from core.nexus_framework.plugin_venv import setup_plugin_venv
 
 from flask import Blueprint
 
 from core.enums import Capability
 
-from core.plugin_SDK import PluginBase, DownloaderProvider, MediaServerProvider, SyncServiceProvider
+from core.nexus_framework.plugin_SDK import PluginBase, DownloaderProvider, MediaServerProvider, SyncServiceProvider
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 
@@ -1279,7 +1279,7 @@ def get_plugin_capabilities(plugin_name: str):
     Return capabilities for a plugin by looking up the plugin class dynamically.
     Gracefully handles plugins that don't declare explicit capabilities.
     """
-    from core.plugin_SDK import ProviderCapabilities
+    from core.nexus_framework.plugin_SDK import ProviderCapabilities
     provider_cls = PluginRegistry.get_provider_class(plugin_name)
     if not provider_cls:
         import logging

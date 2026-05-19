@@ -110,7 +110,7 @@ def pytest_configure(config):
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent))
     try:
-        from core.plugin_loader import PluginLoader
+        from core.nexus_framework.plugin_loader import PluginLoader
         loader = PluginLoader(Path(__file__).parent.parent)
     except Exception as e:
         print(f"Failed to load plugins in conftest: {e}")

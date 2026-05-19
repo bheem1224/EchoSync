@@ -86,7 +86,7 @@ _SCOPES = "profile email submit_isrc tag rating collection"
 def list_accounts():
     """List all MusicBrainz accounts with authentication status."""
     try:
-        from core.plugin_loader import PluginRegistry, ServiceRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         if PluginRegistry.is_provider_disabled("musicbrainz"):
             return jsonify({"accounts": [], "redirect_uri": ""}), 200
 

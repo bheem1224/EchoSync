@@ -205,7 +205,7 @@ def discover_new_tracks(user_id: str) -> List[dict]:
         return []
 
     # 2. Get similar artists/tracks from ListenBrainz
-    from core.plugin_loader import get_plugin
+    from core.nexus_framework.plugin_loader import get_plugin
     lb_plugin = get_plugin('listenbrainz')
     if not lb_plugin:
         import logging

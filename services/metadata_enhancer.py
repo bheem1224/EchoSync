@@ -22,7 +22,7 @@ from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
-from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from database.working_database import get_working_database, ReviewTask
@@ -139,7 +139,7 @@ class MetadataEnhancerService:
 
     def _get_provider(self, capability: Capability):
         """Get the first available provider with the given capability."""
-        from core.plugin_loader import get_provider
+        from core.nexus_framework.plugin_loader import get_provider
         return get_provider(capability)
 
     def enhance_library_metadata(self, batch_size=50) -> None:
@@ -156,7 +156,7 @@ class MetadataEnhancerService:
         from core.matching_engine.fingerprinting import FingerprintGenerator
         from core.matching_engine.echo_sync_track import EchosyncTrack
         from core.matching_engine.matching_engine import WeightedMatchingEngine
-        from core.plugin_loader import PluginRegistry, ServiceRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         from pathlib import Path
 
         MAX_REATTEMPTS = 5
@@ -253,7 +253,7 @@ class MetadataEnhancerService:
 
             # ── Chunked Concurrency for Text Fallback (Step 5) ──
             import asyncio
-            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
             mb_client = PluginRegistry.get_provider("musicbrainz")
             CHUNK_SIZE = 50
@@ -765,7 +765,7 @@ class MetadataEnhancerService:
     def _filename_to_track(self, file_path: Path, duration_ms: Optional[int]) -> EchosyncTrack:
         """Convert filename to EchosyncTrack for matching using provider_base helper."""
         from core.matching_engine.track_parser import TrackParser
-        from core.plugin_SDK import PluginBase
+        from core.nexus_framework.plugin_SDK import PluginBase
         
         # Use TrackParser to extract artist/title from filename
         parser = TrackParser()
@@ -783,7 +783,7 @@ class MetadataEnhancerService:
     
     def _search_result_to_track(self, result: Dict[str, Any]) -> Optional[EchosyncTrack]:
         """Convert MusicBrainz search result to EchosyncTrack using provider_base helper."""
-        from core.plugin_SDK import PluginBase
+        from core.nexus_framework.plugin_SDK import PluginBase
         
         try:
             return PluginBase.create_echo_sync_track(

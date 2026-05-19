@@ -16,7 +16,7 @@ bp = Blueprint('plex_routes', __name__, url_prefix='/api/plex')
 @bp.get('/settings')
 def get_settings():
     """Get Plex server settings (base_url, token status)."""
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_provider_disabled('plex'):
         return jsonify({'settings': {}}), 200
     try:

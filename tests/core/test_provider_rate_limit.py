@@ -4,7 +4,7 @@ Verification test for Provider Rate Limiting logic.
 import pytest
 from unittest.mock import MagicMock, patch
 import time
-from core.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_SDK import PluginBase
 from core.request_manager import RequestManager, RateLimitConfig
 
 class MockRateLimitedProvider(PluginBase):

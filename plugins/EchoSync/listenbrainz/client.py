@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Any
 from core.tiered_logger import get_logger
 
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
-from core.plugin_SDK import PluginBase, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.nexus_framework.plugin_SDK import PluginBase, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 import time
 
 logger = get_logger("listenbrainz_client")

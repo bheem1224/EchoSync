@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any
 from core.caching.provider_cache import provider_cache
-from core.plugin_SDK import PluginBase
-from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.nexus_framework.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 
 from core.file_handling.storage import get_storage_service

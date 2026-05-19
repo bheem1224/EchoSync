@@ -24,7 +24,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
 
 # ---------------------------------------------------------------------------

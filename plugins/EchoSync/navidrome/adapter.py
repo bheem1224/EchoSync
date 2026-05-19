@@ -11,7 +11,7 @@ from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
 from core.models import ProviderType, Track
 from core.file_handling.storage import get_storage_service
-from core.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_SDK import PluginBase
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
 

@@ -4,7 +4,7 @@ from typing import Dict, Optional, List, Any
 
 from sqlalchemy import func
 
-from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.file_handling.path_mapper import PathMapper
 from core.event_bus import event_bus
 from database.music_database import get_database, Track, Artist
@@ -132,7 +132,7 @@ class MediaManagerService:
 
         # 3. If not found, try to apply path mappings from the active media server
         try:
-            from core.plugin_loader import PluginRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry
             from core.file_handling.storage import get_storage_service
             import json
 
@@ -251,7 +251,7 @@ class MediaManagerService:
 
         # Save to active media server config
         try:
-            from core.plugin_loader import PluginRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry
             from database.config_database import get_config_database
             import json
 
@@ -293,7 +293,7 @@ class MediaManagerService:
         """
         Delete a track from the media server (if applicable) and local database.
         """
-        from core.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry
         active_servers = PluginRegistry.get_active_services_by_type('media_server')
 
         remote_delete_success = False

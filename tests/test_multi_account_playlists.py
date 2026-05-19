@@ -85,7 +85,7 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
             return [{'id': f'pl{self.account_id}', 'name': f'Playlist {self.account_id}', 'track_count': 5}]
 
     monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyClient', FakeSpotifyClient)
-    from core.plugin_loader import PluginRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry
     monkeypatch.setattr(PluginRegistry, 'get_provider_class', lambda name: FakeSpotifyClient if name == 'spotify' else None)
     monkeypatch.setattr(PluginRegistry, 'create_instance', lambda name, *args, **kwargs: FakeSpotifyClient() if name == 'spotify' else None)
     monkeypatch.setattr(PluginRegistry, 'is_provider_disabled', lambda name: False)
@@ -116,7 +116,7 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
 
     class FakeSpotifyClient:
         # Add capabilities to bypass strict capability check in analyze route
-        from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+        from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
         capabilities = ProviderCapabilities(
             name='spotify',
             supports_playlists=PlaylistSupport.READ_WRITE,

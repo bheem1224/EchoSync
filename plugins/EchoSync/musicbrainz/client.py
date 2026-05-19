@@ -2,8 +2,8 @@ from typing import List, Optional, Dict, Any
 import re
 
 from core.caching.provider_cache import provider_cache
-from core.plugin_SDK import PluginBase
-from core.plugin_SDK import (
+from core.nexus_framework.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_SDK import (
     ProviderCapabilities,
     PlaylistSupport,
     SearchCapabilities,

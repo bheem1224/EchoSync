@@ -95,10 +95,10 @@ def list_download_clients():
     annotated with 'active' status.
     """
     try:
-        from core.plugin_loader import PluginRegistry, ServiceRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         from core.settings import config_manager
         
-        from core.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry
         active_downloads = PluginRegistry.get_active_services_by_type('download')
         active_client = active_downloads[0].split('.')[-1] if active_downloads else None
         download_clients = []
@@ -132,7 +132,7 @@ def get_active_download_client():
     """Get the currently active download client."""
     try:
         from core.settings import config_manager
-        from core.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry
         active_downloads = PluginRegistry.get_active_services_by_type('download')
         active = active_downloads[0].split('.')[-1] if active_downloads else None
         return jsonify({'active_client': active}), 200
@@ -146,7 +146,7 @@ def set_active_download_client():
     """Set the active download client."""
     try:
         from core.settings import config_manager
-        from core.plugin_loader import PluginRegistry, ServiceRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
         data = request.get_json(silent=True) or {}
         client_name = data.get('client')
@@ -182,7 +182,7 @@ def toggle_plugin(plugin_id):
     """
     try:
         from core.settings import config_manager
-        from core.plugin_loader import PluginRegistry, ServiceRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         
         data = request.get_json(silent=True) or {}
         # If enabled is provided in payload, use it, otherwise flip current state
@@ -227,7 +227,7 @@ def toggle_plugin(plugin_id):
 def rollback_plugin(plugin_id):
     """Roll back a plugin to its previous stable version and state."""
     try:
-        from core.plugin_store import plugin_store
+        from core.nexus_framework.plugin_store import plugin_store
         
         # plugin_id might be a full ID or just a folder name. 
         # PluginStore needs the plugin_id.
@@ -247,7 +247,7 @@ def get_plugin_playlists(plugin_id):
     """Fetch playlists from a specific plugin."""
     try:
         # Get plugin via registry
-        from core.plugin_loader import PluginRegistry, ServiceRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         
         plugin_cls = PluginRegistry.get_provider_class(plugin_id)
         if not plugin_cls:
@@ -520,7 +520,7 @@ def _enrich_provider_capabilities(provider_dict, provider_name=None):
     Returns the provider dict with added capability fields.
     """
     try:
-        from core.plugin_SDK import get_provider_capabilities as fetch_capabilities
+        from core.nexus_framework.plugin_SDK import get_provider_capabilities as fetch_capabilities
         name = provider_name or provider_dict.get('name') or provider_dict.get('id')
         
         caps = fetch_capabilities(name)

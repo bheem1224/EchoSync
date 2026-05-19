@@ -8,8 +8,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from core.plugin_store import plugin_store
-from core.plugin_loader import PluginLoader, PluginRegistry
+from core.nexus_framework.plugin_store import plugin_store
+from core.nexus_framework.plugin_loader import PluginLoader, PluginRegistry
 from database.config_database import ConfigDatabase, get_config_database, close_config_database
 from database.working_database import WorkingDatabase, get_working_database, close_working_database
 from core.state import system_state
@@ -382,7 +382,7 @@ def test_dynamic_module_tracking(temp_plugins_env):
     )
 
     # 2. Trigger loading using the PluginLoader
-    from core.plugin_loader import PluginLoader
+    from core.nexus_framework.plugin_loader import PluginLoader
     app_root = Path(__file__).parent.parent
     loader = PluginLoader(app_root)
     
@@ -446,7 +446,7 @@ def test_plugin_id_reconciliation_and_orphaning(temp_plugins_env):
     )
 
     # 3. Create a PluginLoader instance and run reconcile_services
-    from core.plugin_loader import PluginLoader
+    from core.nexus_framework.plugin_loader import PluginLoader
     app_root = Path(__file__).parent.parent.parent
     loader = PluginLoader(app_root)
     # Patch get_all_plugins to return our simulated scanned plugin

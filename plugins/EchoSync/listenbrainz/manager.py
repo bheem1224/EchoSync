@@ -7,7 +7,7 @@ import json
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from core.tiered_logger import get_logger
-from core.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_SDK import PluginBase
 from core.job_queue import register_job
 from core.file_handling.storage import get_storage_service
 from core.request_manager import RequestManager, RateLimitConfig, RetryConfig
