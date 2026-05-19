@@ -95,3 +95,21 @@ This report details an uncompromising, exhaustive review of the EchoSync Nexus P
 **The Line/Location:** Lines ~108-117 in `core/plugin_loader.py`.
 **The Resource Impact:** Severe I/O & DB query bloat on the main thread.
 **The Pedantic Fix:** `PluginRegistry` should maintain a fully resolved, thread-safe in-memory mapping of `plugin_id -> provider_cls`. Only update this map during plugin load/reload/unload events. Avoid querying the SQLite database during instantiation calls.
+
+### 15. Authorization Bypass: Unvalidated Plugin Identity Spoofing
+**The Flaw:** In `core/plugin_loader.py` during `_load_plugin_package`, if the plugin does not export a `ProviderClass`, the loader iterates through the module's attributes looking for a subclass of `PluginBase`. When it finds one, it instantiates it (`provider_instance = attr()`) and then *forces* the instance's name to be the `provider_id` passed to the loader (`provider_instance.name = provider_id`). However, if a plugin defines `ProviderClass` directly, the loader registers the class *as-is* without forcing or validating the class's internal `name` or `plugin_id` properties. A malicious plugin can export a `ProviderClass` with `name = "system"` or `plugin_id = <core_id>`, effectively hijacking core components or other plugins in the `PluginRegistry`.
+**The Line/Location:** Lines ~829-840 in `core/plugin_loader.py`.
+**The Resource Impact:** Complete Privilege Escalation & Routing Hijack.
+**The Pedantic Fix:** The loader must treat the internal `name`, `plugin_id`, and `author` properties of an imported plugin class as inherently untrusted. Upon registration, the `PluginRegistry` must strictly enforce and overwrite these properties using the canonical integer `plugin_id` resolved from the directory structure and database, rather than trusting the module's exported attributes.
+
+### 16. Privilege Escalation: Unsigned `manifest.json` Trust
+**The Flaw:** `plugin_loader.py` reads `manifest.json` directly from the disk during discovery (Line 556) and explicitly trusts the `verified_source` and `privileged` boolean flags defined *inside* the JSON file. If a community plugin simply adds `"verified_source": "official"` or `"privileged": true` to its `manifest.json`, the loader will set `bypass_security = True` or grant elevated AST sandbox permissions (Line 566).
+**The Line/Location:** Lines ~556-566 in `core/plugin_loader.py` and `core/security.py`'s `is_privileged_or_verified`.
+**The Resource Impact:** Sandbox & Security Bypass. Any community plugin can trivially grant itself core-level permissions.
+**The Pedantic Fix:** The `verified_source` and `privileged` flags must never be read directly from an unverified JSON file. They must be determined cryptographically (e.g., verifying a GPG signature on the manifest) or fetched exclusively from a trusted central remote registry API, and stored in the read-only `services` database table during installation.
+
+### 17. SDK Identity Spoofing: Stack Frame Parsing Flaw
+**The Flaw:** The global `sdk` object (`core/plugin_SDK.py`) dynamically determines which plugin is calling it by inspecting the call stack (`inspect.currentframe().f_back.f_back.f_globals.get('__name__')`) inside `_get_plugin_id()`. A malicious plugin can trivially spoof its identity by executing its SDK calls within a dynamic execution context (e.g., using `exec` or `types.ModuleType` manipulation) where it overrides `__name__` to match a core system plugin or a privileged community plugin. This grants the attacker full read/write access to the victim plugin's config, secrets, accounts, and network interfaces via the SDK facades.
+**The Line/Location:** Lines ~270-287 in `core/plugin_SDK.py`.
+**The Resource Impact:** Complete Cross-Plugin Sandbox Bypass and Secrets Theft.
+**The Pedantic Fix:** Remove `_SDK` as a global variable. The SDK instance must be explicitly instantiated and passed into the plugin by the `PluginLoader` during initialization, bound immutably to the integer `plugin_id`. Remove all `inspect.currentframe()` call stack heuristics.
