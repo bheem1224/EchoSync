@@ -288,10 +288,6 @@ class PluginStore:
             folder_path = clean_id.replace('.', os.sep)
             comm_dir = self.plugins_dir / folder_path
             
-            # Fallback for flat structure
-            if not comm_dir.exists():
-                comm_dir = self.plugins_dir / clean_id.split('.')[-1]
-            
             comm_manifest = comm_dir / "manifest.json"
             
             plugin["_installed"] = False
@@ -304,17 +300,16 @@ class PluginStore:
             try:
                 from database.config_database import get_config_database
                 db = get_config_database()
-                clean_target = str(plugin_id).replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
-                with db._get_connection() as conn:
-                    c = conn.cursor()
-                    c.execute("SELECT name, beta_opt_in, previous_version_path, plugin_id FROM services")
-                    for row in c.fetchall():
-                        row_clean = row[0].replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
-                        if row_clean == clean_target:
-                            plugin["beta_opt_in"] = row[1]
-                            plugin["previous_version_path"] = row[2]
-                            plugin["int_plugin_id"] = row[3]
-                            break
+                db_id = db.get_service_id(plugin_id)
+                if db_id:
+                    with db._get_connection() as conn:
+                        c = conn.cursor()
+                        c.execute("SELECT beta_opt_in, previous_version_path, plugin_id FROM services WHERE id=?", (db_id,))
+                        row = c.fetchone()
+                        if row:
+                            plugin["beta_opt_in"] = row[0]
+                            plugin["previous_version_path"] = row[1]
+                            plugin["int_plugin_id"] = row[2]
             except Exception:
                 pass
             

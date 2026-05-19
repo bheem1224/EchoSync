@@ -662,22 +662,21 @@ class ConfigManager:
         # Save non-secrets to plaintext JSON
         self._save_non_secrets_to_json()
 
-    def get_plugin_channel(self, plugin_id: str) -> str:
+    def get_plugin_channel(self, plugin_id: Any) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
-        clean_id = plugin_id.replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
+        if not plugin_id:
+            return "stable"
         try:
             from database.config_database import get_config_database
             db = get_config_database()
-            with db._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("SELECT name, beta_opt_in FROM services")
-                for row in c.fetchall():
-                    row_clean = row[0].replace('EchoSync.', '').replace('core.', '').replace('plugin.', '').lower()
-                    if row_clean == clean_id:
-                        local_beta = row[1]
-                        if local_beta is not None:
-                            return "beta" if local_beta else "stable"
-                        break
+            db_id = db.get_service_id(plugin_id)
+            if db_id:
+                with db._get_connection() as conn:
+                    c = conn.cursor()
+                    c.execute("SELECT beta_opt_in FROM services WHERE id=?", (db_id,))
+                    row = c.fetchone()
+                    if row and row[0] is not None:
+                        return "beta" if row[0] else "stable"
         except Exception:
             pass
         return "beta" if self.get('ui.beta_plugin_ui', False) else "stable"

@@ -243,12 +243,54 @@ class PluginLoader:
         
         import sqlite3
         import binascii
+        import shutil
         from database.config_database import get_config_database
         db = get_config_database()
         
-        # 1. Physical Scan of Plugins
+        # 1. Clean up physical plugin folders in the wrong structure or directory
+        plugins_dir = Path(config_manager.get_plugins_dir())
+        if plugins_dir.exists():
+            for author_item in list(plugins_dir.iterdir()):
+                if not author_item.is_dir() or author_item.name.startswith('_') or author_item.name.lower() == 'system':
+                    continue
+                
+                # Check for legacy flat plugin (contains manifest.json, __init__.py, or main.wasm directly in plugins_dir/item)
+                is_flat_plugin = (author_item / "manifest.json").exists() or (author_item / "__init__.py").exists() or (author_item / "main.wasm").exists()
+                if is_flat_plugin:
+                    logger.warning(f"Pruning invalid flat legacy plugin folder: {author_item}")
+                    shutil.rmtree(author_item, ignore_errors=True)
+                    continue
+                
+                # Nested author folder structure check
+                for plugin_item in list(author_item.iterdir()):
+                    if not plugin_item.is_dir() or plugin_item.name.startswith('_'):
+                        continue
+                    
+                    # Ensure the plugin subfolder contains at least one signature entry file
+                    has_entry = (plugin_item / "manifest.json").exists() or (plugin_item / "__init__.py").exists() or (plugin_item / "main.wasm").exists()
+                    if not has_entry:
+                        logger.warning(f"Pruning invalid plugin subfolder without entry points: {plugin_item}")
+                        shutil.rmtree(plugin_item, ignore_errors=True)
+                        continue
+                    
+                    # Check if manifest.json exists and parse it to make sure the author/plugin matches the folder structure
+                    manifest_file = plugin_item / "manifest.json"
+                    if manifest_file.exists():
+                        try:
+                            manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                            manifest_id = manifest_data.get("id")
+                            if manifest_id:
+                                # Expected structure is author.plugin
+                                parts = manifest_id.split('.')
+                                if len(parts) < 2 or parts[0].lower() != author_item.name.lower() or parts[1].lower() != plugin_item.name.lower():
+                                    logger.warning(f"Pruning folder {plugin_item} because it does not match manifest ID '{manifest_id}'")
+                                    shutil.rmtree(plugin_item, ignore_errors=True)
+                                    continue
+                        except Exception as e:
+                            logger.error(f"Error validating manifest in {plugin_item}: {e}")
+
+        # 2. Physical Scan of Plugins after physical cleanup
         physical_plugins = get_all_plugins()
-        import binascii
         # Map physical plugins by their CRC32 integer of lowercase ID to match database plugin_id perfectly
         physical_plugin_map = {}
         for p in physical_plugins:
@@ -312,35 +354,66 @@ class PluginLoader:
                     continue
                 
                 # Community Plugin handling
-                # Check if it has a physical match
-                plugin_info = physical_plugin_map.get(p_id) if p_id is not None else None
+                # Determine if orphaned or invalid
+                is_invalid = False
+                reason = ""
                 
-                # Path verification: it must exist, and if it's not the 'system' service,
-                # it should either be in plugins_dir or be a valid plugin directory (having manifest.json, __init__.py, or main.wasm).
-                # If it's outside plugins_dir and is NOT a valid plugin directory, it must be deleted!
-                is_valid_plugin_path = False
-                if install_path and os.path.exists(install_path):
-                    install_path_obj = Path(install_path)
-                    if (install_path_obj / "manifest.json").exists() or (install_path_obj / "__init__.py").exists() or (install_path_obj / "main.wasm").exists():
-                        is_valid_plugin_path = True
-                
-                # Determine if orphaned
-                is_orphaned = False
                 if is_duplicate:
-                    is_orphaned = True
-                    logger.info(f"Pruning duplicate record: {name} (ID: {db_id})")
-                elif name.lower() != 'system':
-                    if not install_path or not os.path.exists(install_path) or not is_valid_plugin_path:
-                        is_orphaned = True
-                        logger.info(f"Pruning orphaned record (invalid or missing install path): {name} (ID: {db_id}, path: {install_path})")
-                    elif not plugin_info:
-                        is_orphaned = True
-                        logger.info(f"Pruning orphaned record (not physically scanned): {name} (ID: {db_id})")
+                    is_invalid = True
+                    reason = "Duplicate record"
+                else:
+                    plugin_info = physical_plugin_map.get(p_id) if p_id is not None else None
+                    if not plugin_info:
+                        is_invalid = True
+                        reason = "No physically scanned plugin matching plugin_id"
+                    else:
+                        p_id_str = plugin_info.get('id')
+                        parts = p_id_str.split('.')
+                        if len(parts) < 2:
+                            is_invalid = True
+                            reason = f"Scanned plugin ID '{p_id_str}' does not follow author.plugin schema"
+                        else:
+                            dev_name, plugin_name = parts[0], parts[1]
+                            expected_base = (plugins_dir / dev_name / plugin_name).resolve()
+                            expected_beta = (plugins_dir / dev_name / plugin_name / "beta").resolve()
+                            
+                            # Path verification: must match user defined/derived install folder
+                            if not install_path:
+                                is_invalid = True
+                                reason = "Empty absolute_install_path in database"
+                            else:
+                                try:
+                                    resolved_install = Path(install_path).resolve()
+                                    if resolved_install != expected_base and resolved_install != expected_beta:
+                                        is_invalid = True
+                                        reason = f"Install path '{install_path}' does not match expected derived folder structure: {expected_base}"
+                                    elif not resolved_install.exists():
+                                        is_invalid = True
+                                        reason = f"Physical install path does not exist: {install_path}"
+                                except Exception as e:
+                                    is_invalid = True
+                                    reason = f"Invalid path syntax: {e}"
+                            
+                            # Name in database does not match the manifest name
+                            manifest_name = plugin_info.get('name')
+                            if manifest_name and name != manifest_name:
+                                is_invalid = True
+                                reason = f"Database name '{name}' does not match manifest name '{manifest_name}'"
                 
-                if is_orphaned:
+                if is_invalid:
+                    logger.warning(f"🚨 Authoritative Pruning: Deleting invalid database record and cleanup service: {name} (ID: {db_id}, Reason: {reason})")
                     c.execute("DELETE FROM services WHERE id=?", (db_id,))
-                    # Also clean up configuration for this service
                     c.execute("DELETE FROM service_config WHERE service_id=?", (db_id,))
+                    
+                    # Clean up physical files associated if they exist
+                    if install_path:
+                        try:
+                            p_path = Path(install_path)
+                            if p_path.exists() and p_path.is_dir():
+                                logger.info(f"Removing invalid plugin files at: {install_path}")
+                                shutil.rmtree(p_path, ignore_errors=True)
+                        except Exception as e:
+                            logger.error(f"Error pruning physical files at {install_path}: {e}")
                     continue
                 
                 # Valid physical plugin: overwrite/update details to ensure consistency and prevent stale data
@@ -841,17 +914,10 @@ def get_all_plugins() -> list:
             continue
         
         # Case 1: Author/Plugin structure
-        found_nested = False
         for subitem in item.iterdir():
             if subitem.is_dir() and not subitem.name.startswith('_'):
                 if (subitem / "manifest.json").exists() or (subitem / "__init__.py").exists() or (subitem / "main.wasm").exists():
                     candidates.append((subitem, f"{item.name}.{subitem.name}"))
-                    found_nested = True
-        
-        # Case 2: Flat structure (legacy/fallback)
-        if not found_nested:
-            if (item / "manifest.json").exists() or (item / "__init__.py").exists() or (item / "main.wasm").exists():
-                candidates.append((item, item.name))
 
     for item, p_id in candidates:
         current_item = item
