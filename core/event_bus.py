@@ -14,6 +14,41 @@ class EventBus:
         self._lock = threading.Lock()
         self._events: Dict[str, List[Dict[str, Any]]] = {}
         self._subscribers: Dict[str, List] = {}
+        import queue
+        self._queue = queue.Queue()
+        self._dispatcher = threading.Thread(target=self._dispatcher_loop, daemon=True)
+        self._dispatcher.start()
+
+    def _dispatcher_loop(self):
+        import inspect
+        import logging
+        while True:
+            try:
+                event_name, payload, serialized, specific, universal = self._queue.get()
+
+                for handler in specific:
+                    try:
+                        sig = inspect.signature(handler)
+                        if '_serialized' in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                            handler(payload, _serialized=serialized)
+                        else:
+                            handler(payload)
+                    except Exception as e:
+                        logging.getLogger("event_bus").error(f"Error in event handler for {event_name}: {e}", exc_info=True)
+
+                for handler in universal:
+                    try:
+                        sig = inspect.signature(handler)
+                        if '_serialized' in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                            handler(payload, _serialized=serialized)
+                        else:
+                            handler(payload)
+                    except Exception as e:
+                        logging.getLogger("event_bus").error(f"Error in universal event handler: {e}", exc_info=True)
+
+            except Exception as e:
+                logging.getLogger("event_bus").error(f"Fatal error in event dispatcher loop: {e}", exc_info=True)
+
 
 
     def subscribe(self, event_name_or_handler, handler=None):
@@ -89,30 +124,10 @@ class EventBus:
         except Exception:
             serialized = "{}"
 
-        for handler in specific:
-            try:
-                # Check if handler accepts kwargs, otherwise just send payload
-                import inspect
-                sig = inspect.signature(handler)
-                if '_serialized' in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-                    handler(payload, _serialized=serialized)
-                else:
-                    handler(payload)
-            except Exception as e:
-                import logging
-                logging.getLogger("event_bus").error(f"Error in event handler for {event_name}: {e}", exc_info=True)
 
-        for handler in universal:
-            try:
-                import inspect
-                sig = inspect.signature(handler)
-                if '_serialized' in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-                    handler(payload, _serialized=serialized)
-                else:
-                    handler(payload)
-            except Exception as e:
-                import logging
-                logging.getLogger("event_bus").error(f"Error in universal event handler: {e}", exc_info=True)
+        # Push to background dispatcher queue to avoid blocking publisher thread
+        import copy
+        self._queue.put((event_name, copy.deepcopy(payload), serialized, specific, universal))
 
     def publish(self, *args, **kwargs):
         # Handle Phase-2 target API: publish(payload_dict)
