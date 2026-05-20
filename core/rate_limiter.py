@@ -1,11 +1,5 @@
-"""
-Rate Limiter Module for Echosync
-
-This module provides a generic rate limiter and a decorator for rate-limiting function calls.
-"""
-
+import urllib.parse
 import time
-import asyncio
 import threading
 from typing import Callable, Optional
 
@@ -36,43 +30,6 @@ def rate_limited(key: str, min_interval_sec: float) -> Callable:
         return wrapper
     return decorator
 
-class RateLimiter:
-    """
-    A generic token-bucket style rate limiter (window-based).
-    """
-    def __init__(self, max_requests: int, window_seconds: float):
-        self.max_requests = max_requests
-        self.window_seconds = window_seconds
-        self.timestamps = []
-
-    async def wait(self):
-        """Wait if necessary to respect rate limiting."""
-        while True:
-            self._clean_old_timestamps()
-            if len(self.timestamps) < self.max_requests:
-                break
-            oldest_timestamp = self.timestamps[0]
-            wait_time = oldest_timestamp + self.window_seconds - time.time()
-            if wait_time > 0:
-                await asyncio.sleep(wait_time)
-            # Re-check after sleep: another coroutine may have consumed a slot
-        self.timestamps.append(time.time())
-
-    def _clean_old_timestamps(self):
-        """Remove timestamps older than the rate limit window."""
-        cutoff_time = time.time() - self.window_seconds
-        self.timestamps = [ts for ts in self.timestamps if ts > cutoff_time]
-
-    def get_status(self) -> dict:
-        """Get current rate limiting status."""
-        self._clean_old_timestamps()
-        return {
-            'requests_in_window': len(self.timestamps),
-            'max_requests': self.max_requests,
-            'window_seconds': self.window_seconds,
-            'remaining_requests': max(0, self.max_requests - len(self.timestamps))
-        }
-
 
 class TokenBucketRateLimiter:
     """A standard thread-safe token bucket rate limiter for API requests."""
@@ -95,3 +52,61 @@ class TokenBucketRateLimiter:
                 self.tokens -= tokens
                 return True
             return False
+
+    def wait(self, tokens: int = 1):
+        """Block until tokens are available."""
+        while True:
+            with self._lock:
+                now = time.time()
+                elapsed = now - self.last_refill
+                self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
+                self.last_refill = now
+
+                if self.tokens >= tokens:
+                    self.tokens -= tokens
+                    return
+
+                # Calculate time to wait
+                deficit = tokens - self.tokens
+                wait_time = deficit / self.refill_rate
+
+            if wait_time > 0:
+                time.sleep(wait_time)
+
+
+class GlobalRateLimiter:
+    """A singleton managing token bucket rate limiters by domain."""
+    _instance = None
+    _init_lock = threading.Lock()
+
+    def __new__(cls):
+        with cls._init_lock:
+            if cls._instance is None:
+                cls._instance = super(GlobalRateLimiter, cls).__new__(cls)
+                cls._instance.domains = {}
+                cls._instance._domains_lock = threading.Lock()
+        return cls._instance
+
+    @classmethod
+    def get_instance(cls):
+        return cls()
+
+    def _get_domain(self, url: str) -> str:
+        try:
+            parsed = urllib.parse.urlparse(url)
+            domain = parsed.netloc
+            if not domain:
+                return "generic_fallback"
+            return domain
+        except Exception:
+            return "generic_fallback"
+
+    def wait_for_url(self, url: str, rps: float = 1.0):
+        domain = self._get_domain(url)
+        with self._domains_lock:
+            if domain not in self.domains:
+                # Capacity is set to 1.0 (burst size), refill_rate is rps
+                self.domains[domain] = TokenBucketRateLimiter(capacity=1.0, refill_rate=rps)
+            bucket = self.domains[domain]
+
+        bucket.wait(1)
