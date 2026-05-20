@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 class FingerprintGenerator:
     """Generate Chromaprint fingerprints from audio files"""
 
-    SUPPORTED_FORMATS = {
+    SUPPORTED_FORMATS = frozenset({
         '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus',
         '.wma', '.wav', '.alac', '.ape'
-    }
+    })
 
     @staticmethod
     def can_fingerprint(file_path: str) -> bool:

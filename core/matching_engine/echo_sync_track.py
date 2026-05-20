@@ -1,3 +1,17 @@
+
+import re
+_ATTRIBUTION_PATTERN = re.compile(
+    r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+.*?[\)\]]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$",
+    re.IGNORECASE
+)
+
+_VERSION_KEYWORDS_PATTERN = re.compile(
+    r"\b(?:Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)\b",
+    re.IGNORECASE
+)
+
+_EDITION_CLEANUP_RE = re.compile(r'[\)\]]\s*$')
+
 """
 EchosyncTrack: The core data structure for music track representation in Echosync.
 
@@ -225,10 +239,8 @@ class EchosyncTrack:
         # Extract edition/version info from title (e.g., "2005 Remaster", "Live at X", etc.)
         # Strategy: Find the LAST occurrence of version keywords, then work backwards to find delimiter
         # This handles: "Sweet Dreams (Are Made of This) - 2005 Remaster" → edition="2005 Remaster"
-        version_keywords = r"(?:Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)"
-        
         # Find all matches of version keywords
-        all_matches = list(re.finditer(rf"\b{version_keywords}\b", self.raw_title, re.IGNORECASE))
+        all_matches = list(_VERSION_KEYWORDS_PATTERN.finditer(self.raw_title))
         clean_title = self.raw_title
         
         if all_matches:
@@ -257,7 +269,7 @@ class EchosyncTrack:
                 edition_text = self.raw_title[edition_start:].strip()
                 
                 # Remove trailing closing brackets/parens if present
-                edition_text = re.sub(r'[\)\]]\s*$', '', edition_text).strip()
+                edition_text = _EDITION_CLEANUP_RE.sub('', edition_text).strip()
                 
                 # Only set edition if not explicitly provided
                 if self.edition is None and edition_text:
@@ -268,11 +280,7 @@ class EchosyncTrack:
 
         # 3. Strip Featured Artist Attribution
         # Remove (feat. ...), [feat. ...], or trailing "feat. ..." after all other info is extracted
-        attribution_pattern = re.compile(
-            r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+.*?[\]\)]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$",
-            re.IGNORECASE
-        )
-        clean_title = attribution_pattern.sub("", clean_title).strip()
+        clean_title = _ATTRIBUTION_PATTERN.sub("", clean_title).strip()
 
         # 4. Balanced Quote Stripping
         clean_title = clean_title.strip()
