@@ -68,6 +68,31 @@ _EDITION_CLEAN_LEAD_DASH_RE = re.compile(r'^\s*[-–—]\s*')
 _EDITION_CLEAN_SPACES_RE = re.compile(r'\s+')
 _EDITION_MARKER_CLEAN_RE = re.compile(r'\s*\(?(?:deluxe|standard|explicit|clean|remaster|remastered|edition|ed\.)\)?', flags=re.IGNORECASE)
 
+# Normalize chars regexes
+_NORM_APOSTROPHE_RE = re.compile(r"[‘’ʼʻ′`´＇]")
+_NORM_DASH_RE = re.compile(r"[‐‑‒–—―−﹣－⁃]")
+_NORM_QUOTE_RE = re.compile(r"[“”„‟″]")
+_NORM_SPACE_RE = re.compile(r"[          ]")
+
+# Normalize text regexes
+_NORM_FEAT_RE = re.compile(r'\b(feat\.?|ft\.?|featuring|x)\b', flags=re.IGNORECASE)
+_NORM_COLLAPSE_SPACE_RE = re.compile(r'\s+')
+_NORM_BRACKETS_PAREN_RE = re.compile(r'\s*\([^)]*\)')
+_NORM_BRACKETS_SQUARE_RE = re.compile(r'\s*\[[^\]]*\]')
+_NORM_BRACKETS_ANGLE_RE = re.compile(r'\s*《[^》]*》')
+_NORM_BRACKETS_CORNER_RE = re.compile(r'\s*【[^】]*】')
+_NORM_BRACKETS_CORNER2_RE = re.compile(r'\s*〈[^〉]*〉')
+_NORM_BRACKETS_QUOTE_RE = re.compile(r'\s*「[^」]*」')
+_NORM_BRACKETS_QUOTE2_RE = re.compile(r'\s*『[^』]*』')
+_NORM_BRACKETS_FULL_PAREN_RE = re.compile(r'\s*（[^）]*）')
+_NORM_TRAILING_AMP_RE = re.compile(r"\s+&\s+\S+.*$")
+_NORM_TRAILING_FEAT_RE = re.compile(r"\s+(feat\.?|featuring|with)\b.*$", flags=re.IGNORECASE)
+_NORM_ALPHANUM_RE = re.compile(r'[^\w\s\-\'\"]')
+_NORM_MULTIPLE_AMP_RE = re.compile(r'\s*&\s*')
+_NORM_AUDIO_TERMS_PATTERN = r'\s*[-~]?\s*(?:\b|\()(?:official\s+(?:music\s+|lyric\s+)?video|official\s+audio|audio|video|lyric\s+video|lyrics?)(?:\b|\))'
+_NORM_AUDIO_TERMS_RE = re.compile(_NORM_AUDIO_TERMS_PATTERN, flags=re.IGNORECASE)
+
+
 def normalize_chars(text: Optional[str]) -> str:
     """
     Normalize Unicode character variants to their plain ASCII canonical equivalents.
@@ -128,16 +153,16 @@ def normalize_chars(text: Optional[str]) -> str:
         return text or ""
 
     # Apostrophe / single-quote variants → plain apostrophe
-    text = re.sub(r"[\u2018\u2019\u02bc\u02bb\u2032\u0060\u00b4\uff07]", "'", text)
+    text = _NORM_APOSTROPHE_RE.sub("'", text)
 
     # Dash / hyphen variants → standard hyphen-minus
-    text = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d\u2043]", "-", text)
+    text = _NORM_DASH_RE.sub("-", text)
 
     # Double quote variants → plain double quote
-    text = re.sub(r"[\u201c\u201d\u201e\u201f\u2033]", '"', text)
+    text = _NORM_QUOTE_RE.sub('"', text)
 
     # Whitespace variants → regular space
-    text = re.sub(r"[\u00a0\u202f\u2009\u2008\u2007\u2006\u2005\u2004\u2003\u2002]", " ", text)
+    text = _NORM_SPACE_RE.sub(" ", text)
 
     # Ellipsis → three dots
     text = text.replace("\u2026", "...")
@@ -175,10 +200,10 @@ def normalize_text(text: Optional[str]) -> str:
 
     # Unify featured-artist separators so "feat/ft/featuring/x" become "&"
     # and compare consistently against strings that already use '&'.
-    text = re.sub(r'\b(feat\.?|ft\.?|featuring|x)\b', '&', text, flags=re.IGNORECASE)
+    text = _NORM_FEAT_RE.sub('&', text)
     
     # Remove extra whitespace
-    text = re.sub(r'\s+', ' ', text)
+    text = _NORM_COLLAPSE_SPACE_RE.sub(' ', text)
     
     return text
 
@@ -253,8 +278,8 @@ def normalize_title(title: Optional[str], plugin_context: Optional[Dict[str, Any
     # Strip ASCII-bracketed content that survived (e.g. version/edit labels).
     # CJK brackets are intentionally preserved — the CJK plugin reads them via
     # the pre_normalize_title hook for drama-context scoring.
-    normalized = re.sub(r'\s*\([^)]*\)', '', normalized)   # (anything)
-    normalized = re.sub(r'\s*\[[^\]]*\]', '', normalized)  # [anything]
+    normalized = _NORM_BRACKETS_PAREN_RE.sub('', normalized)   # (anything)
+    normalized = _NORM_BRACKETS_SQUARE_RE.sub('', normalized)  # [anything]
 
     # Strip CJK drama/promo suffix after a dash separator, now that the
     # pre_normalize_title hook (step 1b) has already captured any drama context.
@@ -272,23 +297,23 @@ def normalize_title(title: Optional[str], plugin_context: Optional[Dict[str, Any
     # Strip remaining CJK bracket sequences (standalone annotations not preceded
     # by a dash, e.g. "望天涯《加長版》"). Must run after the suffix strip above
     # so the brackets remain available as anchors for that pattern.
-    normalized = re.sub(r'\s*《[^》]*》', '', normalized)   # 《…》
-    normalized = re.sub(r'\s*【[^】]*】', '', normalized)   # 【…】
-    normalized = re.sub(r'\s*〈[^〉]*〉', '', normalized)   # 〈…〉
-    normalized = re.sub(r'\s*「[^」]*」', '', normalized)   # 「…」
-    normalized = re.sub(r'\s*『[^』]*』', '', normalized)   # 『…』
-    normalized = re.sub(r'\s*（[^）]*）', '', normalized)   # （…）
+    normalized = _NORM_BRACKETS_ANGLE_RE.sub('', normalized)   # 《…》
+    normalized = _NORM_BRACKETS_CORNER_RE.sub('', normalized)   # 【…】
+    normalized = _NORM_BRACKETS_CORNER2_RE.sub('', normalized)   # 〈…〉
+    normalized = _NORM_BRACKETS_QUOTE_RE.sub('', normalized)   # 「…」
+    normalized = _NORM_BRACKETS_QUOTE2_RE.sub('', normalized)   # 『…』
+    normalized = _NORM_BRACKETS_FULL_PAREN_RE.sub('', normalized)   # （…）
 
     # Remove trailing feat/with clauses (normalize_text already converts "feat" → "&",
     # so both the original keyword and the "&" form need to be handled).
-    normalized = re.sub(r"\s+&\s+\S+.*$", "", normalized)
-    normalized = re.sub(r"\s+(feat\.?|featuring|with)\b.*$", "", normalized, flags=re.IGNORECASE)
+    normalized = _NORM_TRAILING_AMP_RE.sub("", normalized)
+    normalized = _NORM_TRAILING_FEAT_RE.sub("", normalized)
 
     # Keep alphanumeric, spaces, hyphens, and plain quotes/apostrophes.
-    normalized = re.sub(r'[^\w\s\-\'\"]', '', normalized)
+    normalized = _NORM_ALPHANUM_RE.sub('', normalized)
 
 
-    normalized = re.sub(r'\s+', ' ', normalized)
+    normalized = _NORM_COLLAPSE_SPACE_RE.sub(' ', normalized)
     
     return normalized.strip()
 
@@ -310,8 +335,8 @@ def normalize_artist(artist: Optional[str]) -> str:
     # normalize_text already unifies feat/ft/featuring/x to '&'.
     # Keep collaborator names so forms like "Artist feat. Guest" and
     # "Artist & Guest" normalize to the same canonical string.
-    normalized = re.sub(r'\s*&\s*', ' & ', normalized)
-    normalized = re.sub(r'\s+', ' ', normalized)
+    normalized = _NORM_MULTIPLE_AMP_RE.sub(' & ', normalized)
+    normalized = _NORM_COLLAPSE_SPACE_RE.sub(' ', normalized)
     
     return normalized.strip()
 
@@ -333,7 +358,7 @@ def normalize_album(album: Optional[str]) -> str:
     
     # Remove OST/Soundtrack metadata (same patterns as normalize_title)
     for pattern in _OST_PATTERNS:
-        normalized = pattern.sub('', normalized)
+        normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
     
     # Remove edition markers like "Deluxe Edition", "(Remastered)", etc.
     normalized = _EDITION_MARKER_CLEAN_RE.sub('', normalized)
@@ -494,67 +519,23 @@ def extract_edition(title: Optional[str]) -> Tuple[str, Optional[str]]:
     if not title:
         return ("", None)
 
-    # Edition keywords to detect (case-insensitive)
-    EDITION_PATTERNS = [
-        # Remaster variants
-        (r'\b(remaster(?:ed)?)\b', 'Remastered'),
-        (r'\b(remastering)\b', 'Remastered'),
-
-        # Live variants
-        (r'\b(live)\b', 'Live'),
-
-        # Remix variants
-        (r'\b(remix(?:ed)?)\b', 'Remix'),
-        (r'\b(rmx)\b', 'Remix'),
-
-        # Album editions
-        (r'\b(deluxe)\s*(?:edition)?\b', 'Deluxe'),
-        (r'\b(standard)\s*(?:edition)?\b', 'Standard'),
-        (r'\b(expanded)\s*(?:edition)?\b', 'Expanded'),
-        (r'\b(limited)\s*(?:edition)?\b', 'Limited'),
-        (r'\b(special)\s*(?:edition)?\b', 'Special'),
-        (r'\b(anniversary)\s*(?:edition)?\b', 'Anniversary'),
-        (r'\b(collector\'?s?)\s*(?:edition)?\b', 'Collectors'),
-
-        # Content type
-        (r'\b(explicit)\b', 'Explicit'),
-        (r'\b(clean)\b', 'Clean'),
-        (r'\b(instrumental)\b', 'Instrumental'),
-        (r'\b(acapella|a\s*cappella)\b', 'Acapella'),
-        (r'\b(acoustic)\b', 'Acoustic'),
-        (r'\b(unplugged)\b', 'Unplugged'),
-
-        # Version types
-        (r'\b(original)\s*(?:version|mix)?\b', 'Original'),
-        (r'\b(radio)\s*(?:edit|version|mix)?\b', 'Radio Edit'),
-        (r'\b(extended)\s*(?:version|mix)?\b', 'Extended'),
-        (r'\b(club)\s*(?:version|mix)?\b', 'Club Mix'),
-        (r'\b(album)\s*(?:version)?\b', 'Album Version'),
-        (r'\b(single)\s*(?:version)?\b', 'Single Version'),
-
-        # Quality indicators
-        (r'\b(24\s*bit)\b', '24-bit'),
-        (r'\b(16\s*bit)\b', '16-bit'),
-        (r'\b(hi\s*res|high\s*resolution)\b', 'Hi-Res'),
-    ]
-
     title_lower = title.lower()
     detected_editions = []
     cleaned_title = title
 
     # Check each pattern
-    for pattern, edition_name in EDITION_PATTERNS:
-        match = re.search(pattern, title_lower, re.IGNORECASE)
+    for pattern, edition_name in _EDITION_PATTERNS:
+        match = pattern.search(title_lower)
         if match:
             detected_editions.append(edition_name)
             # Remove the matched text from title (case-insensitive)
-            cleaned_title = re.sub(pattern, '', cleaned_title, flags=re.IGNORECASE)
+            cleaned_title = pattern.sub('', cleaned_title)
 
     # Clean up the title: remove extra spaces, parentheses, brackets, dashes
-    cleaned_title = re.sub(r'\s*[\(\[\{]\s*[\)\]\}]\s*', ' ', cleaned_title)  # Empty brackets
-    cleaned_title = re.sub(r'\s*[-–—]\s*$', '', cleaned_title)  # Trailing dashes
-    cleaned_title = re.sub(r'^\s*[-–—]\s*', '', cleaned_title)  # Leading dashes
-    cleaned_title = re.sub(r'\s+', ' ', cleaned_title).strip()
+    cleaned_title = _EDITION_CLEAN_BRACKETS_RE.sub(' ', cleaned_title)  # Empty brackets
+    cleaned_title = _EDITION_CLEAN_TRAIL_DASH_RE.sub('', cleaned_title)  # Trailing dashes
+    cleaned_title = _EDITION_CLEAN_LEAD_DASH_RE.sub('', cleaned_title)  # Leading dashes
+    cleaned_title = _EDITION_CLEAN_SPACES_RE.sub(' ', cleaned_title).strip()
 
     # Return cleaned title and first detected edition (prioritize first match)
     edition = detected_editions[0] if detected_editions else None

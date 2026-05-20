@@ -1,3 +1,18 @@
+
+import re
+_ISRC_PATTERN = re.compile(r'^[A-Z]{2}[A-Z0-9]{3}\d{2}\d{5}$')
+INVALID_ISRC_VALUES = frozenset(["0", "NULL", "NONE", "N/A", "UNKNOWN"])
+_ARTIST_SPLIT_PATTERN = re.compile(r'\s*(?:&|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b|\band\b|,)\s*', flags=re.IGNORECASE)
+_BRACKET_REMOVE_PATTERN = re.compile(r'[\(\[].*?[\)\]]')
+_HYPHEN_TRUNCATE_PATTERN = re.compile(r'-.*$')
+_STRIP_FEATURED_ARTIST_PATTERN = re.compile(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+.*?[\)\]]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$", flags=re.IGNORECASE)
+_STRIP_SPECIAL_CHARS_PATTERN = re.compile(r'[^\w\s]')
+
+class MatchingConstants:
+    TIE_BREAKER_SAVE_STORAGE = 'SAVE_STORAGE'
+    TIE_BREAKER_SPEED = 'SPEED'
+    TIE_BREAKER_MAX_QUALITY = 'MAX_QUALITY'
+
 import re
 """
 WeightedMatchingEngine - Core scoring logic with 5-step gating
@@ -66,10 +81,9 @@ class WeightedMatchingEngine:
         if not isrc_string:
             return False
         cleaned_isrc = str(isrc_string).replace("-", "").strip().upper()
-        if cleaned_isrc in ["0", "NULL", "NONE", "N/A", "UNKNOWN"]:
+        if cleaned_isrc in INVALID_ISRC_VALUES:
             return False
-        isrc_pattern = re.compile(r'^[A-Z]{2}[A-Z0-9]{3}\d{2}\d{5}$')
-        return bool(isrc_pattern.match(cleaned_isrc))
+        return bool(_ISRC_PATTERN.match(cleaned_isrc))
 
     VERSION_KEYWORDS = {
         'remix', 'rmx', 'mix', 'edit', 'extended', 'instrumental',
@@ -762,7 +776,7 @@ class WeightedMatchingEngine:
         if not source.edition and candidate.edition:
             candidate_lower = candidate.edition.lower()
             # Check if candidate is a remix/live/etc (not just remaster which is usually okay)
-            unwanted_versions = {'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club'}
+            unwanted_versions = frozenset({'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club'})
             if any(unwanted in candidate_lower for unwanted in unwanted_versions):
                 return False, f"Source wants original but candidate is '{candidate.edition}' (version mismatch)"
             # Remaster/deluxe/etc are usually acceptable if source has no version preference
@@ -851,7 +865,7 @@ class WeightedMatchingEngine:
         
         # Split by common delimiters
         # Matches: &, feat., ft., featuring, with, and, ,
-        tokens = re.split(r'\s*(?:&|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b|\band\b|,)\s*', artist_string, flags=re.IGNORECASE)
+        tokens = _ARTIST_SPLIT_PATTERN.split(artist_string)
         
         # Normalize each token
         normalized = set()
@@ -923,11 +937,11 @@ class WeightedMatchingEngine:
             # If Pass 1 is below a high threshold (e.g. 0.85), strip parentheticals, brackets, and post-hyphen info
             if title_score < 0.85:
                 # Aggressively strip out anything inside (), [], and anything after -
-                base_source = re.sub(r'[\(\[].*?[\)\]]', '', source.title)
-                base_source = re.sub(r'-.*$', '', base_source)
+                base_source = _BRACKET_REMOVE_PATTERN.sub('', source.title)
+                base_source = _HYPHEN_TRUNCATE_PATTERN.sub('', base_source)
 
-                base_candidate = re.sub(r'[\(\[].*?[\)\]]', '', candidate.title)
-                base_candidate = re.sub(r'-.*$', '', base_candidate)
+                base_candidate = _BRACKET_REMOVE_PATTERN.sub('', candidate.title)
+                base_candidate = _HYPHEN_TRUNCATE_PATTERN.sub('', base_candidate)
 
                 pass_2_score = self._fuzzy_match(base_source, base_candidate)
 
@@ -1061,9 +1075,9 @@ class WeightedMatchingEngine:
             pass
         s = s.lower()
         # Strip featured artist markers first
-        s = re.sub(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+.*?[\]\)]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$", "", s, flags=re.IGNORECASE)
+        s = _STRIP_FEATURED_ARTIST_PATTERN.sub("", s)
         # Remove special characters but keep spaces
-        s = re.sub(r'[^\w\s]', '', s)
+        s = _STRIP_SPECIAL_CHARS_PATTERN.sub('', s)
         # Collapse multiple spaces
         s = ' '.join(s.split())
         return s
@@ -1211,16 +1225,16 @@ class WeightedMatchingEngine:
             
             upload_speed = cand.identifiers.get('upload_speed', 0) or 0
 
-            tie_breaker = getattr(self.weights, 'tie_breaker', 'MAX_QUALITY')
+            tie_breaker = getattr(self.weights, 'tie_breaker', MatchingConstants.TIE_BREAKER_MAX_QUALITY)
 
             # Since reverse=True is used globally for the sort:
             # - We return values so that higher is better.
             # - For values where lower is better (size in SAVE_STORAGE, queue_length in SPEED), we negate them.
 
-            if tie_breaker == 'SAVE_STORAGE':
+            if tie_breaker == MatchingConstants.TIE_BREAKER_SAVE_STORAGE:
                 # We want lowest size to win the tie-breaker
                 return (score, -size)
-            elif tie_breaker == 'SPEED':
+            elif tie_breaker == MatchingConstants.TIE_BREAKER_SPEED:
                 # We want lowest queue length, then highest upload speed
                 return (score, -queue_length, upload_speed)
             else:
