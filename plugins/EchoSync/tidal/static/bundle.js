@@ -437,7 +437,7 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 					a = /* @__PURE__ */ new Map();
 					var s = [...l.current.keys()].filter((e) => this.current.has(e) ? this.current.get(e)[0] !== e.v : !0);
 					if (s.length > 0) for (let e of this.#u) !(e.f & 155648) && Tt(e, s, a) && (e.f & 4194320 ? (A(e, C), l.schedule(e)) : l.#d.add(e));
-					if (l.#l.length > 0) {
+					if (l.#l.length > 0 && !l.#h) {
 						l.apply();
 						for (var c of l.#l) l.#v(c, [], []);
 						l.#l = [];
@@ -1517,7 +1517,7 @@ function Y(e) {
 		var n = V.deps;
 		if (V.f & 2097152) e.rv < Qn && (e.rv = Qn, K === null && n !== null && n[q] === e ? q++ : K === null ? K = [e] : K.push(e));
 		else {
-			(V.deps ??= []).push(e);
+			V.deps ??= [], c.call(V.deps, e) || V.deps.push(e);
 			var r = e.reactions;
 			r === null ? e.reactions = [V] : c.call(r, V) || r.push(V);
 		}
