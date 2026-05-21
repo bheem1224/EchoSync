@@ -1097,6 +1097,17 @@ function en(e) {
 		}
 	});
 }
+new Set([
+	"copyWithin",
+	"fill",
+	"pop",
+	"push",
+	"reverse",
+	"shift",
+	"sort",
+	"splice",
+	"unshift"
+]);
 var tn, nn, rn, an;
 function on() {
 	if (tn === void 0) {

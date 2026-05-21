@@ -1100,6 +1100,17 @@ function nn(e) {
 		}
 	});
 }
+new Set([
+	"copyWithin",
+	"fill",
+	"pop",
+	"push",
+	"reverse",
+	"shift",
+	"sort",
+	"splice",
+	"unshift"
+]);
 var rn, an, on, sn;
 function cn() {
 	if (rn === void 0) {

@@ -1094,6 +1094,17 @@ function Qt(e) {
 		}
 	});
 }
+new Set([
+	"copyWithin",
+	"fill",
+	"pop",
+	"push",
+	"reverse",
+	"shift",
+	"sort",
+	"splice",
+	"unshift"
+]);
 var $t, en, tn, nn;
 function rn() {
 	if ($t === void 0) {
