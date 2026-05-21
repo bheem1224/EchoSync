@@ -9,7 +9,7 @@ bp = Blueprint("tidal_routes", __name__, url_prefix="/api/plugins/tidal")
 @bp.get('')
 def list_accounts():
     """List all Tidal accounts."""
-    from core.plugin_loader import PluginRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry
     # Use the namespaced ID
     plugin_id = 'EchoSync/tidal'
     
@@ -17,7 +17,7 @@ def list_accounts():
         return jsonify({'accounts': [], 'redirect_uri': ''}), 200
 
     try:
-        from core.plugin_loader import get_plugin
+        from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin(plugin_id)
         if not plugin:
             return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
@@ -62,7 +62,7 @@ def create_account():
     Create a new Tidal account with per-account credentials.
     Body: { account_name, client_id, client_secret }
     """
-    from core.plugin_loader import PluginRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry
     plugin_id = 'EchoSync/tidal'
     if PluginRegistry.is_provider_disabled(plugin_id) or PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
@@ -77,7 +77,7 @@ def create_account():
         if not client_id or not client_secret:
             return jsonify({'error': 'client_id and client_secret are required'}), 400
         
-        from core.plugin_loader import get_plugin
+        from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin(plugin_id)
         if not plugin:
             return jsonify({'error': 'Plugin instance not found'}), 500
@@ -114,12 +114,12 @@ def create_account():
 @bp.get('/<int:account_id>')
 def get_account(account_id):
     """Get a specific Tidal account with credentials."""
-    from core.plugin_loader import PluginRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry
     plugin_id = 'EchoSync/tidal'
     if PluginRegistry.is_provider_disabled(plugin_id) or PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
-        from core.plugin_loader import get_plugin
+        from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin(plugin_id)
         if not plugin:
             return jsonify({'error': 'Plugin not found'}), 404
@@ -157,7 +157,7 @@ def update_account(account_id):
     Update Tidal account name and/or credentials.
     Body: { account_name?, client_id?, client_secret? }
     """
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
@@ -179,7 +179,7 @@ def update_account(account_id):
         # Update credentials if provided (non-empty)
         logger.info(f"UPDATE PAYLOAD for account {account_id}: client_id={'present' if payload.get('client_id') else 'missing'}, client_secret={'present' if payload.get('client_secret') else 'missing'}")
         
-        from core.plugin_loader import get_plugin
+        from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin('EchoSync/tidal')
         
         if 'client_id' in payload and payload.get('client_id'):
@@ -216,7 +216,7 @@ def update_account(account_id):
 @bp.put('/<int:account_id>/activate')
 def activate_account(account_id):
     """Activate a Tidal account."""
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
@@ -244,7 +244,7 @@ def activate_account(account_id):
 @bp.delete('/<int:account_id>')
 def delete_account(account_id):
     """Delete a Tidal account."""
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
@@ -277,7 +277,7 @@ def set_redirect_uri():
         if not redirect_uri:
             return jsonify({'error': 'redirect_uri is required'}), 400
         
-        from core.plugin_loader import get_plugin
+        from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin('EchoSync/tidal')
         if not plugin:
             return jsonify({'error': 'Plugin not found'}), 404
@@ -305,7 +305,7 @@ def debug_account(account_id):
         if not account:
             return jsonify({'error': 'Account not found'}), 404
         
-        from core.plugin_loader import get_plugin
+        from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin('EchoSync/tidal')
         
         # Try to load global credentials

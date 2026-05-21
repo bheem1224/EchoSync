@@ -5,7 +5,7 @@ Inherits from PluginBase with enable/disable support
 
 from typing import List, Dict, Optional, Any
 from core.tiered_logger import get_logger
-from core.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_SDK import PluginBase
 from core.settings import get_setting, set_setting
 from .client import LRCLibClient
 

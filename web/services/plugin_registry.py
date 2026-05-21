@@ -1,8 +1,8 @@
-from core.plugin_loader import get_plugin_capabilities
+from core.nexus_framework.plugin_loader import get_plugin_capabilities
 from typing import List, Optional, Dict
 
 
-from core.plugin_loader import PluginRegistry as CorePluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry as CorePluginRegistry, ServiceRegistry
 
 
 # Instance for direct access (for backward compatibility and testing)

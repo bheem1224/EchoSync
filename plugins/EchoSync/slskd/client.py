@@ -6,9 +6,9 @@ import time
 from pathlib import Path
 from core.tiered_logger import get_logger
 
-from core.plugin_SDK import DownloaderProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.nexus_framework.plugin_SDK import DownloaderProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
-from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.request_manager import RequestManager, RateLimitConfig, HttpError
 

@@ -5,7 +5,7 @@ import json
 from core.tiered_logger import get_logger
 
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
-from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from time_utils import ensure_utc, utc_now
 
 
@@ -145,7 +145,7 @@ class JellyfinTrack:
             return self._client.get_album_by_id(self._album_id)
         return None
 
-from core.plugin_SDK import MediaServerProvider
+from core.nexus_framework.plugin_SDK import MediaServerProvider
 
 class JellyfinClient(MediaServerProvider):
     name = "EchoSync.jellyfin"

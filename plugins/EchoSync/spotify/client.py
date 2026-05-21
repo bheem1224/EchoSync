@@ -9,11 +9,11 @@ from typing import Dict, List, Optional, Any, Union, Iterator
 import time
 from dataclasses import dataclass
 from core.tiered_logger import get_logger
-from core.plugin_SDK import PluginBase
-from core.plugin_loader import get_provider_capabilities
-from core.plugin_SDK import SyncServiceProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.nexus_framework.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_loader import get_provider_capabilities
+from core.nexus_framework.plugin_SDK import SyncServiceProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
-from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 from core.caching.provider_cache import provider_cache
@@ -39,7 +39,7 @@ class ConfigCacheHandler(CacheHandler):
             
             # Access the plugin instance via registry or pass it in
             # For simplicity, we use the registry here as this is often called by Spotipy
-            from core.plugin_loader import get_plugin
+            from core.nexus_framework.plugin_loader import get_plugin
             plugin = get_plugin('EchoSync/spotify')
             if not plugin:
                 return None
@@ -88,7 +88,7 @@ class ConfigCacheHandler(CacheHandler):
                 logger.warning(f"No token_info provided to save for account {self.account_id}")
                 return
             
-            from core.plugin_loader import get_plugin
+            from core.nexus_framework.plugin_loader import get_plugin
             plugin = get_plugin('EchoSync/spotify')
             if not plugin:
                 return
@@ -761,7 +761,7 @@ class SpotifyClient(SyncServiceProvider):
         # usually handles the orchestration. If the provider itself must do it:
 
         try:
-            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
             target = PluginRegistry.create_instance(target_provider)
             if not target:
                 logger.error(f"Target provider {target_provider} not found")

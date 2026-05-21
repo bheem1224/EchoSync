@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from core.tiered_logger import get_logger
-from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from services.download_manager import get_download_manager
 from services.match_service import MatchService, MatchContext
 from core.matching_engine import EchosyncTrack
@@ -730,7 +730,7 @@ class PlaylistSyncService:
 
         Returns a summary dict with counts for monitoring.
         """
-        from core.plugin_loader import PluginRegistry, ServiceRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         from database.config_database import get_config_database
 
         summary = {
@@ -974,7 +974,7 @@ class PlaylistSyncService:
         client = getattr(self, "provider", None) or getattr(self, "provider_client", None) or getattr(self, "active_provider", None) or getattr(self, "source_provider", None)
 
         if not client:
-            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
             client = PluginRegistry.create_instance(provider_name, account_id=account_id)
 
         if not client:

@@ -49,7 +49,7 @@ from web.routes.webhooks import bp as webhooks_bp
 from web.routes.local_server import bp as local_server_bp
 from web.routes.local_metadata import bp as local_metadata_bp
 
-from core.plugin_loader import PluginLoader
+from core.nexus_framework.plugin_loader import PluginLoader
 from core.settings import config_manager
 from core.job_queue import start_job_queue
 from core.backend_services import start_services
@@ -209,7 +209,7 @@ def create_app(testing: bool = False) -> Flask:
     loader = PluginLoader(app_root)
     
     # Load Disabled List first
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     disabled_providers = config_manager.get('disabled_providers', [])
     PluginRegistry.set_disabled_providers(disabled_providers)
     
@@ -224,7 +224,7 @@ def create_app(testing: bool = False) -> Flask:
             print(f"[ERROR] Failed to register blueprint {bp.name}: {e}")
 
     # Register explicitly mounted Plugin SDK Routers
-    from core.plugin_router import PluginRouterRegistry
+    from core.nexus_framework.plugin_router import PluginRouterRegistry
     for bp in PluginRouterRegistry.get_all_routers():
         try:
             app.register_blueprint(bp)

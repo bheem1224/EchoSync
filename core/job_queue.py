@@ -585,8 +585,28 @@ def _execute_job_logic(job: ScheduledJob):
             job.running = True
             job.last_started = time.time()
             
-            # Execute the actual function
-            job.func()
+            try:
+                # Execute the actual function
+                job.func()
+            except Exception as e:
+                # 1. Log the failure happens automatically in the outer except block, but we must force rollback
+                logger.error(f"Job failed: {e}")
+                raise
+            finally:
+                # Absolute cleanup guarantee
+                # Explicitly remove the session from the registry to ensure no state
+                # leaks into the next job that picks up this thread.
+                try:
+                    from database.music_database import music_session_registry
+                    music_session_registry.remove()
+                except ImportError:
+                    pass
+
+                try:
+                    from database.working_database import working_session_registry
+                    working_session_registry.remove()
+                except ImportError:
+                    pass
             
             job.last_success = time.time()
             job.last_error = None

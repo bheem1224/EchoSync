@@ -53,7 +53,7 @@ class MediaScanManager:
         """Get the active media client based on the flags/tags system."""
         try:
             from core.settings import config_manager
-            from core.plugin_loader import PluginRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry
             active_servers = PluginRegistry.get_active_services_by_type('media_server')
             active_server = active_servers[0].split('.')[-1] if active_servers else 'plex'
 

@@ -68,7 +68,7 @@ _PINYIN_ARTIST_PASS      = 90    # token_sort_ratio needed to accept the match
 
 
 def _get_provider_for_account(provider_name, acc_id=None):
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
     if provider_name in ['spotify', 'tidal']:
         if acc_id is None:
@@ -386,7 +386,7 @@ def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_
 def _analyze_playlists_internal(source, target_source, playlists, quality_profile="Auto"):
     """Run the canonical playlist matching flow used by both manual and scheduled syncs."""
     from database.music_database import MusicDatabase
-    from core.plugin_SDK import PlaylistSupport
+    from core.nexus_framework.plugin_SDK import PlaylistSupport
     from core.matching_engine.scoring_profile import ExactSyncProfile
     from sqlalchemy import text
 
@@ -1308,7 +1308,7 @@ def start_analyze_job():
             ANALYSIS_JOBS[job_id]['finished_at'] = time.time()
 
     # Register a one-off job and execute it immediately
-    from core.plugin_SDK import PlaylistSupport, get_plugin_capabilities
+    from core.nexus_framework.plugin_SDK import PlaylistSupport, get_plugin_capabilities
 
     source_caps = get_plugin_capabilities(source)
     if not source_caps:
@@ -1358,7 +1358,7 @@ def trigger_sync():
     if not playlist_name:
         return jsonify({"accepted": False, "error": "playlist_name required"}), 400
 
-    from core.plugin_SDK import PlaylistSupport, get_provider_capabilities
+    from core.nexus_framework.plugin_SDK import PlaylistSupport, get_provider_capabilities
 
     try:
         source_caps = get_provider_capabilities(source)
@@ -1571,7 +1571,7 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
         })
 
         try:
-            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
             target_provider = PluginRegistry.get_provider(target)
             
             if not target_provider:

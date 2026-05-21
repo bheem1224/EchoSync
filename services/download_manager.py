@@ -28,8 +28,8 @@ from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 from core.matching_engine.text_utils import normalize_artist, normalize_title
 from core.settings import config_manager
 from time_utils import utc_now
-from core.plugin_loader import PluginRegistry, ServiceRegistry
-from core.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_SDK import PluginBase
 from database.music_database import get_database, Track, Artist, Album
 from database.working_database import get_working_database, Download
 

@@ -47,7 +47,7 @@ async def start_services() -> None:
     """
     logger.info("Starting backend services...")
 
-    from core.plugin_loader import PluginRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry
 
     active_clients = []
 

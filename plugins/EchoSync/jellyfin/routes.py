@@ -12,7 +12,7 @@ bp = Blueprint('jellyfin_routes', __name__, url_prefix='/api/jellyfin')
 @bp.get('/settings')
 def get_settings():
     """Get Jellyfin server settings (base_url, username, password status)."""
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_provider_disabled('jellyfin'):
         return jsonify({'settings': {}}), 200
     try:
@@ -71,7 +71,7 @@ def get_settings():
 @bp.post('/settings')
 def save_settings():
     """Save Jellyfin server settings."""
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_provider_disabled('jellyfin'):
         return jsonify({'error': 'Jellyfin provider disabled'}), 403
     try:

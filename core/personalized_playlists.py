@@ -408,7 +408,7 @@ class PersonalizedPlaylistsService:
         playlist_algorithms support and loads them dynamically.
         """
         try:
-            from core.plugin_SDK import CAPABILITY_REGISTRY
+            from core.nexus_framework.plugin_SDK import CAPABILITY_REGISTRY
             import inspect
             
             for provider_name, capabilities in CAPABILITY_REGISTRY.items():

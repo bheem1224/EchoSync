@@ -320,7 +320,7 @@ class AutoImportService:
             # ── Phase 3: per-file decision logic (Chunked Concurrency) ─────────
             import asyncio
             from core.matching_engine.track_parser import parse_file
-            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
             from core.matching_engine.matching_engine import WeightedMatchingEngine
             from core.matching_engine.scoring_profile import PROFILE_AUTO_IMPORT_STRICT
 

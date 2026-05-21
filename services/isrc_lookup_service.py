@@ -66,7 +66,7 @@ def _dispatch_isrc_via_providers(
     the best-quality source wins.  The ``tried`` list records every provider
     that was attempted regardless of outcome.
     """
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     from core.enums import Capability
 
     tried: List[str] = []

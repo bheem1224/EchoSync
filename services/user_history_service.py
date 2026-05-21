@@ -67,7 +67,7 @@ class UserHistoryService:
         
         try:
             # Get all active media servers
-            from core.plugin_loader import PluginRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry
             active_servers = PluginRegistry.get_active_services_by_type('media_server')
             
             if not active_servers:

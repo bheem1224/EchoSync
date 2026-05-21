@@ -15,7 +15,7 @@ import textwrap
 
 import pytest
 
-from core.plugin_loader import PluginSecurityScanner
+from core.nexus_framework.plugin_loader import PluginSecurityScanner
 
 
 # ---------------------------------------------------------------------------

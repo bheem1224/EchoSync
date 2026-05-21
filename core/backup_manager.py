@@ -58,7 +58,7 @@ class BackupManager:
                 
             # 3. Generate plugins_snapshot.json
             plugins_snapshot = {}
-            from core.plugin_loader import PluginRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry
             for name, entry in PluginRegistry.get_all().items():
                 cls = entry['class']
                 # Skip core providers, only backup community plugins
@@ -177,7 +177,7 @@ class BackupManager:
 
     def _sync_plugins_to_snapshot(self, snapshot: Dict[str, Any]):
         """Downloads/Updates plugins to match the snapshot versions."""
-        from core.plugin_store import plugin_store
+        from core.nexus_framework.plugin_store import plugin_store
         
         # 1. Fetch available plugins from store to find download URLs
         store_plugins = plugin_store.get_all_store_plugins()

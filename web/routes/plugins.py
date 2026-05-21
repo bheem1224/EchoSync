@@ -5,8 +5,8 @@ from core.settings import config_manager
 from werkzeug.utils import safe_join
 import os
 from pathlib import Path
-from core.plugin_loader import get_all_plugins
-from core.plugin_store import plugin_store
+from core.nexus_framework.plugin_loader import get_all_plugins
+from core.nexus_framework.plugin_store import plugin_store
 from core.tiered_logger import get_logger
 
 logger = get_logger("plugins_route")
@@ -158,7 +158,7 @@ def get_plugin_store():
 @bp.route('/install', methods=['POST'])
 @require_auth
 def install_plugin():
-    from core.plugin_store import PrivilegeEscalationError
+    from core.nexus_framework.plugin_store import PrivilegeEscalationError
     data = request.json or {}
     plugin_info = data.get('plugin')
     channel = data.get('channel') or (plugin_info.get('channel') if plugin_info else 'stable')
@@ -182,7 +182,7 @@ def install_plugin():
 @bp.route('/update', methods=['POST'])
 @require_auth
 def update_plugin():
-    from core.plugin_store import PrivilegeEscalationError
+    from core.nexus_framework.plugin_store import PrivilegeEscalationError
     data = request.json or {}
     plugin_info = data.get('plugin')
     force_consent = request.args.get('force_consent') == 'true'
@@ -344,7 +344,7 @@ def set_plugin_beta_opt(plugin_id):
             conn.commit()
             
         try:
-            from core.plugin_loader import PluginLoader
+            from core.nexus_framework.plugin_loader import PluginLoader
             app_root = Path(__file__).parent.parent.parent
             loader = PluginLoader(app_root)
             loader.reload_plugin(db_plugin_id)
@@ -413,7 +413,7 @@ def toggle_plugin(plugin_id):
 
     # Hot-Reload if enabled
     try:
-        from core.plugin_loader import PluginLoader
+        from core.nexus_framework.plugin_loader import PluginLoader
         from database.config_database import get_config_database
         db = get_config_database()
         

@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request, send_file
 from web.services.library_service import LibraryAdapter
 from services.media_manager import MediaManagerService
 from core.settings import config_manager
-from core.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.tiered_logger import get_logger
 import threading
 
@@ -28,7 +28,7 @@ def trigger_library_scan():
         path = request.args.get("path")
         
         # Get active media server
-        from core.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry
         active_servers = PluginRegistry.get_active_services_by_type('media_server')
         active_server = active_servers[0] if active_servers else None
 
@@ -83,7 +83,7 @@ def get_library_scan_status():
     """
     try:
         # Get active media server
-        from core.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry
         active_servers = PluginRegistry.get_active_services_by_type('media_server')
         active_server = active_servers[0] if active_servers else None
 
@@ -136,7 +136,7 @@ def update_database():
         
         # Get active media server
         try:
-            from core.plugin_loader import PluginRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry
             active_servers = PluginRegistry.get_active_services_by_type('media_server')
             active_server = active_servers[0] if active_servers else None
         except Exception as e:
@@ -173,7 +173,7 @@ def update_database():
         # Get provider instance
         provider = None
         try:
-            from core.plugin_loader import PluginRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry
             active_servers = PluginRegistry.get_active_services_by_type('media_server')
             active_server = active_servers[0] if active_servers else None
         except Exception as e:
@@ -258,7 +258,7 @@ def get_database_update_status():
     """
     global _db_update_worker
     try:
-        from core.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry
         active_servers = PluginRegistry.get_active_services_by_type('media_server')
         active_server = active_servers[0] if active_servers else None
     except Exception as e:
@@ -311,7 +311,7 @@ def backfill_identifiers():
     Returns the number of new identifier rows written.
     """
     try:
-        from core.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_loader import PluginRegistry
         active_servers = PluginRegistry.get_active_services_by_type('media_server')
         active_server = active_servers[0] if active_servers else None
         

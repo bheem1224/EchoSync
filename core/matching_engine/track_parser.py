@@ -34,6 +34,30 @@ class TrackParser:
 
     # Regex patterns for common filename formats
     PATTERNS = {
+        'extension_strip': re.compile(r'\.(mp3|flac|m4a|aac|ogg|wav|wma)$', re.IGNORECASE),
+        'quality_marker_strip': re.compile(r'\b(?:FLAC|MP3|AAC|OGG|ALAC|Opus|WMA)\b', re.IGNORECASE),
+        'bitrate_marker_strip': re.compile(r'\b(?:24[-_]?bit|16[-_]?bit|lossless|320kbps|256kbps|192kbps|320k|256k|192k)\b', re.IGNORECASE),
+        'phrase_clean': re.compile(r'[()[\]{}<>]'),
+        'brackets_clean': re.compile(r'\[.*?\]'),
+        'braces_clean': re.compile(r'{.*?}'),
+        'angle_brackets_clean': re.compile(r'<.*?>'),
+        'underscores_clean': re.compile(r'_+'),
+        'tildes_clean': re.compile(r'~.*?~'),
+        'junk_extensions_clean': re.compile(r'\s*(?:www\d+|320|192|256)[\.\s]*$', re.IGNORECASE),
+        'file_extensions_clean': re.compile(r'\b(?:mp3|flac|m4a|aac|ogg|wav|wma)$', re.IGNORECASE),
+        'whitespace_clean': re.compile(r'\s+'),
+        'extension_strip': re.compile(r'\.(mp3|flac|m4a|aac|ogg|wav|wma)$', re.IGNORECASE),
+        'quality_marker_strip': re.compile(r'(?:FLAC|MP3|AAC|OGG|ALAC|Opus|WMA)', re.IGNORECASE),
+        'bitrate_marker_strip': re.compile(r'(?:24[-_]?bit|16[-_]?bit|lossless|320kbps|256kbps|192kbps|320k|256k|192k)', re.IGNORECASE),
+        'phrase_clean': re.compile(r'[()[\]{}<>]'),
+        'brackets_clean': re.compile(r'\[.*?\]'),
+        'braces_clean': re.compile(r'{.*?}'),
+        'angle_brackets_clean': re.compile(r'<.*?>'),
+        'underscores_clean': re.compile(r'_+'),
+        'tildes_clean': re.compile(r'~.*?~'),
+        'junk_extensions_clean': re.compile(r'\s*(?:www\d+|320|192|256)[\.\s]*$', re.IGNORECASE),
+        'file_extensions_clean': re.compile(r'(?:mp3|flac|m4a|aac|ogg|wav|wma)$', re.IGNORECASE),
+        'whitespace_clean': re.compile(r'\s+'),
         # Artist - Title format (most common)
         'artist_title': re.compile(
             r'^(?P<artist>[^-]+?)\s*[-–]\s*(?P<title>.+?)(?:\s*\((?P<version>[^)]+)\))?$',
@@ -205,7 +229,7 @@ class TrackParser:
     def _try_parse_patterns(self, working_string: str) -> Optional[Dict[str, str]]:
         """Try each parsing pattern in order"""
         # Remove file extensions
-        clean_string = re.sub(r'\.(mp3|flac|m4a|aac|ogg|wav|wma)$', '', working_string, flags=re.IGNORECASE)
+        clean_string = self.PATTERNS['extension_strip'].sub('', working_string)
 
         # Try artist-album-title pattern first
         match = self.PATTERNS['artist_album_title'].search(clean_string)
@@ -262,8 +286,8 @@ class TrackParser:
 
     def _remove_quality_markers(self, text: str) -> str:
         """Remove quality markers from text"""
-        text = re.sub(r'\b(?:FLAC|MP3|AAC|OGG|ALAC|Opus|WMA)\b', '', text, flags=re.IGNORECASE)
-        text = re.sub(r'\b(?:24[-_]?bit|16[-_]?bit|lossless|320kbps|256kbps|192kbps|320k|256k|192k)\b', '', text, flags=re.IGNORECASE)
+        text = self.PATTERNS['quality_marker_strip'].sub('', text)
+        text = self.PATTERNS['bitrate_marker_strip'].sub('', text)
         return text.strip()
 
     def _extract_version(self, text: str) -> Optional[str]:
@@ -283,7 +307,7 @@ class TrackParser:
             end = min(len(text), match.end() + 20)
             phrase = text[start:end].strip()
             # Clean up the phrase
-            phrase = re.sub(r'[()[\]{}<>]', '', phrase)
+            phrase = self.PATTERNS['phrase_clean'].sub('', phrase)
             return phrase if len(phrase) < 100 else None
 
         return None
@@ -336,18 +360,18 @@ class TrackParser:
     def _remove_junk(self, text: str) -> str:
         """Remove junk characters and markers"""
         # Remove common junk patterns
-        text = re.sub(r'\[.*?\]', '', text)  # [brackets]
-        text = re.sub(r'{.*?}', '', text)    # {braces}
-        text = re.sub(r'<.*?>', '', text)    # <angle brackets>
-        text = re.sub(r'_+', ' ', text)      # underscores to spaces
-        text = re.sub(r'~.*?~', '', text)    # ~tildes~
+        text = self.PATTERNS['brackets_clean'].sub('', text)  # [brackets]
+        text = self.PATTERNS['braces_clean'].sub('', text)    # {braces}
+        text = self.PATTERNS['angle_brackets_clean'].sub('', text)    # <angle brackets>
+        text = self.PATTERNS['underscores_clean'].sub(' ', text)      # underscores to spaces
+        text = self.PATTERNS['tildes_clean'].sub('', text)    # ~tildes~
 
         # Remove common extensions/markers at end
-        text = re.sub(r'\s*(?:www\d+|320|192|256)[\.\s]*$', '', text, flags=re.IGNORECASE)
-        text = re.sub(r'\b(?:mp3|flac|m4a|aac|ogg|wav|wma)$', '', text, flags=re.IGNORECASE)
+        text = self.PATTERNS['junk_extensions_clean'].sub('', text)
+        text = self.PATTERNS['file_extensions_clean'].sub('', text)
 
         # Clean up whitespace
-        text = re.sub(r'\s+', ' ', text)
+        text = self.PATTERNS['whitespace_clean'].sub(' ', text)
         return text.strip()
 
     def _normalize_parsed_data(self, data: Dict[str, str]) -> Dict[str, str]:

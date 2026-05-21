@@ -379,7 +379,7 @@ class ConfigDatabase:
                     rows = cursor.fetchall()
                     if rows:
                         try:
-                            from core.plugin_loader import get_all_plugins
+                            from core.nexus_framework.plugin_loader import get_all_plugins
                             all_plugins = get_all_plugins()
                             for r in rows:
                                 s_id, s_name = r[0], r[1]
@@ -421,7 +421,7 @@ class ConfigDatabase:
         resolved_plugin_id_str = name
         resolved_version = '1.0.0'
         try:
-            from core.plugin_loader import get_all_plugins
+            from core.nexus_framework.plugin_loader import get_all_plugins
             for p in get_all_plugins():
                 # name is usually like 'plex', 'spotify', 'tidal'. We match against folder_name or name
                 if name.lower() in p.get('folder_name', '').lower() or name.lower() == p.get('name', '').lower():

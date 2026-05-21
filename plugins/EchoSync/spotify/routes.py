@@ -43,7 +43,7 @@ def begin_auth():
     """Start OAuth flow for Spotify. Returns an auth URL to redirect the user to.
     Query params: account_id (required)
     """
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     from plugins.EchoSync.spotify.client import SpotifyClient
     if PluginRegistry.is_provider_disabled('spotify'):
         return jsonify({'error': 'Spotify provider is disabled'}), 403
@@ -100,7 +100,7 @@ def oauth_callback():
     """Handle Spotify OAuth callback and exchange code for tokens.
     Expects query params: code, state
     """
-    from core.plugin_loader import PluginRegistry, ServiceRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_provider_disabled('spotify'):
         return jsonify({'error': 'Spotify provider is disabled'}), 403
     try:

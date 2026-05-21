@@ -3,8 +3,8 @@ Plex Music Provider - Refactored
 Simplified implementation using EchosyncTrack and new core features.
 """
 
-from core.plugin_SDK import PluginBase
-from core.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.nexus_framework.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
 from core.file_handling.path_mapper import PathMapper

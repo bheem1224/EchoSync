@@ -50,7 +50,7 @@ def _get_top_listened_artists(limit: int = 5):
     working_db = get_working_database()
 
     # Get all active media servers
-    from core.plugin_loader import PluginRegistry
+    from core.nexus_framework.plugin_loader import PluginRegistry
     active_servers = PluginRegistry.get_active_services_by_type('media_server')
     if not active_servers:
         return []
@@ -113,7 +113,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             
             # Get active media server
             try:
-                from core.plugin_loader import PluginRegistry
+                from core.nexus_framework.plugin_loader import PluginRegistry
                 active_servers = PluginRegistry.get_active_services_by_type('media_server')
                 active_server = active_servers[0] if active_servers else None
             except Exception as e:
@@ -127,7 +127,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             # Get provider instance
             provider = None
             try:
-                from core.plugin_loader import PluginRegistry, ServiceRegistry
+                from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
                 provider = PluginRegistry.create_instance(active_server)
             except Exception as e:
                 logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
@@ -175,9 +175,9 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                 # newly-imported tracks don't wait up to 24 h for the daily job.
                 if worker.successful_operations > 0:
                     try:
-                        from services.metadata_enhancer import get_metadata_enhancer
+                        from services.metadata_enhancer import get_metadata_enhancer, RetroactiveEnhancer
                         logger.info("Database update: triggering post-import metadata enhancement pass")
-                        get_metadata_enhancer().enhance_library_metadata(batch_size=50)
+                        RetroactiveEnhancer().enhance_library_metadata(batch_size=50)
                     except Exception as _enhance_err:
                         logger.warning(f"Post-import metadata enhancement failed: {_enhance_err}")
 
@@ -215,7 +215,7 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
         try:
             logger.info("Starting scheduled media server scan job")
 
-            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
             active_servers = PluginRegistry.get_active_services_by_type('media_server')
             active_server = active_servers[0] if active_servers else None
@@ -492,8 +492,8 @@ def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400,
     def run_metadata_enhancement():
         try:
             logger.info("Starting scheduled retroactive metadata enhancement job")
-            from services.metadata_enhancer import get_metadata_enhancer
-            get_metadata_enhancer().enhance_library_metadata(batch_size=batch_size)
+            from services.metadata_enhancer import get_metadata_enhancer, RetroactiveEnhancer
+            RetroactiveEnhancer().enhance_library_metadata(batch_size=batch_size)
             logger.info("Retroactive metadata enhancement job complete")
         except Exception as e:
             logger.error(f"Retroactive metadata enhancement job failed: {e}", exc_info=True)
@@ -519,7 +519,7 @@ def register_plugin_update_check_job(interval_seconds: int = 43200, enabled: boo
     def run_plugin_update_check():
         try:
             logger.info("Starting scheduled plugin update check")
-            from core.plugin_store import plugin_store
+            from core.nexus_framework.plugin_store import plugin_store
             from core.event_bus import event_bus
 
             plugins = plugin_store.get_all_store_plugins()
@@ -655,7 +655,7 @@ def register_acoustid_submission_job(fingerprint: str, duration: int, mbid: str)
     """
     def submit_fingerprint():
         try:
-            from core.plugin_loader import PluginRegistry, ServiceRegistry
+            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
             client = PluginRegistry.get_provider("acoustid")
             if client and hasattr(client, "submit_fingerprint"):
                 logger.info(f"Submitting AcoustID fingerprint for MBID: {mbid}")
