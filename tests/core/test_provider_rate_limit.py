@@ -61,12 +61,12 @@ class TestRateLimiting:
             manager = RequestManager("test", rate=config)
 
             # First call - should not sleep (no previous call)
-            manager._apply_rate_limit()
+            manager._apply_rate_limit('https://test.com')
             mock_sleep.assert_not_called()
 
             # Second call immediately after
             # _apply_rate_limit updates _last_call_ts to current_time
-            manager._apply_rate_limit()
+            manager._apply_rate_limit('https://test.com')
 
             # Should sleep for roughly 1.0s
             # Logic: delta = 0, min_interval = 1.0. sleep(1.0 - 0)

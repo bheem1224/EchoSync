@@ -434,7 +434,7 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 					a = /* @__PURE__ */ new Map();
 					var s = [...l.current.keys()].filter((e) => this.current.has(e) ? this.current.get(e)[0] !== e.v : !0);
 					if (s.length > 0) for (let e of this.#u) !(e.f & 155648) && Ct(e, s, a) && (e.f & 4194320 ? (k(e, b), l.schedule(e)) : l.#d.add(e));
-					if (l.#l.length > 0) {
+					if (l.#l.length > 0 && !l.#h) {
 						l.apply();
 						for (var c of l.#l) l.#v(c, [], []);
 						l.#l = [];
@@ -1497,7 +1497,7 @@ function Q(e) {
 		var n = U.deps;
 		if (U.f & 2097152) e.rv < Gn && (e.rv = Gn, Y === null && n !== null && n[X] === e ? X++ : Y === null ? Y = [e] : Y.push(e));
 		else {
-			(U.deps ??= []).push(e);
+			U.deps ??= [], c.call(U.deps, e) || U.deps.push(e);
 			var r = e.reactions;
 			r === null ? e.reactions = [U] : c.call(r, U) || r.push(U);
 		}

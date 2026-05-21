@@ -20,6 +20,7 @@ import requests
 from requests import Response
 
 from core.settings import config_manager
+from core.rate_limiter import GlobalRateLimiter
 
 
 @dataclass
@@ -76,8 +77,6 @@ class RequestManager:
         self._session = (session_factory() if session_factory else requests.Session())
         self.retry = retry or RetryConfig()
         self.rate = rate or self._load_rate_limit_from_config()
-        self._last_call_ts: float = 0.0
-        self._rate_lock = threading.Lock()  # Protects _last_call_ts for concurrent executor threads
 
     def _load_rate_limit_from_config(self) -> RateLimitConfig:
         """Load rate limit configuration from config_manager."""
@@ -89,21 +88,11 @@ class RequestManager:
         except (TypeError, ValueError):
             return RateLimitConfig(requests_per_second=1.0)
 
-    def _apply_rate_limit(self):
-        """Apply rate limiting before making a request.
-
-        Thread-safe: the lock serialises concurrent executor threads so that each
-        thread sees an up-to-date _last_call_ts before sleeping and updating it.
-        """
+    def _apply_rate_limit(self, url: str):
+        """Apply rate limiting before making a request using global rate limiter."""
         if not self.rate.requests_per_second or self.rate.requests_per_second <= 0:
             return
-        min_interval = 1.0 / self.rate.requests_per_second
-        with self._rate_lock:
-            now = time.time()
-            delta = now - self._last_call_ts
-            if delta < min_interval:
-                time.sleep(min_interval - delta)
-            self._last_call_ts = time.time()
+        GlobalRateLimiter.get_instance().wait_for_url(url, self.rate.requests_per_second)
 
     def _should_retry(self, resp: Optional[Response], exc: Optional[Exception], attempt: int) -> bool:
         """Determine if a request should be retried."""
@@ -146,7 +135,7 @@ class RequestManager:
         while True:
             attempt += 1
             try:
-                self._apply_rate_limit()
+                self._apply_rate_limit(url)
                 resp = self._session.request(method, url, timeout=kwargs.pop('timeout', 15), **kwargs)
                 if not self._should_retry(resp, None, attempt):
                     if resp.status_code >= 400:

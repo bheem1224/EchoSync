@@ -175,9 +175,9 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                 # newly-imported tracks don't wait up to 24 h for the daily job.
                 if worker.successful_operations > 0:
                     try:
-                        from services.metadata_enhancer import get_metadata_enhancer
+                        from services.metadata_enhancer import get_metadata_enhancer, RetroactiveEnhancer
                         logger.info("Database update: triggering post-import metadata enhancement pass")
-                        get_metadata_enhancer().enhance_library_metadata(batch_size=50)
+                        RetroactiveEnhancer().enhance_library_metadata(batch_size=50)
                     except Exception as _enhance_err:
                         logger.warning(f"Post-import metadata enhancement failed: {_enhance_err}")
 
@@ -492,8 +492,8 @@ def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400,
     def run_metadata_enhancement():
         try:
             logger.info("Starting scheduled retroactive metadata enhancement job")
-            from services.metadata_enhancer import get_metadata_enhancer
-            get_metadata_enhancer().enhance_library_metadata(batch_size=batch_size)
+            from services.metadata_enhancer import get_metadata_enhancer, RetroactiveEnhancer
+            RetroactiveEnhancer().enhance_library_metadata(batch_size=batch_size)
             logger.info("Retroactive metadata enhancement job complete")
         except Exception as e:
             logger.error(f"Retroactive metadata enhancement job failed: {e}", exc_info=True)

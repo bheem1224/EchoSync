@@ -324,6 +324,21 @@ class ConfigDatabase:
                     )
                 """)
 
+                # UI Component Registry (Sprint 6 — replaces live ui_manifest.json disk parsing)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS ui_components (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        plugin_id INTEGER,
+                        tag_name TEXT NOT NULL UNIQUE,
+                        component_type TEXT NOT NULL,
+                        entry_path TEXT NOT NULL,
+                        is_core INTEGER DEFAULT 0,
+                        created_at INTEGER DEFAULT (strftime('%s','now')),
+                        updated_at INTEGER DEFAULT (strftime('%s','now'))
+                    )
+                """)
+
+
                 # Migration: Add missing columns to services table if they don't exist
                 cursor.execute("PRAGMA table_info(services)")
                 columns = [row[1] for row in cursor.fetchall()]
@@ -351,6 +366,9 @@ class ConfigDatabase:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_mapped ON account_mappings(mapped_account_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_plugin_id ON plugin_snapshots(plugin_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_expires ON plugin_snapshots(expires_at)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ui_components_plugin_id ON ui_components(plugin_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ui_components_component_type ON ui_components(component_type)")
+
 
                 # Inline legacy services migration to avoid schema cache latency on separate connection
                 cursor.execute("PRAGMA table_info(services)")
