@@ -1,3 +1,32 @@
+<script context="module">
+  const clickOutsideRegistry = new Map();
+  let globalListenerAttached = false;
+
+  function handleGlobalClick(event) {
+    for (const [node, callback] of clickOutsideRegistry.entries()) {
+      if (node && !node.contains(event.target) && !event.defaultPrevented) {
+        callback(event);
+      }
+    }
+  }
+
+  function registerClickOutside(node, callback) {
+    clickOutsideRegistry.set(node, callback);
+    if (!globalListenerAttached) {
+      document.addEventListener('click', handleGlobalClick, true);
+      globalListenerAttached = true;
+    }
+  }
+
+  function unregisterClickOutside(node) {
+    clickOutsideRegistry.delete(node);
+    if (clickOutsideRegistry.size === 0 && globalListenerAttached) {
+      document.removeEventListener('click', handleGlobalClick, true);
+      globalListenerAttached = false;
+    }
+  }
+</script>
+
 <script>
   import { createEventDispatcher } from 'svelte';
   import { slide } from 'svelte/transition';
@@ -91,17 +120,14 @@
     showDropdown = false;
   }
 
-  // Helper for clicking outside (inline implementation)
+  // Helper for clicking outside (centralized implementation)
   function clickOutside(node) {
-    const handleClick = (event) => {
-      if (node && !node.contains(event.target) && !event.defaultPrevented) {
-        closeDropdown();
-      }
-    };
-    document.addEventListener('click', handleClick, true);
+    registerClickOutside(node, () => {
+      closeDropdown();
+    });
     return {
       destroy() {
-        document.removeEventListener('click', handleClick, true);
+        unregisterClickOutside(node);
       }
     };
   }

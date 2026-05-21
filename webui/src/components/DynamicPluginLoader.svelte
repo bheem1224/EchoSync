@@ -73,6 +73,19 @@
     });
   }
 
+  /**
+   * Helper to wrap a promise with a timeout.
+   */
+  function waitWithTimeout(promise, ms, timeoutMsg) {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(timeoutMsg)), ms);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+      clearTimeout(timeoutId);
+    });
+  }
+
   // ── Data fetching ──────────────────────────────────────────────────────
   onMount(async () => {
     if (!category) {
@@ -109,28 +122,50 @@
         return;
       }
 
-      // 3. Inject each plugin's bundle script and wait for all to settle
-      const loadResults = await Promise.allSettled(
-        matching.map(plugin => {
-          const bundleUrl = plugin.components[category]?.bundle_url;
-          if (!bundleUrl) return Promise.resolve(null);
+      // 3. Inject each plugin's bundle script and await registration
+      const loadResults = await Promise.all(
+        matching.map(async (plugin) => {
+          const componentInfo = plugin.components[category];
+          const bundleUrl = componentInfo?.bundle_url;
+          const tag = componentInfo?.element_tag;
+          if (!bundleUrl || !tag) return null;
           
           const absoluteUrl = (bundleUrl.startsWith('http') || bundleUrl.startsWith('/'))
             ? bundleUrl
             : `/api/system/plugins/${plugin.id}/ui/${bundleUrl.replace(/^\//, '')}`;
             
-          return injectScript(absoluteUrl, plugin.version).then(() => ({
-            plugin,
-            tag: plugin.components[category]?.element_tag,
-            apiBase: plugin.api_base ?? `/api/plugins/${plugin.id}`,
-          }));
+          try {
+            await injectScript(absoluteUrl, plugin.version);
+            
+            // Defensively wait for custom element registry definition with a timeout
+            await waitWithTimeout(
+              customElements.whenDefined(tag),
+              2000,
+              `Timeout waiting for Custom Element "${tag}" registration`
+            );
+            
+            return {
+              plugin,
+              tag,
+              apiBase: plugin.api_base ?? `/api/plugins/${plugin.id}`,
+              failed: false
+            };
+          } catch (err) {
+            console.error(`[DynamicPluginLoader] Error loading plugin ${plugin.id}:`, err);
+            return {
+              plugin,
+              tag,
+              apiBase: plugin.api_base ?? `/api/plugins/${plugin.id}`,
+              failed: true,
+              errorMsg: err?.message ?? 'Unknown loading error'
+            };
+          }
         })
       );
 
-      // 4. Collect successfully loaded plugins with strict deduplication
+      // 4. Collect loaded plugins (including failed ones for error cards) with strict deduplication
       resolvedPlugins = loadResults
-        .filter(r => r.status === 'fulfilled' && r.value != null && r.value.tag)
-        .map(r => r.value)
+        .filter(item => item != null && item.tag)
         .filter((value, index, self) =>
           self.findIndex(item => {
             // Deduplicate by normalizing IDs (strip core./plugin. prefixes) and comparing tags
@@ -139,14 +174,6 @@
             return (norm1 === norm2 && item.tag === value.tag);
           }) === index
         );
-
-      // Log any failures but don't crash the UI grid
-      loadResults
-        .filter(r => r.status === 'rejected')
-        .forEach(r => {
-          console.warn('[DynamicPluginLoader] Plugin bundle failed to load:', r.reason);
-          // Optional: we could push a 'failed' state to resolvedPlugins to show an error card
-        });
 
     } catch (err) {
       console.warn('[DynamicPluginLoader] Failed to load plugin manifest:', err?.message ?? err);
@@ -169,13 +196,20 @@
 {:else if resolvedPlugins.length > 0}
   <!-- One element per resolved Web Component -->
   <div class="plugin-loader-grid" data-category={category}>
-    {#each resolvedPlugins as { tag, apiBase, plugin } (plugin.id || `${tag}-${apiBase}`)}
-      <svelte:element
-        this={tag}
-        api-base={apiBase}
-        plugin-id={plugin.id}
-        {...passProps}
-      />
+    {#each resolvedPlugins as { tag, apiBase, plugin, failed, errorMsg } (plugin.id || `${tag}-${apiBase}`)}
+      {#if failed}
+        <div class="plugin-error-card">
+          <h4>Failed to load {plugin.name || plugin.id}</h4>
+          <p>{errorMsg}</p>
+        </div>
+      {:else}
+        <svelte:element
+          this={tag}
+          api-base={apiBase}
+          plugin-id={plugin.id}
+          {...passProps}
+        />
+      {/if}
     {/each}
   </div>
 
@@ -251,5 +285,30 @@
     border: 1px solid rgba(239, 68, 68, 0.3);
     color: #ef4444;
     font-size: 13px;
+  }
+
+  /* ── Failed Plugin Card ─────────────────────────────────────────── */
+  .plugin-error-card {
+    padding: 16px;
+    border-radius: 12px;
+    background: rgba(239, 68, 68, 0.05);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .plugin-error-card h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fca5a5;
+  }
+
+  .plugin-error-card p {
+    margin: 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.6);
   }
 </style>
