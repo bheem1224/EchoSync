@@ -854,13 +854,17 @@ class PluginStore:
             except Exception as e:
                 logger.warning(f"Failed to teardown dynamic tables for {plugin_id}: {e}")
 
-            # 4. Delete config keys and remove from services table
+            # 4. Delete config keys, UI components, and remove from services table
             with db._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")
                 c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (plugin_id,))
+                # Sprint 6: Explicit UI Registry teardown (do NOT rely on FK CASCADE)
+                c.execute("DELETE FROM ui_components WHERE plugin_id=?", (plugin_id,))
+                logger.info(f"[UIRegistry] Purged UI components for plugin {plugin_id}")
                 c.execute("DELETE FROM services WHERE plugin_id=?", (plugin_id,))
                 conn.commit()
+
 
             # 4b. Delete working state KVS entries to prevent orphaned data
             try:

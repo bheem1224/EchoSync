@@ -183,6 +183,8 @@ def create_app(testing: bool = False) -> Flask:
     app.register_blueprint(local_metadata_bp)
     from web.routes.plugins import bp as core_plugins_bp
     app.register_blueprint(core_plugins_bp)
+    from web.routes.ui_registry import ui_registry_bp
+    app.register_blueprint(ui_registry_bp)
     
     # Initialize databases (triggers v2.1.0 migration if needed)
     try:

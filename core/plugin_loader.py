@@ -27,6 +27,96 @@ def generate_plugin_id(name: str) -> int:
     """Generate a consistent 32-bit integer ID from a plugin name."""
     return zlib.crc32(name.encode('utf-8')) & 0xFFFFFFFF
 
+
+def _sync_ui_components_to_db(plugin_id: int, install_path: str, is_core: bool = False) -> None:
+    """Read ui_manifest.json once and UPSERT component definitions into ui_components.
+
+    Called during plugin boot and installation.  Handles orphan cleanup for
+    components that are no longer declared in the manifest.
+    """
+    from database.config_database import get_config_database
+    from database import execute_write
+
+    manifest_path = Path(install_path) / "ui_manifest.json"
+    if not manifest_path.exists():
+        return
+
+    try:
+        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning(f"[UIRegistry] Failed to parse ui_manifest.json for plugin {plugin_id}: {exc}")
+        return
+
+    raw_components = manifest_data.get("components", {})
+    raw_assets = manifest_data.get("assets", {})
+
+    # Derive canonical bundle URL
+    folder_name = Path(install_path).name
+    default_bundle = f"/api/system/plugins/{folder_name}/static/bundle.js"
+    bundle_url = (
+        raw_assets.get("js")
+        or raw_assets.get("bundle.js")
+        or raw_assets.get("main")
+        or default_bundle
+    )
+
+    # Collect (tag_name, component_type, entry_path) tuples
+    entries: list[tuple[str, str, str]] = []
+    for category, value in raw_components.items():
+        if isinstance(value, str):
+            entries.append((value, category, bundle_url))
+        elif isinstance(value, dict):
+            tag = value.get("element_tag", "")
+            entry = value.get("bundle_url") or bundle_url
+            if tag:
+                entries.append((tag, category, entry))
+
+    # Also materialise views as component_type="view"
+    for view in manifest_data.get("views", []):
+        if isinstance(view, dict) and view.get("id"):
+            tag = f"es-view-{view['id']}"
+            entries.append((tag, "view", view.get("yaml_path", "")))
+
+    if not entries:
+        return
+
+    db = get_config_database()
+    tag_names_in_manifest = {e[0] for e in entries}
+
+    def _upsert(cursor):
+        for tag_name, comp_type, entry_path in entries:
+            cursor.execute(
+                """
+                INSERT INTO ui_components (plugin_id, tag_name, component_type, entry_path, is_core, updated_at)
+                VALUES (?, ?, ?, ?, ?, strftime('%s','now'))
+                ON CONFLICT(tag_name) DO UPDATE SET
+                    plugin_id      = excluded.plugin_id,
+                    component_type = excluded.component_type,
+                    entry_path     = excluded.entry_path,
+                    is_core        = excluded.is_core,
+                    updated_at     = strftime('%s','now')
+                """,
+                (plugin_id, tag_name, comp_type, entry_path, 1 if is_core else 0),
+            )
+
+        # Orphan cleanup: remove rows for this plugin that are no longer in manifest
+        cursor.execute(
+            "SELECT tag_name FROM ui_components WHERE plugin_id = ?", (plugin_id,)
+        )
+        existing = {row[0] for row in cursor.fetchall()}
+        orphans = existing - tag_names_in_manifest
+        for orphan_tag in orphans:
+            cursor.execute(
+                "DELETE FROM ui_components WHERE plugin_id = ? AND tag_name = ?",
+                (plugin_id, orphan_tag),
+            )
+
+    try:
+        execute_write(str(db.database_path), _upsert)
+        logger.info(f"[UIRegistry] Synced {len(entries)} UI components for plugin {plugin_id}")
+    except Exception as exc:
+        logger.error(f"[UIRegistry] Failed to sync UI components for plugin {plugin_id}: {exc}")
+
 # ---------------------------------------------------------------------------
 # Zero-Trust Plugin Security Scanner
 # ---------------------------------------------------------------------------
@@ -433,6 +523,12 @@ class PluginLoader:
                     SET name=?, plugin_id=?, absolute_install_path=?, version=?, service_type=?, description=?, updated_at=strftime('%s','now')
                     WHERE id=?
                 """, (manifest_display_name, p_id, manifest_path, manifest_version, manifest_type, manifest_desc, db_id))
+
+                # Sprint 6: Sync UI manifest into ui_components table
+                try:
+                    _sync_ui_components_to_db(p_id, manifest_path)
+                except Exception as ui_err:
+                    logger.warning(f"Failed to sync UI components for plugin {p_id}: {ui_err}")
             
             # 5. Now register any physical plugins that are NOT yet in the database!
             c.execute("SELECT plugin_id FROM services")
@@ -842,6 +938,12 @@ class PluginLoader:
                             break
                     if not found:
                         logger.debug(f"No PluginBase found in {module_path}")
+
+                # Sprint 6: Sync UI manifest into ui_components table
+                try:
+                    _sync_ui_components_to_db(plugin_id, str(package_dir.absolute()))
+                except Exception as ui_err:
+                    logger.warning(f"[UIRegistry] Failed to sync UI components during load for plugin {plugin_id}: {ui_err}")
 
                 # Collect Blueprints
                 for bp_attr in ('RouteBlueprint', 'RouteBlueprint2', 'RouteBlueprint3'):

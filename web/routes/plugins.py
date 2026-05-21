@@ -23,114 +23,69 @@ def list_plugins():
 def get_ui_manifest():
     """Return active plugin UI manifests.
 
-    Manifest shape per plugin
-    ─────────────────────────
+    .. deprecated::
+        Use ``GET /api/ui/registry`` instead.  This endpoint now reads from the
+        central ``ui_components`` table and emits an ``X-Deprecated`` header.
+
+    Manifest shape per plugin (backward-compatible)
+    ─────────────────────────────────────────────────
     {
-      "id":         "spotify",          // folder_name
+      "id":         "spotify",
       "api_base":   "/api/plugins/spotify",
-      "components": {                   // category → { element_tag, bundle_url }
-        "music_service": {
-          "element_tag": "echosync-spotify-card",
-          "bundle_url":  "/api/system/plugins/spotify/ui/bundle.js"
-        }
-      },
-      "assets": {                       // legacy flat asset map (preserved)
-        "js": "/api/system/plugins/spotify/ui/bundle.js"
-      },
-      "views": [                        // plugin-declared dashboard views
-        {
-          "id":        "spotify_analytics",
-          "title":     "Spotify Stats",
-          "icon":      "mdi-spotify",
-          "yaml_path": "/api/plugins/spotify/static/dashboard.yaml"
-        }
-      ]
+      "components": { "category": { "element_tag", "bundle_url" } },
+      "assets":     {},
+      "views":      []
     }
     """
-    plugins = get_all_plugins()
-    ui_plugins = []
+    from web.routes.ui_registry import _query_ui_registry
+    from flask import make_response
 
-    for plugin in plugins:
-        if not plugin.get('enabled', False):
-            continue
+    registry = _query_ui_registry()
 
-        ui_manifest = plugin.get('ui_manifest')
-        if not ui_manifest:
-            continue
+    # Reshape DB-backed registry into the legacy per-plugin format the old
+    # frontend expects: list of plugin objects with components/views.
+    plugin_map: dict = {}  # plugin_id -> assembled dict
 
-        # Fix Bug 1: Ensure we use the correct folder_name (Nexus schema aware)
-        folder_name = plugin.get('folder_name') or plugin.get('id', '').replace('plugin.', '').replace('core.', '')
+    for type_key, components in registry.items():
+        # Reverse the pluralisation (cards → card)
+        category = type_key.rstrip("s") if type_key.endswith("s") and type_key != "settings" else type_key
 
-        # Physical verification: only include plugins where UI assets actually exist on disk
-        abs_path = plugin.get('abs_path')
-        if abs_path:
-            bundle_file = Path(abs_path) / 'static' / 'bundle.js'
-            if not bundle_file.exists():
-                logger.warning(f"Plugin {plugin.get('id')} advertised UI but static/bundle.js is missing at {bundle_file}. Skipping.")
+        for comp in components:
+            pid = comp.get("plugin_id")
+            if pid is None:
                 continue
 
-        # ── Normalize components ──────────────────────────────────────
-        # Old shape: { "dashboard_card": "tag-name" }
-        # New shape: { "category": { "element_tag": "tag-name", "bundle_url": "..." } }
-        raw_components = ui_manifest.get('components', {})
-        raw_assets     = ui_manifest.get('assets', {})
-
-        # Derive the canonical bundle URL from assets (fallback: legacy js key)
-        def _default_bundle_url(folder):
-            return f'/api/system/plugins/{folder}/static/bundle.js'
-
-        bundle_url = (
-            raw_assets.get('js')
-            or raw_assets.get('bundle.js')
-            or raw_assets.get('main')
-            or _default_bundle_url(folder_name)
-        )
-
-        normalized_components = {}
-        for category, value in raw_components.items():
-            if isinstance(value, str):
-                # Legacy: value is just the element tag name
-                normalized_components[category] = {
-                    'element_tag': value,
-                    'bundle_url':  bundle_url,
-                }
-            elif isinstance(value, dict):
-                # New schema: already a structured object
-                # Ensure we override broken/generic bundle_urls with our verified one if needed
-                m_bundle = value.get('bundle_url')
-                if m_bundle and '/static/bundle.js' in m_bundle and '/' not in m_bundle.replace('/api/system/plugins/', '').split('/static/')[0]:
-                     m_bundle = bundle_url
-
-                normalized_components[category] = {
-                    'element_tag': value.get('element_tag', ''),
-                    'bundle_url':  m_bundle or bundle_url,
+            if pid not in plugin_map:
+                plugin_map[pid] = {
+                    "id": str(pid),
+                    "plugin_id": pid,
+                    "api_base": "",
+                    "components": {},
+                    "assets": {},
+                    "views": [],
                 }
 
-        # ── Normalize views ───────────────────────────────────────────
-        raw_views = ui_manifest.get('views', [])
-        normalized_views = []
-        for view in raw_views:
-            if not isinstance(view, dict):
-                continue
-            normalized_views.append({
-                'id':        view.get('id', ''),
-                'title':     view.get('title', ''),
-                'icon':      view.get('icon', None),
-                'yaml_path': view.get('yaml_path', ''),
-            })
+            entry = plugin_map[pid]
 
-        # Nexus Framework: api_base MUST use slashes for URI routing
-        uri_path = folder_name.replace('.', '/')
-        ui_plugins.append({
-            'id':         folder_name,
-            'plugin_id':  plugin.get('id'),
-            'api_base':   f'/api/plugins/{uri_path}',
-            'components': normalized_components,
-            'assets':     raw_assets,
-            'views':      normalized_views,
-        })
+            if category == "view":
+                entry["views"].append({
+                    "id": comp["tag_name"].replace("es-view-", ""),
+                    "title": comp["tag_name"],
+                    "icon": None,
+                    "yaml_path": comp["entry"],
+                })
+            else:
+                entry["components"][category] = {
+                    "element_tag": comp["tag_name"],
+                    "bundle_url": comp["entry"],
+                }
 
-    return jsonify({'plugins': ui_plugins})
+    ui_plugins = list(plugin_map.values())
+
+    resp = make_response(jsonify({"plugins": ui_plugins}))
+    resp.headers["X-Deprecated"] = "Use /api/ui/registry instead"
+    return resp
+
 
 
 @bp.route('/config', methods=['POST'])

@@ -26,6 +26,9 @@ class Service(Base):
 
     configs = relationship("ServiceConfig", back_populates="service", cascade="all, delete-orphan")
     accounts = relationship("Account", back_populates="service", cascade="all, delete-orphan")
+    ui_components = relationship("UIComponent", back_populates="service", cascade="all, delete-orphan",
+                                 foreign_keys="UIComponent.plugin_id",
+                                 primaryjoin="Service.plugin_id == UIComponent.plugin_id")
 
 class ServiceConfig(Base):
     __tablename__ = "service_config"
@@ -135,3 +138,24 @@ class PluginSnapshot(Base):
     snapshot_data = Column(Text, nullable=False)
     expires_at = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=func.now())
+
+class UIComponent(Base):
+    """Central UI Registry — all Web Component, Theme, and Dashboard awareness.
+
+    Populated once at plugin boot/install from ui_manifest.json.
+    Queried by the Svelte frontend via GET /api/ui/registry.
+    """
+    __tablename__ = "ui_components"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    plugin_id = Column(Integer, nullable=True, index=True)  # CRC32 integer; nullable for core components
+    tag_name = Column(String, unique=True, nullable=False)   # e.g. es-spotify-card
+    component_type = Column(String, nullable=False, index=True)  # card, page, settings, theme
+    entry_path = Column(String, nullable=False)              # static route path to compiled .js
+    is_core = Column(Boolean, default=False, server_default='0')
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    service = relationship("Service", back_populates="ui_components",
+                           foreign_keys=[plugin_id],
+                           primaryjoin="UIComponent.plugin_id == Service.plugin_id",
+                           viewonly=True)
