@@ -2,7 +2,7 @@ name: Auto-Version & Build Plugins
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,7 @@ jobs:
   version-and-build:
     runs-on: [self-hosted, linux, x64]
     if: "!contains(github.event.head_commit.message, 'chore(plugins)')"
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,10 +20,16 @@ jobs:
           fetch-depth: 2
           token: ${{ secrets.COMMIT_PAT }}
 
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.COMMIT_PAT }} # Uses your newly recreated Personal Access Token
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Process, Version, and Build Changed Plugins
         env:
@@ -168,10 +174,10 @@ jobs:
         run: |
           cat << 'EOF' > raw_manifest.py
           import glob, json
-          
+
           store_manifest = {"plugins": []}
           repo_base = "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync"
-          
+
           for manifest_file in glob.glob("plugins/EchoSync/*/manifest.json"):
               with open(manifest_file, "r") as f:
                   try:
@@ -201,5 +207,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(plugins): sync versions, package artifacts, and update store [skip ci]"
-          file_pattern: 'plugins/'
-
+          file_pattern: "plugins/"
