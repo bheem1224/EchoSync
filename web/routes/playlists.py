@@ -1358,17 +1358,18 @@ def trigger_sync():
     if not playlist_name:
         return jsonify({"accepted": False, "error": "playlist_name required"}), 400
 
-    from core.nexus_framework.plugin_SDK import PlaylistSupport, get_provider_capabilities
+    from core.nexus_framework.plugin_SDK import PlaylistSupport
+    from core.nexus_framework.plugin_loader import get_plugin_capabilities
 
     try:
-        source_caps = get_provider_capabilities(source)
+        source_caps = get_plugin_capabilities(source)
         if source_caps.supports_playlists not in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
             return jsonify({"accepted": False, "error": f"Source provider {source} does not support reading playlists"}), 400
     except KeyError:
         return jsonify({"accepted": False, "error": f"Source provider {source} not found"}), 400
 
     try:
-        target_caps = get_provider_capabilities(target)
+        target_caps = get_plugin_capabilities(target)
         if target_caps.supports_playlists != PlaylistSupport.READ_WRITE:
             return jsonify({"accepted": False, "error": f"Target provider {target} does not support writing playlists"}), 400
     except KeyError:
@@ -1572,10 +1573,10 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
 
         try:
             from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-            target_provider = PluginRegistry.get_provider(target)
+            target_provider = PluginRegistry.get_plugin(target)
             
             if not target_provider:
-                raise RuntimeError(f"Provider {target} not found")
+                raise RuntimeError(f"Plugin {target} not found")
 
             # Add tracks to target provider's playlist
             synced = 0

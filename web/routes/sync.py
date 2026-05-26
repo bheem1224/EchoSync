@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify
 from core.tiered_logger import get_logger
-from core.nexus_framework.plugin_loader import get_provider_capabilities
+from core.nexus_framework.plugin_loader import get_plugin_capabilities
 from core.nexus_framework.plugin_SDK import PlaylistSupport
 
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
@@ -12,7 +12,7 @@ bp = Blueprint("sync", __name__, url_prefix="/api/sync")
 def _serialize_provider(provider_name):
     """Serialize a provider with capabilities for sync planning."""
     try:
-        caps = get_provider_capabilities(provider_name)
+        caps = get_plugin_capabilities(provider_name)
         return {
             "name": provider_name,
             "display_name": caps.name.title(),
@@ -41,12 +41,12 @@ def build_sync_options():
     provider_targets = []
     library_targets = []
 
-    for provider_name in PluginRegistry.list_providers():
-        if PluginRegistry.is_provider_disabled(provider_name):
+    for provider_name in PluginRegistry.list_plugins():
+        if PluginRegistry.is_plugin_disabled(provider_name):
             continue
 
         try:
-            caps = get_provider_capabilities(provider_name)
+            caps = get_plugin_capabilities(provider_name)
             data = _serialize_provider(provider_name)
 
             # Playlist Provider (Source or Target)
@@ -86,10 +86,10 @@ def build_sync_status():
 
         # Count active playlist providers
         active_sync_providers = 0
-        for name in PluginRegistry.list_providers():
-            if not PluginRegistry.is_provider_disabled(name):
+        for name in PluginRegistry.list_plugins():
+            if not PluginRegistry.is_plugin_disabled(name):
                 try:
-                    caps = get_provider_capabilities(name)
+                    caps = get_plugin_capabilities(name)
                     if caps.supports_playlists in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
                         active_sync_providers += 1
                 except:

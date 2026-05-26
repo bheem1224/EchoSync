@@ -343,7 +343,7 @@ class AutoImportService:
                         local_tracks[file_path] = track
 
                 # Step C: Dispatch Async MusicBrainz Searches
-                mb_client = PluginRegistry.get_provider("musicbrainz")
+                mb_client = PluginRegistry.get_plugin("musicbrainz")
 
                 async def fetch_fallbacks(tracks_dict):
                     if not mb_client:

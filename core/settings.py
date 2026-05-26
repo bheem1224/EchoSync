@@ -409,7 +409,7 @@ class ConfigManager:
                 "plugins_dir": str(self.plugins_path)
             },
             # Provider/Plugin management
-            "disabled_providers": [],  # List of provider/plugin names to disable (e.g., ["spotify", "tidal"])
+            "disabled_plugins": [],  # List of provider/plugin names to disable (e.g., ["spotify", "tidal"])
             "custom_plugin_repos": []   # Custom repository URLs for plugin discovery
         }
         return cfg
@@ -792,26 +792,30 @@ class ConfigManager:
         """Returns the absolute path to the configuration root directory."""
         return self.config_dir
 
-    def get_disabled_providers(self) -> List[str]:
+    def get_disabled_plugins(self) -> List[str]:
         """Return the list of disabled providers/plugins."""
-        return self.get('disabled_providers', [])
+        return self.get('disabled_plugins', [])
 
-    def disable_provider(self, provider_id: str) -> bool:
+    def set_disabled_plugins(self, disabled_list: List[str]):
+        """Set the list of disabled plugins."""
+        self.set('disabled_plugins', disabled_list)
+
+    def disable_plugin(self, provider_id: str) -> bool:
         """Add a provider/plugin to the disabled list."""
-        disabled = self.get_disabled_providers()
+        disabled = self.get_disabled_plugins()
         if provider_id not in disabled:
             disabled.append(provider_id)
-            self.set('disabled_providers', disabled)
+            self.set('disabled_plugins', disabled)
             logger.info(f"Plugin {provider_id} has been disabled.")
             return True
         return False
 
-    def enable_provider(self, provider_id: str) -> bool:
+    def enable_plugin(self, provider_id: str) -> bool:
         """Remove a provider/plugin from the disabled list."""
-        disabled = self.get_disabled_providers()
+        disabled = self.get_disabled_plugins()
         if provider_id in disabled:
             disabled.remove(provider_id)
-            self.set('disabled_providers', disabled)
+            self.set('disabled_plugins', disabled)
             logger.info(f"Plugin {provider_id} has been enabled.")
             return True
         return False

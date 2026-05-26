@@ -68,11 +68,18 @@ class JobQueue:
         self._active_processes: Dict[str, Any] = {}  # Tracking multiprocessing.Process handles for kill switch
 
     def _release_worker_resources(self):
-        """Return any working DB connections opened by background jobs to the engine."""
+        """Clean up thread-local database sessions to prevent connection leaks."""
         try:
-            get_working_database().dispose()
+            from database.working_database import working_session_registry
+            working_session_registry.remove()
         except Exception as e:
-            logger.debug(f"Failed to dispose working database after job execution: {e}")
+            logger.error(f"Failed to remove working session registry: {e}")
+
+        try:
+            from database.music_database import music_session_registry
+            music_session_registry.remove()
+        except Exception as e:
+            logger.error(f"Failed to remove music session registry: {e}")
 
     def _remove_from_heap(self, name: str):
         self._heap = [job for job in self._heap if job.name != name]
@@ -599,14 +606,14 @@ def _execute_job_logic(job: ScheduledJob):
                 try:
                     from database.music_database import music_session_registry
                     music_session_registry.remove()
-                except ImportError:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to remove music session registry: {e}")
 
                 try:
                     from database.working_database import working_session_registry
                     working_session_registry.remove()
-                except ImportError:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to remove working session registry: {e}")
             
             job.last_success = time.time()
             job.last_error = None

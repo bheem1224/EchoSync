@@ -129,9 +129,9 @@ def _match_from_album_cache(
 class RetroactiveEnhancer:
     """Background service for library-wide batch metadata enhancement."""
 
-    def _get_provider(self, capability: Capability):
-        from core.nexus_framework.plugin_loader import get_provider
-        return get_provider(capability)
+    def _get_plugin(self, capability: Capability):
+        from core.nexus_framework.plugin_loader import get_plugin_by_capability
+        return get_plugin_by_capability(capability)
 
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
         """
@@ -140,8 +140,8 @@ class RetroactiveEnhancer:
 
         On failure: Returns (None, 0.0) - file will be marked for manual review.
         """
-        fingerprint_provider = self._get_provider(Capability.RESOLVE_FINGERPRINT)
-        metadata_provider = self._get_provider(Capability.FETCH_METADATA)
+        fingerprint_provider = self._get_plugin(Capability.RESOLVE_FINGERPRINT)
+        metadata_provider = self._get_plugin(Capability.FETCH_METADATA)
 
         metadata = None
         confidence = 0.0
@@ -298,7 +298,7 @@ class RetroactiveEnhancer:
         results: List[Tuple[Optional[Dict[str, Any]], float]] = []
         # release_id -> {"album": str, "cover_art_url": str|None, "tracks": [...]}
         album_cache: Dict[str, Any] = {}
-        metadata_provider = self._get_provider(Capability.FETCH_METADATA)
+        metadata_provider = self._get_plugin(Capability.FETCH_METADATA)
 
         for file_path in files:
             # ── Try album cache first ─────────────────────────────────────────
@@ -469,9 +469,9 @@ def register_metadata_enhancer_service():
 class RetroactiveEnhancer:
     """Background service for library-wide batch metadata enhancement."""
 
-    def _get_provider(self, capability: Capability):
-        from core.nexus_framework.plugin_loader import get_provider
-        return get_provider(capability)
+    def _get_plugin(self, capability: Capability):
+        from core.nexus_framework.plugin_loader import get_plugin_by_capability
+        return get_plugin_by_capability(capability)
 
     def enhance_library_metadata(self, batch_size=50) -> None:
         """Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
@@ -493,8 +493,8 @@ class RetroactiveEnhancer:
 
         db = get_database()
 
-        fingerprint_provider = self._get_provider(Capability.RESOLVE_FINGERPRINT)
-        metadata_provider = self._get_provider(Capability.FETCH_METADATA)
+        fingerprint_provider = self._get_plugin(Capability.RESOLVE_FINGERPRINT)
+        metadata_provider = self._get_plugin(Capability.FETCH_METADATA)
 
         total_processed = 0
         MAX_ITERATIONS = 500  # safety cap — prevents infinite loops on persistent failures
@@ -586,7 +586,7 @@ class RetroactiveEnhancer:
             import asyncio
             from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
-            mb_client = PluginRegistry.get_provider("musicbrainz")
+            mb_client = PluginRegistry.get_plugin("musicbrainz")
             CHUNK_SIZE = 50
 
             for chunk_start in range(0, len(track_data_list), CHUNK_SIZE):
@@ -832,10 +832,10 @@ class MetadataEnhancerService:
             cls._instance = MetadataEnhancerService()
         return cls._instance
 
-    def _get_provider(self, capability: Capability):
-        """Get the first available provider with the given capability."""
-        from core.nexus_framework.plugin_loader import get_provider
-        return get_provider(capability)
+    def _get_plugin(self, capability: Capability):
+        """Get the first available plugin with the given capability."""
+        from core.nexus_framework.plugin_loader import get_plugin_by_capability
+        return get_plugin_by_capability(capability)
 
 
 

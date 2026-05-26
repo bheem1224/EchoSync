@@ -35,6 +35,7 @@ from sqlalchemy.orm import (
     relationship,
     sessionmaker,
     synonym,
+    scoped_session,
 )
 
 
@@ -259,12 +260,12 @@ class MediaServerPlaylist(WorkingBase):
 class MediaServerPlaylistItem(WorkingBase):
     __tablename__ = "media_server_playlist_items"
     __table_args__ = (
-        UniqueConstraint("playlist_id", "provider_item_id", name="uq_playlist_item"),
+        UniqueConstraint("playlist_id", "plugin_item_id", name="uq_playlist_item"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     playlist_id: Mapped[int] = mapped_column(ForeignKey("media_server_playlists.id", ondelete="CASCADE"), nullable=False, index=True)
-    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    plugin_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
 
     playlist: Mapped["MediaServerPlaylist"] = relationship(back_populates="items")
 
@@ -272,12 +273,12 @@ class MediaServerPlaylistItem(WorkingBase):
 class PlaybackHistory(WorkingBase):
     __tablename__ = "playback_history"
     __table_args__ = (
-        UniqueConstraint("user_id", "provider_item_id", "listened_at", name="uq_playback_history"),
+        UniqueConstraint("user_id", "plugin_item_id", "listened_at", name="uq_playback_history"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    provider_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    plugin_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     listened_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, index=True)
 
 
@@ -613,6 +614,9 @@ def close_working_database() -> None:
         _working_db_instance = None
 
 
+working_session_registry = scoped_session(lambda: get_working_database().SessionLocal)
+
+
 __all__ = [
     "WorkingBase",
     "User",
@@ -632,6 +636,7 @@ __all__ = [
     "get_working_database",
     "close_working_database",
     "INTENT_TYPES",
+    "working_session_registry",
 ]
 
 

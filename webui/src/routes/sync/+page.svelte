@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { providers } from '../../stores/providers';
   import { jobs } from '../../stores/jobs';
   import { preferences } from '../../stores/preferences';
@@ -499,6 +499,13 @@
     providers.load();
     preferences.load();
     loadScheduledSyncs();
+  });
+
+  onDestroy(() => {
+    if (syncEventPollingId) {
+      clearInterval(syncEventPollingId);
+      syncEventPollingId = null;
+    }
   });
 </script>
 

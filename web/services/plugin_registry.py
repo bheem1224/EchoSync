@@ -31,12 +31,12 @@ def _clean_mocks(val):
 def list_plugins() -> List[Dict]:
     """List all registered plugins with enriched capability metadata."""
     plugins = []
-    for name in CorePluginRegistry.list_providers():
-        cls = CorePluginRegistry.get_provider_class(name)
+    for name in CorePluginRegistry.list_plugins():
+        cls = CorePluginRegistry.get_plugin_class(name)
         if cls:
-            is_disabled = CorePluginRegistry.is_provider_disabled(name)
+            is_disabled = CorePluginRegistry.is_plugin_disabled(name)
             display_name = name.replace('plugin.', '').title()
-            source_type = CorePluginRegistry.get_provider_source(name) or 'core'
+            source_type = CorePluginRegistry.get_plugin_source(name) or 'core'
             
             plugin_dict = {
                 'id': name,  # Unique ID (e.g. plugin.plex)
@@ -126,12 +126,12 @@ def get_plugins_for_capability(capability: str) -> List[Dict]:
 
 def get_plugin(plugin_name: str) -> Optional[Dict]:
     """Get a specific plugin by name."""
-    cls = CorePluginRegistry.get_provider_class(plugin_name)
+    cls = CorePluginRegistry.get_plugin_class(plugin_name)
     if cls:
         return {
             'name': plugin_name,
             'category': getattr(cls, 'category', 'plugin'),
-            'disabled': CorePluginRegistry.is_provider_disabled(plugin_name),
+            'disabled': CorePluginRegistry.is_plugin_disabled(plugin_name),
             'supports_downloads': getattr(cls, 'supports_downloads', False)
         }
     return None
@@ -139,8 +139,8 @@ def get_plugin(plugin_name: str) -> Optional[Dict]:
 def _get_plugin_capabilities() -> List[Dict]:
     """Expose capability flags for each plugin."""
     capabilities = []
-    for name in CorePluginRegistry.list_providers():
-        cls = CorePluginRegistry.get_provider_class(name)
+    for name in CorePluginRegistry.list_plugins():
+        cls = CorePluginRegistry.get_plugin_class(name)
         if cls:
             try:
                 caps = get_plugin_capabilities(name)
@@ -176,9 +176,3 @@ def _get_plugin_capabilities() -> List[Dict]:
                     }
                 })
     return capabilities
-
-# Backward compatibility aliases for legacy terminology
-list_providers = list_plugins
-get_providers_for_capability = get_plugins_for_capability
-get_provider = get_plugin
-provider_registry = plugin_registry

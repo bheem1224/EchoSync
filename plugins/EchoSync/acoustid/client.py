@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from core.caching.provider_cache import provider_cache
+from core.caching.plugin_cache import plugin_cache
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
@@ -70,7 +70,7 @@ class AcoustIDProvider(PluginBase):
 
         return client_key or None, user_key or None
 
-    @provider_cache(ttl_seconds=2592000)
+    @plugin_cache(ttl_seconds=2592000)
     def resolve_fingerprint_details(self, fingerprint: str, duration: int) -> Dict[str, Any]:
         """
         Resolve fingerprint and return both AcoustID result ID and MBID candidates.

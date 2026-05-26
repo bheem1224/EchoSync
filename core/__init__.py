@@ -6,7 +6,7 @@ Main components:
 - TrackParser: Converts raw filenames to EchosyncTrack objects
 - WeightedMatchingEngine: 5-step gating scoring algorithm
 - ScoringProfile: Strategy pattern for different match contexts
-- @provider_cache: Decorator for caching provider queries
+- @plugin_cache: Decorator for caching plugin queries
 """
 
 
@@ -31,8 +31,8 @@ from .matching_engine import (
     PROFILE_LIBRARY_IMPORT,
 )
 from .caching import (
-    provider_cache,
-    ProviderCache,
+    plugin_cache,
+    PluginCache,
     get_cache,
     clear_cache,
     cleanup_expired_cache,
@@ -73,8 +73,8 @@ __all__ = [
     'PROFILE_DOWNLOAD_SEARCH',
     'PROFILE_LIBRARY_IMPORT',
     # Caching
-    'provider_cache',
-    'ProviderCache',
+    'plugin_cache',
+    'PluginCache',
     'get_cache',
     'clear_cache',
     'cleanup_expired_cache',

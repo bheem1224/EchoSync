@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any
 import re
 
-from core.caching.provider_cache import provider_cache
+from core.caching.plugin_cache import plugin_cache
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.nexus_framework.plugin_SDK import (
     ProviderCapabilities,
@@ -63,12 +63,12 @@ class MusicBrainzClient(PluginBase):
         self._batch_task = None
         self._lock = asyncio.Lock()
 
-    @provider_cache(ttl_seconds=2592000)
+    @plugin_cache(ttl_seconds=2592000)
     def _fetch_artist_track_dicts(self, artist_name: str) -> List[Dict[str, Any]]:
         """Cached paginated recording fetch returning JSON-serialisable dicts.
 
         Separating the API calls from EchosyncTrack construction keeps the
-        provider_cache round-trip (JSON → SQLite → JSON) lossless.  Called
+        plugin_cache round-trip (JSON → SQLite → JSON) lossless.  Called
         exclusively by get_artist_tracks.
         """
         artist_name = str(artist_name or "").strip()
@@ -189,7 +189,7 @@ class MusicBrainzClient(PluginBase):
                 tracks.append(track_obj)
         return tracks
 
-    @provider_cache(ttl_seconds=604800)
+    @plugin_cache(ttl_seconds=604800)
     def search_metadata(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Compatibility search API used by metadata_enhancer fallback logic.
 
@@ -637,7 +637,7 @@ class MusicBrainzClient(PluginBase):
             logger.error(f"Failed to fetch metadata for {mbid}: {exc}")
             return None
 
-    @provider_cache(ttl_seconds=2592000)
+    @plugin_cache(ttl_seconds=2592000)
     def get_release(self, release_id: str) -> Optional[Dict[str, Any]]:
         """Fetch full release data for the album memory cache in MetadataEnhancerService.
 

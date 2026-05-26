@@ -93,16 +93,16 @@ def get_ui_manifest():
 def update_plugin_config():
     data = request.json or {}
 
-    disabled_list = data.get('disabled_providers')
+    disabled_list = data.get('disabled_plugins') or data.get('disabled_providers')
     if disabled_list is not None:
         # C2: strict type validation — must be a flat list of strings.
         if not isinstance(disabled_list, list) or not all(
             isinstance(x, str) for x in disabled_list
         ):
             return jsonify(
-                {"error": "disabled_providers must be a list of strings"}
+                {"error": "disabled_plugins must be a list of strings"}
             ), 400
-        config_manager.set_disabled_providers(disabled_list)
+        config_manager.set_disabled_plugins(disabled_list)
 
     active_matching_engine = data.get('active_matching_engine')
     if active_matching_engine is not None:
@@ -405,9 +405,9 @@ def toggle_plugin(plugin_id):
     # To be safe, we strip prefixes to get the raw name, then we can disable both forms if needed,
     # but the settings manager usually stores the exact ID passed. Let's use the exact ID.
     if enabled:
-        config_manager.enable_provider(plugin_id)
+        config_manager.enable_plugin(plugin_id)
     else:
-        config_manager.disable_provider(plugin_id)
+        config_manager.disable_plugin(plugin_id)
 
     config_manager.save_settings(config_manager.get_settings())
 

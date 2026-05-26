@@ -9,7 +9,7 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 
 from typing import List
 from core.tiered_logger import get_logger
-from core.models import ProviderType, Track
+from core.models import PluginType, Track
 from core.file_handling.storage import get_storage_service
 
 logger = get_logger("listenbrainz_adapter")
@@ -20,7 +20,7 @@ class ListenBrainzAdapter:
         storage = get_storage_service()
         db = storage.get_music_database()
         # Use MUSICBRAINZ provider type for recording references
-        super().__init__(db=db, provider_type=ProviderType.MUSICBRAINZ)
+        super().__init__(db=db, provider_type=PluginType.MUSICBRAINZ)
         self.lb = listenbrainz_client
 
     def get_provides_fields(self) -> List[str]:

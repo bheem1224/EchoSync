@@ -2,12 +2,12 @@
 Jellyfin ProviderAdapter implementation.
 
 Populates library-related Track fields (file_path, file_format, bitrate, duration_ms)
-and attaches Jellyfin ProviderRef. Adheres to Track-centric architecture.
+and attaches Jellyfin PluginRef. Adheres to Track-centric architecture.
 """
 
 from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
-from core.models import ProviderType, Track
+from core.models import PluginType, Track
 from core.file_handling.storage import get_storage_service
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.matching_engine.echo_sync_track import EchosyncTrack
@@ -157,7 +157,7 @@ class JellyfinAdapter:
     def __init__(self, jellyfin_client=None):
         storage = get_storage_service()
         db = storage.get_music_database()
-        super().__init__(db=db, provider_type=ProviderType.JELLYFIN)
+        super().__init__(db=db, provider_type=PluginType.JELLYFIN)
         self.jellyfin = jellyfin_client
 
     def get_provides_fields(self) -> List[str]:

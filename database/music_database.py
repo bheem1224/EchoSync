@@ -40,6 +40,7 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
     sessionmaker,
+    scoped_session,
 )
 
 
@@ -141,15 +142,15 @@ class Track(Base):
 class ExternalIdentifier(Base):
     __tablename__ = "external_identifiers"
     __table_args__ = (
-        UniqueConstraint("plugin_id", "provider_item_id", name="uq_provider_item"),
+        UniqueConstraint("plugin_source", "plugin_item_id", name="uq_plugin_item"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     track_id: Mapped[int] = mapped_column(
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    plugin_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    provider_item_id: Mapped[str] = mapped_column(String, nullable=False)
+    plugin_source: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    plugin_item_id: Mapped[str] = mapped_column(String, nullable=False)
     raw_data: Mapped[Optional[dict]] = mapped_column(JSON)
 
     track: Mapped[Track] = relationship(back_populates="external_identifiers")
@@ -448,8 +449,8 @@ class MusicDatabase:
                 ))
         return results
 
-    def get_external_identifier_map(self, plugin_id: int, track_ids: List[int]) -> Dict[int, str]:
-        """Return a map of track_id -> provider_item_id for a provider.
+    def get_external_identifier_map(self, plugin_source: str, track_ids: List[int]) -> Dict[int, str]:
+        """Return a map of track_id -> plugin_item_id for a plugin.
 
         Used to quickly determine whether tracks already exist on a target source
         (e.g., Plex ratingKeys) without issuing repeated lookups.
@@ -461,25 +462,25 @@ class MusicDatabase:
             rows = (
                 session.query(
                     ExternalIdentifier.track_id,
-                    ExternalIdentifier.provider_item_id,
+                    ExternalIdentifier.plugin_item_id,
                 )
                 .filter(
-                    ExternalIdentifier.plugin_id == plugin_id,
+                    ExternalIdentifier.plugin_source == plugin_source,
                     ExternalIdentifier.track_id.in_(track_ids),
                 )
                 .all()
             )
 
-            return {track_id: provider_item_id for track_id, provider_item_id in rows}
+            return {track_id: plugin_item_id for track_id, plugin_item_id in rows}
 
-    def get_external_identifier(self, plugin_id: int, track_id: int) -> Optional[str]:
-        """Return a single provider_item_id for a track/provider if present."""
-        mapping = self.get_external_identifier_map(plugin_id, [track_id])
+    def get_external_identifier(self, plugin_source: str, track_id: int) -> Optional[str]:
+        """Return a single plugin_item_id for a track/plugin if present."""
+        mapping = self.get_external_identifier_map(plugin_source, [track_id])
         return mapping.get(track_id)
 
-    def track_has_external_identifier(self, plugin_id: int, track_id: int) -> bool:
+    def track_has_external_identifier(self, plugin_source: str, track_id: int) -> bool:
         """Boolean helper for quick existence checks."""
-        return bool(self.get_external_identifier(plugin_id, track_id))
+        return bool(self.get_external_identifier(plugin_source, track_id))
 
     @property
     def session_factory(self):
@@ -625,19 +626,19 @@ class MusicDatabase:
                 return track.file_path
             return None
 
-    def clear_server_data(self, plugin_id: int):
-        """Purge all tracks/albums/artists associated with a given provider source.
+    def clear_server_data(self, plugin_source: str):
+        """Purge all tracks/albums/artists associated with a given plugin source.
 
         This is useful when re-syncing a media server from scratch. It deletes
-        all tracks that have an ExternalIdentifier for the specified ``server_source``
+        all tracks that have an ExternalIdentifier for the specified ``plugin_source``
         (e.g. "plex"), along with orphaned albums and artists.
         """
         with self.session_scope() as session:
-            # delete tracks that reference this provider
+            # delete tracks that reference this plugin
             track_ids = (
                 session.query(Track.id)
                 .join(ExternalIdentifier)
-                .filter(ExternalIdentifier.plugin_id == plugin_id)
+                .filter(ExternalIdentifier.plugin_source == plugin_source)
                 .distinct()
                 .all()
             )
@@ -647,7 +648,7 @@ class MusicDatabase:
 
             # remove identifiers themselves
             session.query(ExternalIdentifier).filter(
-                ExternalIdentifier.plugin_id == plugin_id
+                ExternalIdentifier.plugin_source == plugin_source
             ).delete(synchronize_session=False)
 
             # clean up albums with no remaining tracks
@@ -677,6 +678,9 @@ def close_database() -> None:
         _db_instance = None
 
 
+music_session_registry = scoped_session(lambda: get_database().SessionLocal)
+
+
 __all__ = [
     "Base",
     "Artist",
@@ -690,4 +694,5 @@ __all__ = [
     "MusicDatabase",
     "get_database",
     "close_database",
+    "music_session_registry",
 ]

@@ -86,13 +86,9 @@ class MediaManagerService:
                 logger.warning(f"Unable to resolve track_id from sync_id: {sync_id}")
                 return
 
-            from database.config_database import get_config_database
-            config_db = get_config_database()
-            plugin_id = config_db.get_or_create_service_id(active_server)
-
-            provider_track_id = self.db.get_external_identifier(plugin_id, track_id)
+            provider_track_id = self.db.get_external_identifier(active_server, track_id)
             if not provider_track_id:
-                logger.warning(f"No external identifier for track {track_id} on provider {active_server} (id {plugin_id})")
+                logger.warning(f"No external identifier for track {track_id} on provider {active_server}")
                 return
 
             provider = PluginRegistry.create_instance(active_server)
@@ -306,18 +302,18 @@ class MediaManagerService:
             for active_server in active_servers:
                 try:
                     server_type = active_server.split('.')[-1]
-                    provider_item_id = self.db.get_external_identifier(server_type, track_id)
+                    plugin_item_id = self.db.get_external_identifier(server_type, track_id)
 
-                    if provider_item_id:
+                    if plugin_item_id:
                         any_server_attempted = True
                         provider = PluginRegistry.create_instance(active_server)
                         if hasattr(provider, 'delete_track'):
-                            success = provider.delete_track(provider_item_id)
+                            success = provider.delete_track(plugin_item_id)
                             if success:
                                 logger.info(f"Successfully deleted track {track_id} from {active_server}")
                                 remote_delete_success = True
                             else:
-                                logger.error(f"Failed to delete track {track_id} (ID: {provider_item_id}) from {active_server}")
+                                logger.error(f"Failed to delete track {track_id} (ID: {plugin_item_id}) from {active_server}")
                         else:
                             logger.warning(f"Provider {active_server} does not support delete_track")
                     else:

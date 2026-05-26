@@ -12,8 +12,8 @@ class TrackSchema:
     isrc: Optional[str] = None
     track_number: Optional[int] = None
     disc_number: Optional[int] = None
-    provider_refs: Dict[str, str] = field(default_factory=dict)
-    source_provider: Optional[str] = None
+    plugin_refs: Dict[str, str] = field(default_factory=dict)
+    source_plugin: Optional[str] = None
     metadata_richness: Optional[str] = None
     metadata_completeness: Optional[str] = None
 
@@ -28,8 +28,8 @@ class TrackSchema:
             "isrc": self.isrc,
             "track_number": self.track_number,
             "disc_number": self.disc_number,
-            "provider_refs": self.provider_refs,
-            "source_provider": self.source_provider,
+            "plugin_refs": self.plugin_refs,
+            "source_plugin": self.source_plugin,
             "metadata_richness": self.metadata_richness,
             "metadata_completeness": self.metadata_completeness,
         }

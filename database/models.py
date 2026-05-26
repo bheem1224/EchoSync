@@ -26,7 +26,7 @@ class Service(Base):
 
     configs = relationship("ServiceConfig", back_populates="service", cascade="all, delete-orphan")
     accounts = relationship("Account", back_populates="service", cascade="all, delete-orphan")
-    ui_components = relationship("UIComponent", back_populates="service", cascade="all, delete-orphan",
+    ui_components = relationship("UIComponent", back_populates="service",
                                  foreign_keys="UIComponent.plugin_id",
                                  primaryjoin="Service.plugin_id == UIComponent.plugin_id")
 

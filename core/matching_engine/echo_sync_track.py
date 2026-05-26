@@ -201,9 +201,9 @@ class EchosyncTrack:
         if isinstance(self.identifiers, list):
             new_identifiers = {}
             for item in self.identifiers:
-                # Assuming old format: {'provider_source': 'plex_guid', 'provider_item_id': '123'}
-                key = item.get('provider_source')
-                val = item.get('provider_item_id') or item.get('id')
+                # Assuming old format: {'plugin_source': 'plex_guid', 'plugin_item_id': '123'}
+                key = item.get('plugin_source')
+                val = item.get('plugin_item_id') or item.get('id')
                 if key and val:
                     new_identifiers[key] = str(val)
             self.identifiers = new_identifiers

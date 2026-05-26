@@ -309,7 +309,7 @@ class PluginLoader:
 
         # 4. Reload Package
         try:
-            disabled = config_manager.get_disabled_providers()
+            disabled = config_manager.get_disabled_plugins()
             is_disabled = clean_ns in disabled or str(plugin_id) in disabled
             
             success = self._load_plugin_package(
@@ -931,9 +931,7 @@ class PluginLoader:
                     for attr_name in dir(module):
                         attr = getattr(module, attr_name)
                         if isinstance(attr, type) and issubclass(attr, PluginBase) and attr is not PluginBase:
-                            provider_instance = attr()
-                            provider_instance.name = provider_id
-                            PluginRegistry.register_provider(provider_instance)
+                            PluginRegistry.register(attr, name=provider_id, source_type='community')
                             found = True
                             break
                     if not found:
@@ -983,7 +981,7 @@ def get_plugin_by_capability(capability: Capability) -> Optional[PluginBase]:
     Get the first available provider with the given capability.
     Delegates to PluginRegistry.
     """
-    providers = PluginRegistry.get_providers_with_capability(capability)
+    providers = PluginRegistry.get_plugins_with_capability(capability)
     if providers:
         return providers[0]
     return None
@@ -1056,7 +1054,7 @@ def get_all_plugins() -> list:
 
         plugins_map[plugin_info["id"]] = plugin_info
 
-    disabled = config_manager.get_disabled_providers()
+    disabled = config_manager.get_disabled_plugins()
     final_plugins = list(plugins_map.values())
     for p in final_plugins:
         p["enabled"] = p["id"].lower() not in [d.lower() for d in disabled]
@@ -1069,43 +1067,43 @@ class PluginRegistry:
     Central registry for all plugin classes. Allows registration, lookup, and listing.
     Supports both bundled (core) and community plugins with enable/disable functionality.
     """
-    _providers: Dict[str, Type[PluginBase]] = {}
-    _provider_sources: Dict[str, str] = {}  # metadata: provider_name -> source_type
-    _disabled_providers: set = set()
+    _plugins: Dict[str, Type[PluginBase]] = {}
+    _plugin_sources: Dict[str, str] = {}  # metadata: plugin_name -> source_type
+    _disabled_plugins: set = set()
     _quality_options: Dict[str, List[Dict[str, Any]]] = {}
 
     @classmethod
     def get_all(cls) -> Dict[str, Dict[str, Any]]:
         """Return all registered plugins and their metadata."""
         all_plugins = {}
-        for name, provider_cls in cls._providers.items():
+        for name, plugin_cls in cls._plugins.items():
             all_plugins[name] = {
-                'class': provider_cls,
-                'source_type': cls._provider_sources.get(name, 'core')
+                'class': plugin_cls,
+                'source_type': cls._plugin_sources.get(name, 'core')
             }
         return all_plugins
 
     @classmethod
-    def get_providers_with_capability(cls, capability: Capability, exclude_disabled: bool = True) -> List[PluginBase]:
+    def get_plugins_with_capability(cls, capability: Capability, exclude_disabled: bool = True) -> List[PluginBase]:
         """
-        Return a list of instantiated providers that support the given capability.
+        Return a list of instantiated plugins that support the given capability.
         """
-        providers = []
-        for name, provider_cls in cls._providers.items():
-            if exclude_disabled and name.lower() in cls._disabled_providers:
+        plugins = []
+        for name, plugin_cls in cls._plugins.items():
+            if exclude_disabled and name.lower() in cls._disabled_plugins:
                 continue
 
             # Check if class has capabilities attribute and if it contains the capability
-            caps = getattr(provider_cls, 'capabilities', None)
+            caps = getattr(plugin_cls, 'capabilities', None)
             # Normalize None -> empty iterable to avoid TypeError when doing 'in' checks
             if caps is None:
                 caps = []
 
-            # Some providers expose a helper to convert to a list of Capability enums
+            # Some plugins expose a helper to convert to a list of Capability enums
             if hasattr(caps, 'to_enum_list'):
                 caps = caps.to_enum_list() or []
 
-            # Defensive: if caps is not iterable, skip this provider
+            # Defensive: if caps is not iterable, skip this plugin
             try:
                 contains = capability in caps
             except TypeError:
@@ -1113,30 +1111,30 @@ class PluginRegistry:
 
             if contains:
                 try:
-                    providers.append(cls.create_instance(name))
+                    plugins.append(cls.create_instance(name))
                 except Exception as e:
-                    logger.error(f"Failed to instantiate provider '{name}': {e}")
-        return providers
+                    logger.error(f"Failed to instantiate plugin '{name}': {e}")
+        return plugins
 
     @classmethod
-    def get_providers_by_type(cls, provider_type: str, exclude_disabled: bool = True) -> List[str]:
+    def get_plugins_by_type(cls, plugin_type: str, exclude_disabled: bool = True) -> List[str]:
         """
-        Return a list of provider names matching the given type.
-        provider_type: 'downloader', 'mediaserver', 'syncservice'
+        Return a list of plugin names matching the given type.
+        plugin_type: 'downloader', 'mediaserver', 'syncservice'
         """
         type_map = {
             'downloader': DownloaderProvider,
             'mediaserver': MediaServerProvider,
             'syncservice': SyncServiceProvider
         }
-        base_type = type_map.get(provider_type.lower())
+        base_type = type_map.get(plugin_type.lower())
         if not base_type:
-            raise ValueError(f"Unknown provider type: {provider_type}")
+            raise ValueError(f"Unknown plugin type: {plugin_type}")
 
-        providers = [name for name, cls_ in cls._providers.items() if issubclass(cls_, base_type)]
+        plugins = [name for name, cls_ in cls._plugins.items() if issubclass(cls_, base_type)]
         if exclude_disabled:
-            providers = [name for name in providers if name.lower() not in cls._disabled_providers]
-        return providers
+            plugins = [name for name in plugins if name.lower() not in cls._disabled_plugins]
+        return plugins
 
     @classmethod
     def get_active_services_by_type(cls, service_type: str) -> List[str]:
@@ -1158,8 +1156,8 @@ class PluginRegistry:
         if mapped_type == 'metadata':
             from core.enums import Capability
             active = []
-            for p in cls.get_providers_with_capability(Capability.FETCH_METADATA):
-                if p.name.lower() not in cls._disabled_providers:
+            for p in cls.get_plugins_with_capability(Capability.FETCH_METADATA):
+                if p.name.lower() not in cls._disabled_plugins:
                     # Verify configuration if possible
                     if hasattr(p, 'is_configured'):
                         if p.is_configured():
@@ -1168,9 +1166,9 @@ class PluginRegistry:
                         active.append(p.name)
             return active
 
-        # Standard provider-type lookup
+        # Standard plugin-type lookup
         try:
-            potential_names = cls.get_providers_by_type(mapped_type, exclude_disabled=True)
+            potential_names = cls.get_plugins_by_type(mapped_type, exclude_disabled=True)
             active = []
             for name in potential_names:
                 try:
@@ -1186,54 +1184,54 @@ class PluginRegistry:
                     continue
             return active
         except ValueError:
-            # If the type is unknown to get_providers_by_type, return empty list
+            # If the type is unknown to get_plugins_by_type, return empty list
             return []
 
     @classmethod
-    def create_instance_by_type(cls, provider_type: str, *args, **kwargs) -> List[PluginBase]:
+    def create_instance_by_type(cls, plugin_type: str, *args, **kwargs) -> List[PluginBase]:
         """
-        Instantiate all providers of a given type (excluding disabled ones).
+        Instantiate all plugins of a given type (excluding disabled ones).
         """
-        names = cls.get_providers_by_type(provider_type, exclude_disabled=True)
+        names = cls.get_plugins_by_type(plugin_type, exclude_disabled=True)
         instances = []
         for name in names:
             try:
                 instances.append(cls.create_instance(name, *args, **kwargs))
             except Exception as e:
-                logger.error(f"Failed to instantiate provider '{name}': {e}")
+                logger.error(f"Failed to instantiate plugin '{name}': {e}")
         return instances
 
     @classmethod
-    def register(cls, provider_cls: Type[PluginBase], name: Optional[str] = None, source_type: str = 'core'):
+    def register(cls, plugin_cls: Type[PluginBase], name: Optional[str] = None, source_type: str = 'core'):
         """
-        Register a provider class.
+        Register a plugin class.
 
         Args:
-            provider_cls: The class implementing PluginBase.
+            plugin_cls: The class implementing PluginBase.
             name: Optional explicit name override.
-            source_type: 'core' for bundled providers, 'community' for plugins.
+            source_type: 'core' for bundled plugins, 'community' for plugins.
         """
         if not name:
-            name = getattr(provider_cls, 'name', None)
+            name = getattr(plugin_cls, 'name', None)
 
         if not name:
-            raise ValueError("Provider class must have a 'name' attribute or explicit name provided")
+            raise ValueError("Plugin class must have a 'name' attribute or explicit name provided")
 
-        cls._providers[name.lower()] = provider_cls
-        cls._provider_sources[name.lower()] = source_type
-        logger.debug(f"Registered provider '{name}' (source: {source_type})")
-
-    @classmethod
-    def get_provider_class(cls, name: str) -> Optional[Type[PluginBase]]:
-        return cls._providers.get(name.lower())
+        cls._plugins[name.lower()] = plugin_cls
+        cls._plugin_sources[name.lower()] = source_type
+        logger.debug(f"Registered plugin '{name}' (source: {source_type})")
 
     @classmethod
-    def list_providers(cls):
-        return list(cls._providers.keys())
+    def get_plugin_class(cls, name: str) -> Optional[Type[PluginBase]]:
+        return cls._plugins.get(name.lower())
 
     @classmethod
-    def get_provider_source(cls, name: str) -> Optional[str]:
-        return cls._provider_sources.get(name.lower())
+    def list_plugins(cls):
+        return list(cls._plugins.keys())
+
+    @classmethod
+    def get_plugin_source(cls, name: str) -> Optional[str]:
+        return cls._plugin_sources.get(name.lower())
 
     @classmethod
     def create_instance(cls, name, *args, **kwargs) -> PluginBase:
@@ -1248,7 +1246,7 @@ class PluginRegistry:
                 db = get_config_database()
                 resolved_name = db.get_service_name(plugin_id)
                 if not resolved_name:
-                    raise ValueError(f"Provider with plugin_id '{plugin_id}' not found in database")
+                    raise ValueError(f"Plugin with plugin_id '{plugin_id}' not found in database")
                 name = resolved_name
         except Exception as e:
             if isinstance(e, ValueError) and "not found in database" in str(e):
@@ -1257,66 +1255,72 @@ class PluginRegistry:
             logging.getLogger(__name__).warning(f"Failed to resolve integer plugin_id '{original_name}': {e}")
 
         # Double check against config manager to ensure latest state
-        # (The set_disabled_providers might be stale if config reloaded)
         from core.settings import config_manager
 
         # Check global disabled list
-        disabled = config_manager.get_disabled_providers()
+        disabled = config_manager.get_disabled_plugins()
         if disabled is None:
             disabled = []
 
         if name.lower() in [d.lower() for d in disabled]:
-             raise ValueError(f"Provider '{name}' is disabled via config")
+             raise ValueError(f"Plugin '{name}' is disabled via config")
 
-        if name.lower() in cls._disabled_providers:
-            raise ValueError(f"Provider '{name}' is disabled")
+        if name.lower() in cls._disabled_plugins:
+            raise ValueError(f"Plugin '{name}' is disabled")
 
-        provider_cls = cls.get_provider_class(name)
-        if not provider_cls:
-            raise ValueError(f"Provider '{name}' not registered")
-        return provider_cls(*args, **kwargs)
+        plugin_cls = cls.get_plugin_class(name)
+        if not plugin_cls:
+            raise ValueError(f"Plugin '{name}' not registered")
+        return plugin_cls(*args, **kwargs)
+
+    @classmethod
+    def get_plugin(cls, name: str) -> Optional[PluginBase]:
+        try:
+            return cls.create_instance(name)
+        except Exception:
+            return None
 
     @classmethod
     def get_download_clients(cls) -> List[str]:
         """
-        Return a list of provider names that support downloads (excluding disabled ones).
+        Return a list of plugin names that support downloads (excluding disabled ones).
         """
-        clients = [name for name, cls_ in cls._providers.items() if getattr(cls_, 'supports_downloads', False)]
-        return [name for name in clients if name.lower() not in cls._disabled_providers]
+        clients = [name for name, cls_ in cls._plugins.items() if getattr(cls_, 'supports_downloads', False)]
+        return [name for name in clients if name.lower() not in cls._disabled_plugins]
 
     @classmethod
-    def disable_provider(cls, name: str) -> bool:
-        if name.lower() in cls._providers:
-            cls._disabled_providers.add(name.lower())
-            logger.info(f"Provider '{name}' disabled. Restart required to unload.")
+    def disable_plugin(cls, name: str) -> bool:
+        if name.lower() in cls._plugins:
+            cls._disabled_plugins.add(name.lower())
+            logger.info(f"Plugin '{name}' disabled. Restart required to unload.")
             return True
         return False
 
     @classmethod
-    def enable_provider(cls, name: str) -> bool:
-        if name.lower() in cls._providers:
-            cls._disabled_providers.discard(name.lower())
-            logger.info(f"Provider '{name}' enabled. Restart required to load.")
+    def enable_plugin(cls, name: str) -> bool:
+        if name.lower() in cls._plugins:
+            cls._disabled_plugins.discard(name.lower())
+            logger.info(f"Plugin '{name}' enabled. Restart required to load.")
             return True
         return False
 
     @classmethod
-    def is_provider_disabled(cls, name: str) -> bool:
-        if getattr(cls, '_disabled_providers', None) is None:
-            cls._disabled_providers = set()
-        return name.lower() in cls._disabled_providers
+    def is_plugin_disabled(cls, name: str) -> bool:
+        if getattr(cls, '_disabled_plugins', None) is None:
+            cls._disabled_plugins = set()
+        return name.lower() in cls._disabled_plugins
 
     @classmethod
-    def set_disabled_providers(cls, disabled_list: List[str]) -> None:
+    def set_disabled_plugins(cls, disabled_list: List[str]) -> None:
         if disabled_list is None:
             disabled_list = []
-        cls._disabled_providers = set(name.lower() for name in disabled_list)
+        cls._disabled_plugins = set(name.lower() for name in disabled_list)
         if disabled_list:
-            logger.info(f"Disabled providers: {', '.join(disabled_list)}")
+            logger.info(f"Disabled plugins: {', '.join(disabled_list)}")
 
     @classmethod
-    def get_disabled_providers(cls) -> List[str]:
-        return list(cls._disabled_providers)
+    def get_disabled_plugins(cls) -> List[str]:
+        return list(cls._disabled_plugins)
     
     @classmethod
     def register_quality_option(cls, plugin_id: str, option: Dict[str, Any]):
@@ -1382,16 +1386,10 @@ def get_plugin_capabilities(plugin_name: str):
     Gracefully handles plugins that don't declare explicit capabilities.
     """
     from core.nexus_framework.plugin_SDK import ProviderCapabilities
-    provider_cls = PluginRegistry.get_provider_class(plugin_name)
+    provider_cls = PluginRegistry.get_plugin_class(plugin_name)
     if not provider_cls:
         import logging
         logging.getLogger(__name__).warning(f"Plugin '{plugin_name}' not found in registry, defaulting to empty capabilities.")
         return ProviderCapabilities(name=plugin_name, supports_playlists=None, search=None, metadata=None)
 
     return getattr(provider_cls, 'capabilities', ProviderCapabilities(name=plugin_name, supports_playlists=None, search=None, metadata=None))
-
-# Backward compatibility aliases for legacy Provider architecture
-ProviderRegistry = PluginRegistry
-get_provider_capabilities = get_plugin_capabilities
-get_provider = get_plugin
-provider_registry = PluginRegistry # Discovery engine expects this

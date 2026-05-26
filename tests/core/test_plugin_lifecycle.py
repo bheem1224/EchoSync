@@ -460,7 +460,7 @@ def test_plugin_id_reconciliation_and_orphaning(temp_plugins_env):
             "abs_path": str(plugin_path.resolve())
         }
     ]
-    with patch("core.plugin_loader.get_all_plugins", return_value=scanned_plugins):
+    with patch("core.nexus_framework.plugin_loader.get_all_plugins", return_value=scanned_plugins):
         loader.reconcile_services()
 
     # 4. Verify that:

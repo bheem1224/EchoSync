@@ -263,25 +263,25 @@ def is_track_in_media_server_playlist(
     target_playlist_id: int,
     music_db,
     working_db,
-    provider: str,
+    plugin: str,
 ) -> bool:
     """
     Fast path: check whether a library track is already present in a cached media
     server playlist without invoking the WeightedMatchingEngine.
 
     Resolution strategy:
-    1. Look up the ``provider_item_id`` for *track_db_id* via ``ExternalIdentifier``
-       for the given *provider* (e.g. ``"plex"``, ``"jellyfin"``, ``"navidrome"``).
+    1. Look up the ``plugin_item_id`` for *track_db_id* via ``ExternalIdentifier``
+       for the given *plugin* (e.g. ``"plex"``, ``"jellyfin"``, ``"navidrome"``).
     2. Query ``MediaServerPlaylistItem`` for a matching row — O(1) indexed lookup.
     3. Return ``True`` iff the row exists.
 
     Returns ``False`` immediately if no ExternalIdentifier is found (the track has
-    never been synced to this provider, so it cannot appear in any server playlist).
+    never been synced to this plugin, so it cannot appear in any server playlist).
     """
     from database.working_database import MediaServerPlaylistItem  # late import — avoids circular
 
-    provider_item_id = music_db.get_external_identifier(provider, track_db_id)
-    if not provider_item_id:
+    plugin_item_id = music_db.get_external_identifier(plugin, track_db_id)
+    if not plugin_item_id:
         return False
 
     with working_db.session_scope() as session:
@@ -289,7 +289,7 @@ def is_track_in_media_server_playlist(
             session.query(MediaServerPlaylistItem)
             .filter(
                 MediaServerPlaylistItem.playlist_id == target_playlist_id,
-                MediaServerPlaylistItem.provider_item_id == provider_item_id,
+                MediaServerPlaylistItem.plugin_item_id == plugin_item_id,
             )
             .first()
         ) is not None

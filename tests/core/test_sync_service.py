@@ -35,10 +35,10 @@ def patch_spotify_client(monkeypatch):
         return MagicMock()
 
     # patch PluginRegistry.create_instance used by sync_service
-    monkeypatch.setattr('core.plugin_loader.PluginRegistry.create_instance', factory)
+    monkeypatch.setattr('core.nexus_framework.plugin_loader.PluginRegistry.create_instance', factory)
 
     # disable provider registry registration which isn't needed for these fakes
-    monkeypatch.setattr('core.plugin_loader.PluginRegistry.register', lambda *args, **kwargs: None)
+    monkeypatch.setattr('core.nexus_framework.plugin_loader.PluginRegistry.register', lambda *args, **kwargs: None)
 
     # also patch storage service to return two accounts
     fake_storage = MagicMock()
@@ -92,7 +92,7 @@ def test_get_all_spotify_playlists_filters_active(monkeypatch):
                 def get_user_playlists(self):
                     return [{'id': f'pl{account_id}', 'name': f'Playlist {account_id}'}]
             return MockClient()
-        monkeypatch.setattr('core.plugin_loader.PluginRegistry.create_instance', mock_create_instance)
+        monkeypatch.setattr('core.nexus_framework.plugin_loader.PluginRegistry.create_instance', mock_create_instance)
 
         playlists = asyncio.run(service._get_all_spotify_playlists())
         # The name no longer contains the account name, so we check account_name instead

@@ -10,7 +10,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.enums import Capability
-from core.nexus_framework.plugin_loader import get_provider
+from core.nexus_framework.plugin_loader import get_plugin_by_capability
 from core.matching_engine.track_parser import TrackParser
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.settings import config_manager
@@ -303,7 +303,7 @@ def _normalize_duration_seconds(metadata: Dict[str, Any], file_path: Path) -> Op
 
 def _submit_acoustid_contribution_async(fingerprint: str, duration: int, mbid: str) -> None:
     try:
-        fingerprint_provider = get_provider(Capability.RESOLVE_FINGERPRINT)
+        fingerprint_provider = get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
         if not fingerprint_provider or not hasattr(fingerprint_provider, "submit_fingerprint"):
             logger.debug("Skipping AcoustID contribution: no submit-capable fingerprint provider")
             return
@@ -571,8 +571,8 @@ def lookup_review_queue_item_acoustid(task_id: int):
             if not file_path:
                 return jsonify({"error": "File does not exist"}), 404
 
-            fingerprint_provider = get_provider(Capability.RESOLVE_FINGERPRINT)
-            metadata_provider = get_provider(Capability.FETCH_METADATA)
+            fingerprint_provider = get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
+            metadata_provider = get_plugin_by_capability(Capability.FETCH_METADATA)
             if not fingerprint_provider:
                 return jsonify({"error": "No fingerprint provider configured"}), 503
 
@@ -702,7 +702,7 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
         if not artist or not title:
             return jsonify({"error": "artist and title are required"}), 400
 
-        metadata_provider = get_provider(Capability.FETCH_METADATA)
+        metadata_provider = get_plugin_by_capability(Capability.FETCH_METADATA)
         if not metadata_provider:
             return jsonify({"error": "No metadata provider configured"}), 503
 

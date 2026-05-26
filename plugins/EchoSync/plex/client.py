@@ -1054,8 +1054,8 @@ class PlexClient(PluginBase):
             identifiers = []
             if plex_track_id:
                 identifiers.append({
-                    'provider_source': 'plex',
-                    'provider_item_id': plex_track_id,
+                    'plugin_source': 'plex',
+                    'plugin_item_id': plex_track_id,
                     'raw_data': None # Avoid storing heavy object
                 })
 
@@ -1429,7 +1429,7 @@ class PlexClient(PluginBase):
             if interaction.rating is not None:
                 continue
 
-            provider_item_id = str(_safe_getattr(interaction, 'provider_item_id', '') or '').strip()
+            provider_item_id = str(_safe_getattr(interaction, 'plugin_item_id', '') or '').strip()
             if not provider_item_id:
                 continue
 
@@ -1472,7 +1472,7 @@ class PlexClient(PluginBase):
         last_played_at = self._coerce_datetime(_safe_getattr(plex_track, 'lastViewedAt', None))
 
         return UserTrackInteraction(
-            provider_item_id=provider_item_id,
+            plugin_item_id=provider_item_id,
             artist_name=converted.artist_name,
             track_title=converted.title,
             play_count=play_count,

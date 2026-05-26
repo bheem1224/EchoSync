@@ -37,28 +37,12 @@ class LibraryManager:
         # Local caches to minimize DB lookups
         self.artist_cache: Dict[str, int] = {}  # normalized_name -> artist_id
         self.album_cache: Dict[Tuple[str, int], int] = {}  # (normalized_title, artist_id) -> album_id
-        self.plugin_id_cache: Dict[str, int] = {} # provider_name -> plugin_id
 
     def _normalize_name(self, name: Optional[str]) -> str:
         """Normalize name for cache lookup."""
         if not name:
             return ""
         return text_utils.normalize_text(name).lower()
-
-    def _resolve_plugin_id(self, provider_name: str) -> int:
-        """Resolve a string provider name to its integer plugin_id."""
-        if not provider_name:
-            return 0
-        
-        name = provider_name.lower()
-        if name in self.plugin_id_cache:
-            return self.plugin_id_cache[name]
-        
-        from database.config_database import get_config_database
-        config_db = get_config_database()
-        pid = config_db.get_or_create_service_id(name)
-        self.plugin_id_cache[name] = pid
-        return pid
 
     def _get_or_create_artist(self, session: Session, artist_name: str, sort_name: Optional[str] = None) -> Artist:
         """
@@ -90,16 +74,13 @@ class LibraryManager:
             func.lower(Artist.name) == norm_name
         )
         artist = session.execute(stmt).scalar_one_or_none()
-        # Additional fallback: try Python normalization to catch accent variants
+        # Fallback for normalized lookup
         if artist is None:
-            # since artist_cache may already contain normalized values from DB,
-            # we can leverage it here to avoid another query
             if norm_name in self.artist_cache:
                 uid = self.artist_cache[norm_name]
                 stmt2 = select(Artist).where(Artist.id == uid)
                 artist = session.execute(stmt2).scalar_one_or_none()
             else:
-                # final brute-force scan (should be rare after cache prepopulate)
                 stmt2 = select(Artist)
                 for a in session.execute(stmt2).scalars().all():
                     if self._normalize_name(a.name) == norm_name:
@@ -133,9 +114,9 @@ class LibraryManager:
         Args:
             session: SQLAlchemy session
             album_title: Album title
-            artist: Artist object (already created/fetched)
+            artist: Artist object
             release_year: Release year
-            album_type: Album type (e.g. Album, EP)
+            album_type: Album type
             release_group_id: MusicBrainz Release Group ID
             mb_release_id: MusicBrainz Release ID
             original_release_date: Original release date
@@ -154,7 +135,7 @@ class LibraryManager:
             album_id = self.album_cache[cache_key]
             stmt = select(Album).where(Album.id == album_id)
             album = session.execute(stmt).scalar_one()
-            # Still might need to update metadata if it was cached but fields were missing
+            # Update fields if missing
             if release_group_id and not album.release_group_id:
                 album.release_group_id = release_group_id
             if album_type and not album.album_type:
@@ -165,13 +146,13 @@ class LibraryManager:
                 album.original_release_date = original_release_date
             return album
 
-        # Check DB using case-insensitive lookup (may not strip accents)
+        # Check DB
         stmt = select(Album).where(
             func.lower(Album.title) == norm_title,
             Album.artist_id == artist.id,
         )
         album = session.execute(stmt).scalar_one_or_none()
-        # Fallback via normalization similar to artists
+        # Fallback via normalization
         if album is None:
             cache_key = (norm_title, artist.id)
             if cache_key in self.album_cache:
@@ -188,7 +169,6 @@ class LibraryManager:
         release_date = date(release_year, 1, 1) if release_year else None
 
         if album is None:
-            # Create new album
             album = Album(
                 title=album_title,
                 artist=artist,
@@ -201,7 +181,6 @@ class LibraryManager:
             session.add(album)
             session.flush()
         else:
-            # Update metadata if needed
             if release_date and album.release_date != release_date:
                 album.release_date = release_date
             if release_group_id and not album.release_group_id:
@@ -225,7 +204,7 @@ class LibraryManager:
 
         Args:
             session: SQLAlchemy session
-            identifiers: Dict of identifiers from EchosyncTrack (key=source, value=id)
+            identifiers: Dict of identifiers (key=plugin_source, value=id)
 
         Returns:
             Track object or None
@@ -237,8 +216,6 @@ class LibraryManager:
             if not source or not item_id:
                 continue
 
-            plugin_id = self._resolve_plugin_id(source)
-
             # Ensure item_id is a string
             if not isinstance(item_id, str):
                 item_id = str(item_id)
@@ -247,8 +224,8 @@ class LibraryManager:
                 select(Track)
                 .join(ExternalIdentifier)
                 .where(
-                    ExternalIdentifier.plugin_id == plugin_id,
-                    ExternalIdentifier.provider_item_id == item_id,
+                    ExternalIdentifier.plugin_source == source,
+                    ExternalIdentifier.plugin_item_id == item_id,
                 )
             )
             track = session.execute(stmt).scalar_one_or_none()
@@ -268,26 +245,13 @@ class LibraryManager:
     ) -> Optional[Track]:
         """
         Fallback: find track by file_path OR (title + artist + album + track_number).
-
-        Args:
-            session: SQLAlchemy session
-            title: Track title
-            artist_id: Artist ID
-            album_id: Album ID (optional)
-            track_number: Track number (optional)
-            file_path: File path (optional)
-
-        Returns:
-            Track object or None
         """
-        # Highest confidence: if file_path matches, it's definitely the same physical file/track
         if file_path:
             stmt = select(Track).where(Track.file_path == file_path)
             track = session.execute(stmt).scalar_one_or_none()
             if track:
                 return track
 
-        # Otherwise, match strictly on title + artist + album + track_number
         norm_title = self._normalize_name(title)
         conditions = [
             func.lower(Track.title) == norm_title,
@@ -299,7 +263,6 @@ class LibraryManager:
             conditions.append(Track.track_number == track_number)
 
         stmt = select(Track).where(*conditions)
-        # Using first() to handle edge cases gracefully, but ideally this composite is unique
         return session.execute(stmt).scalars().first()
 
     def _upsert_track(
@@ -307,40 +270,23 @@ class LibraryManager:
     ) -> tuple[Track, bool]:
         """
         Insert or update a single track.
-
-        Args:
-            session: SQLAlchemy session
-            track_data: EchosyncTrack object
-            artist: Artist object
-            album: Album object (optional)
-
-        Returns:
-            Tuple of (Track object, is_new: bool)
-            is_new is True if track was newly created, False if updated
         """
-        # FIRST: Check for existing external identifiers (provider-agnostic deduplication)
-        # This prevents duplicates across ALL providers (Plex ratingKey, Jellyfin ID, Navidrome ID, etc.)
-        # If same external ID exists, it must be the same track - update it instead of creating new
         track = None
         if track_data.identifiers:
-            for source, provider_item_id in track_data.identifiers.items():
-                if source and provider_item_id:
-                    plugin_id = self._resolve_plugin_id(source)
+            for source, plugin_item_id in track_data.identifiers.items():
+                if source and plugin_item_id:
                     stmt = select(ExternalIdentifier).where(
-                        ExternalIdentifier.plugin_id == plugin_id,
-                        ExternalIdentifier.provider_item_id == str(provider_item_id)
+                        ExternalIdentifier.plugin_source == source,
+                        ExternalIdentifier.plugin_item_id == str(plugin_item_id)
                     )
                     ext_id = session.execute(stmt).scalar_one_or_none()
                     if ext_id and ext_id.track:
                         track = ext_id.track
-                        # Found match - no logging needed here, will log in update section if needed
-                        break  # Use first match
-        
-        # SECOND: Try to find by other methods if external ID didn't match
+                        break
+
         if track is None:
             track = self._find_track_by_identifiers(session, track_data.identifiers)
-        
-        # THIRD: Try to find by metadata
+
         if track is None:
             track = self._find_track_by_metadata(
                 session,
@@ -350,35 +296,20 @@ class LibraryManager:
                 track_number=track_data.track_number,
                 file_path=track_data.file_path,
             )
-            # If we matched via metadata, only discard the match (create a new row) when
-            # the same provider source ALREADY has a *different* identifier on the existing
-            # track.  That case means two genuinely distinct provider items share metadata
-            # (e.g. two separate Plex ratingKeys that resolved to the same title/artist).
-            #
-            # When the existing track has *no* entry for the incoming source at all (e.g. a
-            # track first imported by auto_importer / local_server has no 'plex' row), this
-            # is a new provider discovering the same real-world track — keep the existing
-            # row and let the identifier-sync loop below add the ratingKey/ID to it.
-            # This ensures every Plex DB pull enriches locally-imported tracks with their
-            # Plex ratingKeys so playlist sync can use them.
             if track is not None and track_data.identifiers:
-                existing_ids     = { (e.plugin_id, e.provider_item_id) for e in track.external_identifiers }
-                existing_plugins = { e.plugin_id for e in track.external_identifiers }
+                existing_ids = {(e.plugin_source, e.plugin_item_id) for e in track.external_identifiers}
+                existing_plugins = {e.plugin_source for e in track.external_identifiers}
                 conflict = False
                 for src, pid in track_data.identifiers.items():
                     if src and pid:
-                        plugin_id = self._resolve_plugin_id(src)
-                        if plugin_id in existing_plugins:
-                            # Same provider already has an entry on this track; if it's a
-                            # different ID it's a genuine different item → don't merge.
-                            if (plugin_id, str(pid)) not in existing_ids:
+                        if src in existing_plugins:
+                            if (src, str(pid)) not in existing_ids:
                                 conflict = True
                                 break
                 if conflict:
                     track = None
 
         if track is None:
-            # Create new track
             track = Track(
                 title=track_data.title,
                 sort_title=track_data.sort_title,
@@ -394,7 +325,7 @@ class LibraryManager:
                 sample_rate=track_data.sample_rate,
                 bit_depth=track_data.bit_depth,
                 file_size_bytes=track_data.file_size_bytes,
-                added_at=track_data.added_at, # Set added_at only on insert
+                added_at=track_data.added_at,
                 musicbrainz_id=track_data.musicbrainz_id,
                 isrc=track_data.isrc,
             )
@@ -403,8 +334,6 @@ class LibraryManager:
             logger.debug(f"Created new track: {track.title} by {artist.name}")
             is_new = True
         else:
-            # Update existing track (Sparse Updates)
-            # Identity fields - always update
             old_title = track.title
             track.title = track_data.title
             if album and track.album_id != album.id:
@@ -412,33 +341,26 @@ class LibraryManager:
             if track.artist_id != artist.id:
                 track.artist = artist
 
-            # Metadata fields - only update if incoming is not None
             if track_data.sort_title is not None:
                 track.sort_title = track_data.sort_title
             if track_data.edition is not None:
                 track.edition = track_data.edition
             else:
-                # Special case: If title changed significantly and edition looks corrupted, clear it
-                # Corruption patterns: dangling parenthesis, typos like "titile", very short strings
-                # Also check if edition content is actually part of the new title (split corruption)
                 if track.edition and old_title != track_data.title:
                     edition_lower = track.edition.lower()
                     new_title_lower = track_data.title.lower()
-                    
                     is_corrupted = (
-                        'titile' in edition_lower or  # Common typo
-                        track.edition.startswith(') -') or  # Dangling parenthesis
-                        track.edition.startswith('(') and ')' not in track.edition or  # Unmatched paren
-                        len(track.edition.strip()) < 3 or  # Too short
-                        track.edition.count('(') != track.edition.count(')') or  # Mismatched parens
-                        edition_lower in new_title_lower  # Edition content is now part of title (split fix)
+                        'titile' in edition_lower or
+                        track.edition.startswith(') -') or
+                        track.edition.startswith('(') and ')' not in track.edition or
+                        len(track.edition.strip()) < 3 or
+                        track.edition.count('(') != track.edition.count(')') or
+                        edition_lower in new_title_lower
                     )
                     if is_corrupted:
-                        logger.info(
-                            f"Corruption fix: Clearing corrupted edition '{track.edition}' "
-                            f"for track '{track_data.title}'"
-                        )
+                        logger.info(f"Corruption fix: Clearing corrupted edition '{track.edition}' for track '{track_data.title}'")
                         track.edition = None
+
             if track_data.duration is not None:
                 track.duration = track_data.duration
             if track_data.track_number is not None:
@@ -462,45 +384,36 @@ class LibraryManager:
             if track_data.isrc is not None:
                 track.isrc = track_data.isrc
 
-            # NOTE: Explicitly NOT updating added_at to preserve original import time
-            
-            # Only log at DEBUG level for routine updates (reduces log spam)
             logger.debug(f"Updated existing track: {track.title} by {artist.name}")
             is_new = False
 
-        # Ensure all identifiers are linked to this track
+        # Link identifiers
         for source, item_id in track_data.identifiers.items():
             if not source or not item_id:
                 continue
 
-            plugin_id = self._resolve_plugin_id(source)
-
-            # Ensure item_id is a string
             if not isinstance(item_id, str):
                 item_id = str(item_id)
 
-            # Check if identifier already exists
             stmt = select(ExternalIdentifier).where(
-                ExternalIdentifier.plugin_id == plugin_id,
-                ExternalIdentifier.provider_item_id == item_id,
+                ExternalIdentifier.plugin_source == source,
+                ExternalIdentifier.plugin_item_id == item_id,
             )
             ext_id = session.execute(stmt).scalar_one_or_none()
 
             if ext_id is None:
-                # Create new identifier
                 ext_id = ExternalIdentifier(
                     track=track,
-                    plugin_id=plugin_id,
-                    provider_item_id=item_id,
-                    raw_data=None, # Raw data not supported in simple dict mapping
+                    plugin_source=source,
+                    plugin_item_id=item_id,
+                    raw_data=None,
                 )
                 session.add(ext_id)
             else:
-                # Link to track if different
                 if ext_id.track_id != track.id:
                     ext_id.track = track
 
-        # Handle Audio Fingerprint
+        # Audio Fingerprint
         if track_data.fingerprint:
             stmt = select(AudioFingerprint).where(
                 AudioFingerprint.chromaprint == track_data.fingerprint
@@ -523,28 +436,19 @@ class LibraryManager:
         return track, is_new
 
     def _delete_missing_tracks(self, session: Session, observed_identifiers: Dict[str, set[str]]) -> int:
-        """Remove tracks that are no longer present for a given provider source.
-
-        Args:
-            session: SQLAlchemy session
-            observed_identifiers: Map of provider_source -> set of provider_item_id values seen in this import
-
-        Returns:
-            Number of tracks deleted
-        """
+        """Remove tracks that are no longer present for a given plugin source."""
         if not observed_identifiers:
             return 0
 
         deleted_track_ids: set[int] = set()
 
-        for plugin_id, item_ids in observed_identifiers.items():
+        for plugin_source, item_ids in observed_identifiers.items():
             stmt = select(Track.id).join(ExternalIdentifier).where(
-                ExternalIdentifier.plugin_id == plugin_id
+                ExternalIdentifier.plugin_source == plugin_source
             )
 
-            # If no items were observed for this provider, delete all entries for that source
             if item_ids:
-                stmt = stmt.where(~ExternalIdentifier.provider_item_id.in_(item_ids))
+                stmt = stmt.where(~ExternalIdentifier.plugin_item_id.in_(item_ids))
 
             stale_ids = session.execute(stmt).scalars().all()
             deleted_track_ids.update(stale_ids)
@@ -563,26 +467,16 @@ class LibraryManager:
     ) -> int:
         """
         Bulk import EchosyncTrack objects into database.
-        Uses local caching and batched commits for efficiency.
-        Supports generators to minimize memory usage.
-
-        Args:
-            tracks: Iterable (list or generator) of EchosyncTrack objects
-            total_count: Optional total count for progress reporting (if tracks is a generator)
-
-        Returns:
-            Number of tracks processed (new + updated)
         """
         if not tracks:
             logger.warning("No tracks provided for bulk import")
             return 0
 
-        # Try to determine length if not provided
         if total_count is None:
             try:
                 total_count = len(tracks)
             except TypeError:
-                total_count = 0  # Unknown total
+                total_count = 0
 
         logger.info(f"Starting bulk import of {total_count if total_count > 0 else 'unknown number of'} tracks")
 
@@ -590,39 +484,34 @@ class LibraryManager:
         imported_count = 0
         updated_count = 0
         failed_count = 0
-        observed_identifiers: Dict[int, set[str]] = defaultdict(set)
-        # Progress tracking (unique artists/albums encountered)
+        observed_identifiers: Dict[str, set[str]] = defaultdict(set)
         seen_artist_ids: set[int] = set()
         seen_album_ids: set[int] = set()
 
-        # === prepopulate caches with existing database entries ===
-        # This avoids creating duplicates due to normalization mismatch (e.g. accents)
+        # prepopulate caches
         if not self.artist_cache:
             try:
                 stmt = select(Artist)
                 for a in session.execute(stmt).scalars().all():
                     norm = self._normalize_name(a.name)
                     if norm in self.artist_cache:
-                        # existing artist with same normalized name -> merge
                         primary_id = self.artist_cache[norm]
                         primary = session.get(Artist, primary_id)
                         if primary and primary.id != a.id:
-                            # reassign albums and tracks to primary
                             for alb in list(a.albums):
                                 alb.artist = primary
                             for tr in list(a.tracks):
                                 tr.artist = primary
-                            # delete duplicate artist
                             try:
                                 session.delete(a)
                                 logger.info(f"Merged duplicate artist '{a.name}' into '{primary.name}'")
                             except Exception:
-                                logger.debug(f"Failed to delete duplicate artist {a.name}")
-                            continue  # skip caching this one
-                    # cache valid id
+                                pass
+                            continue
                     self.artist_cache[norm] = a.id
             except Exception:
                 pass
+
         if not self.album_cache:
             try:
                 stmt = select(Album)
@@ -630,7 +519,6 @@ class LibraryManager:
                     norm = self._normalize_name(alb.title)
                     key = (norm, alb.artist_id)
                     if key in self.album_cache:
-                        # merge duplicate album into primary
                         primary_id = self.album_cache[key]
                         primary = session.get(Album, primary_id)
                         if primary and primary.id != alb.id:
@@ -640,7 +528,7 @@ class LibraryManager:
                                 session.delete(alb)
                                 logger.info(f"Merged duplicate album '{alb.title}' into '{primary.title}'")
                             except Exception:
-                                logger.debug(f"Failed to delete duplicate album {alb.title}")
+                                pass
                             continue
                     self.album_cache[key] = alb.id
             except Exception:
@@ -648,20 +536,15 @@ class LibraryManager:
 
         try:
             for idx, track_data in enumerate(tracks):
-                # yield occasionally to allow other threads to run and avoid hogging the GIL
                 if idx and idx % 10 == 0:
-                    import time
                     time.sleep(0)
 
                 try:
-                    # Skip tracks with missing required fields
                     if not track_data.title or not track_data.title.strip():
                         failed_count += 1
                         logger.warning(
                             "Skipping track %s due to missing title: artist='%s' album='%s'",
-                            idx + 1,
-                            track_data.artist_name,
-                            track_data.album_title,
+                            idx + 1, track_data.artist_name, track_data.album_title,
                         )
                         continue
                     
@@ -669,22 +552,16 @@ class LibraryManager:
                         failed_count += 1
                         logger.warning(
                             "Skipping track %s due to missing artist: title='%s'",
-                            idx + 1,
-                            track_data.title,
+                            idx + 1, track_data.title,
                         )
                         continue
                     
-                    # Only log every 100 tracks to reduce spam (batch commits log at that interval)
                     if (idx + 1) % 100 == 0 or idx == 0:
                         logger.debug(
                             "Processing track %s: title='%s' artist='%s' album='%s'",
-                            idx + 1,
-                            track_data.title,
-                            track_data.artist_name,
-                            track_data.album_title,
+                            idx + 1, track_data.title, track_data.artist_name, track_data.album_title,
                         )
 
-                    # Get or create artist
                     artist = self._get_or_create_artist(
                         session,
                         track_data.artist_name,
@@ -693,7 +570,6 @@ class LibraryManager:
                     if artist and artist.id:
                         seen_artist_ids.add(artist.id)
 
-                    # Get or create album
                     album = self._get_or_create_album(
                         session,
                         track_data.album_title,
@@ -707,17 +583,14 @@ class LibraryManager:
                     if album and album.id:
                         seen_album_ids.add(album.id)
 
-                    # Upsert track
                     track, is_new = self._upsert_track(session, track_data, artist, album)
 
-                    # Track identifier observations for deletion detection
                     for source, item_id in (track_data.identifiers or {}).items():
                         if not source or item_id is None:
                             continue
-                        plugin_id = self._resolve_plugin_id(source)
                         if not isinstance(item_id, str):
                             item_id = str(item_id)
-                        observed_identifiers[plugin_id].add(item_id)
+                        observed_identifiers[source].add(item_id)
 
                     if is_new:
                         imported_count += 1
@@ -726,20 +599,13 @@ class LibraryManager:
 
                 except Exception as e:
                     failed_count += 1
-                    logger.error(
-                        f"Failed to import track '{track_data.title}': {e}",
-                        exc_info=True,
-                    )
+                    logger.error(f"Failed to import track '{track_data.title}': {e}", exc_info=True)
                     continue
 
-                # Batch commit every BATCH_SIZE tracks
                 if (idx + 1) % BATCH_SIZE == 0:
                     session.commit()
-                    logger.info(
-                        f"Batch committed: {idx + 1} tracks processed"
-                    )
+                    logger.info(f"Batch committed: {idx + 1} tracks processed")
 
-                # Emit progress updates periodically (every 25 items and on each batch commit)
                 if progress_callback and (((idx + 1) % 25 == 0) or ((idx + 1) % BATCH_SIZE == 0)):
                     try:
                         progress_callback({
@@ -752,13 +618,10 @@ class LibraryManager:
                             "albums": len(seen_album_ids),
                         })
                     except Exception:
-                        # Progress should never break import; ignore callback errors
                         pass
 
-            # Final commit for inserts/updates
             session.commit()
 
-            # Remove tracks that no longer exist for observed providers
             deleted_count = self._delete_missing_tracks(session, observed_identifiers)
             if deleted_count:
                 session.commit()
@@ -768,7 +631,6 @@ class LibraryManager:
                 f"Bulk import complete: {imported_count} new, {updated_count} updated, {deleted_count} deleted, {failed_count} failed (total processed: {total_processed})"
             )
 
-            # Final progress callback
             if progress_callback:
                 try:
                     progress_callback({
@@ -792,37 +654,18 @@ class LibraryManager:
 
         return total_processed
 
-    def backfill_provider_identifiers(self, provider_source: str) -> int:
+    def backfill_plugin_identifiers(self, plugin_source: str) -> int:
         """
         Repair missing external identifiers caused by the old duplicate-row bug.
-
-        When ``auto_importer`` or ``local_server`` creates a track row, it carries
-        no identifier for the media-server provider (e.g. ``plex``).  A subsequent
-        Plex DB pull matched by ``file_path`` would previously create a *second*
-        (ghost) row that held the ``ratingKey``, leaving the original row — the one
-        the playlist-scoring engine matched against — without it.
-
-        This method performs a purely in-database repair pass:
-
-        1.  Builds a map of ``file_path → (provider_item_id, ext_id_row_id)`` from
-            tracks that already have a ``provider_source`` identifier.
-        2.  Finds all tracks at those file_paths that are *missing* that provider's
-            identifier.
-        3.  For each orphan track, **re-points** the existing ``ExternalIdentifier``
-            row (UPDATE track_id) rather than inserting a new one.  This avoids the
-            UNIQUE constraint on ``(provider_source, provider_item_id)`` and also
-            effectively re-homes the ghost row's ratingKey onto the canonical track.
-
-        Returns the number of ``ExternalIdentifier`` rows re-pointed.
         """
         session = self.session_factory()
         try:
-            # --- Step 1: build file_path → (provider_item_id, ext_id pk) map ---
+            # --- Step 1: build file_path → (plugin_item_id, ext_id pk) map ---
             rows = session.execute(
-                select(Track.file_path, ExternalIdentifier.provider_item_id, ExternalIdentifier.id)
+                select(Track.file_path, ExternalIdentifier.plugin_item_id, ExternalIdentifier.id)
                 .join(ExternalIdentifier, ExternalIdentifier.track_id == Track.id)
                 .where(
-                    ExternalIdentifier.provider_source == provider_source,
+                    ExternalIdentifier.plugin_source == plugin_source,
                     Track.file_path.isnot(None),
                     Track.file_path != '',
                 )
@@ -830,28 +673,27 @@ class LibraryManager:
 
             if not rows:
                 logger.info(
-                    "backfill_provider_identifiers(%s): no source rows found — nothing to backfill.",
-                    provider_source,
+                    "backfill_plugin_identifiers(%s): no source rows found — nothing to backfill.",
+                    plugin_source,
                 )
                 return 0
 
             # Keep the first (earliest) ext_id row seen per file_path.
-            fp_to_info: Dict[str, tuple] = {}  # fp → (provider_item_id, ext_id_pk)
+            fp_to_info: Dict[str, tuple] = {}  # fp → (plugin_item_id, ext_id_pk)
             for fp, pid, ext_pk in rows:
                 if fp and fp not in fp_to_info:
                     fp_to_info[fp] = (pid, ext_pk)
 
             target_file_paths = list(fp_to_info.keys())
             logger.info(
-                "backfill_provider_identifiers(%s): %d file paths carry an identifier for this provider.",
-                provider_source, len(target_file_paths),
+                "backfill_plugin_identifiers(%s): %d file paths carry an identifier for this plugin.",
+                plugin_source, len(target_file_paths),
             )
 
             # --- Step 2: find tracks at those file_paths that lack the identifier ---
-            # Use a proper select() subquery (SQLAlchemy 2.0 style) to avoid SAWarning.
             already_linked_subq = (
                 select(ExternalIdentifier.track_id)
-                .where(ExternalIdentifier.provider_source == provider_source)
+                .where(ExternalIdentifier.plugin_source == plugin_source)
                 .scalar_subquery()
             )
 
@@ -876,7 +718,6 @@ class LibraryManager:
                         continue
 
                     # Re-point the existing ExternalIdentifier row to this track.
-                    # This is an UPDATE, not an INSERT, so no UNIQUE violation occurs.
                     ext_row = session.get(ExternalIdentifier, ext_pk)
                     if ext_row is None:
                         continue
@@ -885,20 +726,20 @@ class LibraryManager:
                     updated_count += 1
                     logger.debug(
                         "backfill: re-pointed %s identifier '%s' from track %d → track %d ('%s')",
-                        provider_source, pid, old_track_id, track.id, track.title,
+                        plugin_source, pid, old_track_id, track.id, track.title,
                     )
 
             session.commit()
             logger.info(
-                "backfill_provider_identifiers(%s): re-pointed %d missing identifier(s).",
-                provider_source, updated_count,
+                "backfill_plugin_identifiers(%s): re-pointed %d missing identifier(s).",
+                plugin_source, updated_count,
             )
             return updated_count
 
         except Exception as exc:
             session.rollback()
             logger.error(
-                "backfill_provider_identifiers(%s) failed: %s", provider_source, exc, exc_info=True
+                "backfill_plugin_identifiers(%s) failed: %s", plugin_source, exc, exc_info=True
             )
             raise
         finally:

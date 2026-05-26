@@ -458,8 +458,8 @@ class PlaylistSyncService:
                     # Resolve the provider-specific item ID from ExternalIdentifiers.
                     # db_track.id is the internal MusicDatabase PK — never pass it to a
                     # media server directly, as it is unrelated to any provider's track ID.
-                    provider_item_id = db.get_external_identifier(server_type, db_track.id)
-                    if not provider_item_id:
+                    plugin_item_id = db.get_external_identifier(server_type, db_track.id)
+                    if not plugin_item_id:
                         logger.warning(
                             f"❌ No {server_type} ExternalIdentifier for '{db_track.title}' "
                             f"(db_id={db_track.id}) — track has not been synced to this server yet"
@@ -469,19 +469,19 @@ class PlaylistSyncService:
                     # Validate the ID is live on the server via the uniform PluginBase
                     # interface.  Each provider handles any internal casting (e.g. int() for
                     # Plex ratingKeys) inside its own get_track() implementation.
-                    validated = media_client.get_track(provider_item_id)
+                    validated = media_client.get_track(plugin_item_id)
                     if not validated:
                         logger.warning(
-                            f"❌ {server_type} could not resolve provider_item_id='{provider_item_id}' "
+                            f"❌ {server_type} could not resolve provider_item_id='{plugin_item_id}' "
                             f"for '{db_track.title}'"
                         )
                         return None, 0.0
 
                     logger.debug(
                         f"✔️ Validated '{db_track.title}' on {server_type} "
-                        f"(provider_item_id={provider_item_id})"
+                        f"(provider_item_id={plugin_item_id})"
                     )
-                    return provider_item_id, confidence
+                    return plugin_item_id, confidence
 
             except Exception as db_error:
                 logger.error(f"Error checking track existence for '{original_title}' by '{artist_name}': {db_error}")

@@ -65,7 +65,7 @@ class OutboundGatewayProvider(PluginBase):
         for key, value in track.identifiers.items():
             # Filter out any internal identifier schemas if necessary, although
             # standard identifiers in track.identifiers usually resemble provider IDs.
-            if key not in ("provider_source", "provider_item_id"):
+            if key not in ("plugin_source", "plugin_item_id"):
                 external_identifiers[key] = value
 
         if external_identifiers:

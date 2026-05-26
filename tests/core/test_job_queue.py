@@ -6,13 +6,17 @@ from core.job_queue import JobQueue, ScheduledJob
 def test_scheduled_job_clears_running_lock_and_disposes_working_db(monkeypatch):
     queue = JobQueue(worker_count=1)
 
-    disposed = {"count": 0}
+    removed_working = {"count": 0}
+    removed_music = {"count": 0}
 
-    class FakeWorkingDatabase:
-        def dispose(self):
-            disposed["count"] += 1
+    class FakeRegistry:
+        def __init__(self, counter):
+            self.counter = counter
+        def remove(self):
+            self.counter["count"] += 1
 
-    monkeypatch.setattr("core.job_queue.get_working_database", lambda: FakeWorkingDatabase())
+    monkeypatch.setattr("database.working_database.working_session_registry", FakeRegistry(removed_working))
+    monkeypatch.setattr("database.music_database.music_session_registry", FakeRegistry(removed_music))
 
     def failing_job():
         raise RuntimeError("boom")
@@ -37,4 +41,5 @@ def test_scheduled_job_clears_running_lock_and_disposes_working_db(monkeypatch):
     assert queue._is_running.get(job.name, False) is False
     assert job.running is False
     assert job.name not in queue._jobs
-    assert disposed["count"] == 1
+    assert removed_working["count"] >= 1
+    assert removed_music["count"] >= 1

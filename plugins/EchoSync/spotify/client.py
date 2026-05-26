@@ -10,13 +10,12 @@ import time
 from dataclasses import dataclass
 from core.tiered_logger import get_logger
 from core.nexus_framework.plugin_SDK import PluginBase
-from core.nexus_framework.plugin_loader import get_provider_capabilities
 from core.nexus_framework.plugin_SDK import SyncServiceProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
-from core.caching.provider_cache import provider_cache
+from core.caching.plugin_cache import plugin_cache
 
 logger = get_logger("spotify_client")
 
@@ -619,10 +618,10 @@ class SpotifyClient(SyncServiceProvider):
             logger.warning("Spotify search_by_isrc(%s) failed: %s", isrc, exc)
             return None
 
-    @provider_cache(ttl_seconds=2592000)
+    @plugin_cache(ttl_seconds=2592000)
     def _raw_track(self, track_id: str) -> Optional[Dict[str, Any]]:
         """Cached raw Spotipy track payload.  Decoupled from get_track so the
-        JSON-serialisable dict survives the provider_cache SQLite round-trip."""
+        JSON-serialisable dict survives the plugin_cache SQLite round-trip."""
         if not self.is_authenticated():
             return None
         try:
@@ -640,7 +639,7 @@ class SpotifyClient(SyncServiceProvider):
     def get_track_by_id(self, item_id: str) -> Optional[EchosyncTrack]:
         return self.get_track(item_id)
 
-    @provider_cache(ttl_seconds=2592000)
+    @plugin_cache(ttl_seconds=2592000)
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
         if not self.is_authenticated():
             return None
@@ -650,7 +649,7 @@ class SpotifyClient(SyncServiceProvider):
             logger.error(f"Error getting album {album_id}: {e}")
             return None
 
-    @provider_cache(ttl_seconds=2592000)
+    @plugin_cache(ttl_seconds=2592000)
     def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
         if not self.is_authenticated():
             return None
@@ -822,19 +821,15 @@ class SpotifyClient(SyncServiceProvider):
             # We stored the ID in identifiers.
             found = results[0]
             # Retrieve ID from identifiers
-            # identifiers structure: [{'provider_source': 'spotify', 'provider_item_id': '...'}]
-            # or dict if normalized. EchosyncTrack normalizes to dict in post_init?
-            # Let's check EchosyncTrack definition. It has 'identifiers' dict by default.
-
-            # The factory `create_echo_sync_track` adds it as a list item first,
-            # then `EchosyncTrack.__post_init__` converts list to dict if needed.
+            # identifiers structure: {'plugin_source': 'spotify', 'plugin_item_id': '...'}
+            # or dict if normalized. EchosyncTrack normalizes to dict in post_init.
 
             # Safe retrieval
             if isinstance(found.identifiers, dict):
                 tid = found.identifiers.get('spotify')
             elif isinstance(found.identifiers, list):
                  # fallback search in list
-                 tid = next((x['provider_item_id'] for x in found.identifiers if x['provider_source'] == 'spotify'), None)
+                 tid = next((x['plugin_item_id'] for x in found.identifiers if x['plugin_source'] == 'spotify'), None)
             else:
                 tid = None
 

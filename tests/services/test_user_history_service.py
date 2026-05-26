@@ -59,14 +59,14 @@ def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, moc
 
     stats = {"ratings_imported": 0}
     interactions = [
-        UserTrackInteraction(provider_item_id="1", artist_name="Artist A", track_title="Song One", rating=4.5, play_count=7),
-        UserTrackInteraction(provider_item_id="2", artist_name="Artist A", track_title="Song Two", rating=3.0, play_count=3),
-        UserTrackInteraction(provider_item_id="3", artist_name="Artist A", track_title="Missing Song", rating=5.0),
+        UserTrackInteraction(plugin_item_id="1", artist_name="Artist A", track_title="Song One", rating=4.5, play_count=7),
+        UserTrackInteraction(plugin_item_id="2", artist_name="Artist A", track_title="Song Two", rating=3.0, play_count=3),
+        UserTrackInteraction(plugin_item_id="3", artist_name="Artist A", track_title="Missing Song", rating=5.0),
     ]
 
     stats["listen_count_imported"] = 0
 
-    matched_count = service._process_interactions(user_id, interactions, stats, plugin_id=1)
+    matched_count = service._process_interactions(user_id, interactions, stats, plugin_source="plex")
 
     assert matched_count == 2
     assert stats["ratings_imported"] == 2
@@ -104,7 +104,7 @@ def test_process_interactions_persists_listen_count_without_rating(mock_db, mock
     stats = {"ratings_imported": 0, "listen_count_imported": 0}
     interactions = [
         UserTrackInteraction(
-            provider_item_id="4",
+            plugin_item_id="4",
             artist_name="Artist B",
             track_title="Playcount Only",
             rating=None,
@@ -112,7 +112,7 @@ def test_process_interactions_persists_listen_count_without_rating(mock_db, mock
         )
     ]
 
-    matched_count = service._process_interactions(user_id, interactions, stats, plugin_id=1)
+    matched_count = service._process_interactions(user_id, interactions, stats, plugin_source="plex")
 
     assert matched_count == 1
     assert stats["ratings_imported"] == 0
@@ -142,8 +142,8 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
         music_session.add(
             ExternalIdentifier(
                 track_id=track.id,
-                plugin_id=1,
-                provider_item_id="120760",
+                plugin_source="plex",
+                plugin_item_id="120760",
                 raw_data=None,
             )
         )
@@ -157,7 +157,7 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
     stats = {"ratings_imported": 0, "listen_count_imported": 0}
     interactions = [
         UserTrackInteraction(
-            provider_item_id="/library/metadata/120760",
+            plugin_item_id="/library/metadata/120760",
             artist_name="Various Artists",
             track_title="Gangsta's Paradise",
             rating=4.0,
@@ -165,7 +165,7 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
         )
     ]
 
-    matched_count = service._process_interactions(user_id, interactions, stats, plugin_id=1)
+    matched_count = service._process_interactions(user_id, interactions, stats, plugin_source="plex")
 
     assert matched_count == 1
     assert stats["ratings_imported"] == 1
@@ -195,8 +195,8 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
         music_session.add(
             ExternalIdentifier(
                 track_id=track.id,
-                plugin_id=1,
-                provider_item_id="120760",
+                plugin_source="plex",
+                plugin_item_id="120760",
                 raw_data=None,
             )
         )
@@ -210,7 +210,7 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
     stats = {"ratings_imported": 0, "listen_count_imported": 0}
 
     legacy_id_interaction = UserTrackInteraction(
-        provider_item_id="",
+        plugin_item_id="",
         artist_name="Various Artists",
         track_title="Gangsta's Paradise",
         rating=5.0,
@@ -219,7 +219,7 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
     legacy_id_interaction.source_item_id = "/library/metadata/120760"
 
     dict_id_interaction = UserTrackInteraction(
-        provider_item_id="",
+        plugin_item_id="",
         artist_name="Various Artists",
         track_title="Gangsta's Paradise",
         rating=4.0,
@@ -231,7 +231,7 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
         user_id,
         [legacy_id_interaction, dict_id_interaction],
         stats,
-        plugin_id=1
+        plugin_source="plex"
     )
 
     assert matched_count == 2

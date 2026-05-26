@@ -7,9 +7,9 @@ from core.user_history import UserTrackInteraction
 @pytest.fixture
 def plex_client():
     # Patch the facades so they don't hit the DB or fail stack inspection during init
-    with patch('core.plugin_SDK._AccountsSDKFacade.get_all', return_value=[]), \
-         patch('core.plugin_SDK._AccountsSDKFacade.get_token', return_value=None), \
-         patch('core.plugin_SDK._ConfigFacade.get', return_value=None):
+    with patch('core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_all', return_value=[]), \
+         patch('core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_token', return_value=None), \
+         patch('core.nexus_framework.plugin_SDK._ConfigFacade.get', return_value=None):
         client = PlexClient()
         return client
 
@@ -25,8 +25,8 @@ def test_is_configured_false(plex_client):
 
 def test_is_configured_true(plex_client):
     plex_client.account_id = 1
-    with patch('core.plugin_SDK._AccountsSDKFacade.get_token') as mock_get_token, \
-         patch('core.plugin_SDK._ConfigFacade.get') as mock_config_get:
+    with patch('core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_token') as mock_get_token, \
+         patch('core.nexus_framework.plugin_SDK._ConfigFacade.get') as mock_config_get:
         
         mock_get_token.return_value = {'access_token': 'abc'}
         mock_config_get.side_effect = lambda k, **kwargs: 'http://plex' if k in ['base_url', 'server_url'] else None
@@ -34,8 +34,8 @@ def test_is_configured_true(plex_client):
         assert plex_client.is_configured() is True
 
 def test_auto_detect_prefers_token_backed_account(monkeypatch):
-    with patch('core.plugin_SDK._AccountsSDKFacade.get_all') as mock_get_all, \
-         patch('core.plugin_SDK._AccountsSDKFacade.get_token') as mock_get_token:
+    with patch('core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_all') as mock_get_all, \
+         patch('core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_token') as mock_get_token:
         
         mock_get_all.return_value = [
             {'id': 11, 'display_name': 'Managed User'},
@@ -231,7 +231,7 @@ def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
 
     client._find_music_library_for_server = lambda _: MagicMock()
     client._track_to_interaction = lambda _: UserTrackInteraction(
-        provider_item_id='1',
+        plugin_item_id='1',
         artist_name='Artist',
         track_title='Song',
         play_count=3,
@@ -302,14 +302,14 @@ def test_enrich_interactions_with_user_ratings_fetches_missing_only():
     client = PlexClient(account_id=7)
 
     missing_rating = UserTrackInteraction(
-        provider_item_id='100',
+        plugin_item_id='100',
         artist_name='Artist A',
         track_title='Song A',
         play_count=1,
         rating=None,
     )
     existing_rating = UserTrackInteraction(
-        provider_item_id='200',
+        plugin_item_id='200',
         artist_name='Artist B',
         track_title='Song B',
         play_count=2,
@@ -362,7 +362,7 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
 
     client._find_music_library_for_server = lambda _: MagicMock()
     client._track_to_interaction = lambda _: UserTrackInteraction(
-        provider_item_id='123',
+        plugin_item_id='123',
         artist_name='Artist',
         track_title='Song',
         play_count=1,

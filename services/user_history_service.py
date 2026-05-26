@@ -151,7 +151,7 @@ class UserHistoryService:
                                 account_id=working_user.id,
                                 interactions=interactions,
                                 stats=stats,
-                                plugin_id=plugin_id
+                                plugin_source=server_name
                             )
                             
                             self.logger.info(
@@ -251,7 +251,7 @@ class UserHistoryService:
         account_id: int,
         interactions: List[UserTrackInteraction],
         stats: Dict,
-        plugin_id: Optional[int] = None
+        plugin_source: Optional[str] = None
     ) -> int:
         """
         Process a list of user interactions and store ratings in working.db.
@@ -281,54 +281,54 @@ class UserHistoryService:
                     interaction_records = []
                     unique_pairs = set()
 
-                    provider_item_ids: Set[str] = set()
+                    plugin_item_ids: Set[str] = set()
                     for interaction in interactions:
-                        raw_id = self._extract_provider_item_id(interaction)
+                        raw_id = self._extract_plugin_item_id(interaction)
                         if not raw_id:
                             continue
-                        provider_item_ids.add(raw_id)
-                        normalized_id = self._normalize_provider_item_id(raw_id)
+                        plugin_item_ids.add(raw_id)
+                        normalized_id = self._normalize_plugin_item_id(raw_id)
                         if normalized_id:
-                            provider_item_ids.add(normalized_id)
+                            plugin_item_ids.add(normalized_id)
 
-                    if not provider_item_ids:
-                        self.logger.debug("No provider item IDs found in interactions; using text fallback only")
+                    if not plugin_item_ids:
+                        self.logger.debug("No plugin item IDs found in interactions; using text fallback only")
 
                     # Primary O(1) lookup via ExternalIdentifiers.
                     ext_idents = []
-                    if provider_item_ids and plugin_id:
+                    if plugin_item_ids and plugin_source:
                         ext_idents = (
                             music_session.query(ExternalIdentifier, Track)
                             .join(Track, ExternalIdentifier.track_id == Track.id)
                             .filter(
-                                ExternalIdentifier.plugin_id == plugin_id,
-                                ExternalIdentifier.provider_item_id.in_(list(provider_item_ids))
+                                ExternalIdentifier.plugin_source == plugin_source,
+                                ExternalIdentifier.plugin_item_id.in_(list(plugin_item_ids))
                             )
                             .all()
                         )
 
-                    provider_id_to_track: Dict[str, Track] = {}
+                    plugin_id_to_track: Dict[str, Track] = {}
                     for ext_ident, track in ext_idents:
-                        raw_ext_id = str(ext_ident.provider_item_id)
-                        provider_id_to_track[raw_ext_id] = track
-                        normalized_ext_id = self._normalize_provider_item_id(raw_ext_id)
+                        raw_ext_id = str(ext_ident.plugin_item_id)
+                        plugin_id_to_track[raw_ext_id] = track
+                        normalized_ext_id = self._normalize_plugin_item_id(raw_ext_id)
                         if normalized_ext_id:
-                            provider_id_to_track[normalized_ext_id] = track
+                            plugin_id_to_track[normalized_ext_id] = track
 
                     # 1) Record playback history catch-up
                     playback_payloads = []
                     for interaction in interactions:
                         try:
-                            extracted_id = self._extract_provider_item_id(interaction)
-                            interaction_provider_id = self._normalize_provider_item_id(extracted_id) or extracted_id
+                            extracted_id = self._extract_plugin_item_id(interaction)
+                            interaction_plugin_id = self._normalize_plugin_item_id(extracted_id) or extracted_id
 
                             user_record = work_session.query(User).filter_by(id=account_id).first()
                             playback_user_id = user_record.provider_identifier if user_record and user_record.provider_identifier else str(account_id)
 
-                            if interaction_provider_id:
+                            if interaction_plugin_id:
                                 playback_payloads.append({
                                     "user_id": str(playback_user_id),
-                                    "provider_item_id": str(interaction_provider_id),
+                                    "plugin_item_id": str(interaction_plugin_id),
                                     "listened_at": interaction.last_played_at or utc_now()
                                 })
                         except Exception as e:
@@ -338,18 +338,18 @@ class UserHistoryService:
                         if self.working_db.engine.dialect.name == 'sqlite':
                             insert_stmt = sqlite_insert(PlaybackHistory).values(playback_payloads)
                             upsert_stmt = insert_stmt.on_conflict_do_nothing(
-                                index_elements=['user_id', 'provider_item_id', 'listened_at']
+                                index_elements=['user_id', 'plugin_item_id', 'listened_at']
                             )
                             work_session.execute(upsert_stmt)
 
                     # 2) Continue with UserRatings matching
                     for interaction in interactions:
                         try:
-                            extracted_id = self._extract_provider_item_id(interaction)
-                            interaction_provider_id = self._normalize_provider_item_id(extracted_id) or extracted_id
+                            extracted_id = self._extract_plugin_item_id(interaction)
+                            interaction_plugin_id = self._normalize_plugin_item_id(extracted_id) or extracted_id
 
-                            if interaction_provider_id in provider_id_to_track:
-                                track = provider_id_to_track[interaction_provider_id]
+                            if interaction_plugin_id in plugin_id_to_track:
+                                track = plugin_id_to_track[interaction_plugin_id]
                                 sync_id = f"ss:track:meta:{generate_deterministic_id(track.artist.name, track.title)}"
                                 interaction_records.append({
                                     "interaction": interaction,
@@ -358,10 +358,10 @@ class UserHistoryService:
                                 })
                                 continue
 
-                            if interaction_provider_id and interaction_provider_id.startswith('ss:track:meta:'):
+                            if interaction_plugin_id and interaction_plugin_id.startswith('ss:track:meta:'):
                                 interaction_records.append({
                                     "interaction": interaction,
-                                    "sync_id": interaction_provider_id.split('?')[0],
+                                    "sync_id": interaction_plugin_id.split('?')[0],
                                     "matched_by_id": True,
                                 })
                                 continue
@@ -440,9 +440,9 @@ class UserHistoryService:
 
         return matched_count
 
-    def _extract_provider_item_id(self, interaction: UserTrackInteraction) -> str:
-        """Extract provider item ID from current and legacy interaction fields."""
-        direct_id = str(getattr(interaction, 'provider_item_id', '') or '').strip()
+    def _extract_plugin_item_id(self, interaction: UserTrackInteraction) -> str:
+        """Extract plugin item ID from current and legacy interaction fields."""
+        direct_id = str(getattr(interaction, 'plugin_item_id', getattr(interaction, 'provider_item_id', '')) or '').strip()
         if direct_id:
             return direct_id
 
@@ -461,8 +461,8 @@ class UserHistoryService:
 
         return ''
 
-    def _normalize_provider_item_id(self, provider_item_id: Optional[str]) -> str:
-        """Normalize provider item IDs for robust reverse lookups.
+    def _normalize_plugin_item_id(self, provider_item_id: Optional[str]) -> str:
+        """Normalize provider/plugin item IDs for robust reverse lookups.
 
         Handles common Plex representations such as:
         - "120760"

@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.caching.provider_cache import provider_cache
+from core.caching.plugin_cache import plugin_cache
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger
 
@@ -71,7 +71,7 @@ def _dispatch_isrc_via_providers(
 
     tried: List[str] = []
 
-    candidates = PluginRegistry.get_providers_with_capability(Capability.FETCH_METADATA)
+    candidates = PluginRegistry.get_plugins_with_capability(Capability.FETCH_METADATA)
     isrc_providers = [p for p in candidates if getattr(p, "supports_isrc_lookup", False)]
 
     # Sort descending by metadata richness so the richest source goes first.
@@ -112,7 +112,7 @@ def _dispatch_isrc_via_providers(
 
 # ─── Public entrypoint ────────────────────────────────────────────────────────
 
-@provider_cache(ttl_seconds=2592000)
+@plugin_cache(ttl_seconds=2592000)
 def fetch_metadata_by_isrc(isrc_code: str) -> Dict[str, Any]:
     """
     Resolve track metadata for *isrc_code* via the provider-agnostic waterfall.

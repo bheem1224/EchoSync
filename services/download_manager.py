@@ -781,7 +781,7 @@ class DownloadManager:
 
             # Extract download parameters
             username = best_candidate.identifiers.get('username')
-            filename = best_candidate.identifiers.get('provider_item_id')
+            filename = best_candidate.identifiers.get('plugin_item_id')
             size = best_candidate.identifiers.get('size')
             
             if not username:
@@ -1083,7 +1083,7 @@ class DownloadManager:
         for candidate in candidates:
             identifiers = getattr(candidate, 'identifiers', None) or {}
             username = identifiers.get('username') if isinstance(identifiers, dict) else None
-            provider_item_id = identifiers.get('provider_item_id') if isinstance(identifiers, dict) else None
+            plugin_item_id = identifiers.get('plugin_item_id') if isinstance(identifiers, dict) else None
 
             # Include quality-relevant fields so we only collapse exact duplicate
             # observations of the same file result across fallback strategies.
@@ -1096,7 +1096,7 @@ class DownloadManager:
 
             dedupe_key = (
                 username,
-                provider_item_id,
+                plugin_item_id,
                 size,
                 bitrate,
                 duration,
@@ -1105,10 +1105,10 @@ class DownloadManager:
                 bit_depth,
             )
 
-            if provider_item_id and username and dedupe_key in seen:
+            if plugin_item_id and username and dedupe_key in seen:
                 continue
 
-            if provider_item_id and username:
+            if plugin_item_id and username:
                 seen.add(dedupe_key)
             unique.append(candidate)
 
@@ -1407,14 +1407,14 @@ class DownloadManager:
             queue_length = int(candidate.identifiers.get('queue_length', 0) or 0)
             size = int(candidate.file_size_bytes or candidate.identifiers.get('size', 0) or 0)
             size_rank = size if prefer_larger_files else -size
-            provider_item_id = candidate.identifiers.get('provider_item_id', '') or ''
+            plugin_item_id = candidate.identifiers.get('plugin_item_id', '') or ''
             return (
                 bitrate,
                 free_slots,
                 upload_speed,
                 -queue_length,
                 size_rank,
-                len(provider_item_id),
+                len(plugin_item_id),
             )
 
         return max(candidates, key=candidate_key)

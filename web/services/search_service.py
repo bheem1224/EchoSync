@@ -3,7 +3,7 @@
 import asyncio
 from typing import List, Dict, Optional
 
-from core.nexus_framework.plugin_loader import get_provider_capabilities
+from core.nexus_framework.plugin_loader import get_plugin_capabilities
 from core.nexus_framework.plugin_SDK import MediaServerProvider
 
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
@@ -32,10 +32,10 @@ class SearchAdapter:
 
         # Discover search-capable providers from the central registry.
         search_providers = []
-        for provider_name in PluginRegistry.list_providers():
+        for provider_name in PluginRegistry.list_plugins():
             try:
                 provider = PluginRegistry.create_instance(provider_name)
-                caps = get_provider_capabilities(provider.name)
+                caps = get_plugin_capabilities(provider.name)
             except Exception:
                 continue
             if not any(getattr(caps.search, search_cap_keys[k], False) for k in search_types if k in search_cap_keys):
@@ -86,13 +86,13 @@ class SearchAdapter:
         """Async federated discovery utilizing all search providers."""
         
         search_providers = []
-        for provider_name in PluginRegistry.list_providers():
+        for provider_name in PluginRegistry.list_plugins():
             if enabled_providers is not None and provider_name not in enabled_providers:
                 continue
                 
             try:
                 provider = PluginRegistry.create_instance(provider_name)
-                caps = get_provider_capabilities(provider.name)
+                caps = get_plugin_capabilities(provider.name)
                 if getattr(caps.search, 'tracks', False):
                     search_providers.append(provider)
             except Exception:

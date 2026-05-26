@@ -94,8 +94,8 @@ class PlexWebhookParser(WebhookParser):
                     "data": {
                         "rating": rating,
                         "account_id": user_id,
-                        "provider": "plex",
-                        "provider_item_id": provider_item_id
+                        "plugin": "plex",
+                        "plugin_item_id": provider_item_id
                     }
                 }
             elif event_type == 'media.scrobble':
@@ -104,8 +104,8 @@ class PlexWebhookParser(WebhookParser):
                     "sync_id": sync_id,  # May be None, that is fine
                     "data": {
                         "account_id": user_id,
-                        "provider": "plex",
-                        "provider_item_id": provider_item_id
+                        "plugin": "plex",
+                        "plugin_item_id": provider_item_id
                     }
                 }
             else:
@@ -147,7 +147,7 @@ class PlexWebhookParser(WebhookParser):
 
             return {
                 "user_id": str(user_id),
-                "provider_item_id": str(provider_item_id)
+                "plugin_item_id": str(provider_item_id)
             }
         except Exception:
             return None
@@ -163,26 +163,26 @@ class NavidromeWebhookParser(WebhookParser):
         pass
 
 
-_PROVIDER_PARSERS = {
+_PLUGIN_PARSERS = {
     "plex": PlexWebhookParser,
     "navidrome": NavidromeWebhookParser,
 }
 
 
-def parse_media_server_webhook(request, provider: str = "plex") -> Optional[Dict[str, Any]]:
+def parse_media_server_webhook(request, plugin: str = "plex") -> Optional[Dict[str, Any]]:
     """
     Module-level dispatcher: parse an inbound webhook request from any supported
-    media server and return a normalised ``{user_id, provider_item_id}`` dict on
+    media server and return a normalised ``{user_id, plugin_item_id}`` dict on
     a ``media.scrobble`` / track event, or ``None`` for unrecognised events.
 
     Args:
         request: The Flask ``request`` object.
-        provider: Lowercase provider name (e.g. ``"plex"``, ``"navidrome"``).
+        plugin: Lowercase plugin name (e.g. ``"plex"``, ``"navidrome"``).
 
     Returns:
-        ``{"user_id": str, "provider_item_id": str}`` or ``None``.
+        ``{"user_id": str, "plugin_item_id": str}`` or ``None``.
     """
-    parser_cls = _PROVIDER_PARSERS.get((provider or "").lower())
+    parser_cls = _PLUGIN_PARSERS.get((plugin or "").lower())
     if parser_cls is None:
         return None
 

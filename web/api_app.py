@@ -161,7 +161,6 @@ def create_app(testing: bool = False) -> Flask:
 
     # Register Core API blueprints
     app.register_blueprint(plugins_bp, url_prefix="/api/plugins", name="plugins_config")
-    app.register_blueprint(plugins_bp, url_prefix="/api/providers", name="legacy_providers")
     app.register_blueprint(jobs_bp)
     app.register_blueprint(tracks_bp)
     app.register_blueprint(search_bp)
@@ -209,9 +208,9 @@ def create_app(testing: bool = False) -> Flask:
     loader = PluginLoader(app_root)
     
     # Load Disabled List first
-    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-    disabled_providers = config_manager.get('disabled_providers', [])
-    PluginRegistry.set_disabled_providers(disabled_providers)
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    disabled_plugins = config_manager.get_disabled_plugins()
+    PluginRegistry.set_disabled_plugins(disabled_plugins)
     
     # Scan and Load Providers/Plugins
     loader.load_all()

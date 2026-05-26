@@ -23,7 +23,7 @@ from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine.track_parser import TrackParser
 from core.matching_engine.matching_engine import WeightedMatchingEngine, MatchResult
 from core.matching_engine.scoring_profile import ProfileFactory, ProfileType, ScoringProfile
-from core.caching import provider_cache, get_cache
+from core.caching import plugin_cache, get_cache
 
 logger = logging.getLogger(__name__)
 

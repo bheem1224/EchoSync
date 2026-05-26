@@ -103,22 +103,22 @@ def list_download_clients():
         active_client = active_downloads[0].split('.')[-1] if active_downloads else None
         download_clients = []
         
-        # Get all registered providers
+        # Get all registered plugins
         clients = PluginRegistry.get_download_clients()
         
-        for provider_name in clients:
+        for plugin_name in clients:
             try:
-                provider_class = PluginRegistry.get_provider_class(provider_name)
-                if provider_class:
+                plugin_class = PluginRegistry.get_plugin_class(plugin_name)
+                if plugin_class:
                     download_clients.append({
-                        'name': provider_name,
-                        'display_name': provider_name.title(),
+                        'name': plugin_name,
+                        'display_name': plugin_name.title(),
                         'supports_downloads': True,
-                        'description': f'Download music via {provider_name.title()}',
-                        'active': provider_name == active_client
+                        'description': f'Download music via {plugin_name.title()}',
+                        'active': plugin_name == active_client
                     })
             except Exception as e:
-                logger.error(f"Error processing provider {provider_name} for download clients: {e}")
+                logger.error(f"Error processing plugin {plugin_name} for download clients: {e}")
                 continue
         
         return jsonify(download_clients), 200
@@ -154,13 +154,13 @@ def set_active_download_client():
         if not client_name:
             return jsonify({'error': 'Client name is required'}), 400
 
-        # Validate client exists and is a download provider
-        provider_class = PluginRegistry.get_provider_class(client_name)
-        if not provider_class:
-            return jsonify({'error': f'Provider {client_name} not found'}), 404
+        # Validate client exists and is a download plugin
+        plugin_class = PluginRegistry.get_plugin_class(client_name)
+        if not plugin_class:
+            return jsonify({'error': f'Plugin {client_name} not found'}), 404
 
-        if not getattr(provider_class, 'supports_downloads', False):
-             return jsonify({'error': f'Provider {client_name} does not support downloads'}), 400
+        if not getattr(plugin_class, 'supports_downloads', False):
+             return jsonify({'error': f'Plugin {client_name} does not support downloads'}), 400
 
         config_manager.set_active_download_client(client_name)
         logger.info(f"Active download client set to: {client_name}")
@@ -188,7 +188,7 @@ def toggle_plugin(plugin_id):
         # If enabled is provided in payload, use it, otherwise flip current state
         enabled = data.get('enabled')
         
-        current_disabled = config_manager.get_disabled_providers()
+        current_disabled = config_manager.get_disabled_plugins()
         # Use full ID (plugin_id) to distinguish between core and community plugins
         is_currently_disabled = plugin_id.lower() in [d.lower() for d in current_disabled]
         
@@ -200,16 +200,16 @@ def toggle_plugin(plugin_id):
         if new_enabled:
             # Enable: remove from disabled list
             new_disabled = [d for d in current_disabled if d.lower() != plugin_id.lower()]
-            PluginRegistry.enable_provider(plugin_id)
+            PluginRegistry.enable_plugin(plugin_id)
         else:
             # Disable: add to disabled list
             if not is_currently_disabled:
                 new_disabled = current_disabled + [plugin_id]
             else:
                 new_disabled = current_disabled
-            PluginRegistry.disable_provider(plugin_id)
+            PluginRegistry.disable_plugin(plugin_id)
             
-        config_manager.set_disabled_providers(new_disabled)
+        config_manager.set_disabled_plugins(new_disabled)
         
         return jsonify({
             'success': True,
@@ -249,12 +249,12 @@ def get_plugin_playlists(plugin_id):
         # Get plugin via registry
         from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         
-        plugin_cls = PluginRegistry.get_provider_class(plugin_id)
+        plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
         if not plugin_cls:
             return jsonify({'error': f'Plugin {plugin_id} not found or not installed'}), 404
         
         # Check disabled state before instantiating
-        if PluginRegistry.is_provider_disabled(plugin_id):
+        if PluginRegistry.is_plugin_disabled(plugin_id):
             return jsonify({'error': f'Plugin {plugin_id} is disabled'}), 403
         
         # Instantiate plugin
@@ -520,7 +520,7 @@ def _enrich_provider_capabilities(provider_dict, provider_name=None):
     Returns the provider dict with added capability fields.
     """
     try:
-        from core.nexus_framework.plugin_SDK import get_provider_capabilities as fetch_capabilities
+        from core.nexus_framework.plugin_loader import get_plugin_capabilities as fetch_capabilities
         name = provider_name or provider_dict.get('name') or provider_dict.get('id')
         
         caps = fetch_capabilities(name)
@@ -556,30 +556,30 @@ def _enrich_provider_capabilities(provider_dict, provider_name=None):
     return provider_dict
 
 @bp.get("/full")
-def list_providers_route():
-    """Full provider metadata for diagnostics (legacy shape)."""
+def list_plugins_route():
+    """Full plugin metadata for diagnostics."""
     try:
-        providers = list_providers()
+        plugins = list_plugins()
         return jsonify({
-            'plugins': [p.to_dict() for p in providers],
-            'total': len(providers)
+            'plugins': [p.to_dict() for p in plugins],
+            'total': len(plugins)
         }), 200
     except Exception as e:
-        logger.error(f"Error listing providers: {e}")
+        logger.error(f"Error listing plugins: {e}")
         return jsonify({'error': str(e)}), 500
 
 @bp.get("/by-capability/<capability>")
-def get_providers_by_capability(capability):
-    """Get providers that support a specific capability."""
+def get_plugins_by_capability(capability):
+    """Get plugins that support a specific capability."""
     try:
-        providers = get_providers_for_capability(capability)
+        plugins = get_plugins_for_capability(capability)
         return jsonify({
             'capability': capability,
-            'providers': [p.to_dict() for p in providers],
-            'total': len(providers)
+            'plugins': [p.to_dict() for p in plugins],
+            'total': len(plugins)
         }), 200
     except Exception as e:
-        logger.error(f"Error getting providers for capability {capability}: {e}")
+        logger.error(f"Error getting plugins for capability {capability}: {e}")
         return jsonify({'error': str(e)}), 500
 
 @bp.get("/<plugin_id>")

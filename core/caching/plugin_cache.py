@@ -1,8 +1,8 @@
 """
-Caching layer for provider queries and metadata lookups
+Caching layer for plugin queries and metadata lookups
 
 This module provides:
-1. @provider_cache decorator for caching function results with TTL
+1. @plugin_cache decorator for caching function results with TTL
 2. Database-backed cache using music_library.db
 3. Automatic TTL expiration handling
 4. Cache invalidation methods
@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 F = TypeVar('F', bound=Callable[..., Any])
 
 
-class ProviderCache:
-    """Cache manager for provider queries using database backend"""
+class PluginCache:
+    """Cache manager for plugin queries using database backend"""
 
     def __init__(self, db_path: Optional[Path] = None):
         """
@@ -41,7 +41,7 @@ class ProviderCache:
         if db_path is None:
             # Standard location
             # Note: This assumes relative path from this file
-            # core/caching/provider_cache.py -> .../data/music_library.db
+            # core/caching/plugin_cache.py -> .../data/music_library.db
             db_path = Path(__file__).parent.parent.parent / "data" / "music_library.db"
 
         self.db_path = db_path
@@ -137,14 +137,14 @@ class ProviderCache:
                     conn.commit()
             except Exception as e:
                 import logging
-                logging.getLogger("provider_cache").error(f"Error storing in cache: {e}")
+                logging.getLogger("plugin_cache").error(f"Error storing in cache: {e}")
 
         # OPTIMIZATION: Dispatch via job_queue to prevent thread exhaustion
         # and keep all threads managed by central job queue
         from core.job_queue import job_queue
         import time
 
-        job_name = f"provider_cache_writer_{hash(key)}_{int(time.time()*1000)}"
+        job_name = f"plugin_cache_writer_{hash(key)}_{int(time.time()*1000)}"
         job_queue.register_job(name=job_name, func=_persist_cache, interval_seconds=None, tags=["system", "cache"])
         job_queue.execute_job_now(job_name)
         return True
@@ -209,35 +209,35 @@ class ProviderCache:
 
 
 # Global cache instance
-_cache_instance: Optional[ProviderCache] = None
+_cache_instance: Optional[PluginCache] = None
 _cache_lock = threading.Lock()
 
 
-def get_cache() -> ProviderCache:
+def get_cache() -> PluginCache:
     """Get or create global cache instance"""
     global _cache_instance
     if _cache_instance is None:
         with _cache_lock:
             if _cache_instance is None:
-                _cache_instance = ProviderCache()
+                _cache_instance = PluginCache()
     return _cache_instance
 
 
-def provider_cache(ttl_seconds: int = 3600, key_prefix: str = ""):
+def plugin_cache(ttl_seconds: int = 3600, key_prefix: str = ""):
     """
-    Decorator for caching provider query results
+    Decorator for caching plugin query results
 
     Args:
         ttl_seconds: Time-to-live for cache entries (default 1 hour)
         key_prefix: Optional prefix for cache keys to avoid collisions
 
     Example:
-        @provider_cache(ttl_seconds=7200)
+        @plugin_cache(ttl_seconds=7200)
         def get_track_metadata(track_id: str) -> dict:
             # ... expensive metadata lookup ...
             return metadata
 
-        # First call queries the provider
+        # First call queries the plugin
         result = get_track_metadata("spotify:123")
 
         # Second call returns cached result

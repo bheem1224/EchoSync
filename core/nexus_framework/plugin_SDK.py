@@ -833,8 +833,8 @@ class PluginBase(ABC):
         identifiers = []
         if provider_id and source:
             identifiers.append({
-                'provider_source': source,
-                'provider_item_id': str(provider_id),
+                'plugin_source': source,
+                'plugin_item_id': str(provider_id),
                 'raw_data': extra_fields or None
             })
         

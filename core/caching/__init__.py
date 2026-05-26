@@ -2,9 +2,9 @@
 Caching module exports
 """
 
-from .provider_cache import (
-    ProviderCache,
-    provider_cache,
+from .plugin_cache import (
+    PluginCache,
+    plugin_cache,
     get_cache,
     invalidate_cache_for,
     clear_cache,
@@ -12,8 +12,8 @@ from .provider_cache import (
 )
 
 __all__ = [
-    'ProviderCache',
-    'provider_cache',
+    'PluginCache',
+    'plugin_cache',
     'get_cache',
     'invalidate_cache_for',
     'clear_cache',

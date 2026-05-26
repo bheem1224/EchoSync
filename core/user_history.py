@@ -17,7 +17,7 @@ class UserTrackInteraction:
     
     Fields represent provider-agnostic metadata for a user's interaction with a track.
     """
-    provider_item_id: str  # Provider's unique track ID (e.g., Plex ratingKey, MusicBrainz MBID)
+    plugin_item_id: str  # Provider's unique track ID (e.g., Plex ratingKey, MusicBrainz MBID)
     artist_name: str  # Artist name for cache ID generation
     track_title: str  # Track title for cache ID generation
     play_count: int = 0  # How many times user has played this track

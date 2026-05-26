@@ -26,8 +26,8 @@ class DownloadStatus(Enum):
     FAILED = "failed"             # Download failed
 
 
-class ProviderType(Enum):
-    """Provider types for track references"""
+class PluginType(Enum):
+    """Plugin types for track references"""
     SPOTIFY = "spotify"
     TIDAL = "tidal"
     YOUTUBE = "youtube"
@@ -40,32 +40,32 @@ class ProviderType(Enum):
 
 
 @dataclass
-class ProviderRef:
-    """Reference to a track in a specific provider"""
-    provider: ProviderType
-    provider_id: str                    # Provider's native ID
-    provider_url: Optional[str] = None  # Direct URL if available
-    metadata: Dict[str, Any] = field(default_factory=dict)  # Provider-specific extras
+class PluginRef:
+    """Reference to a track in a specific plugin"""
+    plugin: PluginType
+    plugin_id: str                    # Plugin's native ID
+    plugin_url: Optional[str] = None  # Direct URL if available
+    metadata: Dict[str, Any] = field(default_factory=dict)  # Plugin-specific extras
     last_updated: datetime = field(default_factory=utc_now)
 
     def validate(self) -> None:
-        """Validate the provider reference fields."""
-        if not self.provider_id:
-            raise ValueError("Provider ID cannot be empty.")
-        if self.provider_url and not re.match(r'^https?://', self.provider_url):
-            raise ValueError("Provider URL must start with http:// or https://.")
+        """Validate the plugin reference fields."""
+        if not self.plugin_id:
+            raise ValueError("Plugin ID cannot be empty.")
+        if self.plugin_url and not re.match(r'^https?://', self.plugin_url):
+            raise ValueError("Plugin URL must start with http:// or https://.")
 
 
 @dataclass
 class EchosyncTrack:
     """
-    Canonical Track model - single source of truth for all providers.
+    Canonical Track model - single source of truth for all plugins.
     
     Design principles:
     - All fields except track_id are optional (progressive enrichment)
-    - Providers attach references via provider_refs
+    - Plugins attach references via plugin_refs
     - confidence_score tracks data quality (0.0 = stub, 1.0 = fully verified)
-    - No provider owns this data - all work through music_database
+    - No plugin owns this data - all work through music_database
     """
     
     # === Core Identity ===
@@ -82,8 +82,8 @@ class EchosyncTrack:
     musicbrainz_recording_id: Optional[str] = None      # MusicBrainz recording MBID
     acoustid: Optional[str] = None                      # AcoustID fingerprint
     
-    # === Provider References ===
-    provider_refs: Dict[str, ProviderRef] = field(default_factory=dict)  # Key: provider name
+    # === Plugin References ===
+    plugin_refs: Dict[str, PluginRef] = field(default_factory=dict)  # Key: plugin name
     
     # === Download Management ===
     download_status: DownloadStatus = DownloadStatus.MISSING
@@ -149,25 +149,25 @@ class EchosyncTrack:
         
         return base_id
     
-    def add_provider_ref(self, provider: ProviderType, provider_id: str, 
-                        provider_url: Optional[str] = None, 
+    def add_plugin_ref(self, plugin: PluginType, plugin_id: str, 
+                        plugin_url: Optional[str] = None, 
                         metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Attach a provider reference to this track"""
-        self.provider_refs[provider.value] = ProviderRef(
-            provider=provider,
-            provider_id=provider_id,
-            provider_url=provider_url,
+        """Attach a plugin reference to this track"""
+        self.plugin_refs[plugin.value] = PluginRef(
+            plugin=plugin,
+            plugin_id=plugin_id,
+            plugin_url=plugin_url,
             metadata=metadata or {}
         )
         self.updated_at = utc_now()
     
-    def get_provider_ref(self, provider: ProviderType) -> Optional[ProviderRef]:
-        """Get reference for a specific provider"""
-        return self.provider_refs.get(provider.value)
+    def get_plugin_ref(self, plugin: PluginType) -> Optional[PluginRef]:
+        """Get reference for a specific plugin"""
+        return self.plugin_refs.get(plugin.value)
     
-    def has_provider_ref(self, provider: ProviderType) -> bool:
-        """Check if track has reference for a provider"""
-        return provider.value in self.provider_refs
+    def has_plugin_ref(self, plugin: PluginType) -> bool:
+        """Check if track has reference for a plugin"""
+        return plugin.value in self.plugin_refs
     
     def enrich(self, **kwargs) -> None:
         """
@@ -219,13 +219,13 @@ class EchosyncTrack:
             'isrc': self.isrc,
             'musicbrainz_recording_id': self.musicbrainz_recording_id,
             'acoustid': self.acoustid,
-            'provider_refs': {k: {
-                'provider': v.provider.value,
-                'provider_id': v.provider_id,
-                'provider_url': v.provider_url,
+            'plugin_refs': {k: {
+                'plugin': v.plugin.value,
+                'plugin_id': v.plugin_id,
+                'plugin_url': v.plugin_url,
                 'metadata': v.metadata,
                 'last_updated': utc_isoformat(v.last_updated)
-            } for k, v in self.provider_refs.items()},
+            } for k, v in self.plugin_refs.items()},
             'download_status': self.download_status.value,
             'file_path': self.file_path,
             'file_format': self.file_format,
@@ -254,13 +254,13 @@ class EchosyncTrack:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'EchosyncTrack':
         """Create Track from dictionary (database retrieval)."""
-        # Parse provider_refs
-        provider_refs = {}
-        for key, ref_data in data.get('provider_refs', {}).items():
-            provider_refs[key] = ProviderRef(
-                provider=ProviderType(ref_data['provider']),
-                provider_id=ref_data['provider_id'],
-                provider_url=ref_data.get('provider_url'),
+        # Parse plugin_refs
+        plugin_refs = {}
+        for key, ref_data in data.get('plugin_refs', {}).items():
+            plugin_refs[key] = PluginRef(
+                plugin=PluginType(ref_data['plugin']),
+                plugin_id=ref_data['plugin_id'],
+                plugin_url=ref_data.get('plugin_url'),
                 metadata=ref_data.get('metadata', {}),
                 last_updated=parse_utc_datetime(ref_data.get('last_updated')) or utc_now()
             )
@@ -274,7 +274,7 @@ class EchosyncTrack:
             isrc=data.get('isrc'),
             musicbrainz_recording_id=data.get('musicbrainz_recording_id'),
             acoustid=data.get('acoustid'),
-            provider_refs=provider_refs,
+            plugin_refs=plugin_refs,
             download_status=DownloadStatus(data.get('download_status', 'missing')),
             file_path=data.get('file_path'),
             file_format=data.get('file_format'),

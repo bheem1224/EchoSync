@@ -142,7 +142,7 @@ class TestDownloadManagerPrefilterBypass:
             file_format="flac",
         )
         candidate.identifiers["username"] = "peerA"
-        candidate.identifiers["provider_item_id"] = "Artist/Album/01 - Song.flac"
+        candidate.identifiers["plugin_item_id"] = "Artist/Album/01 - Song.flac"
         candidate.identifiers["size"] = 50_000_000
         candidate.identifiers["bitrate"] = 1000
         candidate.identifiers["free_upload_slots"] = 2

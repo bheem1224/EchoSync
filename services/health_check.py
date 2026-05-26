@@ -52,14 +52,14 @@ def get_system_health() -> Dict[str, Any]:
         core_message = str(e)
 
     # 2. Count Enabled Providers
-    disabled_providers = config_manager.get('disabled_providers', [])
+    disabled_plugins = config_manager.get_disabled_plugins()
     enabled_providers_count = 0
 
     from database.config_database import get_config_database
     config_db = get_config_database()
 
     # Check Spotify
-    if 'spotify' not in disabled_providers:
+    if 'spotify' not in disabled_plugins:
         spotify_id = config_db.get_or_create_service_id('spotify')
         spotify_creds = config_db.get_all_service_config(spotify_id) or {}
         spotify_accounts = config_db.get_accounts(service_id=spotify_id, is_active=True)
@@ -67,7 +67,7 @@ def get_system_health() -> Dict[str, Any]:
             enabled_providers_count += 1
 
     # Check Plex
-    if 'plex' not in disabled_providers:
+    if 'plex' not in disabled_plugins:
         plex_id = config_db.get_or_create_service_id('plex')
         plex_url = config_db.get_service_config(plex_id, 'base_url') or config_db.get_service_config(plex_id, 'server_url')
         plex_token = config_db.get_service_config(plex_id, 'token')
@@ -76,21 +76,21 @@ def get_system_health() -> Dict[str, Any]:
             enabled_providers_count += 1
 
     # Check Jellyfin
-    if 'jellyfin' not in disabled_providers:
+    if 'jellyfin' not in disabled_plugins:
         jellyfin_id = config_db.get_or_create_service_id('jellyfin')
         jellyfin_creds = config_db.get_all_service_config(jellyfin_id) or {}
         if jellyfin_creds.get('base_url') and jellyfin_creds.get('api_key'):
             enabled_providers_count += 1
 
     # Check Navidrome
-    if 'navidrome' not in disabled_providers:
+    if 'navidrome' not in disabled_plugins:
         navidrome_id = config_db.get_or_create_service_id('navidrome')
         navidrome_creds = config_db.get_all_service_config(navidrome_id) or {}
         if navidrome_creds.get('base_url') and navidrome_creds.get('username'):
             enabled_providers_count += 1
 
     # Check Soulseek (slskd)
-    if 'soulseek' not in disabled_providers and 'slskd' not in disabled_providers:
+    if 'soulseek' not in disabled_plugins and 'slskd' not in disabled_plugins:
         slskd_id = config_db.get_or_create_service_id('soulseek')
         slskd_url = config_db.get_service_config(slskd_id, 'slskd_url') or config_db.get_service_config(slskd_id, 'server_url')
         api_key = config_db.get_service_config(slskd_id, 'api_key')
@@ -99,7 +99,7 @@ def get_system_health() -> Dict[str, Any]:
             enabled_providers_count += 1
 
     # Check LRClib (bundled, usually enabled unless explicitly disabled)
-    if 'lrclib' not in disabled_providers:
+    if 'lrclib' not in disabled_plugins:
          # It's enabled by default in the backend startup logic if not disabled
          enabled_providers_count += 1
 

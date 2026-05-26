@@ -29,11 +29,10 @@ def test_import_with_duplicate_metadata_creates_separate_tracks(tmp_path):
         from database.music_database import Track, ExternalIdentifier
         tracks = session.query(Track).all()
         ids = []
-        plex_id = manager._resolve_plugin_id('plex')
         for tr in tracks:
             for ei in tr.external_identifiers:
-                if ei.plugin_id == plex_id:
-                    ids.append(ei.provider_item_id)
+                if ei.plugin_source == 'plex':
+                    ids.append(ei.plugin_item_id)
         assert set(ids) == {"100", "200"}
 
 
