@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   version-and-build:
@@ -25,7 +26,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.COMMIT_PAT }} # Uses your newly recreated Personal Access Token
+          password: ${{ secrets.COMMIT_PAT }}
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
