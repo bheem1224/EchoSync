@@ -39,7 +39,8 @@ def _query_ui_registry() -> dict:
                     uc.component_type,
                     uc.entry_path,
                     uc.plugin_id,
-                    uc.is_core
+                    uc.is_core,
+                    s.name AS plugin_name
                 FROM ui_components uc
                 LEFT JOIN services s ON s.plugin_id = uc.plugin_id
                 WHERE uc.is_core = 1
@@ -53,6 +54,7 @@ def _query_ui_registry() -> dict:
             comp_type = row["component_type"]
             entry_path = row["entry_path"]
             plugin_id = row["plugin_id"]
+            plugin_name = row["plugin_name"]
             is_core = bool(row["is_core"])
 
             # Pluralise the type key for the response (card → cards, page → pages)
@@ -65,6 +67,7 @@ def _query_ui_registry() -> dict:
                 "tag_name": tag_name,
                 "entry": entry_path,
                 "plugin_id": plugin_id,
+                "plugin_name": plugin_name,
                 "is_core": is_core,
             })
 

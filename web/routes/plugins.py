@@ -55,11 +55,13 @@ def get_ui_manifest():
             if pid is None:
                 continue
 
+            pname = comp.get("plugin_name") or str(pid)
+
             if pid not in plugin_map:
                 plugin_map[pid] = {
-                    "id": str(pid),
+                    "id": pname,
                     "plugin_id": pid,
-                    "api_base": "",
+                    "api_base": f"/api/plugins/{pname}",
                     "components": {},
                     "assets": {},
                     "views": [],
@@ -75,6 +77,7 @@ def get_ui_manifest():
                     "yaml_path": comp["entry"],
                 })
             else:
+                entry["assets"]["js"] = comp["entry"]
                 entry["components"][category] = {
                     "element_tag": comp["tag_name"],
                     "bundle_url": comp["entry"],

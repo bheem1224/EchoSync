@@ -11,13 +11,13 @@
   onMount(async () => {
     try {
       // 1. Fetch manifest and inject scripts
-      // Fetch UI manifest and manager ui-beta opt state
+      // Fetch UI registry and manager ui-beta opt state
       const [manifestRes, uiBetaRes] = await Promise.all([
-        fetch('/api/system/plugins/ui-manifest', { credentials: 'include' }),
+        fetch('/api/ui/registry', { credentials: 'include' }),
         fetch('/api/manager/ui-beta', { credentials: 'include' }).catch(() => null)
       ]);
 
-      if (!manifestRes.ok) throw new Error('Failed to fetch UI manifest');
+      if (!manifestRes.ok) throw new Error('Failed to fetch UI registry');
       const manifestData = await manifestRes.json();
 
       let betaOpt = false;
@@ -32,41 +32,26 @@
         }
       }
 
-      function chooseAsset(assets, preferBeta) {
-        if (!assets) return null;
-
-        // Normalize assets if it's a string
-        if (typeof assets === 'string') return assets;
-
-        const betaKeys = ['beta_js', 'bundle.beta.js', 'bundle.beta', 'bundle.beta_js', 'beta'];
-        const normalKeys = ['js', 'bundle.js', 'bundle', 'main', 'index.js'];
-
-        const prefer = preferBeta ? [...betaKeys, ...normalKeys] : [...normalKeys, ...betaKeys];
-        for (const k of prefer) {
-          if (assets[k]) return assets[k];
-        }
-        // fallback: first string value found
-        for (const v of Object.values(assets)) {
-          if (typeof v === 'string') return v;
-        }
-        return null;
-      }
-
-      if (manifestData && Array.isArray(manifestData.plugins)) {
-        for (const plugin of manifestData.plugins) {
-          const preferBeta = betaOpt || devMode;
-          const src = chooseAsset(plugin.assets, preferBeta);
-          if (src) {
-            const script = document.createElement('script');
-            script.type = 'module';
-            
-            // The Cache-Buster: Append version query param
-            const separator = src.includes('?') ? '&' : '?';
-            const version = plugin.version || '1.0.0';
-            script.src = `${src}${separator}v=${version}`;
-            
-            document.head.appendChild(script);
+      if (manifestData) {
+        const scriptsToLoad = new Set();
+        for (const [category, components] of Object.entries(manifestData)) {
+          if (!Array.isArray(components)) continue;
+          for (const comp of components) {
+            if (comp.entry && comp.entry.endsWith('.js') && !comp.is_core) {
+              scriptsToLoad.add(comp.entry);
+            }
           }
+        }
+
+        for (const src of scriptsToLoad) {
+          const script = document.createElement('script');
+          script.type = 'module';
+          
+          // The Cache-Buster: Append version query param (use timestamp as fallback)
+          const separator = src.includes('?') ? '&' : '?';
+          script.src = `${src}${separator}v=${Date.now()}`;
+          
+          document.head.appendChild(script);
         }
       }
 

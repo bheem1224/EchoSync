@@ -720,6 +720,14 @@ class PluginStore:
                         raise RuntimeError(f"Live-swap failed: {e}")
                 else:
                     logger.info(f"Fresh installation complete for {plugin_id}. Hot-swap skipped.")
+                    try:
+                        import binascii
+                        plugin_id_int = target_plugin_id if target_plugin_id else binascii.crc32(strict_namespace.lower().encode('utf-8')) & 0xFFFFFFFF
+                        from core.nexus_framework.plugin_loader import _sync_ui_components_to_db
+                        _sync_ui_components_to_db(plugin_id_int, str(target_dir.resolve()))
+                        logger.info(f"Dynamically discovered and registered UI components for fresh installed plugin {strict_namespace}")
+                    except Exception as ui_err:
+                        logger.error(f"Failed to run UI component discovery for fresh installed plugin {strict_namespace}: {ui_err}")
 
                 return True
 

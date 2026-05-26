@@ -95,28 +95,24 @@
 
     try {
       // 1. Fetch the UI manifest from the backend
-      const resp = await fetch('/api/system/plugins/ui-manifest', {
+      const resp = await fetch('/api/ui/registry', {
         credentials: 'include',
       });
 
       if (!resp.ok) {
         if (resp.status === 404) {
-          console.warn(`[DynamicPluginLoader] /api/system/plugins/ui-manifest not found. No plugins will load for category="${category}".`);
+          console.warn(`[DynamicPluginLoader] /api/ui/registry not found. No plugins will load for category="${category}".`);
           loading = false;
           return;
         }
-        throw new Error(`UI manifest fetch failed: ${resp.status} ${resp.statusText}`);
+        throw new Error(`UI registry fetch failed: ${resp.status} ${resp.statusText}`);
       }
 
       const data = await resp.json();
-      const allPlugins = data?.plugins ?? [];
+      const typeKey = category.endsWith('s') ? category : `${category}s`;
+      const components = Array.isArray(data?.[typeKey]) ? data[typeKey] : [];
 
-      // 2. Filter to plugins that declare a component for the requested category
-      const matching = allPlugins.filter(
-        p => p?.components?.[category]
-      );
-
-      if (matching.length === 0) {
+      if (components.length === 0) {
         console.warn(`[DynamicPluginLoader] No plugins found for category="${category}".`);
         loading = false;
         return;
@@ -124,18 +120,17 @@
 
       // 3. Inject each plugin's bundle script and await registration
       const loadResults = await Promise.all(
-        matching.map(async (plugin) => {
-          const componentInfo = plugin.components[category];
-          const bundleUrl = componentInfo?.bundle_url;
-          const tag = componentInfo?.element_tag;
+        components.map(async (comp) => {
+          const bundleUrl = comp.entry;
+          const tag = comp.tag_name;
           if (!bundleUrl || !tag) return null;
           
           const absoluteUrl = (bundleUrl.startsWith('http') || bundleUrl.startsWith('/'))
             ? bundleUrl
-            : `/api/system/plugins/${plugin.id}/ui/${bundleUrl.replace(/^\//, '')}`;
+            : `/api/system/plugins/${comp.plugin_name || comp.plugin_id}/ui/${bundleUrl.replace(/^\//, '')}`;
             
           try {
-            await injectScript(absoluteUrl, plugin.version);
+            await injectScript(absoluteUrl, null);
             
             // Defensively wait for custom element registry definition with a timeout
             await waitWithTimeout(
@@ -144,18 +139,26 @@
               `Timeout waiting for Custom Element "${tag}" registration`
             );
             
+            const pluginId = comp.plugin_name || String(comp.plugin_id);
             return {
-              plugin,
+              plugin: {
+                id: pluginId,
+                plugin_id: comp.plugin_id
+              },
               tag,
-              apiBase: plugin.api_base ?? `/api/plugins/${plugin.id}`,
+              apiBase: `/api/plugins/${pluginId}`,
               failed: false
             };
           } catch (err) {
-            console.error(`[DynamicPluginLoader] Error loading plugin ${plugin.id}:`, err);
+            console.error(`[DynamicPluginLoader] Error loading plugin ${comp.plugin_id}:`, err);
+            const pluginId = comp.plugin_name || String(comp.plugin_id);
             return {
-              plugin,
+              plugin: {
+                id: pluginId,
+                plugin_id: comp.plugin_id
+              },
               tag,
-              apiBase: plugin.api_base ?? `/api/plugins/${plugin.id}`,
+              apiBase: `/api/plugins/${pluginId}`,
               failed: true,
               errorMsg: err?.message ?? 'Unknown loading error'
             };
@@ -169,8 +172,8 @@
         .filter((value, index, self) =>
           self.findIndex(item => {
             // Deduplicate by normalizing IDs (strip core./plugin. prefixes) and comparing tags
-            const norm1 = item.plugin.id.replace('core.', '').replace('plugin.', '');
-            const norm2 = value.plugin.id.replace('core.', '').replace('plugin.', '');
+            const norm1 = String(item.plugin.id).replace('core.', '').replace('plugin.', '');
+            const norm2 = String(value.plugin.id).replace('core.', '').replace('plugin.', '');
             return (norm1 === norm2 && item.tag === value.tag);
           }) === index
         );

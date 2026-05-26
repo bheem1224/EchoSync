@@ -48,38 +48,36 @@ export async function loadPluginViews() {
 
   _loadPromise = (async () => {
     try {
-      const res = await apiFetch('/api/system/plugins/ui-manifest');
+      const res = await apiFetch('/api/ui/registry');
 
       if (!res.ok) {
         if (res.status === 404) {
-          console.warn('[pluginViews] ui-manifest endpoint not found (404). No plugin views registered.');
+          console.warn('[pluginViews] registry endpoint not found (404). No plugin views registered.');
           _state.update((s) => ({ ...s, loaded: true, views: [] }));
           return;
         }
-        throw new Error(`ui-manifest fetch failed: ${res.status} ${res.statusText}`);
+        throw new Error(`registry fetch failed: ${res.status} ${res.statusText}`);
       }
 
       const data = await res.json();
-      const plugins = Array.isArray(data?.plugins) ? data.plugins : [];
+      const rawViews = Array.isArray(data?.views) ? data.views : [];
 
       /** @type {PluginView[]} */
       const views = [];
 
-      for (const plugin of plugins) {
-        const rawViews = Array.isArray(plugin.views) ? plugin.views : [];
-        for (const v of rawViews) {
-          if (!v.id || !v.title) continue; // Malformed entry – skip
+      for (const v of rawViews) {
+        const id = v.tag_name ? v.tag_name.replace("es-view-", "") : "";
+        if (!id) continue; // Malformed entry – skip
 
-          views.push({
-            id:       v.id,
-            pluginId: plugin.id,
-            title:    v.title,
-            icon:     v.icon ?? '🔌',
-            yamlPath: v.yaml_path ?? '',
-            // Computed SvelteKit href — routed by the catch-all plugin-views page
-            href:     `/plugin-views/${v.id}`,
-          });
-        }
+        views.push({
+          id:       id,
+          pluginId: v.plugin_name || String(v.plugin_id),
+          title:    v.tag_name,
+          icon:     v.icon ?? '🔌',
+          yamlPath: v.entry ?? '',
+          // Computed SvelteKit href — routed by the catch-all plugin-views page
+          href:     `/plugin-views/${id}`,
+        });
       }
 
       _state.update((s) => ({ ...s, loaded: true, views, error: null }));
