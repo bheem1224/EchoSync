@@ -37,6 +37,7 @@ from sqlalchemy.orm import (
     synonym,
     scoped_session,
 )
+from sqlalchemy.ext.hybrid import hybrid_property, Comparator
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +283,18 @@ class PlaybackHistory(WorkingBase):
     listened_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, index=True)
 
 
+def hash_legacy_user(val):
+    if val is None:
+        return None
+    if isinstance(val, int) or str(val).isdigit():
+        return int(val)
+    import binascii
+    return binascii.crc32(str(val).encode('utf-8')) & 0x7fffffff
 
+
+class UserIDComparator(Comparator):
+    def __eq__(self, other):
+        return self.__clause_element__() == hash_legacy_user(other)
 
 
 class SuggestionStagingQueue(WorkingBase):
@@ -332,6 +344,18 @@ class SuggestionStagingQueue(WorkingBase):
 
     # The internal user identifier (string form; mirrors PlaybackHistory.user_id).
     account_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+
+    @hybrid_property
+    def user_id(self) -> int:
+        return self.account_id
+
+    @user_id.setter
+    def user_id(self, val):
+        self.account_id = hash_legacy_user(val)
+
+    @user_id.comparator
+    def user_id(cls):
+        return UserIDComparator(cls.account_id)
 
     # Primary key of the matching local track in music.db's ``tracks`` table.
     # NULL for playlist-gap suggestions where the track does not yet exist locally.

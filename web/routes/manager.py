@@ -796,7 +796,9 @@ def get_suggestion_queue():
                         "originator": (item.context_data or {}).get("originator", "Consensus Engine"),
                         "title": item.ui_label,
                         "track_id": item.music_db_track_id,
-                        "action_needed": (item.context_data or {}).get("action_needed", "SUGGESTION")
+                        "action_needed": (item.context_data or {}).get("action_needed", "SUGGESTION"),
+                        "user_id": item.user_id,
+                        "account_id": item.account_id,
                     } for item in items
                 ]
             }), 200
