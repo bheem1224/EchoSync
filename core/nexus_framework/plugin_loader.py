@@ -51,7 +51,15 @@ def _sync_ui_components_to_db(plugin_id: int, install_path: str, is_core: bool =
     raw_assets = manifest_data.get("assets", {})
 
     # Derive canonical bundle URL
-    folder_name = Path(install_path).name
+    plugins_dir = Path(config_manager.get_plugins_dir())
+    try:
+        relative_path = Path(install_path).resolve().relative_to(plugins_dir.resolve())
+        parts = list(relative_path.parts)
+        if parts and parts[-1] == "beta":
+            parts.pop()
+        folder_name = ".".join(parts)
+    except Exception:
+        folder_name = Path(install_path).name
     default_bundle = f"/api/system/plugins/{folder_name}/static/bundle.js"
     bundle_url = (
         raw_assets.get("js")
