@@ -160,7 +160,6 @@ def create_app(testing: bool = False) -> Flask:
                  pass
 
     # Register Core API blueprints
-    app.register_blueprint(plugins_bp, url_prefix="/api/plugins", name="plugins_config")
     app.register_blueprint(jobs_bp)
     app.register_blueprint(tracks_bp)
     app.register_blueprint(search_bp)
@@ -221,6 +220,9 @@ def create_app(testing: bool = False) -> Flask:
             app.register_blueprint(bp)
         except Exception as e:
             print(f"[ERROR] Failed to register blueprint {bp.name}: {e}")
+
+    # Register generic plugin config blueprint (plugins_bp) at the end to allow dynamic routes to take precedence
+    app.register_blueprint(plugins_bp, url_prefix="/api/plugins", name="plugins_config")
 
     # Register explicitly mounted Plugin SDK Routers
     from core.nexus_framework.plugin_router import PluginRouterRegistry
