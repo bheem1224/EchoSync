@@ -20,17 +20,26 @@ jobs:
         with:
           fetch-depth: 2
           token: ${{ secrets.COMMIT_PAT }}
+          persist-credentials: true # 🔐 KEY FIX A: Caches token into the local runner configuration
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.COMMIT_PAT }}
+          password: ${{ secrets.COMMIT_PAT }} # Uses aligned user token session context
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      # 🔐 KEY FIX B: Explicitly configure Git to pass the PAT token context to avoid terminal username prompt drops
+      - name: Configure Git Authentication
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.COMMIT_PAT }}@github.com/".insteadOf "https://github.com/"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Process, Version, and Build Changed Plugins
         env:
@@ -39,7 +48,6 @@ jobs:
         run: |
           # --- UNIFIED GLOBAL RELEASE DETECTION ---
           if echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then
-            # Extracts pure numbers (e.g., "2.5.0") for the JSON manifest
             GLOBAL_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 | sed -E 's/version:\s*v?//i')
             echo "🚀 Global Release detected (v$GLOBAL_VERSION). Syncing ALL plugins."
             CHANGED_DIRS=$(find plugins/EchoSync -mindepth 1 -maxdepth 1 -type d)
@@ -81,17 +89,14 @@ jobs:
 
           override_match = re.search(rf"{plugin_name}:v(\d+\.\d+\.\d+)", commit_msg, re.IGNORECASE)
 
-          # 1. Specific plugin override (e.g., musicbrainz:v1.2.0)
           if override_match:
               new_version = override_match.group(1)
               build_type = "stable"
               manifest["version"] = new_version
-          # 2. Global Release Sync
           elif is_global_release == "true":
               new_version = global_version
               build_type = "stable"
               manifest["version"] = new_version
-          # 3. Incremental Beta Bump
           else:
               current_beta = manifest.get("beta_version", f"{major}.{minor}.{patch+1}-beta.0")
               try:
@@ -124,7 +129,6 @@ jobs:
             echo "⚙️ Processing Plugin: $PLUGIN_NAME"
             echo "========================================"
 
-            # Execute Python script with parameters
             RESULT=$(python3 bump.py "$PLUGIN_NAME" "$MANIFEST" "$COMMIT_MSG" "$IS_GLOBAL_RELEASE" "$GLOBAL_VERSION")
 
             BUILD_TYPE=$(echo "$RESULT" | cut -d',' -f1)
@@ -132,7 +136,6 @@ jobs:
 
             echo "✅ Manifest updated to $NEW_VERSION ($BUILD_TYPE build)"
 
-            # --- UI BUILD PIPELINE ---
             if [ -d "$UI_DIR" ]; then
               mkdir -p "$STATIC_DIR"
               cd "$UI_DIR"
@@ -152,14 +155,11 @@ jobs:
               echo "📦 UI Compiled to bundle.js"
             fi
 
-            # --- ZIP PACKAGING PIPELINE ---
             cd "$DIR"
-            
             if [ "$BUILD_TYPE" = "stable" ]; then
               echo "🗜️ Packaging stable release v$NEW_VERSION..."
               mkdir -p "releases"
               DYNAMIC_ZIP_NAME="v${NEW_VERSION}.zip"
-              
               zip -r "releases/$DYNAMIC_ZIP_NAME" . -x "ui/*" -x "src/*" -x "target/*" -x "releases/*" -x "beta.zip" -x "*/__pycache__/*"
               echo "✅ Created stable package: releases/$DYNAMIC_ZIP_NAME"
             else
@@ -174,16 +174,15 @@ jobs:
       - name: Generate store-manifest.json
         run: |
           cat << 'EOF' > raw_manifest.py
-          import glob, json
-
+          import glob, json, os
+          
           store_manifest = {"plugins": []}
           repo_base = "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync"
-
+          
           for manifest_file in glob.glob("plugins/EchoSync/*/manifest.json"):
               with open(manifest_file, "r") as f:
                   try:
                       plugin_data = json.load(f)
-                      import os
                       folder_name = os.path.basename(os.path.dirname(manifest_file))
                       
                       plugin_data["plugin_id"] = folder_name

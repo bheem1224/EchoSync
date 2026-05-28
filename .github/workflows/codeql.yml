@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '30 13 * * 2' # Scans every Tuesday automatically
+    - cron: '30 13 * * 2'
 
 permissions:
   actions: read
@@ -16,19 +16,35 @@ permissions:
 jobs:
   analyze:
     name: Analyze Codebase
-    runs-on: [self-hosted, linux, x64] # Binds directly to your existing free runner
+    runs-on: [self-hosted, linux, x64]
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    # 📦 STEP A: Explicitly install the UI dependencies so CodeQL has a node tree to read
+    - name: Install Frontend Dependencies
+      run: |
+        if [ -d "webui" ]; then
+          cd webui
+          npm install
+          cd ..
+        fi
+
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
       with:
-        languages: 'python, javascript' # Targets FastAPI backend and Svelte UI layers explicitly
+        languages: 'python, javascript' # Tracks both backend and svelte chunks
 
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v3
+    # 🚨 STEP B: WE REMOVED THE AUTOBUILD CRASH STEP AND REPLACED IT WITH A CUSTOM COMMAND
+    - name: Manual Build Step
+      run: |
+        echo "Skipping autobuild to prevent root path mismatches. CodeQL will analyze checked-out modules directly."
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
