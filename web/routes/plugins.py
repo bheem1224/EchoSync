@@ -439,32 +439,50 @@ def toggle_plugin(plugin_id):
 @bp.route('/<plugin_id>/ui/<path:filename>', methods=['GET'])
 @require_auth
 def serve_plugin_ui(plugin_id, filename):
-    # Strip prefixes if present
-    clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
-    plugins_dir = config_manager.get_plugins_dir()
-    app_root = Path(__file__).parent.parent.parent
-    
-    logger.debug(f"[UISearch] Request for {plugin_id}/{filename} (Cleaned ID: {clean_id})")
-    
-    # Canonical base directory for plugins
-    base_dirs = [str(plugins_dir)]
+    # Try resolving via database record first
+    from database.config_database import get_config_database
+    db = get_config_database()
+    service_id = db.get_service_id(plugin_id)
+    install_path = None
+    if service_id:
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT absolute_install_path FROM services WHERE id=?", (service_id,))
+            row = c.fetchone()
+            if row and row[0]:
+                install_path = row[0]
 
     ui_dir = None
-    for base in base_dirs:
-        # Check standard folder
-        path = os.path.abspath(os.path.join(base, clean_id, 'ui'))
+    if install_path:
+        path = os.path.abspath(os.path.join(install_path, 'ui'))
         if os.path.exists(path):
             ui_dir = path
-            break
-        
-        # Check beta folder
-        path = os.path.abspath(os.path.join(base, clean_id, 'beta', 'ui'))
-        if os.path.exists(path):
-            ui_dir = path
-            break
+        else:
+            path = os.path.abspath(os.path.join(install_path, 'beta', 'ui'))
+            if os.path.exists(path):
+                ui_dir = path
 
     if not ui_dir:
-        logger.error(f"Plugin UI folder NOT FOUND for {plugin_id}. Searched in: {base_dirs}")
+        # Strip prefixes if present
+        clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
+        plugins_dir = config_manager.get_plugins_dir()
+        base_dirs = [str(plugins_dir)]
+
+        for base in base_dirs:
+            # Check standard folder
+            path = os.path.abspath(os.path.join(base, clean_id, 'ui'))
+            if os.path.exists(path):
+                ui_dir = path
+                break
+            
+            # Check beta folder
+            path = os.path.abspath(os.path.join(base, clean_id, 'beta', 'ui'))
+            if os.path.exists(path):
+                ui_dir = path
+                break
+
+    if not ui_dir:
+        logger.error(f"Plugin UI folder NOT FOUND for {plugin_id}.")
         abort(404)
 
     # Security check
@@ -479,6 +497,7 @@ def serve_plugin_ui(plugin_id, filename):
 
     return send_from_directory(ui_dir, filename)
 
+
 @bp.route('/<plugin_id>/static/<path:filename>', methods=['GET'])
 @require_auth
 def serve_plugin_static(plugin_id, filename):
@@ -486,32 +505,50 @@ def serve_plugin_static(plugin_id, filename):
     Serve static assets (JS bundles, CSS, etc.) for a plugin.
     Checks community plugins, beta channel, and core plugins.
     """
-    # Strip prefixes if present
-    clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
-    plugins_dir = config_manager.get_plugins_dir()
-    app_root = Path(__file__).parent.parent.parent
-    
-    logger.debug(f"[AssetSearch] Request for {plugin_id}/{filename} (Cleaned ID: {clean_id})")
-    
-    # Canonical base directory for plugins
-    base_dirs = [str(plugins_dir)]
+    # Try resolving via database record first
+    from database.config_database import get_config_database
+    db = get_config_database()
+    service_id = db.get_service_id(plugin_id)
+    install_path = None
+    if service_id:
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT absolute_install_path FROM services WHERE id=?", (service_id,))
+            row = c.fetchone()
+            if row and row[0]:
+                install_path = row[0]
 
     static_dir = None
-    for base in base_dirs:
-        # Check standard static folder
-        path = os.path.abspath(os.path.join(base, clean_id, 'static'))
+    if install_path:
+        path = os.path.abspath(os.path.join(install_path, 'static'))
         if os.path.exists(path):
             static_dir = path
-            break
-        
-        # Check beta folder static folder
-        path = os.path.abspath(os.path.join(base, clean_id, 'beta', 'static'))
-        if os.path.exists(path):
-            static_dir = path
-            break
+        else:
+            path = os.path.abspath(os.path.join(install_path, 'beta', 'static'))
+            if os.path.exists(path):
+                static_dir = path
 
     if not static_dir:
-        logger.error(f"Plugin asset folder NOT FOUND for {plugin_id}. Searched in: {base_dirs}")
+        # Strip prefixes if present
+        clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
+        plugins_dir = config_manager.get_plugins_dir()
+        base_dirs = [str(plugins_dir)]
+
+        for base in base_dirs:
+            # Check standard static folder
+            path = os.path.abspath(os.path.join(base, clean_id, 'static'))
+            if os.path.exists(path):
+                static_dir = path
+                break
+            
+            # Check beta folder static folder
+            path = os.path.abspath(os.path.join(base, clean_id, 'beta', 'static'))
+            if os.path.exists(path):
+                static_dir = path
+                break
+
+    if not static_dir:
+        logger.error(f"Plugin asset folder NOT FOUND for {plugin_id}.")
         abort(404)
 
     # Security check: Ensure we are not serving files outside the plugin static folder
