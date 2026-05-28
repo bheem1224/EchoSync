@@ -365,7 +365,14 @@ class PluginLoader:
                         continue
                     
                     # Ensure the plugin subfolder contains at least one signature entry file
-                    has_entry = (plugin_item / "manifest.json").exists() or (plugin_item / "__init__.py").exists() or (plugin_item / "main.wasm").exists()
+                    has_entry = (
+                        (plugin_item / "manifest.json").exists() or 
+                        (plugin_item / "__init__.py").exists() or 
+                        (plugin_item / "main.wasm").exists() or
+                        (plugin_item / "beta" / "manifest.json").exists() or
+                        (plugin_item / "beta" / "__init__.py").exists() or
+                        (plugin_item / "beta" / "main.wasm").exists()
+                    )
                     if not has_entry:
                         logger.warning(f"Pruning invalid plugin subfolder without entry points: {plugin_item}")
                         shutil.rmtree(plugin_item, ignore_errors=True)
@@ -373,6 +380,8 @@ class PluginLoader:
                     
                     # Check if manifest.json exists and parse it to make sure the author/plugin matches the folder structure
                     manifest_file = plugin_item / "manifest.json"
+                    if not manifest_file.exists() and (plugin_item / "beta" / "manifest.json").exists():
+                        manifest_file = plugin_item / "beta" / "manifest.json"
                     if manifest_file.exists():
                         try:
                             manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
