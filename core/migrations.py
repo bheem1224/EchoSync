@@ -97,6 +97,19 @@ def run_migrations() -> None:
         logger.error(f"Migration script encountered an error: {e}")
 
 
+def run_working_db_migrations(working_db_engine) -> None:
+    """
+    Entry point for working.db schema migrations at application startup.
+
+    All DDL is managed exclusively by Alembic via ``run_auto_migrations()``
+    (the "alembic:working" environment).  Raw ALTER TABLE statements have been
+    removed — schema changes must be expressed as Alembic migration scripts.
+    """
+    logger.debug(
+        "run_working_db_migrations: schema management delegated to Alembic — nothing to do here."
+    )
+
+
 def _engine_for_env(env: str):
     """Return the live SQLAlchemy engine for the given Alembic environment name."""
     if env == "alembic:working":
