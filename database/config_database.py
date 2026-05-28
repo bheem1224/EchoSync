@@ -420,20 +420,26 @@ class ConfigDatabase:
 
         resolved_plugin_id_str = name
         resolved_version = '1.0.0'
+        resolved_path = None
         try:
             from core.nexus_framework.plugin_loader import get_all_plugins
             for p in get_all_plugins():
-                # name is usually like 'plex', 'spotify', 'tidal'. We match against folder_name or name
-                if name.lower() in p.get('folder_name', '').lower() or name.lower() == p.get('name', '').lower():
-                    # e.g. EchoSync/spotify -> spotify
-                    resolved_plugin_id_str = p.get('folder_name', name).split('/')[-1]
+                p_id = p.get('id', '')
+                p_name = p.get('name', '')
+                if (name.lower() == p_id.lower() or 
+                    p_id.lower().endswith('.' + name.lower()) or 
+                    name.lower() == p_name.lower() or 
+                    p_name.lower().endswith('.' + name.lower())):
+                    resolved_plugin_id_str = p_id
                     resolved_version = p.get('version', '1.0.0')
+                    resolved_path = p.get('abs_path')
                     break
         except Exception as e:
             logger.error(f"Failed to resolve plugin details for {name}: {e}")
 
-        plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
-        self.register_service(name, 'streaming', f"{name.capitalize()} service", plugin_id=plugin_id_int, version=resolved_version)
+        plugin_id_int = binascii.crc32(resolved_plugin_id_str.lower().encode('utf-8')) & 0xFFFFFFFF
+        self.register_service(resolved_plugin_id_str, 'streaming', f"{resolved_plugin_id_str.capitalize()} service", 
+                              absolute_install_path=resolved_path, plugin_id=plugin_id_int, version=resolved_version)
 
         # 3. Try to find again after registration
         existing_id = self.get_service_id(name)
@@ -451,8 +457,8 @@ class ConfigDatabase:
 
         if absolute_install_path is None:
             # Check if name is a core streaming/built-in service
-            core_services = {'system', 'plex', 'soulseek', 'spotify', 'jellyfin', 'navidrome'}
-            if name in core_services:
+            core_services = {'system'}
+            if name.lower() in core_services:
                 from pathlib import Path
                 app_root = Path(__file__).parent.parent
                 absolute_install_path = str((app_root / "core").resolve())
