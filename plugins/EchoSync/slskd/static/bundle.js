@@ -245,7 +245,6 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 	async_deriveds = /* @__PURE__ */ new Map();
 	current = /* @__PURE__ */ new Map();
 	previous = /* @__PURE__ */ new Map();
-	unblocked = /* @__PURE__ */ new Set();
 	#r = /* @__PURE__ */ new Set();
 	#i = /* @__PURE__ */ new Set();
 	#a = /* @__PURE__ */ new Set();
@@ -260,6 +259,9 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 	#m = /* @__PURE__ */ new Set();
 	is_fork = !1;
 	#h = !1;
+	constructor() {
+		lt === null ? ct = lt = this : (lt.#n = this, this.#t = lt), lt = this;
+	}
 	#g() {
 		if (this.is_fork) return !0;
 		for (let n of this.#s.keys()) {
@@ -290,17 +292,16 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 		this.#m.add(e);
 	}
 	#_() {
-		if (this.#e = !0, gt++ > 1e3 && (this.#w(), bt()), !this.#g()) {
-			for (let e of this.#d) this.#f.delete(e), k(e, b), this.schedule(e);
-			for (let e of this.#f) k(e, x), this.schedule(e);
-		}
+		this.#e = !0, gt++ > 1e3 && (this.#C(), bt());
+		for (let e of this.#d) this.#f.delete(e), k(e, b), this.schedule(e);
+		for (let e of this.#f) k(e, x), this.schedule(e);
 		let n = this.#l;
 		this.#l = [], this.apply();
 		var r = mt = [], i = [], a = ht = [];
 		for (let e of n) try {
 			this.#v(e, r, i);
 		} catch (t) {
-			throw Et(e), t;
+			throw Et(e), this.#g() || this.discard(), t;
 		}
 		if (A = null, a.length > 0) {
 			var o = t.ensure();
@@ -314,18 +315,17 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 		}
 		let s = this.#y();
 		if (s) {
-			s.#b(this);
+			this.#x(i), this.#x(r), s.#b(this);
 			return;
 		}
 		this.#d.clear(), this.#f.clear();
 		for (let e of this.#r) e(this);
 		this.#r.clear(), ut = this, xt(i), xt(r), ut = null, this.#c?.resolve();
 		var c = A;
-		if (this.linked && this.#o === 0 && this.#w(), e && !this.linked && (this.#S(), A = c), this.#l.length > 0) {
-			c === null && (c = this, this.#C());
+		if (this.#o === 0 && (this.#l.length === 0 || c !== null) && (this.#C(), e && (this.#S(), A = c)), this.#l.length > 0) if (c !== null) {
 			let e = c;
 			e.#l.push(...this.#l.filter((t) => !e.#l.includes(t)));
-		}
+		} else c = this;
 		c !== null && c.#_();
 	}
 	#v(t, n, r) {
@@ -363,8 +363,9 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 		for (let [t, n] of e.current) !this.previous.has(t) && e.previous.has(t) && this.previous.set(t, e.previous.get(t)), this.current.set(t, n);
 		for (let [t, n] of e.async_deriveds) {
 			let e = this.async_deriveds.get(t);
-			e && n.promise.then(e.resolve);
+			e && n.promise.then(e.resolve).catch(e.reject);
 		}
+		this.transfer_effects(e.#d, e.#f);
 		let t = (e) => {
 			var n = e.reactions;
 			if (n !== null) for (let e of n) {
@@ -377,7 +378,7 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 			}
 		};
 		for (let e of this.current.keys()) t(e);
-		this.oncommit(() => e.discard()), e.#w(), A = this, this.#_();
+		this.oncommit(() => e.discard()), e.#C(), A = this, this.#_();
 	}
 	#x(e) {
 		for (var t = 0; t < e.length; t += 1) it(e[t], this.#d, this.#f);
@@ -400,13 +401,12 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 	}
 	discard() {
 		for (let e of this.#i) e(this);
-		this.#i.clear(), this.#a.clear(), this.#w();
+		this.#i.clear(), this.#a.clear(), this.#C(), this.#c?.resolve();
 	}
 	register_created_effect(e) {
 		this.#u.push(e);
 	}
 	#S() {
-		this.#w();
 		for (let l = ct; l !== null; l = l.#n) {
 			var e = l.id < this.id, t = [];
 			for (let [r, [i, a]] of this.current) {
@@ -419,10 +419,10 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 			}
 			if (e) for (let [e, t] of this.async_deriveds) {
 				let n = l.async_deriveds.get(e);
-				n && t.promise.then(n.resolve);
+				n && t.promise.then(n.resolve).catch(n.reject);
 			}
 			if (l.#e) {
-				var r = [...l.current.keys()].filter((e) => !this.current.has(e));
+				var r = [...l.current.keys()].filter((e) => !l.current.get(e)[1] && !this.current.has(e));
 				if (r.length === 0) e && l.discard();
 				else if (t.length > 0) {
 					if (e) for (let e of this.#m) l.unskip_effect(e, (e) => {
@@ -432,7 +432,10 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 					var i = /* @__PURE__ */ new Set(), a = /* @__PURE__ */ new Map();
 					for (var o of t) St(o, r, i, a);
 					a = /* @__PURE__ */ new Map();
-					var s = [...l.current.keys()].filter((e) => this.current.has(e) ? this.current.get(e)[0] !== e.v : !0);
+					var s = [...l.current].filter(([e, t]) => {
+						let n = this.current.get(e);
+						return n ? n[0] !== t[0] || n[1] !== t[1] : !0;
+					}).map(([e]) => e);
 					if (s.length > 0) for (let e of this.#u) !(e.f & 155648) && Ct(e, s, a) && (e.f & 4194320 ? (k(e, b), l.schedule(e)) : l.#d.add(e));
 					if (l.#l.length > 0 && !l.#h) {
 						l.apply();
@@ -483,7 +486,7 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 	static ensure() {
 		if (A === null) {
 			let e = A = new t();
-			e.#C(), !pt && !ft && D(() => {
+			!pt && !ft && D(() => {
 				e.#e || e.flush();
 			});
 		}
@@ -524,11 +527,10 @@ var ct = null, lt = null, A = null, ut = null, j = null, dt = null, ft = !1, pt 
 		this.#l.push(n);
 	}
 	#C() {
-		lt === null ? ct = lt = this : (lt.#n = this, this.#t = lt), lt = this;
-	}
-	#w() {
-		var e = this.#t, t = this.#n;
-		e === null ? ct = t : e.#n = t, t === null ? lt = e : t.#t = e, this.linked = !1;
+		if (this.linked) {
+			var e = this.#t, t = this.#n;
+			e === null ? ct = t : e.#n = t, t === null ? lt = e : t.#t = e, this.linked = !1;
+		}
 	}
 };
 function yt(e) {
@@ -827,9 +829,9 @@ function Nt(e = !0) {
 	q(null), G(null), qe(null), e && A?.deactivate();
 }
 function Pt() {
-	var e = K, t = e.b, n = A, r = t.is_rendered();
-	return t.update_pending_count(1, n), n.increment(r, e), () => {
-		t.update_pending_count(-1, n), n.decrement(r, e);
+	var e = K, t = e.b, n = A, r = !!t?.is_rendered();
+	return t?.update_pending_count(1, n), n.increment(r, e), () => {
+		t?.update_pending_count(-1, n), n.decrement(r, e);
 	};
 }
 /* @__NO_SIDE_EFFECTS__ */
@@ -869,7 +871,7 @@ function Lt(e, t, n) {
 		var i = A;
 		if (s) {
 			if (t.f & 32768) var l = Pt();
-			if (r.b.is_rendered()) i.async_deriveds.get(t)?.reject(It);
+			if (r.b?.is_rendered()) i.async_deriveds.get(t)?.reject(It);
 			else for (let e of c.values()) e.reject(It);
 			c.add(n), i.async_deriveds.set(t, n);
 		}
@@ -1245,7 +1247,7 @@ function vn(e) {
 function yn(e) {
 	hn("$effect");
 	var t = K.f;
-	if (!U && t & 32 && !(t & 32768)) {
+	if (!U && t & 32 && E !== null && !E.i) {
 		var n = E;
 		(n.e ??= []).push(e);
 	} else return bn(e);
@@ -1616,16 +1618,15 @@ function pr(e) {
 		var u = U, f = K;
 		G(null), q(null);
 		try {
-			for (var p, m = []; a !== null;) {
-				var h = a.assignedSlot || a.parentNode || a.host || null;
+			for (var p, m = []; a !== null && a !== t;) {
 				try {
-					var g = a[sr]?.[r];
-					g != null && (!a.disabled || e.target === a) && g.call(a, e);
+					var h = a[sr]?.[r];
+					h != null && (!a.disabled || e.target === a) && h.call(a, e);
 				} catch (e) {
 					p ? m.push(e) : p = e;
 				}
-				if (e.cancelBubble || h === t || h === null) break;
-				a = h;
+				if (e.cancelBubble) break;
+				o++, a = o < i.length ? i[o] : null;
 			}
 			if (p) {
 				for (let e of m) queueMicrotask(() => {
@@ -1771,7 +1772,7 @@ var Or = class {
 			if (n) In(n), this.#r.delete(t);
 			else {
 				var r = this.#n.get(t);
-				r && (this.#t.set(t, r.effect), this.#n.delete(t), r.fragment.lastChild.remove(), this.anchor.before(r.fragment), n = r.effect);
+				r && (In(r.effect), this.#t.set(t, r.effect), this.#n.delete(t), r.fragment.lastChild.remove(), this.anchor.before(r.fragment), n = r.effect);
 			}
 			for (let [t, n] of this.#e) {
 				if (this.#e.delete(t), t === e) break;
