@@ -26,6 +26,7 @@ from sqlalchemy import (
     UniqueConstraint
 )
 from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.hybrid import hybrid_property, Comparator
 from sqlalchemy.orm import (
     validates,
     DeclarativeBase,
@@ -85,7 +86,27 @@ class UserRating(WorkingBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(nullable=False, index=True)
-    user_id: Mapped[int] = synonym('account_id')
+
+    @hybrid_property
+    def user_id(self):
+        return self.account_id
+
+    @user_id.setter
+    def user_id(self, value):
+        self.account_id = hash_legacy_user(value)
+
+    class _UserRatingUserIdComparator(Comparator):
+        def __eq__(self, other):
+            return self.expression == hash_legacy_user(other)
+
+        def operate(self, op, other, **kwargs):
+            if op.__name__ == 'eq':
+                return op(self.expression, hash_legacy_user(other), **kwargs)
+            return op(self.expression, other, **kwargs)
+
+    @user_id.comparator
+    def user_id(cls):
+        return cls._UserRatingUserIdComparator(cls.account_id)
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 1-5, or system flags 0.1, 2.1, 3.1
     play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -190,7 +211,27 @@ class UserTrackState(WorkingBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("working_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id: Mapped[int] = synonym('account_id')
+
+    @hybrid_property
+    def user_id(self):
+        return self.account_id
+
+    @user_id.setter
+    def user_id(self, value):
+        self.account_id = hash_legacy_user(value)
+
+    class _UserTrackStateUserIdComparator(Comparator):
+        def __eq__(self, other):
+            return self.expression == hash_legacy_user(other)
+
+        def operate(self, op, other, **kwargs):
+            if op.__name__ == 'eq':
+                return op(self.expression, hash_legacy_user(other), **kwargs)
+            return op(self.expression, other, **kwargs)
+
+    @user_id.comparator
+    def user_id(cls):
+        return cls._UserTrackStateUserIdComparator(cls.account_id)
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     is_unlinked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_hard_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -292,48 +333,13 @@ def hash_legacy_user(val):
     return binascii.crc32(str(val).encode('utf-8')) & 0x7fffffff
 
 
-class UserIDComparator(Comparator):
-    def __eq__(self, other):
-        return self.__clause_element__() == hash_legacy_user(other)
-
-
 class SuggestionStagingQueue(WorkingBase):
-    """
-    Staging queue for tracks that the Suggestion Engine wants to surface to a user.
-
-    Each row is a single suggestion -- de-duplicated per the appropriate key depending
-    on the entry-point that created it:
-
-    - Tracks *found* in the local library (near-miss, vibe discovery): deduplicated on
-      ``(user_id, music_db_track_id, reason)``.
-    - Tracks *missing* from the local library (playlist-gap mining): deduplicated on
-      ``(user_id, sync_id, reason)`` -- ``music_db_track_id`` is NULL for these rows.
-
-    Populated by:
-    - ``discovery.recommend_near_miss()``  -- duration-miss alternate editions.
-    - ``discovery.mine_cached_playlists()`` -- tracks absent from the library and not
-      already sitting in the Download queue.
-    - Future entry points: vibe-based discovery, gap analysis, etc.
-
-    Canonical ``reason`` values:
-    - ``"near_miss_alternate_edition"`` -- duration-miss but text was near-perfect
-    - ``"vibe_discovery"``              -- vibe-engine surfaced a rarely-played track
-    - ``"playlist_gap"``                -- track is in a Spotify playlist but absent
-                                           from the local library and the download queue
-
-    Consumed by the UI layer (e.g. ``GET /api/suggestions``) which reads pending rows,
-    presents them to the user, and marks them as accepted / dismissed.
-    """
     __tablename__ = "suggestion_staging_queue"
     __table_args__ = (
-        # Dedup for locally-matched tracks (near-miss, vibe).
         UniqueConstraint(
             "account_id", "music_db_track_id", "reason",
             name="uq_suggestion_per_user_track_reason"
         ),
-        # Dedup for missing tracks (playlist-gap).  SQLite treats NULL as distinct in
-        # unique indexes, so rows with NULL sync_id are never caught by this constraint
-        # and rows with a real sync_id are correctly deduplicated.
         UniqueConstraint(
             "account_id", "sync_id", "reason",
             name="uq_suggestion_per_user_sync_reason"
@@ -341,8 +347,6 @@ class SuggestionStagingQueue(WorkingBase):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-
-    # The internal user identifier (string form; mirrors PlaybackHistory.user_id).
     account_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
 
     @hybrid_property
@@ -360,13 +364,8 @@ class SuggestionStagingQueue(WorkingBase):
     # Primary key of the matching local track in music.db's ``tracks`` table.
     # NULL for playlist-gap suggestions where the track does not yet exist locally.
     music_db_track_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-
-    # Deterministic Echosync sync_id (``ss:track:meta:{hash}``) used to identify a
-    # track that is absent from the local library.  NULL for near-miss / vibe rows
-    # where ``music_db_track_id`` is the canonical identifier instead.
     sync_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
 
-    # Short machine-readable reason tag used for UI grouping / filtering.
     reason: Mapped[str] = mapped_column(String, nullable=False, index=True)
 
     # Structured intent type from the 6-value Intent Engine taxonomy.
