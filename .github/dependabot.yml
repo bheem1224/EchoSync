@@ -1,0 +1,17 @@
+# To get started with Dependabot version updates, you'll need to specify which
+# package ecosystems to update and where the package manifests are located.
+# Please see the documentation for all configuration options:
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/webui" # Adjust this to point strictly to your svelte directory if nested
+    schedule:
+      interval: "weekly"
+    # 🔐 THIS IS THE MAGIC BATCHING BLOCK
+    groups:
+      security-updates:
+        applies-to: "security-updates"
+        patterns:
+          - "*" # Aggregates every single security alert package into 1 single PR
