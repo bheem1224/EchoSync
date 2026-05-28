@@ -48,13 +48,24 @@ class TestRateLimiting:
 
     def test_request_manager_applies_limit(self):
         """Verify RequestManager sleeps appropriately."""
+        # Reset global rate limiter to ensure isolation
+        from core.rate_limiter import GlobalRateLimiter
+        GlobalRateLimiter.get_instance().domains.clear()
+
         # Mock time.sleep and time.time
         with patch('time.sleep') as mock_sleep, \
              patch('time.time') as mock_time:
 
             # Setup mock time to advance manually
             current_time = 1000.0
-            mock_time.side_effect = lambda: current_time
+            def get_time():
+                return current_time
+            mock_time.side_effect = get_time
+
+            def sleep_side_effect(seconds):
+                nonlocal current_time
+                current_time += seconds
+            mock_sleep.side_effect = sleep_side_effect
 
             # Create manager with 1 req/s limit
             config = RateLimitConfig(requests_per_second=1.0)

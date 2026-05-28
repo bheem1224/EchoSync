@@ -119,6 +119,9 @@ def test_event_bus_payload_schema():
     _subscribe_lightweight(bus, "TRACK_RATED", _handler)
     _publish_lightweight(bus, payload)
 
+    # Give the async dispatcher a moment to process the event
+    time.sleep(0.1)
+
     assert received, "Subscriber did not receive any event payload"
     assert received[0]["event"] == "TRACK_RATED"
     assert received[0]["sync_id"] == "ss:track:mbid:123"
@@ -242,7 +245,8 @@ def test_state_listener_writes_to_db():
     bus = _new_event_bus_instance()
 
     # In-memory working database schema used by this test only.
-    engine = create_engine("sqlite:///:memory:", future=True)
+    engine = create_engine("sqlite:///file:test_state_listener_db?mode=memory&cache=shared", connect_args={'uri': True}, future=True)
+    _keep_alive = engine.connect()
     WorkingBase.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
@@ -277,11 +281,12 @@ def test_state_listener_writes_to_db():
     _publish_lightweight(bus, payload)
 
     # Give async/event-loop listeners a short processing window.
-    time.sleep(0.05)
+    time.sleep(0.2)
 
     with Session() as session:
         row = session.query(UserRating).filter_by(sync_id="ss:track:mbid:123", account_id=1).one_or_none()
         assert row is not None
         assert row.rating == 8.0
 
+    _keep_alive.close()
     engine.dispose()

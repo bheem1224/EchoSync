@@ -76,6 +76,7 @@ class StateListenerService:
                 # Sponsor action: if sponsor rated, remove from Suggestions for You playlist.
                 self._handle_sponsor_rating_action(session, base_sync_id, internal_account_id, float(rating))
             except Exception as e:
+                logger.error(f"Error in handle_track_rated: {e}", exc_info=True)
                 session.rollback()
 
     def _handle_sponsor_rating_action(self, session, base_sync_id: str, account_id: int, rating_stars: float) -> None:

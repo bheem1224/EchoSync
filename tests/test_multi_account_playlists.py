@@ -86,8 +86,10 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
 
     monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyClient', FakeSpotifyClient)
     from core.nexus_framework.plugin_loader import PluginRegistry
+    monkeypatch.setattr(PluginRegistry, 'get_plugin_class', lambda name: FakeSpotifyClient if name == 'spotify' else None)
     monkeypatch.setattr(PluginRegistry, 'get_provider_class', lambda name: FakeSpotifyClient if name == 'spotify' else None)
     monkeypatch.setattr(PluginRegistry, 'create_instance', lambda name, *args, **kwargs: FakeSpotifyClient() if name == 'spotify' else None)
+    monkeypatch.setattr(PluginRegistry, 'is_plugin_disabled', lambda name: False)
     monkeypatch.setattr(PluginRegistry, 'is_provider_disabled', lambda name: False)
 
     resp = client.get('/api/plugins/spotify/playlists')

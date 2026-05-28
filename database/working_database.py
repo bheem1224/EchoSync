@@ -71,7 +71,7 @@ class WorkingAccount(WorkingBase):
     track_states: Mapped[list["UserTrackState"]] = relationship(
         back_populates="account",
         cascade="all, delete-orphan",
-        foreign_keys="[UserTrackState.account_id]"
+        foreign_keys="[UserTrackState.user_id]"
     )
     artist_ratings: Mapped[list["UserArtistRating"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     album_ratings: Mapped[list["UserAlbumRating"]] = relationship(back_populates="account", cascade="all, delete-orphan")
@@ -205,32 +205,23 @@ class Download(WorkingBase):
 class UserTrackState(WorkingBase):
     __tablename__ = "user_track_states"
     __table_args__ = (
-        UniqueConstraint("account_id", "sync_id", name="uq_user_track_state"),
+        UniqueConstraint("user_id", "sync_id", name="uq_user_track_state"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("working_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("working_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id = synonym('user_id')
 
-    @hybrid_property
-    def user_id(self):
-        return self.account_id
+    def __init__(self, **kwargs):
+        for key in ('user_id', 'account_id'):
+            if key in kwargs:
+                kwargs[key] = hash_legacy_user(kwargs[key])
+        super().__init__(**kwargs)
 
-    @user_id.setter
-    def user_id(self, value):
-        self.account_id = hash_legacy_user(value)
+    @validates('user_id', 'account_id')
+    def validate_user_id(self, key, value):
+        return hash_legacy_user(value)
 
-    class _UserTrackStateUserIdComparator(Comparator):
-        def __eq__(self, other):
-            return self.expression == hash_legacy_user(other)
-
-        def operate(self, op, other, **kwargs):
-            if op.__name__ == 'eq':
-                return op(self.expression, hash_legacy_user(other), **kwargs)
-            return op(self.expression, other, **kwargs)
-
-    @user_id.comparator
-    def user_id(cls):
-        return cls._UserTrackStateUserIdComparator(cls.account_id)
     sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     is_unlinked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_hard_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -244,7 +235,7 @@ class UserTrackState(WorkingBase):
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
-    account: Mapped["WorkingAccount"] = relationship(back_populates="track_states", foreign_keys=[account_id])
+    account: Mapped["WorkingAccount"] = relationship(back_populates="track_states", foreign_keys=[user_id])
     sponsor: Mapped[Optional["WorkingAccount"]] = relationship(foreign_keys=[sponsor_id])
 
     @validates('sync_id')
@@ -336,38 +327,28 @@ class SuggestionStagingQueue(WorkingBase):
     __tablename__ = "suggestion_staging_queue"
     __table_args__ = (
         UniqueConstraint(
-            "account_id", "music_db_track_id", "reason",
+            "user_id", "music_db_track_id", "reason",
             name="uq_suggestion_per_user_track_reason"
         ),
         UniqueConstraint(
-            "account_id", "sync_id", "reason",
+            "user_id", "sync_id", "reason",
             name="uq_suggestion_per_user_sync_reason"
         ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    account_id = synonym('user_id')
 
-    @hybrid_property
-    def user_id(self) -> int:
-        return self.account_id
+    def __init__(self, **kwargs):
+        for key in ('user_id', 'account_id'):
+            if key in kwargs:
+                kwargs[key] = hash_legacy_user(kwargs[key])
+        super().__init__(**kwargs)
 
-    @user_id.setter
-    def user_id(self, val):
-        self.account_id = hash_legacy_user(val)
-
-    class _SuggestionStagingQueueUserIdComparator(Comparator):
-        def __eq__(self, other):
-            return self.expression == hash_legacy_user(other)
-
-        def operate(self, op, other, **kwargs):
-            if op.__name__ == 'eq':
-                return op(self.expression, hash_legacy_user(other), **kwargs)
-            return op(self.expression, other, **kwargs)
-
-    @user_id.comparator
-    def user_id(cls):
-        return cls._SuggestionStagingQueueUserIdComparator(cls.account_id)
+    @validates('user_id', 'account_id')
+    def validate_user_id(self, key, value):
+        return hash_legacy_user(value)
 
     # Primary key of the matching local track in music.db's ``tracks`` table.
     # NULL for playlist-gap suggestions where the track does not yet exist locally.
