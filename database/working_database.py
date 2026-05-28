@@ -38,7 +38,6 @@ from sqlalchemy.orm import (
     synonym,
     scoped_session,
 )
-from sqlalchemy.ext.hybrid import hybrid_property, Comparator
 
 
 # ---------------------------------------------------------------------------
@@ -357,9 +356,18 @@ class SuggestionStagingQueue(WorkingBase):
     def user_id(self, val):
         self.account_id = hash_legacy_user(val)
 
+    class _SuggestionStagingQueueUserIdComparator(Comparator):
+        def __eq__(self, other):
+            return self.expression == hash_legacy_user(other)
+
+        def operate(self, op, other, **kwargs):
+            if op.__name__ == 'eq':
+                return op(self.expression, hash_legacy_user(other), **kwargs)
+            return op(self.expression, other, **kwargs)
+
     @user_id.comparator
     def user_id(cls):
-        return UserIDComparator(cls.account_id)
+        return cls._SuggestionStagingQueueUserIdComparator(cls.account_id)
 
     # Primary key of the matching local track in music.db's ``tracks`` table.
     # NULL for playlist-gap suggestions where the track does not yet exist locally.
