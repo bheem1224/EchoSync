@@ -387,9 +387,20 @@ class PluginLoader:
                             manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
                             manifest_id = manifest_data.get("id")
                             if manifest_id:
-                                # Expected structure is author.plugin
+                                # Expected structure is author.plugin (permissive matching)
                                 parts = manifest_id.split('.')
-                                if len(parts) < 2 or parts[0].lower() != author_item.name.lower() or parts[1].lower() != plugin_item.name.lower():
+                                expected_author = parts[0].lower() if len(parts) >= 2 else ""
+                                expected_plugin = parts[1].lower() if len(parts) >= 2 else manifest_id.lower()
+                                
+                                norm_author = author_item.name.lower().replace('_', '').replace('-', '').replace(' ', '')
+                                norm_plugin = plugin_item.name.lower().replace('_', '').replace('-', '').replace(' ', '')
+                                norm_exp_author = expected_author.replace('_', '').replace('-', '').replace(' ', '')
+                                norm_exp_plugin = expected_plugin.replace('_', '').replace('-', '').replace(' ', '')
+                                
+                                author_ok = (norm_author == norm_exp_author) or (norm_author in ('echosync', 'core') and norm_exp_author in ('echosync', 'core')) or not expected_author
+                                plugin_ok = (norm_plugin == norm_exp_plugin)
+                                
+                                if not author_ok or not plugin_ok:
                                     logger.warning(f"Pruning folder {plugin_item} because it does not match manifest ID '{manifest_id}'")
                                     shutil.rmtree(plugin_item, ignore_errors=True)
                                     continue
