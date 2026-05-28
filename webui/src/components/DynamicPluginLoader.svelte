@@ -185,6 +185,32 @@
       loading = false;
     }
   });
+
+  function initCard(node, { apiBase, pluginId }) {
+    // Set properties directly on the element object
+    node.apiBase = apiBase;
+    node.pluginId = pluginId;
+    node.plugin_id = pluginId;
+    
+    // Set attributes as fallback
+    node.setAttribute('api-base', apiBase);
+    node.setAttribute('apibase', apiBase);
+    node.setAttribute('plugin-id', pluginId);
+    node.setAttribute('plugin_id', pluginId);
+    
+    return {
+      update(params) {
+        node.apiBase = params.apiBase;
+        node.pluginId = params.pluginId;
+        node.plugin_id = params.pluginId;
+        
+        node.setAttribute('api-base', params.apiBase);
+        node.setAttribute('apibase', params.apiBase);
+        node.setAttribute('plugin-id', params.pluginId);
+        node.setAttribute('plugin_id', params.pluginId);
+      }
+    };
+  }
 </script>
 
 <!-- ── Render ─────────────────────────────────────────────────────────────── -->
@@ -208,7 +234,10 @@
       {:else}
         <svelte:element
           this={tag}
+          use:initCard={{ apiBase, pluginId: plugin.id }}
           api-base={apiBase}
+          apiBase={apiBase}
+          apibase={apiBase}
           plugin-id={plugin.id}
           {...passProps}
         />
