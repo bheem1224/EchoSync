@@ -522,6 +522,8 @@ class PluginLoader:
                     logger.warning(f"🚨 Authoritative Pruning: Deleting invalid database record and cleanup service: {name} (ID: {db_id}, Reason: {reason})")
                     c.execute("DELETE FROM services WHERE id=?", (db_id,))
                     c.execute("DELETE FROM service_config WHERE service_id=?", (db_id,))
+                    if p_id is not None:
+                        c.execute("DELETE FROM ui_components WHERE plugin_id=?", (p_id,))
                     
                     # Clean up physical files associated if they exist
                     if install_path:
