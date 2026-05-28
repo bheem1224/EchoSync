@@ -246,7 +246,7 @@ class NavidromeClient(MediaServerProvider):
         if not self.is_configured():
             return
         
-        from core.health_check import register_health_check_job, HealthCheckResult
+        from core.health_check import HealthCheckResult
         
         def navidrome_health_check() -> HealthCheckResult:
             try:
@@ -265,7 +265,7 @@ class NavidromeClient(MediaServerProvider):
                     message=f"Navidrome connection error: {str(e)}",
                 )
         
-        register_health_check_job("navidrome_health_check", navidrome_health_check, interval_seconds=300)
+        self.sdk.health.register(navidrome_health_check, interval_seconds=300)
 
     def set_progress_callback(self, callback):
         """Set callback function for progress updates"""

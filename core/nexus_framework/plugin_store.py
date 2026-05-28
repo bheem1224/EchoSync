@@ -823,6 +823,21 @@ class PluginStore:
                         except Exception:
                             pass
 
+            # Unregister health checks for the plugin
+            try:
+                from core.health_check import health_check_registry
+                # Try unregistering both full clean_id and short name
+                health_check_registry.unregister_check(clean_id)
+                short_name = clean_id.split('.')[-1].split('@')[0]
+                health_check_registry.unregister_check(short_name)
+                
+                # Unregister the jobs from job_queue
+                from core.job_queue import job_queue
+                job_queue.unregister_job(f"health_check_{clean_id}")
+                job_queue.unregister_job(f"health_check_{short_name}")
+            except Exception as e:
+                logger.warning(f"Failed to unregister health check for {clean_id}: {e}")
+
             # Fallback/Additional check: inspect sys.modules
             if absolute_install_path:
                 plugin_path_str = str(Path(absolute_install_path).resolve())

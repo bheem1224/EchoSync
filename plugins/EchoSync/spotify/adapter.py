@@ -9,7 +9,7 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 
 from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
-from core.models import PluginType, Track
+from core.models import Track
 from core.file_handling.storage import get_storage_service
 
 logger = get_logger("spotify_adapter")
@@ -19,7 +19,7 @@ class SpotifyAdapter:
     def __init__(self, spotify_client=None):
         storage = get_storage_service()
         db = storage.get_music_database()
-        super().__init__(db=db, provider_type=PluginType.SPOTIFY)
+        super().__init__(db=db, provider_type="spotify")
         self.spotify = spotify_client
 
     # Field contracts

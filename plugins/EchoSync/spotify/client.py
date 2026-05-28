@@ -206,7 +206,7 @@ class SpotifyClient(SyncServiceProvider):
         if not self.is_configured():
             return
         
-        from core.health_check import register_health_check_job, HealthCheckResult
+        from core.health_check import HealthCheckResult
         
         def spotify_health_check() -> HealthCheckResult:
             try:
@@ -246,7 +246,7 @@ class SpotifyClient(SyncServiceProvider):
                     message=f"Spotify health check error: {str(e)}"
                 )
         
-        register_health_check_job("spotify_health_check", spotify_health_check, interval_seconds=300)
+        self.sdk.health.register(spotify_health_check, interval_seconds=300)
 
     def _setup_client(self):
         try:

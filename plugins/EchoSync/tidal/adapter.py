@@ -10,7 +10,6 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 from typing import List, Optional
 from core.tiered_logger import get_logger
 from database.music_database import Track
-from core.models import PluginType
 from core.file_handling.storage import get_storage_service
 from typing import Any
 
@@ -32,7 +31,7 @@ class TidalAdapter:
     def __init__(self, tidal_client=None):
         storage = get_storage_service()
         db = storage.get_music_database()
-        super().__init__(db=db, provider_type=PluginType.TIDAL)
+        super().__init__(db=db, provider_type="tidal")
         self.tidal = tidal_client
 
     # Field contracts

@@ -415,12 +415,13 @@ class ConfigDatabase:
         if existing_id:
             return existing_id
 
-        # 2. Register if missing
+        # 2. Register if missing (ONLY if it is core service 'system' OR matches a physically installed plugin)
         import binascii
 
         resolved_plugin_id_str = name
         resolved_version = '1.0.0'
         resolved_path = None
+        is_matched = False
         try:
             from core.nexus_framework.plugin_loader import get_all_plugins
             for p in get_all_plugins():
@@ -433,20 +434,23 @@ class ConfigDatabase:
                     resolved_plugin_id_str = p_id
                     resolved_version = p.get('version', '1.0.0')
                     resolved_path = p.get('abs_path')
+                    is_matched = True
                     break
         except Exception as e:
             logger.error(f"Failed to resolve plugin details for {name}: {e}")
 
-        plugin_id_int = binascii.crc32(resolved_plugin_id_str.lower().encode('utf-8')) & 0xFFFFFFFF
-        self.register_service(resolved_plugin_id_str, 'streaming', f"{resolved_plugin_id_str.capitalize()} service", 
-                              absolute_install_path=resolved_path, plugin_id=plugin_id_int, version=resolved_version)
+        if name.lower() == 'system' or is_matched:
+            plugin_id_int = binascii.crc32(resolved_plugin_id_str.lower().encode('utf-8')) & 0xFFFFFFFF
+            self.register_service(resolved_plugin_id_str, 'streaming', f"{resolved_plugin_id_str.capitalize()} service", 
+                                  absolute_install_path=resolved_path, plugin_id=plugin_id_int, version=resolved_version)
 
-        # 3. Try to find again after registration
-        existing_id = self.get_service_id(name)
-        if existing_id:
-            return existing_id
+            # 3. Try to find again after registration
+            existing_id = self.get_service_id(name)
+            if existing_id:
+                return existing_id
+        else:
+            logger.debug(f"Service '{name}' is not physically installed or core. Not registering.")
 
-        logger.error(f"Failed to get or create service ID for '{name}' after registration attempt.")
         return 0
 
     def register_service(self, name: str, service_type: str, description: str, absolute_install_path: Optional[str] = None, plugin_id: Optional[int] = None, version: Optional[str] = None, loaded_modules: Optional[str] = None) -> int:

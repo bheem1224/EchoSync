@@ -8,7 +8,7 @@ from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSuppor
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
 from core.file_handling.path_mapper import PathMapper
-from core.health_check import register_health_check_job, HealthCheckResult
+from core.health_check import HealthCheckResult
 from plexapi.server import PlexServer
 from plexapi.library import MusicSection
 from plexapi.audio import Track as PlexTrack
@@ -127,7 +127,7 @@ class PlexClient(PluginBase):
                     message=f"Plex connection error: {str(e)}",
                 )
         
-        register_health_check_job("plex_health_check", plex_health_check, interval_seconds=300)
+        self.sdk.health.register(plex_health_check, interval_seconds=300)
     
     def authenticate(self, **kwargs) -> bool:
         """Authenticate with Plex server."""

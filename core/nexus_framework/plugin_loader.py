@@ -1043,7 +1043,15 @@ def get_all_plugins() -> list:
         # Case 1: Author/Plugin structure
         for subitem in item.iterdir():
             if subitem.is_dir() and not subitem.name.startswith('_'):
-                if (subitem / "manifest.json").exists() or (subitem / "__init__.py").exists() or (subitem / "main.wasm").exists():
+                has_entry = (
+                    (subitem / "manifest.json").exists() or 
+                    (subitem / "__init__.py").exists() or 
+                    (subitem / "main.wasm").exists() or
+                    (subitem / "beta" / "manifest.json").exists() or
+                    (subitem / "beta" / "__init__.py").exists() or
+                    (subitem / "beta" / "main.wasm").exists()
+                )
+                if has_entry:
                     candidates.append((subitem, f"{item.name}.{subitem.name}"))
 
     for item, p_id in candidates:

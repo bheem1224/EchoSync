@@ -309,7 +309,7 @@ class JellyfinClient(MediaServerProvider):
         if not self.is_configured():
             return
         
-        from core.health_check import register_health_check_job, HealthCheckResult
+        from core.health_check import HealthCheckResult
         
         def jellyfin_health_check() -> HealthCheckResult:
             try:
@@ -328,7 +328,7 @@ class JellyfinClient(MediaServerProvider):
                     message=f"Jellyfin connection error: {str(e)}",
                 )
         
-        register_health_check_job("jellyfin_health_check", jellyfin_health_check, interval_seconds=300)
+        self.sdk.health.register(jellyfin_health_check, interval_seconds=300)
         self._progress_callback = None
         
         # Initialize centralized HTTP client for Jellyfin (10 requests/second)

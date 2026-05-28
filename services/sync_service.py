@@ -70,99 +70,132 @@ class PlaylistSyncService:
         jellyfin_client=None,
         navidrome_client=None,
     ):
-        # Support multiple spotify accounts by default when no client is passed
-        self.spotify_clients = []
-        self.spotify_client = None
-
-        if spotify_client:
-            self.spotify_clients = [spotify_client]
-            self.spotify_client = spotify_client
-        else:
-            # Use PluginRegistry to load all spotify clients
-            try:
-                from core.file_handling.storage import get_storage_service
-                storage = get_storage_service()
-                accounts = storage.list_accounts('spotify') or []
-
-                for acc in accounts:
-                    try:
-                        if acc.get('is_active') is False:
-                            logger.debug(f"Skipping disabled spotify account {acc.get('id')}")
-                            continue
-                        # Instantiate via Registry
-                        client = PluginRegistry.create_instance('spotify', account_id=acc.get('id'))
-                        if client.is_configured():
-                            self.spotify_clients.append(client)
-                    except Exception as e:
-                        logger.warning(f"Failed to load spotify client for account {acc.get('id')}: {e}")
-                        continue
-
-                if self.spotify_clients:
-                    # default to first account
-                    self.spotify_client = self.spotify_clients[0]
-                else:
-                    # fallback to generic auto-detect client via Registry
-                    try:
-                        self.spotify_client = PluginRegistry.create_instance('spotify')
-                        self.spotify_clients = [self.spotify_client]
-                    except Exception as e:
-                        logger.error(f"Failed to create default spotify client: {e}")
-            except Exception as e:
-                # if storage service not available, just create a generic client
-                try:
-                    self.spotify_client = PluginRegistry.create_instance('spotify')
-                    self.spotify_clients = [self.spotify_client]
-                except Exception as create_err:
-                    logger.error(f"Critical failure creating spotify client: {create_err}")
-
-        # other providers assume single-client style (injected or lazy-loaded)
-        self.plex_client = plex_client
-        self.jellyfin_client = jellyfin_client
-        self.navidrome_client = navidrome_client
-
-        # Lazy load clients if not injected
-        if not self.plex_client:
-            try:
-                self.plex_client = PluginRegistry.create_instance('plex')
-            except Exception as e:
-                logger.warning(f"Plex client unavailable at SyncService init: {e}")
-
-        if not self.jellyfin_client:
-            try:
-                self.jellyfin_client = PluginRegistry.create_instance('jellyfin')
-            except Exception as e:
-                logger.warning(f"Jellyfin client unavailable at SyncService init: {e}")
-
-        if not self.navidrome_client:
-            try:
-                self.navidrome_client = PluginRegistry.create_instance('navidrome')
-            except Exception as e:
-                logger.warning(f"Navidrome client unavailable at SyncService init: {e}")
+        self._client_cache = {}
+        if spotify_client is not None:
+            self._client_cache['spotify'] = spotify_client
+            self._client_cache['spotify_list'] = [spotify_client]
+        if plex_client is not None:
+            self._client_cache['plex'] = plex_client
+        if jellyfin_client is not None:
+            self._client_cache['jellyfin'] = jellyfin_client
+        if navidrome_client is not None:
+            self._client_cache['navidrome'] = navidrome_client
+        if soulseek_client is not None:
+            self._client_cache['soulseek'] = soulseek_client
 
         self.download_manager = get_download_manager()
         self.progress_callbacks = {}  # Playlist-specific progress callbacks
         self.syncing_playlists = set()  # Track multiple syncing playlists
         self._cancelled = False
         self.matching_engine = MatchService()
-    
+
+    def _get_cached_client(self, name: str) -> Any:
+        if name in self._client_cache:
+            return self._client_cache[name]
+        try:
+            client = PluginRegistry.create_instance(name)
+            self._client_cache[name] = client
+            return client
+        except Exception as e:
+            logger.warning(f"{name.capitalize()} client unavailable: {e}")
+            return None
+
+    @property
+    def spotify_client(self):
+        if 'spotify' in self._client_cache:
+            return self._client_cache['spotify']
+        clients = self.spotify_clients
+        if clients:
+            self._client_cache['spotify'] = clients[0]
+            return clients[0]
+        return None
+
+    @spotify_client.setter
+    def spotify_client(self, value):
+        self._client_cache['spotify'] = value
+        if value:
+            self._client_cache['spotify_list'] = [value]
+
+    @property
+    def spotify_clients(self):
+        if 'spotify_list' in self._client_cache:
+            return self._client_cache['spotify_list']
+            
+        clients = []
+        try:
+            from core.file_handling.storage import get_storage_service
+            storage = get_storage_service()
+            accounts = storage.list_accounts('spotify') or []
+
+            for acc in accounts:
+                try:
+                    if acc.get('is_active') is False:
+                        logger.debug(f"Skipping disabled spotify account {acc.get('id')}")
+                        continue
+                    client = PluginRegistry.create_instance('spotify', account_id=acc.get('id'))
+                    if client.is_configured():
+                        clients.append(client)
+                except Exception as e:
+                    logger.warning(f"Failed to load spotify client for account {acc.get('id')}: {e}")
+                    continue
+
+            if not clients:
+                try:
+                    client = PluginRegistry.create_instance('spotify')
+                    clients = [client]
+                except Exception as e:
+                    logger.error(f"Failed to create default spotify client: {e}")
+        except Exception as e:
+            try:
+                client = PluginRegistry.create_instance('spotify')
+                clients = [client]
+            except Exception as create_err:
+                logger.error(f"Critical failure creating spotify client: {create_err}")
+                
+        self._client_cache['spotify_list'] = clients
+        return clients
+
+    @spotify_clients.setter
+    def spotify_clients(self, value):
+        self._client_cache['spotify_list'] = value
+        if value:
+            self._client_cache['spotify'] = value[0]
+
+    @property
+    def plex_client(self):
+        return self._get_cached_client('plex')
+
+    @plex_client.setter
+    def plex_client(self, value):
+        self._client_cache['plex'] = value
+
+    @property
+    def jellyfin_client(self):
+        return self._get_cached_client('jellyfin')
+
+    @jellyfin_client.setter
+    def jellyfin_client(self, value):
+        self._client_cache['jellyfin'] = value
+
+    @property
+    def navidrome_client(self):
+        return self._get_cached_client('navidrome')
+
+    @navidrome_client.setter
+    def navidrome_client(self, value):
+        self._client_cache['navidrome'] = value
+
     def _get_active_media_client(self):
         """Get the active media client based on config settings"""
         try:
             from core.settings import config_manager
-            active_server = config_manager.get('active_media_server')
-
-            if active_server == "jellyfin":
-                if not self.jellyfin_client:
-                    logger.error("Jellyfin client not provided to sync service")
-                    return None, "jellyfin"
-                return self.jellyfin_client, "jellyfin"
-            elif active_server == "navidrome":
-                if not self.navidrome_client:
-                    logger.error("Navidrome client not provided to sync service")
-                    return None, "navidrome"
-                return self.navidrome_client, "navidrome"
-            else:  # Default to Plex
-                return self.plex_client, "plex"
+            active_server = config_manager.get('active_media_server') or "plex"
+            
+            client = self._get_cached_client(active_server)
+            if not client:
+                logger.error(f"{active_server.capitalize()} client not available to sync service")
+                return None, active_server
+            return client, active_server
         except Exception as e:
             logger.error(f"Error determining active media server: {e}")
             return self.plex_client, "plex"  # Fallback to Plex

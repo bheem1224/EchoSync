@@ -120,7 +120,8 @@ class HealthCheckRegistry:
         service_name: str, 
         check_func: Callable[[], HealthCheckResult],
         interval_seconds: float = 60.0,
-        max_retries: int = 3
+        max_retries: int = 3,
+        plugin: Optional[str] = None
     ):
         """
         Register a health check and schedule it as a periodic job in job_queue.
@@ -130,6 +131,7 @@ class HealthCheckRegistry:
             check_func: Function that returns a HealthCheckResult
             interval_seconds: How often to run the check (default: 60 seconds)
             max_retries: Number of retries on failure (default: 3)
+            plugin: Optional identifier for the owning plugin
         """
         # Register the check function
         self.register_check(service_name, check_func)
@@ -148,10 +150,11 @@ class HealthCheckRegistry:
             interval_seconds=interval_seconds,
             start_after=interval_seconds,  # Wait for interval before first run
             max_retries=max_retries,
-            tags=["health_check"]
+            tags=["health_check"],
+            plugin=plugin
         )
         
-        logger.info(f"Registered health check job for {service_name} (interval: {interval_seconds}s)")
+        logger.info(f"Registered health check job for {service_name} (interval: {interval_seconds}s, plugin: {plugin})")
 
 
 # Global health check registry instance
@@ -168,7 +171,8 @@ def register_health_check_job(
     service_name: str, 
     check_func: Callable[[], HealthCheckResult],
     interval_seconds: float = 60.0,
-    max_retries: int = 3
+    max_retries: int = 3,
+    plugin: Optional[str] = None
 ):
     """
     Register a health check and schedule it as a periodic job.
@@ -178,12 +182,14 @@ def register_health_check_job(
         check_func: Function that returns a HealthCheckResult
         interval_seconds: How often to run the check (default: 60 seconds). Override for debug mode or custom schedules.
         max_retries: Number of retries on failure (default: 3)
+        plugin: Optional identifier for the owning plugin
     """
     health_check_registry.register_check_with_job(
         service_name, 
         check_func, 
         interval_seconds=interval_seconds,
-        max_retries=max_retries
+        max_retries=max_retries,
+        plugin=plugin
     )
 
 

@@ -243,6 +243,82 @@ class _NetworkSDKFacade:
         self._check_allowlist(url)
         return self._manager.delete(url, **kwargs)
 
+class _HealthCheckSDKFacade:
+    def __init__(self, plugin_id: str):
+        self.plugin_id = plugin_id
+
+    def register(self, url_or_func, interval_seconds: float = 300.0):
+        """
+        Register a health check for the calling plugin.
+        
+        Args:
+            url_or_func: Either a string URL to GET or a function returning HealthCheckResult.
+            interval_seconds: How often to run the check (default: 300 seconds).
+        """
+        from core.health_check import health_check_registry, HealthCheckResult
+        
+        service_name = self.plugin_id.split('.')[-1].split('@')[0]
+        
+        if isinstance(url_or_func, str):
+            url = url_or_func
+            def url_health_check() -> HealthCheckResult:
+                try:
+                    from core.request_manager import RequestManager
+                    manager = RequestManager(provider=self.plugin_id)
+                    response = manager.get(url, timeout=10.0)
+                    if 200 <= response.status_code < 400:
+                        return HealthCheckResult(
+                            service_name=service_name,
+                            status="healthy",
+                            message=f"Ping to {url} succeeded (HTTP {response.status_code})"
+                        )
+                    else:
+                        return HealthCheckResult(
+                            service_name=service_name,
+                            status="unhealthy",
+                            message=f"Ping to {url} failed (HTTP {response.status_code})"
+                        )
+                except Exception as e:
+                    return HealthCheckResult(
+                        service_name=service_name,
+                        status="unhealthy",
+                        message=f"Ping to {url} failed: {str(e)}"
+                    )
+            check_func = url_health_check
+        else:
+            check_func = url_or_func
+
+        def wrapped_check_func() -> HealthCheckResult:
+            try:
+                res = check_func()
+                if isinstance(res, HealthCheckResult):
+                    return res
+                elif isinstance(res, bool):
+                    return HealthCheckResult(
+                        service_name=service_name,
+                        status="healthy" if res else "unhealthy",
+                        message="Service check succeeded" if res else "Service check failed"
+                    )
+                else:
+                    return HealthCheckResult(
+                        service_name=service_name,
+                        status="healthy" if res else "unhealthy",
+                        message=str(res)
+                    )
+            except Exception as e:
+                return HealthCheckResult(
+                    service_name=service_name,
+                    status="unhealthy",
+                    message=str(e)
+                )
+
+        health_check_registry.register_check_with_job(
+            service_name=service_name,
+            check_func=wrapped_check_func,
+            interval_seconds=interval_seconds,
+            plugin=self.plugin_id
+        )
+
 class _SDK:
     def __init__(self):
         # We don't know the plugin_id here yet as it's a global singleton,
@@ -250,6 +326,7 @@ class _SDK:
         self._accounts = _AccountsSDKFacade()
         self.plugins = _PluginsSDKFacade()
         self.file = _FileSDKFacade()
+        self.health = _HealthCheckSDKFacade(self._get_plugin_id())
 
     @property
     def config(self):

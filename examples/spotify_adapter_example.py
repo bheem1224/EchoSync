@@ -8,7 +8,7 @@ AFTER (New): SpotifyAdapter creates stubs through music_database
 """
 
 from typing import List, Dict, Optional, Any
-from core.models import Track, PluginType
+from core.models import Track
 from database.music_database import MusicDatabase
 
 
@@ -25,7 +25,7 @@ class SpotifyAdapter:
     """
     
     def __init__(self, db: MusicDatabase):
-        super().__init__(db, PluginType.SPOTIFY)
+        super().__init__(db, "spotify")
         
         # Initialize Spotify API client (authentication, etc.)
         from plugins.spotify.client import SpotifyClient
@@ -236,8 +236,8 @@ def example_usage():
         print(f"{track.title} by {', '.join(track.artists)} (confidence: {track.confidence_score:.2f})")
         
         # Check if we have Spotify reference
-        if track.has_plugin_ref(PluginType.SPOTIFY):
-            spotify_ref = track.get_plugin_ref(PluginType.SPOTIFY)
+        if track.has_plugin_ref("spotify"):
+            spotify_ref = track.get_plugin_ref("spotify")
             print(f"  Spotify ID: {spotify_ref.provider_id}")
     
     # Example 3: Enrich track that was created from another source

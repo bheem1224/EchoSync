@@ -53,55 +53,38 @@ def get_system_health() -> Dict[str, Any]:
 
     # 2. Count Enabled Providers
     disabled_plugins = config_manager.get_disabled_plugins()
+    if disabled_plugins is None:
+        disabled_plugins = []
+    disabled_set = {d.lower() for d in disabled_plugins}
     enabled_providers_count = 0
 
     from database.config_database import get_config_database
     config_db = get_config_database()
 
-    # Check Spotify
-    if 'spotify' not in disabled_plugins:
-        spotify_id = config_db.get_or_create_service_id('spotify')
-        spotify_creds = config_db.get_all_service_config(spotify_id) or {}
-        spotify_accounts = config_db.get_accounts(service_id=spotify_id, is_active=True)
-        if (spotify_creds.get('client_id') and spotify_creds.get('client_secret')) or spotify_accounts:
-            enabled_providers_count += 1
+    active_services = []
+    try:
+        with config_db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT name FROM services WHERE is_active = 1 AND name != 'system'")
+            active_services = [row['name'] for row in c.fetchall()]
+    except Exception as e:
+        logger.error(f"Failed to fetch active services for health check: {e}")
 
-    # Check Plex
-    if 'plex' not in disabled_plugins:
-        plex_id = config_db.get_or_create_service_id('plex')
-        plex_url = config_db.get_service_config(plex_id, 'base_url') or config_db.get_service_config(plex_id, 'server_url')
-        plex_token = config_db.get_service_config(plex_id, 'token')
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    for svc_name in active_services:
+        clean_name = svc_name.split('.')[-1].split('@')[0].lower()
+        if clean_name in disabled_set or svc_name.lower() in disabled_set:
+            continue
 
-        if plex_url and plex_token:
-            enabled_providers_count += 1
-
-    # Check Jellyfin
-    if 'jellyfin' not in disabled_plugins:
-        jellyfin_id = config_db.get_or_create_service_id('jellyfin')
-        jellyfin_creds = config_db.get_all_service_config(jellyfin_id) or {}
-        if jellyfin_creds.get('base_url') and jellyfin_creds.get('api_key'):
-            enabled_providers_count += 1
-
-    # Check Navidrome
-    if 'navidrome' not in disabled_plugins:
-        navidrome_id = config_db.get_or_create_service_id('navidrome')
-        navidrome_creds = config_db.get_all_service_config(navidrome_id) or {}
-        if navidrome_creds.get('base_url') and navidrome_creds.get('username'):
-            enabled_providers_count += 1
-
-    # Check Soulseek (slskd)
-    if 'soulseek' not in disabled_plugins and 'slskd' not in disabled_plugins:
-        slskd_id = config_db.get_or_create_service_id('soulseek')
-        slskd_url = config_db.get_service_config(slskd_id, 'slskd_url') or config_db.get_service_config(slskd_id, 'server_url')
-        api_key = config_db.get_service_config(slskd_id, 'api_key')
-
-        if slskd_url and api_key:
-            enabled_providers_count += 1
-
-    # Check LRClib (bundled, usually enabled unless explicitly disabled)
-    if 'lrclib' not in disabled_plugins:
-         # It's enabled by default in the backend startup logic if not disabled
-         enabled_providers_count += 1
+        try:
+            instance = PluginRegistry.create_instance(svc_name)
+            if instance:
+                if instance.is_configured():
+                    enabled_providers_count += 1
+                elif clean_name == 'lrclib':
+                    enabled_providers_count += 1
+        except Exception as e:
+            logger.debug(f"Dynamic health check config check failed for {svc_name}: {e}")
 
     # 3. Calculate Operational Services
     # Start with Core

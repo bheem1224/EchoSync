@@ -191,7 +191,7 @@ class SlskdProvider(DownloaderProvider):
         if not self.is_configured():
             return
         
-        from core.health_check import register_health_check_job, HealthCheckResult
+        from core.health_check import HealthCheckResult
         
         def slskd_health_check() -> HealthCheckResult:
             try:
@@ -228,7 +228,7 @@ class SlskdProvider(DownloaderProvider):
                     message=f"Slskd health check error: {str(e)}"
                 )
         
-        register_health_check_job("slskd_health_check", slskd_health_check, interval_seconds=300)
+        self.sdk.health.register(slskd_health_check, interval_seconds=300)
 
     def _setup_client(self):
         # Retrieve Slskd connection details from namespaced config facade

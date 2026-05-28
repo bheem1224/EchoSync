@@ -15,29 +15,14 @@ logger = get_logger("config_manager")
 
 # Defines which keys in the config dict should be encrypted.
 SECRETS = [
-    # Single-account legacy keys
-    "spotify.client_id",
-    "spotify.client_secret",
-    # Multi-account Spotify secrets (wildcards supported)
-    "spotify.accounts.*.client_id",
-    "spotify.accounts.*.client_secret",
-    "spotify.accounts.*.refresh_token",
-    "spotify.accounts.*.access_token",
-    # Tidal single-account legacy keys
-    "tidal.client_id",
-    "tidal.client_secret",
-    # Multi-account Tidal secrets (wildcards supported)
-    "tidal.accounts.*.client_id",
-    "tidal.accounts.*.client_secret",
-    "tidal.accounts.*.refresh_token",
-    "tidal.accounts.*.access_token",
-    # Other service secrets
-    "plex.token",
-    "jellyfin.api_key",
-    "navidrome.password",
-    "soulseek.api_key",
-    "listenbrainz.token",
-    "acoustid.api_key",
+    # Generic plugin-agnostic secret keys (supports wildcard matching)
+    "*client_id",
+    "*client_secret",
+    "*refresh_token",
+    "*access_token",
+    "*token",
+    "*api_key",
+    "*password",
 ]
 
 
@@ -352,20 +337,7 @@ class ConfigManager:
         cfg = {
             "custom_ui_path": "",
             "active_media_server": "plex",
-            "spotify": {"client_id": "", "client_secret": "", "redirect_uri": "http://127.0.0.1:8008/api/spotify/callback"},
-            # Multi-account Spotify support
-            "spotify_accounts": [],
-            "active_spotify_account_id": None,
-            "tidal": {"client_id": "", "client_secret": "", "redirect_uri": "http://127.0.0.1:8889/tidal/callback"},
-            # Multi-account Tidal support
-            "tidal_accounts": [],
-            "active_tidal_account_id": None,
-            "plex": {"base_url": "", "token": "", "auto_detect": True, "path_mappings": []},
-            "jellyfin": {"base_url": "", "api_key": "", "auto_detect": True},
-            "navidrome": {"base_url": "", "username": "", "password": "", "auto_detect": True},
-            "soulseek": {"slskd_url": "", "api_key": ""},
             "active_download_client": None,
-            "listenbrainz": {"token": ""},
             "logging": {"path": str(self.logs_path / 'app.log'), "level": "INFO"},
             "database": {"path": str(self.media_db_path), "max_workers": 2},
             "metadata_enhancement": {

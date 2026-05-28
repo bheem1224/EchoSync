@@ -26,11 +26,6 @@ def acknowledge_v2_1_migration() -> None:
     global _v2_1_migration_triggered
     _v2_1_migration_triggered = False
 
-def _decrypt_legacy_value(value: str) -> str:
-    if isinstance(value, str) and value.startswith('enc:'):
-        return decrypt_string(value)
-    return value
-
 def _handle_v2_1_0_migration() -> bool:
     """
     v2.1.0 Hard Reset Migration:
@@ -71,42 +66,11 @@ def _handle_v2_1_0_migration() -> bool:
     
     return False
 
-def traverse_and_decrypt(data, transform_func, keys_to_transform):
-    """Helper to decrypt legacy app_config JSON similar to core/settings.py"""
-    if isinstance(data, dict):
-        output = {}
-        for k, v in data.items():
-            if isinstance(v, dict):
-                output[k] = traverse_and_decrypt(v, transform_func, keys_to_transform)
-            elif k in keys_to_transform:
-                output[k] = transform_func(v)
-            else:
-                output[k] = v
-        return output
-    return data
-
-SECRETS = {
-    'password', 'token', 'client_secret', 'api_key', 'access_token', 'refresh_token'
-}
-
-def run_working_db_migrations(working_db_engine) -> None:  # noqa: ARG001
-    """
-    Entry point for working.db schema migrations at application startup.
-
-    All DDL is managed exclusively by Alembic via ``run_auto_migrations()``
-    (the "alembic:working" environment).  Raw ALTER TABLE statements have been
-    removed — schema changes must be expressed as Alembic migration scripts.
-    """
-    logger.debug(
-        "run_working_db_migrations: schema management delegated to Alembic — nothing to do here."
-    )
-
 
 def run_migrations() -> None:
     """
     Check for the metadata table containing the legacy app_config JSON blob,
-    migrate Plex and Slskd data securely to the new tables,
-    and then strictly DROP the metadata table.
+    and strictly DROP the metadata table.
 
     Also handles v2.1.0 hard reset migration for database schema upgrades.
     """
@@ -123,52 +87,6 @@ def run_migrations() -> None:
             conn.execute("PRAGMA busy_timeout = 5000")
             conn.execute("PRAGMA journal_mode = WAL")
             cursor = conn.cursor()
-
-            # Check if metadata table exists
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
-            if not cursor.fetchone():
-                logger.info("No 'metadata' table found. Migration already completed or fresh install.")
-                return
-
-            # Check for app_config blob
-            cursor.execute("SELECT value FROM metadata WHERE key='app_config'")
-            row = cursor.fetchone()
-
-            if row and row[0]:
-                logger.info("Legacy 'app_config' found. Running migration...")
-                config_db = get_config_database()
-                try:
-                    app_config = json.loads(row[0])
-                    decrypted_config = traverse_and_decrypt(app_config, _decrypt_legacy_value, SECRETS)
-
-                    # Migrate Plex Data
-                    plex_data = decrypted_config.get('plex')
-                    if plex_data:
-                        service_id = config_db.get_or_create_service_id('plex')
-                        for key, value in plex_data.items():
-                            is_sensitive = key in SECRETS or 'token' in key
-                            config_db.set_service_config(service_id, key, value, is_sensitive=is_sensitive)
-                        logger.info("Migrated legacy Plex configuration.")
-
-                    # Migrate Slskd Data
-                    slskd_data = decrypted_config.get('slskd')
-                    if not slskd_data:
-                        slskd_data = decrypted_config.get('soulseek')
-
-                    if slskd_data:
-                        service_id = config_db.get_or_create_service_id('soulseek')
-                        for key, value in slskd_data.items():
-                            is_sensitive = key in SECRETS or 'password' in key
-                            config_db.set_service_config(service_id, key, value, is_sensitive=is_sensitive)
-                        logger.info("Migrated legacy Slskd configuration.")
-                except Exception as e:
-                    logger.error(f"Error parsing or migrating legacy app_config: {e}")
-                    # Even if there is an error processing the config, we shouldn't fail totally,
-                    # but maybe we shouldn't drop the table if we didn't migrate successfully?
-                    # The instruction says "If found: Load JSON... Map... Delete entry".
-                    # We will proceed to drop to follow the burn strategy.
-            else:
-                logger.info("No 'app_config' row found in metadata table.")
 
             # Drop the metadata table completely
             cursor.execute("DROP TABLE IF EXISTS metadata")

@@ -26,23 +26,10 @@ class DownloadStatus(Enum):
     FAILED = "failed"             # Download failed
 
 
-class PluginType(Enum):
-    """Plugin types for track references"""
-    SPOTIFY = "spotify"
-    TIDAL = "tidal"
-    YOUTUBE = "youtube"
-    PLEX = "plex"
-    JELLYFIN = "jellyfin"
-    NAVIDROME = "navidrome"
-    SOULSEEK = "soulseek"
-    MUSICBRAINZ = "musicbrainz"
-    ACOUSTID = "acoustid"
-
-
 @dataclass
 class PluginRef:
     """Reference to a track in a specific plugin"""
-    plugin: PluginType
+    plugin: str
     plugin_id: str                    # Plugin's native ID
     plugin_url: Optional[str] = None  # Direct URL if available
     metadata: Dict[str, Any] = field(default_factory=dict)  # Plugin-specific extras
@@ -149,25 +136,28 @@ class EchosyncTrack:
         
         return base_id
     
-    def add_plugin_ref(self, plugin: PluginType, plugin_id: str, 
+    def add_plugin_ref(self, plugin: Any, plugin_id: str, 
                         plugin_url: Optional[str] = None, 
                         metadata: Optional[Dict[str, Any]] = None) -> None:
         """Attach a plugin reference to this track"""
-        self.plugin_refs[plugin.value] = PluginRef(
-            plugin=plugin,
+        plugin_name = plugin.value if hasattr(plugin, 'value') else str(plugin)
+        self.plugin_refs[plugin_name] = PluginRef(
+            plugin=plugin_name,
             plugin_id=plugin_id,
             plugin_url=plugin_url,
             metadata=metadata or {}
         )
         self.updated_at = utc_now()
     
-    def get_plugin_ref(self, plugin: PluginType) -> Optional[PluginRef]:
+    def get_plugin_ref(self, plugin: Any) -> Optional[PluginRef]:
         """Get reference for a specific plugin"""
-        return self.plugin_refs.get(plugin.value)
+        plugin_name = plugin.value if hasattr(plugin, 'value') else str(plugin)
+        return self.plugin_refs.get(plugin_name)
     
-    def has_plugin_ref(self, plugin: PluginType) -> bool:
+    def has_plugin_ref(self, plugin: Any) -> bool:
         """Check if track has reference for a plugin"""
-        return plugin.value in self.plugin_refs
+        plugin_name = plugin.value if hasattr(plugin, 'value') else str(plugin)
+        return plugin_name in self.plugin_refs
     
     def enrich(self, **kwargs) -> None:
         """
@@ -257,8 +247,9 @@ class EchosyncTrack:
         # Parse plugin_refs
         plugin_refs = {}
         for key, ref_data in data.get('plugin_refs', {}).items():
+            plugin_name = ref_data['plugin'].value if hasattr(ref_data['plugin'], 'value') else str(ref_data['plugin'])
             plugin_refs[key] = PluginRef(
-                plugin=PluginType(ref_data['plugin']),
+                plugin=plugin_name,
                 plugin_id=ref_data['plugin_id'],
                 plugin_url=ref_data.get('plugin_url'),
                 metadata=ref_data.get('metadata', {}),

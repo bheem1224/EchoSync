@@ -477,3 +477,59 @@ def test_plugin_id_reconciliation_and_orphaning(temp_plugins_env):
         nonexistent_row = c.fetchone()
         assert nonexistent_row is None
 
+
+def test_get_or_create_service_id_filtering(temp_plugins_env):
+    """
+    Verifies that get_or_create_service_id:
+    1. Returns 0 and does not register a service if it is not physically installed and not core.
+    2. Registers and returns ID for core service 'system'.
+    3. Registers and returns ID for a physically installed plugin.
+    """
+    config_db = temp_plugins_env["config_db"]
+    plugins_dir = temp_plugins_env["plugins_dir"]
+
+    # 1. Non-existent, non-core service: should NOT be created, returns 0
+    sid = config_db.get_or_create_service_id("nonexistent_random_service")
+    assert sid == 0
+
+    with config_db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM services WHERE name = 'nonexistent_random_service'")
+        assert c.fetchone() is None
+
+    # 2. Core system service: should be created/returned
+    system_sid = config_db.get_or_create_service_id("system")
+    assert system_sid > 0
+
+    with config_db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT name FROM services WHERE id = ?", (system_sid,))
+        assert c.fetchone()["name"] == "system"
+
+    # 3. Physically installed plugin: setup a physical folder
+    plugin_path = _create_mock_plugin_folder(plugins_dir, "spotify", "2.4.2")
+    import binascii
+    spotify_crc = binascii.crc32("EchoSync.spotify".lower().encode('utf-8')) & 0xFFFFFFFF
+
+    # Mock get_all_plugins so config_db can discover it
+    scanned_plugins = [
+        {
+            "id": "EchoSync.spotify",
+            "name": "Spotify Premium",
+            "version": "2.4.2",
+            "abs_path": str(plugin_path.resolve())
+        }
+    ]
+    with patch("core.nexus_framework.plugin_loader.get_all_plugins", return_value=scanned_plugins):
+        spotify_sid = config_db.get_or_create_service_id("spotify")
+        assert spotify_sid > 0
+
+    with config_db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT name, absolute_install_path, plugin_id FROM services WHERE id = ?", (spotify_sid,))
+        row = c.fetchone()
+        assert row["name"] == "EchoSync.spotify"
+        assert row["plugin_id"] == spotify_crc
+        assert row["absolute_install_path"] == str(plugin_path.resolve())
+
+
