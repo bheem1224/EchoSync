@@ -147,3 +147,89 @@ def test_static_serving(tmp_path):
     resp = client.get("/api/system/plugins/spotify/static/bundle.js")
     assert resp.status_code == 200
     assert resp.data == b"console.log('spotify');"
+
+
+def test_plugin_uninstall_cleanup(tmp_path):
+    from core.nexus_framework.plugin_store import plugin_store
+    
+    # Setup mock plugin folder structure
+    author_dir = tmp_path / "EchoSync"
+    plugin_dir = author_dir / "Spotify"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Write mock files
+    (plugin_dir / "manifest.json").write_text("{}", encoding="utf-8")
+    
+    db = get_config_database()
+    db.register_service(
+        name="Spotify",
+        service_type="provider",
+        description="Spotify provider",
+        absolute_install_path=str(plugin_dir.resolve()),
+        version="2.4.2",
+        plugin_id=239116200,
+        beta_opt_in=0,
+        verified_source=1,
+        privileged_mode=0,
+        permissions="[]"
+    )
+    
+    # Check that directory exists
+    assert plugin_dir.exists()
+    
+    # Resolve "spotify"
+    service_id = db.get_service_id("spotify")
+    assert service_id is not None
+    
+    # Execute uninstall
+    success = plugin_store.uninstall_plugin("spotify")
+    assert success is True
+    
+    # Verify that files, plugin directory, and the author_dir (which was empty) are all deleted
+    assert not plugin_dir.exists()
+    assert not author_dir.exists()
+    
+    # Verify database record is gone
+    with db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM services WHERE id=?", (service_id,))
+        assert c.fetchone()[0] == 0
+
+
+def test_list_plugins_with_none_capabilities():
+    from core.nexus_framework.plugin_loader import PluginRegistry, get_plugin_capabilities
+    from web.services.plugin_registry import list_plugins, _get_plugin_capabilities
+    
+    mock_class = MagicMock()
+    mock_class.category = "provider"
+    mock_class.service_type = "provider"
+    mock_class.version = "1.0.0"
+    mock_class.author = "Test Author"
+    mock_class.capabilities = None
+    
+    with patch.object(PluginRegistry, "list_plugins", return_value=["test_plugin"]), \
+         patch.object(PluginRegistry, "get_plugin_class", return_value=mock_class), \
+         patch.object(PluginRegistry, "is_plugin_disabled", return_value=False), \
+         patch.object(PluginRegistry, "create_instance", return_value=None):
+        
+        # Calling get_plugin_capabilities should return the default capabilities structure
+        caps = get_plugin_capabilities("test_plugin")
+        assert caps is not None
+        assert caps.search is not None
+        assert caps.search.tracks is False
+        assert caps.metadata is not None
+        
+        # Test list_plugins
+        plugins_list = list_plugins()
+        assert len(plugins_list) == 1
+        assert plugins_list[0]["name"] == "test_plugin"
+        assert plugins_list[0]["capabilities"]["metadata_richness"] == "MEDIUM"
+        assert plugins_list[0]["capabilities"]["search"]["tracks"] is False
+        
+        # Test _get_plugin_capabilities
+        caps_list = _get_plugin_capabilities()
+        assert len(caps_list) == 1
+        assert caps_list[0]["name"] == "test_plugin"
+        assert caps_list[0]["metadata_richness"] == "MEDIUM"
+        assert caps_list[0]["search_capabilities"]["tracks"] is False
+

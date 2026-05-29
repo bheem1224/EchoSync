@@ -372,13 +372,30 @@ def uninstall_plugin_route():
     if not plugin_id_raw and not (plugin_name and author):
         return jsonify({"error": "Plugin ID required"}), 400
 
-    if isinstance(plugin_id_raw, int):
-        plugin_id = plugin_id_raw
-    elif author and plugin_name:
-        plugin_id = binascii.crc32(f"{author}.{plugin_name}".lower().encode('utf-8')) & 0xFFFFFFFF
-    else:
-        plugin_id = binascii.crc32(str(plugin_id_raw).lower().encode('utf-8')) & 0xFFFFFFFF
+    from database.config_database import get_config_database
+    db = get_config_database()
 
+    # Attempt to resolve the service ID first
+    service_id = db.get_service_id(plugin_id_raw)
+    if not service_id and author and plugin_name:
+        service_id = db.get_service_id(f"{author}.{plugin_name}")
+
+    if service_id:
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT plugin_id FROM services WHERE id=?", (service_id,))
+            row = c.fetchone()
+            if row and row['plugin_id'] is not None:
+                plugin_id = int(row['plugin_id'])
+            else:
+                plugin_id = service_id
+    else:
+        if isinstance(plugin_id_raw, int):
+            plugin_id = plugin_id_raw
+        elif author and plugin_name:
+            plugin_id = binascii.crc32(f"{author}.{plugin_name}".lower().encode('utf-8')) & 0xFFFFFFFF
+        else:
+            plugin_id = binascii.crc32(str(plugin_id_raw).lower().encode('utf-8')) & 0xFFFFFFFF
 
     try:
         success = plugin_store.uninstall_plugin(plugin_id)

@@ -68,26 +68,28 @@ def list_plugins() -> List[Dict]:
             
             try:
                 caps = get_plugin_capabilities(name)
+                if not caps:
+                    raise AttributeError("Capabilities is None")
                 search_caps = {
-                    'tracks': caps.search.tracks if caps.search else False,
-                    'artists': caps.search.artists if caps.search else False,
-                    'albums': caps.search.albums if caps.search else False,
-                    'playlists': caps.search.playlists if caps.search else False,
+                    'tracks': caps.search.tracks if (caps.search and hasattr(caps.search, 'tracks')) else False,
+                    'artists': caps.search.artists if (caps.search and hasattr(caps.search, 'artists')) else False,
+                    'albums': caps.search.albums if (caps.search and hasattr(caps.search, 'albums')) else False,
+                    'playlists': caps.search.playlists if (caps.search and hasattr(caps.search, 'playlists')) else False,
                 }
                 plugin_dict['capabilities'] = {
-                    'metadata_richness': caps.metadata.name if caps.metadata else 'MEDIUM',
-                    'supports_streaming': caps.supports_streaming,
-                    'supports_downloads': caps.supports_downloads,
-                    'supports_cover_art': caps.supports_cover_art,
-                    'supports_library_scan': caps.supports_library_scan,
-                    'supports_playlists': caps.supports_playlists.name if caps.supports_playlists else 'NONE',
+                    'metadata_richness': caps.metadata.name if (caps.metadata and hasattr(caps.metadata, 'name')) else 'MEDIUM',
+                    'supports_streaming': getattr(caps, 'supports_streaming', False),
+                    'supports_downloads': getattr(caps, 'supports_downloads', False),
+                    'supports_cover_art': getattr(caps, 'supports_cover_art', False),
+                    'supports_library_scan': getattr(caps, 'supports_library_scan', False),
+                    'supports_playlists': caps.supports_playlists.name if (caps.supports_playlists and hasattr(caps.supports_playlists, 'name')) else 'NONE',
                     'search': search_caps,
                     'search_capabilities': search_caps,  # Alias for compatibility
                     # Add metadata-specific capabilities
-                    'fetch_metadata': caps.supports_metadata_fetch if hasattr(caps, 'supports_metadata_fetch') else False,
-                    'resolve_fingerprint': caps.supports_fingerprinting if hasattr(caps, 'supports_fingerprinting') else False,
+                    'fetch_metadata': getattr(caps, 'supports_metadata_fetch', False),
+                    'resolve_fingerprint': getattr(caps, 'supports_fingerprinting', False),
                 }
-            except KeyError:
+            except (KeyError, AttributeError, ValueError):
                 # Plugin not in capability registry, check class-level capabilities
                 from core.enums import Capability
                 class_caps = getattr(cls, 'capabilities', [])
@@ -104,8 +106,8 @@ def list_plugins() -> List[Dict]:
                     'supports_playlists': 'NONE',
                     'search': default_search,
                     'search_capabilities': default_search,
-                    'fetch_metadata': Capability.FETCH_METADATA in class_caps,
-                    'resolve_fingerprint': Capability.RESOLVE_FINGERPRINT in class_caps,
+                    'fetch_metadata': Capability.FETCH_METADATA in class_caps if isinstance(class_caps, list) else False,
+                    'resolve_fingerprint': Capability.RESOLVE_FINGERPRINT in class_caps if isinstance(class_caps, list) else False,
                 }
             plugins.append(plugin_dict)
     return _clean_mocks(plugins)
@@ -144,22 +146,24 @@ def _get_plugin_capabilities() -> List[Dict]:
         if cls:
             try:
                 caps = get_plugin_capabilities(name)
+                if not caps:
+                    raise AttributeError("Capabilities is None")
                 capabilities.append({
                     'name': name,
-                    'metadata_richness': caps.metadata.name,
-                    'supports_streaming': caps.supports_streaming,
-                    'supports_downloads': caps.supports_downloads,
-                    'supports_cover_art': caps.supports_cover_art,
-                    'supports_library_scan': caps.supports_library_scan,
-                    'playlist_support': caps.supports_playlists.name if caps.supports_playlists else 'NONE',
+                    'metadata_richness': caps.metadata.name if (caps.metadata and hasattr(caps.metadata, 'name')) else 'MEDIUM',
+                    'supports_streaming': getattr(caps, 'supports_streaming', False),
+                    'supports_downloads': getattr(caps, 'supports_downloads', False),
+                    'supports_cover_art': getattr(caps, 'supports_cover_art', False),
+                    'supports_library_scan': getattr(caps, 'supports_library_scan', False),
+                    'playlist_support': caps.supports_playlists.name if (caps.supports_playlists and hasattr(caps.supports_playlists, 'name')) else 'NONE',
                     'search_capabilities': {
-                        'tracks': caps.search.tracks,
-                        'artists': caps.search.artists,
-                        'albums': caps.search.albums,
-                        'playlists': caps.search.playlists,
+                        'tracks': caps.search.tracks if (caps.search and hasattr(caps.search, 'tracks')) else False,
+                        'artists': caps.search.artists if (caps.search and hasattr(caps.search, 'artists')) else False,
+                        'albums': caps.search.albums if (caps.search and hasattr(caps.search, 'albums')) else False,
+                        'playlists': caps.search.playlists if (caps.search and hasattr(caps.search, 'playlists')) else False,
                     }
                 })
-            except KeyError:
+            except (KeyError, AttributeError, ValueError):
                 capabilities.append({
                     'name': name,
                     'metadata_richness': 'MEDIUM',

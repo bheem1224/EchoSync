@@ -811,7 +811,7 @@ class PluginStore:
         config_manager.save_settings(config_manager.get_settings())
         return results
 
-    def uninstall_plugin(self, plugin_id: int) -> bool:
+    def uninstall_plugin(self, plugin_id: Any) -> bool:
         import re
         import shutil
         import os
@@ -823,24 +823,34 @@ class PluginStore:
             from database.config_database import get_config_database
             db = get_config_database()
             
-            # 1. Disable and remove jobs
-            try:
-                from core.job_queue import job_queue
-                job_queue.kill_jobs_by_plugin(plugin_id)
-            except Exception as e:
-                logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
+            # Resolve service_id (the primary key 'id' in services)
+            service_id = db.get_service_id(plugin_id)
+            if not service_id:
+                # Fallback: check if plugin_id matches either id or plugin_id in DB
+                with db._get_connection() as conn:
+                    c = conn.cursor()
+                    c.execute("SELECT id FROM services WHERE id=? OR plugin_id=?", (plugin_id, plugin_id))
+                    row = c.fetchone()
+                    if row:
+                        service_id = row[0]
+            
+            if not service_id:
+                logger.error(f"Cannot uninstall plugin {plugin_id}: service not found in database.")
+                return False
 
-            # 2. Get install path and modules to purge before deleting services row
+            # 1. Get install path, name, plugin_id (CRC32), and modules to purge
             absolute_install_path = None
             modules_to_purge = set()
             clean_id = str(plugin_id)
+            db_plugin_id = None
             
             with db._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT name, absolute_install_path, loaded_modules FROM services WHERE plugin_id=?", (plugin_id,))
+                c.execute("SELECT id, name, plugin_id, absolute_install_path, loaded_modules FROM services WHERE id=?", (service_id,))
                 row = c.fetchone()
                 if row:
                     clean_id = row['name']
+                    db_plugin_id = row['plugin_id']
                     absolute_install_path = row['absolute_install_path']
                     loaded_modules_str = row['loaded_modules']
                     if loaded_modules_str:
@@ -849,6 +859,18 @@ class PluginStore:
                             modules_to_purge.update(json.loads(loaded_modules_str))
                         except Exception:
                             pass
+
+            if db_plugin_id is None:
+                import binascii
+                db_plugin_id = binascii.crc32(clean_id.lower().encode('utf-8')) & 0xFFFFFFFF
+
+            # 2. Disable and remove jobs
+            try:
+                from core.job_queue import job_queue
+                job_queue.kill_jobs_by_plugin(db_plugin_id)
+                job_queue.kill_jobs_by_plugin(service_id)
+            except Exception as e:
+                logger.warning(f"Failed to kill workers for {db_plugin_id}: {e}")
 
             # Unregister health checks for the plugin
             try:
@@ -879,7 +901,7 @@ class PluginStore:
                     logger.debug(f"Hot-unloaded zombie module: {module_name}")
 
             # 3. Dynamic Database and Config Teardown
-            safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', str(plugin_id).replace('.', '_')).lower()
+            safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', str(db_plugin_id).replace('.', '_')).lower()
             prefix = f"plugin_{safe_id}_%"
             
             try:
@@ -902,19 +924,25 @@ class PluginStore:
                         except Exception:
                             pass
             except Exception as e:
-                logger.warning(f"Failed to teardown dynamic tables for {plugin_id}: {e}")
+                logger.warning(f"Failed to teardown dynamic tables for {db_plugin_id}: {e}")
 
             # 4. Delete config keys, UI components, and remove from services table
             with db._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")
-                c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (plugin_id,))
+                c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (db_plugin_id,))
+                c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (service_id,))
+                
+                # Delete config keys from service_config table
+                c.execute("DELETE FROM service_config WHERE service_id=?", (service_id,))
+                
                 # Sprint 6: Explicit UI Registry teardown (do NOT rely on FK CASCADE)
-                c.execute("DELETE FROM ui_components WHERE plugin_id=?", (plugin_id,))
-                logger.info(f"[UIRegistry] Purged UI components for plugin {plugin_id}")
-                c.execute("DELETE FROM services WHERE plugin_id=?", (plugin_id,))
+                c.execute("DELETE FROM ui_components WHERE plugin_id=?", (db_plugin_id,))
+                c.execute("DELETE FROM ui_components WHERE plugin_id=?", (service_id,))
+                logger.info(f"[UIRegistry] Purged UI components for plugin {db_plugin_id}")
+                
+                c.execute("DELETE FROM services WHERE id=?", (service_id,))
                 conn.commit()
-
 
             # 4b. Delete working state KVS entries to prevent orphaned data
             try:
@@ -922,9 +950,12 @@ class PluginStore:
                 w_db = get_working_database()
                 with w_db.session_scope() as session:
                     from sqlalchemy import text
-                    session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": str(plugin_id)})
+                    session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": str(db_plugin_id)})
+                    session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": f"{db_plugin_id}@beta"})
+                    session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": f"{db_plugin_id}@archive"})
+                    session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": str(service_id)})
             except Exception as e:
-                logger.warning(f"Error purging working state KVS for {plugin_id}: {e}")
+                logger.warning(f"Error purging working state KVS for {db_plugin_id}: {e}")
 
             # Remove from JSON config if exists
             try:
@@ -940,13 +971,26 @@ class PluginStore:
             # 5. Delete physical folder
             if absolute_install_path:
                 dest_dir = Path(absolute_install_path)
-                if dest_dir.exists():
-                    shutil.rmtree(dest_dir, ignore_errors=True)
-                    logger.info(f"Successfully deleted plugin directory: {dest_dir}")
             else:
-                dest_dir = self.plugins_dir / str(plugin_id)
-                if dest_dir.exists():
-                    shutil.rmtree(dest_dir, ignore_errors=True)
+                dest_dir = self.plugins_dir / str(db_plugin_id)
+            
+            if dest_dir.exists():
+                shutil.rmtree(dest_dir, ignore_errors=True)
+                logger.info(f"Successfully deleted plugin directory: {dest_dir}")
+                
+                # Recursively clean up parent directories up to plugins_dir (but do not delete plugins_dir itself)
+                try:
+                    plugins_dir_resolved = Path(config_manager.get_plugins_dir()).resolve()
+                    parent = dest_dir.parent.resolve()
+                    while parent != plugins_dir_resolved and parent.drive == plugins_dir_resolved.drive and len(parent.parts) > len(plugins_dir_resolved.parts):
+                        if parent.exists() and parent.is_dir() and not any(parent.iterdir()):
+                            logger.info(f"Cleaning up empty parent directory: {parent}")
+                            parent.rmdir()
+                        else:
+                            break
+                        parent = parent.parent.resolve()
+                except Exception as clean_err:
+                    logger.warning(f"Error cleaning up parent directories for {dest_dir}: {clean_err}")
 
         except Exception as e:
             logger.error(f"Failed during uninstall for {plugin_id}: {e}")

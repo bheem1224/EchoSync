@@ -495,8 +495,8 @@ class PluginLoader:
                 (path / "beta" / "manifest.json").exists() or
                 (path / "beta" / "__init__.py").exists() or
                 (path / "beta" / "main.wasm").exists()
-            )
-        
+            )        
+        ui_components_to_sync = []
         with db._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
@@ -610,6 +610,10 @@ class PluginLoader:
                 manifest_type = (plugin_info.get('type') if plugin_info else None) or service_type or 'provider'
                 manifest_path = install_path
                 
+                # Collect for sync outside this connection context
+                if p_id is not None and manifest_path:
+                    ui_components_to_sync.append((p_id, manifest_path))
+                
                 manifest_verified = 0
                 manifest_privileged = 0
                 manifest_permissions = '[]'
@@ -637,7 +641,7 @@ class PluginLoader:
                 privileged_mode = manifest_privileged if privileged_mode is None else privileged_mode
                 permissions = manifest_permissions if permissions is None else permissions
                 is_active = 1 if is_active is None else is_active
-
+ 
                 c.execute("""
                     UPDATE services 
                     SET name=?, plugin_id=?, absolute_install_path=?, version=?, service_type=?, description=?, 
@@ -646,12 +650,6 @@ class PluginLoader:
                     WHERE id=?
                 """, (manifest_display_name, p_id, manifest_path, manifest_version, manifest_type, manifest_desc, 
                       is_active, beta_opt_in, verified_source, privileged_mode, permissions, db_id))
-
-                # Sprint 6: Sync UI manifest into ui_components table
-                try:
-                    _sync_ui_components_to_db(p_id, manifest_path)
-                except Exception as ui_err:
-                    logger.warning(f"Failed to sync UI components for plugin {p_id}: {ui_err}")
             
             # 5. Now register any physical plugins that are NOT yet in the database!
             c.execute("SELECT plugin_id FROM services")
@@ -694,6 +692,9 @@ class PluginLoader:
                         VALUES(?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, strftime('%s','now'), strftime('%s','now'))
                     """, (manifest_display_name, p_crc, manifest_type, manifest_desc, manifest_path, manifest_version,
                           manifest_verified, manifest_privileged, manifest_permissions))
+                    
+                    if manifest_path:
+                        ui_components_to_sync.append((p_crc, manifest_path))
             
             # 6. Ensure all core services are present in the database (bootstrap if missing)
             for name in core_services:
@@ -706,8 +707,6 @@ class PluginLoader:
                                              beta_opt_in, verified_source, privileged_mode, permissions, created_at, updated_at)
                         VALUES(?, ?, 'system', ?, ?, '2.5.2', 1, 0, 1, 1, '[]', strftime('%s','now'), strftime('%s','now'))
                     """, (name, target_plugin_id, f"{name.capitalize()} service", core_path))
-            
-            conn.commit()
             
             # Prune orphaned KVS records
             try:
@@ -731,6 +730,15 @@ class PluginLoader:
                             session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": pid})
             except Exception as e:
                 logger.error(f"Failed to prune orphaned KVS records: {e}")
+            
+            conn.commit()
+
+        # Sprint 6: Sync UI components outside of the active database connection to prevent deadlock locks
+        for sync_pid, sync_manifest_path in ui_components_to_sync:
+            try:
+                _sync_ui_components_to_db(sync_pid, sync_manifest_path)
+            except Exception as ui_err:
+                logger.warning(f"Failed to sync UI components for plugin {sync_pid}: {ui_err}")
             
         logger.info("Authoritative services registry reconciliation complete!")
 
@@ -1540,11 +1548,14 @@ def get_plugin_capabilities(plugin_name: str):
     Return capabilities for a plugin by looking up the plugin class dynamically.
     Gracefully handles plugins that don't declare explicit capabilities.
     """
-    from core.nexus_framework.plugin_SDK import ProviderCapabilities
+    from core.nexus_framework.plugin_SDK import ProviderCapabilities, SearchCapabilities, MetadataRichness, PlaylistSupport
     provider_cls = PluginRegistry.get_plugin_class(plugin_name)
     if not provider_cls:
         import logging
         logging.getLogger(__name__).warning(f"Plugin '{plugin_name}' not found in registry, defaulting to empty capabilities.")
-        return ProviderCapabilities(name=plugin_name, supports_playlists=None, search=None, metadata=None)
+        return ProviderCapabilities(name=plugin_name, supports_playlists=PlaylistSupport.NONE, search=SearchCapabilities(), metadata=MetadataRichness.MEDIUM)
 
-    return getattr(provider_cls, 'capabilities', ProviderCapabilities(name=plugin_name, supports_playlists=None, search=None, metadata=None))
+    caps = getattr(provider_cls, 'capabilities', None)
+    if caps is None:
+        return ProviderCapabilities(name=plugin_name, supports_playlists=PlaylistSupport.NONE, search=SearchCapabilities(), metadata=MetadataRichness.MEDIUM)
+    return caps
