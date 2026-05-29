@@ -698,12 +698,16 @@ class PluginLoader:
                 # Resolve module path
                 try:
                     relative_path = package_dir.relative_to(self.plugins_dir)
-                    base_ns = ".".join(relative_path.parts)
+                    parts = list(relative_path.parts)
+                    base_ns = ".".join(parts)
                     module_path = f"plugins.{base_ns}"
+
+                    if is_beta and not module_path.endswith('.beta'):
+                         module_path = f"{module_path}.beta"
+
                     logger.debug(f"Resolved module path casing: {module_path}")
                 except Exception as e:
                     logger.warning(f"Could not derive relative path for {package_dir}: {e}")
-                    # Fallback if not inside plugins_dir
                     module_path = f"plugins.{plugin_name}"
 
                 # 2. Extract metadata from manifest
@@ -797,38 +801,44 @@ class PluginLoader:
                         added_micro_venv = True
 
                     before_modules = set(sys.modules.keys())
+                    snapshot_modules = dict(sys.modules)
                     try:
+                        importlib.invalidate_caches()
                         module = importlib.import_module(module_path)
+                    except Exception as e:
+                        logger.error(f"Module compilation failed: {e}")
+                        sys.modules.clear()
+                        sys.modules.update(snapshot_modules)
+                        raise
                         
-                        # MISSION: Live Memory Module Tracking (Persist loaded modules to services table)
-                        after_modules = set(sys.modules.keys())
-                        newly_loaded = after_modules - before_modules
-                        newly_loaded.add(module_path)
-                        
-                        plugin_modules = set()
-                        plugin_path_str = str(Path(absolute_install_path).resolve())
-                        for mod_name in newly_loaded:
-                            if mod_name.startswith(f"plugins.{clean_ns}"):
+                    after_modules = set(sys.modules.keys())
+                    newly_loaded = after_modules - before_modules
+                    newly_loaded.add(module_path)
+
+                    plugin_modules = set()
+                    plugin_path_str = str(Path(absolute_install_path).resolve())
+                    for mod_name in newly_loaded:
+                        if mod_name.startswith(f"plugins.{clean_ns}"):
+                            plugin_modules.add(mod_name)
+                        else:
+                            mod = sys.modules.get(mod_name)
+                            mod_file = getattr(mod, '__file__', None)
+                            if mod_file and str(Path(mod_file).resolve()).startswith(plugin_path_str):
                                 plugin_modules.add(mod_name)
-                            else:
-                                mod = sys.modules.get(mod_name)
-                                mod_file = getattr(mod, '__file__', None)
-                                if mod_file and str(Path(mod_file).resolve()).startswith(plugin_path_str):
-                                    plugin_modules.add(mod_name)
-                                    
-                        try:
-                            from database.config_database import get_config_database
-                            db_conf = get_config_database()
-                            with db_conf._get_connection() as conn:
-                                c = conn.cursor()
-                                c.execute(
-                                    "UPDATE services SET loaded_modules = ? WHERE plugin_id = ?",
-                                    (json.dumps(list(plugin_modules)), plugin_id)
-                                )
-                                conn.commit()
-                            logger.info(f"Dynamically tracked and saved {len(plugin_modules)} loaded modules in services registry for plugin ID {plugin_id}")
-                        except Exception as db_e:
-                            logger.warning(f"Failed to persist dynamically tracked loaded modules in database for plugin ID {plugin_id}: {db_e}")
+
+                    try:
+                        from database.config_database import get_config_database
+                        db_conf = get_config_database()
+                        with db_conf._get_connection() as conn:
+                            c = conn.cursor()
+                            c.execute(
+                                "UPDATE services SET loaded_modules = ? WHERE plugin_id = ?",
+                                (json.dumps(list(plugin_modules)), plugin_id)
+                            )
+                            conn.commit()
+                        logger.info(f"Dynamically tracked and saved {len(plugin_modules)} loaded modules in services registry for plugin ID {plugin_id}")
+                    except Exception as db_e:
+                        logger.warning(f"Failed to persist dynamically tracked loaded modules in database for plugin ID {plugin_id}: {db_e}")
 
                     except Exception as import_e:
                         logger.error(f"Failed to import {module_path}: {import_e}")
