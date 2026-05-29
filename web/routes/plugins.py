@@ -465,6 +465,7 @@ def serve_plugin_asset(plugin_id, filename):
     db = get_config_database()
     service_id = db.get_service_id(plugin_id)
     logger.info(f"[serve_plugin_asset] Resolved service_id={service_id} for plugin_id={plugin_id}")
+
     install_path = None
     if service_id:
         with db._get_connection() as conn:
@@ -473,48 +474,23 @@ def serve_plugin_asset(plugin_id, filename):
             row = c.fetchone()
             if row and row[0]:
                 install_path = row[0]
+
     logger.info(f"[serve_plugin_asset] Retrieve absolute_install_path={install_path} for service_id={service_id}")
 
     if install_path:
-        from core.nexus_framework.plugin_loader import find_case_insensitive_path
-        resolved_install = find_case_insensitive_path(Path(install_path))
-        logger.info(f"[serve_plugin_asset] resolved_install={resolved_install}")
-        if resolved_install:
-            file_path = find_case_insensitive_path(resolved_install / filename)
-            logger.info(f"[serve_plugin_asset] Checked database path: {resolved_install / filename} -> resolved: {file_path} (exists: {file_path.exists() if file_path else False})")
-            if file_path and file_path.exists():
-                resolved_file = os.path.abspath(str(file_path))
-                resolved_base = os.path.abspath(str(resolved_install))
-                if not resolved_file.startswith(resolved_base):
-                    logger.warning(f"Security: Blocked traversal attempt for {plugin_id}: {filename}")
-                    abort(403)
-                logger.info(f"Serving plugin asset: {resolved_file}")
+        resolved_install = Path(install_path).resolve()
+
+        from werkzeug.security import safe_join
+        safe_path = safe_join(str(resolved_install), filename)
+
+        if safe_path:
+            file_path = Path(safe_path)
+            if file_path.exists():
+                logger.info(f"Serving plugin asset: {file_path}")
                 return send_from_directory(str(file_path.parent), file_path.name)
 
-    # Fallback to generic plugins directory if not found in db or file doesn't exist
-    clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
-    plugins_dir = config_manager.get_plugins_dir()
-    logger.info(f"[serve_plugin_asset] Fallback check: plugins_dir={plugins_dir}, clean_id={clean_id}")
-    from core.nexus_framework.plugin_loader import find_case_insensitive_path
+        logger.warning(f"Security: Blocked traversal attempt or file missing for {plugin_id}: {filename}")
+        abort(403)
 
-    for sub in ["", "beta"]:
-        candidate_base = Path(plugins_dir) / clean_id
-        if sub:
-            candidate_base = candidate_base / sub
-        
-        resolved_base = find_case_insensitive_path(candidate_base)
-        logger.info(f"[serve_plugin_asset] Fallback candidate={candidate_base} -> resolved: {resolved_base}")
-        if resolved_base:
-            file_path = find_case_insensitive_path(resolved_base / filename)
-            logger.info(f"[serve_plugin_asset] Checked fallback path: {resolved_base / filename} -> resolved: {file_path} (exists: {file_path.exists() if file_path else False})")
-            if file_path and file_path.exists():
-                resolved_file = os.path.abspath(str(file_path))
-                resolved_base_abs = os.path.abspath(str(resolved_base))
-                if not resolved_file.startswith(resolved_base_abs):
-                    logger.warning(f"Security: Blocked traversal attempt for {plugin_id}: {filename}")
-                    abort(403)
-                logger.info(f"Serving plugin asset (fallback): {resolved_file}")
-                return send_from_directory(str(file_path.parent), file_path.name)
-
-    logger.error(f"Plugin asset folder or file NOT FOUND for {plugin_id}: {filename}")
+    logger.error(f"Plugin asset folder NOT FOUND for {plugin_id}")
     abort(404)

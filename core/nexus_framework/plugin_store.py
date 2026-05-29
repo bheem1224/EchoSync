@@ -541,8 +541,7 @@ class PluginStore:
                 dest_dir = self.plugins_dir / manifest_author / manifest_name
                 
                 # Check case-insensitively to reuse existing folder names and prevent casing duplicates
-                from core.nexus_framework.plugin_loader import find_case_insensitive_path
-                existing_dest = find_case_insensitive_path(dest_dir)
+                existing_dest = dest_dir if dest_dir.exists() else None
                 if existing_dest:
                     dest_dir = existing_dest
                 
@@ -978,239 +977,17 @@ class PluginStore:
             # 5. Delete physical folder
             if absolute_install_path:
                 dest_dir = Path(absolute_install_path)
+                # Excision Pass: target the parent plugin family folder
+                if dest_dir.name in ["beta", "stable"]:
+                    dest_dir = dest_dir.parent
             else:
                 dest_dir = self.plugins_dir / str(db_plugin_id)
             
             if dest_dir.exists():
                 shutil.rmtree(dest_dir, ignore_errors=True)
-                logger.info(f"Successfully deleted plugin directory: {dest_dir}")
-                
-                # Recursively clean up parent directories up to plugins_dir (but do not delete plugins_dir itself)
-                try:
-                    plugins_dir_resolved = Path(config_manager.get_plugins_dir()).resolve()
-                    parent = dest_dir.parent.resolve()
-                    while parent != plugins_dir_resolved and parent.drive == plugins_dir_resolved.drive and len(parent.parts) > len(plugins_dir_resolved.parts):
-                        if parent.exists() and parent.is_dir() and not any(parent.iterdir()):
-                            logger.info(f"Cleaning up empty parent directory: {parent}")
-                            parent.rmdir()
-                        else:
-                            break
-                        parent = parent.parent.resolve()
-                except Exception as clean_err:
-                    logger.warning(f"Error cleaning up parent directories for {dest_dir}: {clean_err}")
-
+                logger.info(f"Successfully deleted plugin family directory: {dest_dir}")
+            return True
         except Exception as e:
-            logger.error(f"Failed during uninstall for {plugin_id}: {e}")
+            logger.error(f"Failed to uninstall plugin {plugin_id}: {e}")
             return False
-            
-        return True
-
-    def get_plugin_channel(self, plugin_id: int) -> str:
-        """Get the active update channel ('stable' or 'beta') for a plugin."""
-        try:
-            from database.config_database import get_config_database
-            db = get_config_database()
-            with db._get_connection() as conn:
-                c = conn.cursor()
-                c.execute("SELECT beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,))
-                row = c.fetchone()
-                if row:
-                    local_beta = row[0]
-                    if local_beta is not None:
-                        return "beta" if local_beta else "stable"
-        except Exception:
-            pass
-        return "beta" if config_manager.get('ui.beta_plugin_ui', False) else "stable"
-
-    def _fork_namespace(self, plugin_id: int):
-        """The Fork: Copies current stable DB file and KVS to a @beta side-car."""
-        from database.config_database import get_config_database
-        from database.working_database import get_working_database
-        import os
-        import shutil
-
-        beta_id = f"{plugin_id}@beta"
-
-        # 1. Fork Config KVS
-        db_config = get_config_database()
-        with db_config._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")
-            c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (beta_id,))
-            c.execute("INSERT INTO config_kvs (plugin_id, key, value, is_sensitive) SELECT ?, key, value, is_sensitive FROM config_kvs WHERE plugin_id=?", (beta_id, plugin_id))
-            conn.commit()
-
-        # 2. Fork Working State KVS
-        db_working = get_working_database()
-        with db_working.session_scope() as session:
-            from sqlalchemy import text
-            session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:beta"), {"beta": beta_id})
-            session.execute(text("INSERT INTO plugin_state_kvs (plugin_id, key, value, is_sensitive) SELECT :beta, key, value, is_sensitive FROM plugin_state_kvs WHERE plugin_id=:orig"), {"beta": beta_id, "orig": plugin_id})
-
-        # 3. Fork File
-        stable_db_path = f"/data/plugins/data/{plugin_id}.db"
-        beta_db_path = f"/data/plugins/data/{plugin_id}@beta.db"
-        if os.path.exists(stable_db_path):
-            shutil.copy2(stable_db_path, beta_db_path)
-
-    def _abort_namespace(self, plugin_id: int):
-        """The Abort: Physically deletes the @beta side-car file and KVS."""
-        from database.config_database import get_config_database
-        from database.working_database import get_working_database
-        import os
-
-        beta_id = f"{plugin_id}@beta"
-
-        # 1. Abort Config KVS
-        db_config = get_config_database()
-        with db_config._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")
-            c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (beta_id,))
-            conn.commit()
-
-        # 2. Abort Working State KVS
-        db_working = get_working_database()
-        with db_working.session_scope() as session:
-            from sqlalchemy import text
-            session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:beta"), {"beta": beta_id})
-
-        # 3. Abort File
-        beta_db_path = f"/data/plugins/data/{plugin_id}@beta.db"
-        if os.path.exists(beta_db_path):
-            try:
-                os.remove(beta_db_path)
-            except OSError:
-                pass
-
-    def _cutover_namespace(self, plugin_id: int):
-        """The Cutover: Archives current stable and promotes @beta to active."""
-        from database.config_database import get_config_database
-        from database.working_database import get_working_database
-        import os
-        import shutil
-        
-        beta_id = f"{plugin_id}@beta"
-        archive_id = f"{plugin_id}@archive"
-        
-        # 1. Cutover Config KVS
-        db_config = get_config_database()
-        with db_config._get_connection() as conn:
-            c = conn.cursor()
-            # Ensure table exists before querying
-            c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")
-            # Cleanup old archive
-            c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (archive_id,))
-            
-            # Check if beta exists
-            c.execute("SELECT 1 FROM config_kvs WHERE plugin_id=? LIMIT 1", (beta_id,))
-            has_beta = c.fetchone() is not None
-            
-            if has_beta:
-                # Beta -> Stable: Rename primary to archive, then beta to primary
-                c.execute("UPDATE config_kvs SET plugin_id=? WHERE plugin_id=?", (archive_id, plugin_id))
-                c.execute("UPDATE config_kvs SET plugin_id=? WHERE plugin_id=?", (plugin_id, beta_id))
-            else:
-                # Stable -> Stable: Copy primary to archive
-                c.execute("""
-                    INSERT INTO config_kvs (plugin_id, key, value, is_sensitive)
-                    SELECT ?, key, value, is_sensitive FROM config_kvs WHERE plugin_id=?
-                """, (archive_id, plugin_id))
-            conn.commit()
-
-        # 2. Cutover Working State KVS
-        db_working = get_working_database()
-        with db_working.session_scope() as session:
-            from sqlalchemy import text
-            session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:arch"), {"arch": archive_id})
-            
-            res = session.execute(text("SELECT 1 FROM plugin_state_kvs WHERE plugin_id=:beta LIMIT 1"), {"beta": beta_id}).fetchone()
-            if res:
-                session.execute(text("UPDATE plugin_state_kvs SET plugin_id=:arch WHERE plugin_id=:orig"), {"arch": archive_id, "orig": plugin_id})
-                session.execute(text("UPDATE plugin_state_kvs SET plugin_id=:orig WHERE plugin_id=:beta"), {"orig": plugin_id, "beta": beta_id})
-            else:
-                session.execute(text("""
-                    INSERT INTO plugin_state_kvs (plugin_id, key, value, is_sensitive)
-                    SELECT :arch, key, value, is_sensitive FROM plugin_state_kvs WHERE plugin_id=:orig
-                """), {"arch": archive_id, "orig": plugin_id})
-
-        # 3. Cutover Physical Database File
-        stable_db_path = f"/data/plugins/data/{plugin_id}.db"
-        beta_db_path = f"/data/plugins/data/{plugin_id}@beta.db"
-        archive_db_path = f"/data/plugins/data/{plugin_id}@archive.db"
-        
-        # Ensure directories exist
-        os.makedirs(os.path.dirname(stable_db_path), exist_ok=True)
-
-        if os.path.exists(beta_db_path):
-            if os.path.exists(stable_db_path):
-                # Archive current stable
-                try:
-                    if os.path.exists(archive_db_path):
-                        os.remove(archive_db_path)
-                    os.rename(stable_db_path, archive_db_path)
-                except OSError:
-                    pass
-            try:
-                os.rename(beta_db_path, stable_db_path)
-            except OSError:
-                pass
-        else:
-            # Stable to Stable: copy current to archive
-            if os.path.exists(stable_db_path):
-                try:
-                    if os.path.exists(archive_db_path):
-                        os.remove(archive_db_path)
-                    shutil.copy2(stable_db_path, archive_db_path)
-                except (OSError, IOError):
-                    pass
-
-    def rollback_plugin(self, plugin_id: int) -> bool:
-        """Restores a plugin to its previous stable version by aborting beta context."""
-        import shutil
-        import os
-        from database.config_database import get_config_database
-        
-        db = get_config_database()
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT previous_version_path, absolute_install_path FROM services WHERE plugin_id=?", (plugin_id,))
-            row = c.fetchone()
-            if not row:
-                logger.error(f"Cannot rollback plugin {plugin_id}: Not found in DB.")
-                return False
-                
-            prev_path = row[0]
-            curr_path = row[1]
-            
-            c.execute("UPDATE services SET beta_opt_in=0 WHERE plugin_id=?", (plugin_id,))
-            if prev_path:
-                c.execute("UPDATE services SET absolute_install_path=? WHERE plugin_id=?", (prev_path, plugin_id))
-            conn.commit()
-
-        # 1. Abort side-car data
-        try:
-            self._abort_namespace(plugin_id)
-        except Exception as e:
-            logger.error(f"Failed to abort data namespace for {plugin_id}: {e}")
-
-        # 2. Cleanup beta subfolder based on current absolute install path
-        if curr_path:
-            p = Path(curr_path)
-            if p.name == "beta":
-                shutil.rmtree(p, ignore_errors=True)
-                logger.info(f"Removed beta folder at {p}")
-            else:
-                beta_path = p / "beta"
-                if beta_path.exists():
-                    shutil.rmtree(beta_path, ignore_errors=True)
-                    logger.info(f"Removed leftover beta folder at {beta_path}")
-
-        from core.state import system_state
-        system_state.restart_pending = True
-        return True
-
-
-
-
 plugin_store = PluginStore()
