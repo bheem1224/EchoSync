@@ -34,6 +34,7 @@ class CaseInsensitiveAliasFinder(MetaPathFinder):
         
         req_lower = fullname.lower()
         
+        # Check existing sys.modules keys first for exact/beta mapping
         for existing_name in list(sys.modules.keys()):
             if not existing_name.startswith("plugins."):
                 continue
@@ -62,7 +63,57 @@ class CaseInsensitiveAliasFinder(MetaPathFinder):
                     with_beta = ".".join(with_beta_parts)
                     if with_beta == existing_lower:
                         return ModuleSpec(fullname, CaseInsensitiveLoader(existing_name))
+        
+        # Fallback: Resolve casing and channel dynamically from disk
+        resolved_name = self.resolve_casing(fullname)
+        if resolved_name and resolved_name != fullname:
+            return ModuleSpec(fullname, CaseInsensitiveLoader(resolved_name))
+            
         return None
+
+    def resolve_casing(self, fullname: str) -> Optional[str]:
+        parts = fullname.split('.')
+        resolved_parts = ["plugins"]
+        from core.settings import config_manager
+        plugins_dir = Path(config_manager.get_plugins_dir())
+        current_path = plugins_dir
+        
+        idx = 1
+        while idx < len(parts):
+            part = parts[idx]
+            part_lower = part.lower()
+            
+            matched_name = None
+            if current_path.exists() and current_path.is_dir():
+                try:
+                    for item in current_path.iterdir():
+                        if item.name.lower() == part_lower:
+                            matched_name = item.name
+                            break
+                except OSError:
+                    pass
+            
+            if matched_name:
+                resolved_parts.append(matched_name)
+                current_path = current_path / matched_name
+            else:
+                resolved_parts.append(part)
+                current_path = current_path / part
+            
+            # After matching part 2 (length of resolved_parts is 3: plugins, Author, Plugin)
+            if len(resolved_parts) == 3:
+                plugin_id = f"{resolved_parts[1]}.{resolved_parts[2]}"
+                channel = config_manager.get_plugin_channel(plugin_id)
+                if channel == 'beta' and (current_path / 'beta').exists():
+                    resolved_parts.append('beta')
+                    current_path = current_path / 'beta'
+                    # If next part in parts is explicitly 'beta', skip it
+                    if idx + 1 < len(parts) and parts[idx + 1].lower() == 'beta':
+                        idx += 1
+            
+            idx += 1
+            
+        return ".".join(resolved_parts)
 
 class CaseInsensitiveLoader(Loader):
     def __init__(self, target_name):
