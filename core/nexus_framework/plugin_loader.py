@@ -807,23 +807,22 @@ class PluginLoader:
                     try:
                         importlib.invalidate_caches()
                         
-                        import importlib.util
-                        spec = importlib.util.find_spec(module_path)
-                        if spec is None:
-                            raise ModuleNotFoundError(f"No module named {module_path}")
+                        alias_path = f"plugins.{clean_ns.lower()}"
                         
-                        module = importlib.util.module_from_spec(spec)
+                        # Pre-calculate the expected lowercase import path and inject the 
+                        # case-preserved module path reference into sys.modules prior to import
+                        sys.modules[alias_path] = module_path
+                        if is_beta:
+                            sys.modules[f"{alias_path}.beta"] = module_path
+                            
+                        module = importlib.import_module(module_path)
                         
                         # One-Time Authoritative Module Pre-Registration
-                        # Inject the case-preserved module path reference into sys.modules prior to execution
                         sys.modules[module_path] = module
-                        sys.modules[f"plugins.{clean_ns.lower()}"] = module
+                        sys.modules[alias_path] = module
                         if is_beta:
-                            sys.modules[f"plugins.{clean_ns.lower()}.beta"] = module
+                            sys.modules[f"{alias_path}.beta"] = module
                             
-                        # Execute the module code
-                        spec.loader.exec_module(module)
-                        
                     except Exception as e:
                         logger.error(f"Module compilation failed: {e}")
                         sys.modules.clear()
