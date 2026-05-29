@@ -1,4 +1,4 @@
-from plugins.local_metadata.client import LocalMetadataProvider
+from .client import LocalMetadataProvider
 
 ProviderClass = LocalMetadataProvider
 

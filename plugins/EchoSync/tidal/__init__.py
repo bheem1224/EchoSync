@@ -1,5 +1,5 @@
-from plugins.EchoSync.tidal.client import TidalClient
-from plugins.EchoSync.tidal.routes import bp
+from .client import TidalClient
+from .routes import bp
 
 ProviderClass = TidalClient
 RouteBlueprint = bp

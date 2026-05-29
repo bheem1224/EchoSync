@@ -1,5 +1,5 @@
-from plugins.EchoSync.navidrome.client import NavidromeClient
-from plugins.EchoSync.navidrome.routes import bp
+from .client import NavidromeClient
+from .routes import bp
 
 ProviderClass = NavidromeClient
 RouteBlueprint = bp

@@ -110,7 +110,7 @@ def list_accounts():
             for a in db_accounts
         ]
 
-        from plugins.EchoSync.musicbrainz.client import MusicBrainzClient
+        from .client import MusicBrainzClient
         redirect_uri = MusicBrainzClient().get_oauth_redirect_uri()
 
         client_id = storage.get_service_config("musicbrainz", "client_id")
@@ -235,7 +235,7 @@ def begin_auth():
             return jsonify({"error": "MusicBrainz client_secret is not configured."}), 400
 
         # Derive redirect URI from centralized PluginBase helper (OAuth sidecar)
-        from plugins.EchoSync.musicbrainz.client import MusicBrainzClient
+        from .client import MusicBrainzClient
         redirect_uri = MusicBrainzClient().get_oauth_redirect_uri()
 
         # Generate PKCE verifier / challenge pair

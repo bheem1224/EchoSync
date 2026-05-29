@@ -22,6 +22,7 @@ from core.settings import config_manager
 
 logger = get_logger("plugin_loader")
 import zlib
+import types
 
 # The sys.meta_path hooks (CaseInsensitiveAliasFinder) have been excised.
 # We now use One-Time Authoritative Module Pre-Registration directly in _load_plugin_package.
@@ -776,24 +777,6 @@ class PluginLoader:
                     added_to_path = True
                 
                 try:
-                    # MISSION: Dynamic Import Pathing Patch (Namespace Injection)
-                    base_module_name = f"plugins.{clean_ns}"
-                    try:
-                        importlib.invalidate_caches()
-                        base_module = importlib.import_module(base_module_name)
-
-                        channel_dir = str(package_dir.absolute())
-                        if hasattr(base_module, '__path__'):
-                            if not isinstance(base_module.__path__, list):
-                                base_module.__path__ = list(base_module.__path__)
-                            
-                            if channel_dir not in base_module.__path__:
-                                base_module.__path__.insert(0, channel_dir)
-                                importlib.invalidate_caches()
-                                logger.debug(f"Path Patch: Injected {channel_dir} into {base_module_name}")
-                    except Exception as bridge_err:
-                        logger.debug(f"Path Patch failed for {base_module_name}: {bridge_err}")
-
                     # Micro-Venv Injection
                     micro_venv_dir = package_dir / "micro-venv"
                     micro_venv_str = str(micro_venv_dir)
@@ -804,31 +787,21 @@ class PluginLoader:
 
                     before_modules = set(sys.modules.keys())
                     snapshot_modules = dict(sys.modules)
+
                     try:
                         importlib.invalidate_caches()
-                        
-                        alias_path = f"plugins.{clean_ns.lower()}"
-                        
-                        # Pre-calculate the expected lowercase import path and inject the 
-                        # case-preserved module path reference into sys.modules prior to import
-                        sys.modules[alias_path] = module_path
-                        if is_beta:
-                            sys.modules[f"{alias_path}.beta"] = module_path
-                            
                         module = importlib.import_module(module_path)
-                        
-                        # One-Time Authoritative Module Pre-Registration
-                        sys.modules[module_path] = module
-                        sys.modules[alias_path] = module
-                        if is_beta:
-                            sys.modules[f"{alias_path}.beta"] = module
-                            
                     except Exception as e:
-                        logger.error(f"Module compilation failed: {e}")
-                        sys.modules.clear()
-                        sys.modules.update(snapshot_modules)
+                        logger.error(f"Module compilation failed for {module_path}: {e}")
+                        # Surgical rollback of any modules imported during this import attempt
+                        for key in list(sys.modules):
+                            if key not in snapshot_modules:
+                                del sys.modules[key]
                         raise
-                        
+                    finally:
+                        if added_micro_venv:
+                            sys.path.remove(micro_venv_str)
+
                     after_modules = set(sys.modules.keys())
                     newly_loaded = after_modules - before_modules
                     newly_loaded.add(module_path)
@@ -857,13 +830,6 @@ class PluginLoader:
                         logger.info(f"Dynamically tracked and saved {len(plugin_modules)} loaded modules in services registry for plugin ID {plugin_id}")
                     except Exception as db_e:
                         logger.warning(f"Failed to persist dynamically tracked loaded modules in database for plugin ID {plugin_id}: {db_e}")
-
-                    except Exception as import_e:
-                        logger.error(f"Failed to import {module_path}: {import_e}")
-                        return False
-                    finally:
-                        if added_micro_venv:
-                            sys.path.remove(micro_venv_str)
                 finally:
                     if added_to_path:
                         sys.path.remove(plugins_parent_str)

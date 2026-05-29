@@ -1,2 +1,6 @@
-from plugins.EchoSync.listenbrainz.client import *
+from .client import ListenBrainzClient
+
+ProviderClass = ListenBrainzClient
+
+__all__ = ['ProviderClass']
 

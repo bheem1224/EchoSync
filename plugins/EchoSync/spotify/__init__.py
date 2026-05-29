@@ -1,5 +1,5 @@
-from plugins.EchoSync.spotify.client import SpotifyClient
-from plugins.EchoSync.spotify.routes import bp
+from .client import SpotifyClient
+from .routes import bp
 
 ProviderClass = SpotifyClient
 RouteBlueprint = bp

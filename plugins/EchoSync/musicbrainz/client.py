@@ -13,7 +13,7 @@ import hashlib
 from rapidfuzz import fuzz
 
 from core.matching_engine.echo_sync_track import EchosyncTrack
-from plugins.EchoSync.musicbrainz.models import PluginMusicbrainzCache
+from .models import PluginMusicbrainzCache
 from core.file_handling.storage import get_storage_service
 from core.tiered_logger import get_logger
 

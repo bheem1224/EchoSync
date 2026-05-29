@@ -1,5 +1,5 @@
-from plugins.EchoSync.slskd.client import SlskdProvider
-from plugins.EchoSync.slskd.routes import bp
+from .client import SlskdProvider
+from .routes import bp
 
 ProviderClass = SlskdProvider
 RouteBlueprint = bp

@@ -44,7 +44,7 @@ class ListenBrainzMetadataProvider(PluginBase):
     
     def __init__(self):
         """Initialize ListenBrainz provider"""
-        from plugins.EchoSync.listenbrainz.client import ListenBrainzClient
+        from .client import ListenBrainzClient
         self.client = ListenBrainzClient()
         
         # Initialize HTTP client for cover art fetching

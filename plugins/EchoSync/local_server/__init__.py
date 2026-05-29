@@ -1,4 +1,4 @@
-from plugins.local_server.client import LocalServerProvider
+from .client import LocalServerProvider
 
 ProviderClass = LocalServerProvider
 

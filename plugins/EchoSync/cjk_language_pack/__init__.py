@@ -45,9 +45,9 @@ from typing import Any, List
 from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
 
-from plugins.cjk_language_pack.transliterator import get_transliterator
-from plugins.cjk_language_pack.vgmdb_proxy import get_proxy
-from plugins.cjk_language_pack.noise_filter import get_noise_filter
+from .transliterator import get_transliterator
+from .vgmdb_proxy import get_proxy
+from .noise_filter import get_noise_filter
 
 logger = get_logger("plugin.cjk")
 
@@ -208,7 +208,7 @@ def _expand_query(query: str, artist_name: str = "", title: str = "") -> list[st
 
     # Priority 4 & 5: Simplified / Traditional Chinese script variants
     # (only emitted for Chinese; detect_language guards are inside script_variants)
-    from plugins.cjk_language_pack.transliterator import detect_language
+    from .transliterator import detect_language
     lang = detect_language(cjk_title or query)
     if lang == "zh":
         if cjk_artist:
