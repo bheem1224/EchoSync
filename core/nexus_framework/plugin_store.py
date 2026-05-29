@@ -440,6 +440,10 @@ class PluginStore:
             return False
 
         plugin_id = plugin_info.get("id", plugin_info.get("plugin_id", "unknown_plugin"))
+        import binascii
+        # Resolve target plugin's numerical key early to avoid scope panic
+        int_plugin_id = target_plugin_id if target_plugin_id is not None else (binascii.crc32(str(plugin_id).lower().encode('utf-8')) & 0xFFFFFFFF)
+
         # Nexus Framework: Resolve nested path (dots to slashes)
         folder_path = plugin_info.get("path")
         if not folder_path:
@@ -635,7 +639,7 @@ class PluginStore:
                                 state_snapshot["service_config"] = [dict(row) for row in c.fetchall()]
 
                                 # 2. Config.db Plugin Accounts & Tokens
-                                c.execute("SELECT id, name, user_id, provider_id, external_id FROM accounts WHERE service_id=?", (service_id,))
+                                c.execute("SELECT id, service_id, account_name, display_name, user_id, account_email, is_active, is_authenticated, last_authenticated_at FROM accounts WHERE service_id=?", (service_id,))
                                 accounts = [dict(row) for row in c.fetchall()]
                                 state_snapshot["accounts"] = accounts
 
@@ -643,7 +647,7 @@ class PluginStore:
                                 state_snapshot["tokens"] = []
                                 if account_ids:
                                     placeholders = ','.join('?' * len(account_ids))
-                                    c.execute(f"SELECT account_id, token_data, expires_at FROM auth_tokens WHERE account_id IN ({placeholders})", account_ids)
+                                    c.execute(f"SELECT account_id, access_token, refresh_token, token_type, expires_at, scope FROM account_tokens WHERE account_id IN ({placeholders})", account_ids)
                                     state_snapshot["tokens"] = [dict(row) for row in c.fetchall()]
 
                             # 3. Working.db Local KVS states
@@ -742,6 +746,7 @@ class PluginStore:
                             manifest_permissions = json.dumps(m_perms)
                     
                     computed_plugin_id = target_plugin_id if target_plugin_id else binascii.crc32(strict_namespace.lower().encode('utf-8')) & 0xFFFFFFFF
+                    int_plugin_id = computed_plugin_id
 
                     db.register_service(
                         name=manifest_name,
@@ -793,7 +798,7 @@ class PluginStore:
                                     c = conn.cursor()
                                     # Purge corrupted rows
                                     c.execute("DELETE FROM service_config WHERE service_id=?", (service_id,))
-                                    c.execute("DELETE FROM auth_tokens WHERE account_id IN (SELECT id FROM accounts WHERE service_id=?)", (service_id,))
+                                    c.execute("DELETE FROM account_tokens WHERE account_id IN (SELECT id FROM accounts WHERE service_id=?)", (service_id,))
                                     c.execute("DELETE FROM accounts WHERE service_id=?", (service_id,))
 
                                     # Restore snapshots
@@ -802,12 +807,12 @@ class PluginStore:
                                                   (service_id, row['config_key'], row['config_value'], row['is_sensitive']))
 
                                     for row in state_snapshot["accounts"]:
-                                        c.execute("INSERT INTO accounts (id, service_id, name, user_id, provider_id, external_id) VALUES (?, ?, ?, ?, ?, ?)",
-                                                  (row['id'], service_id, row['name'], row['user_id'], row['provider_id'], row['external_id']))
+                                        c.execute("INSERT INTO accounts (id, service_id, account_name, display_name, user_id, account_email, is_active, is_authenticated, last_authenticated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                                  (row['id'], service_id, row['account_name'], row['display_name'], row['user_id'], row['account_email'], row['is_active'], row['is_authenticated'], row['last_authenticated_at']))
 
                                     for row in state_snapshot["tokens"]:
-                                        c.execute("INSERT INTO auth_tokens (account_id, token_data, expires_at) VALUES (?, ?, ?)",
-                                                  (row['account_id'], row['token_data'], row['expires_at']))
+                                        c.execute("INSERT INTO account_tokens (account_id, access_token, refresh_token, token_type, expires_at, scope) VALUES (?, ?, ?, ?, ?, ?)",
+                                                  (row['account_id'], row['access_token'], row['refresh_token'], row['token_type'], row['expires_at'], row['scope']))
 
                                     conn.commit()
 
