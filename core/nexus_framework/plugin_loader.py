@@ -296,7 +296,7 @@ def find_case_insensitive_path(path: Path) -> Optional[Path]:
     Recursively scans the filesystem to match path components case-insensitively.
     Returns the resolved Path with correct casing if found, or None.
     """
-    if path.exists():
+    if path.exists() and os.name != 'nt':
         return path
     parts = path.parts
     if not parts:
@@ -371,8 +371,13 @@ class PluginLoader:
             logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
 
         # 3. Purge Memory (Recursive)
-        # We purge both the potential name variants
-        module_names = [f"plugins.{clean_ns}", f"plugins.{clean_ns.replace('.', '_')}"]
+        # We purge all casing variants to ensure modules are re-imported correctly on case-sensitive filesystems
+        module_names = [
+            f"plugins.{clean_ns}",
+            f"plugins.{clean_ns.replace('.', '_')}",
+            f"plugins.{clean_ns.lower()}",
+            f"plugins.{clean_ns.lower().replace('.', '_')}"
+        ]
         
         for module_name in module_names:
             if module_name in sys.modules:
@@ -927,11 +932,14 @@ class PluginLoader:
                 # Resolve module path
                 try:
                     relative_path = package_dir.relative_to(self.plugins_dir)
-                    actual_ns = ".".join(relative_path.parts)
+                    parts = list(relative_path.parts)
+                    if parts and parts[-1] == "beta":
+                        parts.pop()
+                    base_ns = ".".join(parts)
                     if is_beta:
-                        module_path = f"plugins.{actual_ns}.beta"
+                        module_path = f"plugins.{base_ns}.beta"
                     else:
-                        module_path = f"plugins.{actual_ns}"
+                        module_path = f"plugins.{base_ns}"
                     logger.debug(f"Resolved module path casing: {module_path}")
                 except Exception as e:
                     logger.warning(f"Could not derive relative path for {package_dir}: {e}")

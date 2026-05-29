@@ -233,3 +233,55 @@ def test_list_plugins_with_none_capabilities():
         assert caps_list[0]["metadata_richness"] == "MEDIUM"
         assert caps_list[0]["search_capabilities"]["tracks"] is False
 
+
+def test_load_plugin_package_path_resolution(tmp_path):
+    from core.nexus_framework.plugin_loader import PluginLoader
+    loader = PluginLoader(tmp_path)
+    
+    package_dir = tmp_path / "EchoSync" / "slskd" / "beta"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    (package_dir / "manifest.json").write_text('{"author": "EchoSync", "name": "slskd", "description": "slskd test", "version": "1.0.0", "type": "provider"}', encoding="utf-8")
+    
+    imported_modules = []
+    def mock_import_module(name):
+        imported_modules.append(name)
+        m = MagicMock()
+        m.__file__ = str(package_dir / "__init__.py")
+        return m
+
+    db = get_config_database()
+    db.register_service(
+        name="EchoSync.slskd",
+        service_type="provider",
+        description="slskd",
+        absolute_install_path=str(package_dir.resolve()),
+        version="1.0.0",
+        plugin_id=3515518521,
+        beta_opt_in=1,
+        verified_source=1,
+        privileged_mode=0,
+        permissions="[]"
+    )
+
+    with patch("importlib.import_module", side_effect=mock_import_module), \
+         patch("sys.path", []), \
+         patch("sys.modules", {}):
+        loader._load_plugin_package(3515518521, is_beta=True, absolute_install_path=str(package_dir.resolve()))
+        
+    assert "plugins.EchoSync.slskd.beta" in imported_modules
+    assert "plugins.EchoSync.slskd.beta.beta" not in imported_modules
+
+
+def test_install_case_preservation(tmp_path):
+    from core.nexus_framework.plugin_loader import find_case_insensitive_path
+    
+    existing_dir = tmp_path / "EchoSync" / "slskd"
+    existing_dir.mkdir(parents=True, exist_ok=True)
+    
+    dest_dir = tmp_path / "EchoSync" / "Slskd"
+    resolved = find_case_insensitive_path(dest_dir)
+    assert resolved is not None
+    assert resolved.name == "slskd"
+
+
+

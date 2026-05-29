@@ -539,6 +539,13 @@ class PluginStore:
                 
                 # Dynamically calculate target directories based on strict_namespace
                 dest_dir = self.plugins_dir / manifest_author / manifest_name
+                
+                # Check case-insensitively to reuse existing folder names and prevent casing duplicates
+                from core.nexus_framework.plugin_loader import find_case_insensitive_path
+                existing_dest = find_case_insensitive_path(dest_dir)
+                if existing_dest:
+                    dest_dir = existing_dest
+                
                 beta_dir = dest_dir / "beta"
                 if channel == "beta":
                     target_dir = beta_dir
