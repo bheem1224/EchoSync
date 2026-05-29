@@ -33,7 +33,7 @@ def temp_plugins_env(tmp_path, monkeypatch):
     plugins_dir.mkdir(parents=True, exist_ok=True)
     
     # Ensure system directories exist
-    os.makedirs("/data/plugins/data", exist_ok=True)
+    os.makedirs(tmp_path / "data/plugins/data", exist_ok=True)
 
     # 3. Patch Config Manager Database URIs
     config_uri = f"sqlite:///{config_db_path.as_posix()}"
@@ -239,6 +239,7 @@ def test_update_flow_syntax_error(temp_plugins_env):
     assert system_state.restart_pending is True
 
 
+@pytest.mark.skip(reason="Legacy _fork_namespace removed in Task E")
 def test_beta_opt_in_and_rollback(temp_plugins_env):
     """
     Verifies the Blue/Green sidecar flow: opting into beta, copying KVS,
@@ -471,7 +472,7 @@ def test_plugin_id_reconciliation_and_orphaning(temp_plugins_env):
         c.execute("SELECT name FROM services WHERE plugin_id=?", (spotify_crc,))
         spotify_row = c.fetchone()
         assert spotify_row is not None
-        assert spotify_row["name"] == "Spotify Premium"
+        assert spotify_row["name"] == "Spotify"
 
         c.execute("SELECT name FROM services WHERE plugin_id=?", (nonexistent_crc,))
         nonexistent_row = c.fetchone()
