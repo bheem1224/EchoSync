@@ -479,19 +479,18 @@ def serve_plugin_asset(plugin_id, filename):
 
     if install_path:
         resolved_install = Path(install_path).resolve()
-        file_path = (resolved_install / filename).resolve()
-        
-        logger.info(f"[serve_plugin_asset] Checked database path: {file_path}")
-        if file_path.exists():
-            resolved_file = str(file_path)
-            resolved_base = str(resolved_install)
 
-            if not resolved_file.startswith(resolved_base):
-                logger.warning(f"Security: Blocked traversal attempt for {plugin_id}: {filename}")
-                abort(403)
+        from werkzeug.security import safe_join
+        safe_path = safe_join(str(resolved_install), filename)
 
-            logger.info(f"Serving plugin asset: {resolved_file}")
-            return send_from_directory(str(file_path.parent), file_path.name)
+        if safe_path:
+            file_path = Path(safe_path)
+            if file_path.exists():
+                logger.info(f"Serving plugin asset: {file_path}")
+                return send_from_directory(str(file_path.parent), file_path.name)
 
-    logger.error(f"Plugin asset folder or file NOT FOUND for {plugin_id}: {filename}")
+        logger.warning(f"Security: Blocked traversal attempt or file missing for {plugin_id}: {filename}")
+        abort(403)
+
+    logger.error(f"Plugin asset folder NOT FOUND for {plugin_id}")
     abort(404)
