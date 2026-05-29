@@ -250,26 +250,25 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 	previous = /* @__PURE__ */ new Map();
 	#r = /* @__PURE__ */ new Set();
 	#i = /* @__PURE__ */ new Set();
-	#a = /* @__PURE__ */ new Set();
-	#o = 0;
-	#s = /* @__PURE__ */ new Map();
-	#c = null;
+	#a = 0;
+	#o = /* @__PURE__ */ new Map();
+	#s = null;
+	#c = [];
 	#l = [];
-	#u = [];
+	#u = /* @__PURE__ */ new Set();
 	#d = /* @__PURE__ */ new Set();
-	#f = /* @__PURE__ */ new Set();
-	#p = /* @__PURE__ */ new Map();
-	#m = /* @__PURE__ */ new Set();
+	#f = /* @__PURE__ */ new Map();
+	#p = /* @__PURE__ */ new Set();
 	is_fork = !1;
-	#h = !1;
+	#m = !1;
 	constructor() {
 		ut === null ? lt = ut = this : (ut.#n = this, this.#t = ut), ut = this;
 	}
-	#g() {
+	#h() {
 		if (this.is_fork) return !0;
-		for (let n of this.#s.keys()) {
+		for (let n of this.#o.keys()) {
 			for (var e = n, t = !1; e.parent !== null;) {
-				if (this.#p.has(e)) {
+				if (this.#f.has(e)) {
 					t = !0;
 					break;
 				}
@@ -280,63 +279,63 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 		return !1;
 	}
 	skip_effect(e) {
-		this.#p.has(e) || this.#p.set(e, {
+		this.#f.has(e) || this.#f.set(e, {
 			d: [],
 			m: []
-		}), this.#m.delete(e);
+		}), this.#p.delete(e);
 	}
 	unskip_effect(e, t = (e) => this.schedule(e)) {
-		var n = this.#p.get(e);
+		var n = this.#f.get(e);
 		if (n) {
-			this.#p.delete(e);
+			this.#f.delete(e);
 			for (var r of n.d) A(r, C), t(r);
 			for (r of n.m) A(r, w), t(r);
 		}
-		this.#m.add(e);
+		this.#p.add(e);
 	}
-	#_() {
-		this.#e = !0, _t++ > 1e3 && (this.#C(), xt());
-		for (let e of this.#d) this.#f.delete(e), A(e, C), this.schedule(e);
-		for (let e of this.#f) A(e, w), this.schedule(e);
-		let n = this.#l;
-		this.#l = [], this.apply();
+	#g() {
+		this.#e = !0, _t++ > 1e3 && (this.#S(), xt());
+		for (let e of this.#u) this.#d.delete(e), A(e, C), this.schedule(e);
+		for (let e of this.#d) A(e, w), this.schedule(e);
+		let n = this.#c;
+		this.#c = [], this.apply();
 		var r = ht = [], i = [], a = gt = [];
 		for (let e of n) try {
-			this.#v(e, r, i);
+			this.#_(e, r, i);
 		} catch (t) {
-			throw Dt(e), this.#g() || this.discard(), t;
+			throw Dt(e), this.#h() || this.discard(), t;
 		}
 		if (j = null, a.length > 0) {
 			var o = t.ensure();
 			for (let e of a) o.schedule(e);
 		}
-		if (ht = null, gt = null, this.#g()) {
-			this.#x(i), this.#x(r);
-			for (let [e, t] of this.#p) Et(e, t);
-			a.length > 0 && j.#_();
+		if (ht = null, gt = null, this.#h()) {
+			this.#b(i), this.#b(r);
+			for (let [e, t] of this.#f) Et(e, t);
+			a.length > 0 && j.#g();
 			return;
 		}
-		let s = this.#y();
+		let s = this.#v();
 		if (s) {
-			this.#x(i), this.#x(r), s.#b(this);
+			this.#b(i), this.#b(r), s.#y(this);
 			return;
 		}
-		this.#d.clear(), this.#f.clear();
+		this.#u.clear(), this.#d.clear();
 		for (let e of this.#r) e(this);
-		this.#r.clear(), dt = this, St(i), St(r), dt = null, this.#c?.resolve();
+		this.#r.clear(), dt = this, St(i), St(r), dt = null, this.#s?.resolve();
 		var c = j;
-		if (this.#o === 0 && (this.#l.length === 0 || c !== null) && (this.#C(), e && (this.#S(), j = c)), this.#l.length > 0) if (c !== null) {
+		if (this.#a === 0 && (this.#c.length === 0 || c !== null) && (this.#S(), e && (this.#x(), j = c)), this.#c.length > 0) if (c !== null) {
 			let e = c;
-			e.#l.push(...this.#l.filter((t) => !e.#l.includes(t)));
+			e.#c.push(...this.#c.filter((t) => !e.#c.includes(t)));
 		} else c = this;
-		c !== null && c.#_();
+		c !== null && c.#g();
 	}
-	#v(t, n, r) {
+	#_(t, n, r) {
 		t.f ^= S;
 		for (var i = t.first; i !== null;) {
 			var a = i.f, o = (a & 96) != 0;
-			if (!(o && a & 1024 || a & 8192 || this.#p.has(i)) && i.fn !== null) {
-				o ? i.f ^= S : a & 4 ? n.push(i) : e && a & 16777224 ? r.push(i) : er(i) && (a & 16 && this.#f.add(i), ar(i));
+			if (!(o && a & 1024 || a & 8192 || this.#f.has(i)) && i.fn !== null) {
+				o ? i.f ^= S : a & 4 ? n.push(i) : e && a & 16777224 ? r.push(i) : er(i) && (a & 16 && this.#d.add(i), ar(i));
 				var s = i.first;
 				if (s !== null) {
 					i = s;
@@ -353,7 +352,7 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 			}
 		}
 	}
-	#y() {
+	#v() {
 		for (var e = this.#t; e !== null;) {
 			if (!e.is_fork) {
 				for (let [t, [, n]] of this.current) if (e.current.has(t) && !n) return e;
@@ -362,13 +361,13 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 		}
 		return null;
 	}
-	#b(e) {
+	#y(e) {
 		for (let [t, n] of e.current) !this.previous.has(t) && e.previous.has(t) && this.previous.set(t, e.previous.get(t)), this.current.set(t, n);
 		for (let [t, n] of e.async_deriveds) {
 			let e = this.async_deriveds.get(t);
 			e && n.promise.then(e.resolve).catch(e.reject);
 		}
-		this.transfer_effects(e.#d, e.#f);
+		this.transfer_effects(e.#u, e.#d);
 		let t = (e) => {
 			var n = e.reactions;
 			if (n !== null) for (let e of n) {
@@ -376,15 +375,15 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 				if (r & 2) t(e);
 				else {
 					var i = e;
-					r & 4194320 && !this.async_deriveds.has(i) && (this.#f.delete(i), A(i, C), this.schedule(i));
+					r & 4194320 && !this.async_deriveds.has(i) && (this.#d.delete(i), A(i, C), this.schedule(i));
 				}
 			}
 		};
 		for (let e of this.current.keys()) t(e);
-		this.oncommit(() => e.discard()), e.#C(), j = this, this.#_();
+		this.oncommit(() => e.discard()), e.#S(), j = this, this.#g();
 	}
-	#x(e) {
-		for (var t = 0; t < e.length; t += 1) at(e[t], this.#d, this.#f);
+	#b(e) {
+		for (var t = 0; t < e.length; t += 1) at(e[t], this.#u, this.#d);
 	}
 	capture(e, t, n = !1) {
 		e.v !== i && !this.previous.has(e) && this.previous.set(e, e.v), e.f & 8388608 || (this.current.set(e, [t, n]), M?.set(e, t)), this.is_fork || (e.v = t);
@@ -397,19 +396,19 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 	}
 	flush() {
 		try {
-			mt = !0, j = this, this.#_();
+			mt = !0, j = this, this.#g();
 		} finally {
 			_t = 0, ft = null, ht = null, gt = null, mt = !1, j = null, M = null, Kt.clear();
 		}
 	}
 	discard() {
 		for (let e of this.#i) e(this);
-		this.#i.clear(), this.#a.clear(), this.#C(), this.#c?.resolve();
+		this.#i.clear(), this.#S(), this.#s?.resolve();
 	}
 	register_created_effect(e) {
-		this.#u.push(e);
+		this.#l.push(e);
 	}
-	#S() {
+	#x() {
 		for (let l = lt; l !== null; l = l.#n) {
 			var e = l.id < this.id, t = [];
 			for (let [r, [i, a]] of this.current) {
@@ -428,8 +427,8 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 				var r = [...l.current.keys()].filter((e) => !l.current.get(e)[1] && !this.current.has(e));
 				if (r.length === 0) e && l.discard();
 				else if (t.length > 0) {
-					if (e) for (let e of this.#m) l.unskip_effect(e, (e) => {
-						e.f & 4194320 ? l.schedule(e) : l.#x([e]);
+					if (e) for (let e of this.#p) l.unskip_effect(e, (e) => {
+						e.f & 4194320 ? l.schedule(e) : l.#b([e]);
 					});
 					l.activate();
 					var i = /* @__PURE__ */ new Set(), a = /* @__PURE__ */ new Map();
@@ -439,11 +438,11 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 						let n = this.current.get(e);
 						return n ? n[0] !== t[0] || n[1] !== t[1] : !0;
 					}).map(([e]) => e);
-					if (s.length > 0) for (let e of this.#u) !(e.f & 155648) && wt(e, s, a) && (e.f & 4194320 ? (A(e, C), l.schedule(e)) : l.#d.add(e));
-					if (l.#l.length > 0 && !l.#h) {
+					if (s.length > 0) for (let e of this.#l) !(e.f & 155648) && wt(e, s, a) && (e.f & 4194320 ? (A(e, C), l.schedule(e)) : l.#u.add(e));
+					if (l.#c.length > 0 && !l.#m) {
 						l.apply();
-						for (var c of l.#l) l.#v(c, [], []);
-						l.#l = [];
+						for (var c of l.#c) l.#_(c, [], []);
+						l.#c = [];
 					}
 					l.deactivate();
 				}
@@ -451,23 +450,23 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 		}
 	}
 	increment(e, t) {
-		if (this.#o += 1, e) {
-			let e = this.#s.get(t) ?? 0;
-			this.#s.set(t, e + 1);
+		if (this.#a += 1, e) {
+			let e = this.#o.get(t) ?? 0;
+			this.#o.set(t, e + 1);
 		}
 	}
 	decrement(e, t) {
-		if (--this.#o, e) {
-			let e = this.#s.get(t) ?? 0;
-			e === 1 ? this.#s.delete(t) : this.#s.set(t, e - 1);
+		if (--this.#a, e) {
+			let e = this.#o.get(t) ?? 0;
+			e === 1 ? this.#o.delete(t) : this.#o.set(t, e - 1);
 		}
-		this.#h || (this.#h = !0, Qe(() => {
-			this.#h = !1, this.linked && this.flush();
+		this.#m || (this.#m = !0, Qe(() => {
+			this.#m = !1, this.linked && this.flush();
 		}));
 	}
 	transfer_effects(e, t) {
-		for (let t of e) this.#d.add(t);
-		for (let e of t) this.#f.add(e);
+		for (let t of e) this.#u.add(t);
+		for (let e of t) this.#d.add(e);
 		e.clear(), t.clear();
 	}
 	oncommit(e) {
@@ -476,15 +475,8 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 	ondiscard(e) {
 		this.#i.add(e);
 	}
-	on_fork_commit(e) {
-		this.#a.add(e);
-	}
-	run_fork_commit_callbacks() {
-		for (let e of this.#a) e(this);
-		this.#a.clear();
-	}
 	settled() {
-		return (this.#c ??= x()).promise;
+		return (this.#s ??= x()).promise;
 	}
 	static ensure() {
 		if (j === null) {
@@ -527,9 +519,9 @@ var lt = null, ut = null, j = null, dt = null, M = null, ft = null, pt = !1, mt 
 				n.f ^= S;
 			}
 		}
-		this.#l.push(n);
+		this.#c.push(n);
 	}
-	#C() {
+	#S() {
 		if (this.linked) {
 			var e = this.#t, t = this.#n;
 			e === null ? lt = t : e.#n = t, t === null ? ut = e : t.#t = e, this.linked = !1;
@@ -713,13 +705,13 @@ var jt = class {
 	}
 	#x(e) {
 		var t = G, n = H, r = k;
-		Kn(this.#i), W(this.#i), Ke(this.#i.ctx);
+		K(this.#i), W(this.#i), Ke(this.#i.ctx);
 		try {
 			return yt.ensure(), e();
 		} catch (e) {
 			return et(e), null;
 		} finally {
-			Kn(t), W(n), Ke(r);
+			K(t), W(n), Ke(r);
 		}
 	}
 	#S(e, t) {
@@ -741,7 +733,7 @@ var jt = class {
 	}
 	error(e) {
 		if (!this.#n.onerror && !this.#n.failed) throw e;
-		j?.is_fork ? (this.#a && j.skip_effect(this.#a), this.#o && j.skip_effect(this.#o), this.#s && j.skip_effect(this.#s), j.on_fork_commit(() => {
+		j?.is_fork ? (this.#a && j.skip_effect(this.#a), this.#o && j.skip_effect(this.#o), this.#s && j.skip_effect(this.#s), j.oncommit(() => {
 			this.#C(e);
 		})) : this.#C(e);
 	}
@@ -825,11 +817,11 @@ function Mt(e, t, n, r) {
 function Nt() {
 	var e = G, t = H, n = k, r = j;
 	return function(i = !0) {
-		Kn(e), W(t), Ke(n), i && !(e.f & 16384) && (r?.activate(), r?.apply());
+		K(e), W(t), Ke(n), i && !(e.f & 16384) && (r?.activate(), r?.apply());
 	};
 }
 function Pt(e = !0) {
-	Kn(null), W(null), Ke(null), e && j?.deactivate();
+	K(null), W(null), Ke(null), e && j?.deactivate();
 }
 function Ft() {
 	var e = G, t = e.b, n = j, r = !!t?.is_rendered();
@@ -909,11 +901,11 @@ function Bt(e) {
 function Vt(e) {
 	var t, n = G, r = e.parent;
 	if (!Wn && r !== null && e.v !== i && r.f & 24576) return Fe(), e.v;
-	Kn(r);
+	K(r);
 	try {
 		e.f &= ~ce, Bt(e), t = nr(e);
 	} finally {
-		Kn(n);
+		K(n);
 	}
 	return t;
 }
@@ -955,7 +947,7 @@ function P(e, n = !1, r = !0) {
 	return n || (i.equals = Ge), t && r && k !== null && k.l !== null && (k.l.s ??= []).push(i), i;
 }
 function F(e, t, n = !1) {
-	return H !== null && (!U || H.f & 131072) && Ye() && H.f & 4325394 && (K === null || !c.call(K, e)) && Ne(), Xt(e, n ? en(t) : t, gt);
+	return H !== null && (!U || H.f & 131072) && Ye() && H.f & 4325394 && (Kn === null || !Kn.has(e)) && Ne(), Xt(e, n ? en(t) : t, gt);
 }
 function Xt(e, t, n = null) {
 	if (!e.equals(t)) {
@@ -1173,8 +1165,7 @@ function dn() {
 	return !e || N !== null ? !1 : (G.f & ne) !== 0;
 }
 function fn(e, t, n) {
-	let r = n ? { is: n } : void 0;
-	return document.createElementNS(t ?? "http://www.w3.org/1999/xhtml", e, r);
+	return t == null || t === "http://www.w3.org/1999/xhtml" ? n ? document.createElement(e, { is: n }) : document.createElement(e) : n ? document.createElementNS(t, e, { is: n }) : document.createElementNS(t, e);
 }
 function pn(e) {
 	if (e.nodeValue.length < 65536) return;
@@ -1195,11 +1186,11 @@ function hn() {
 //#region node_modules/svelte/src/internal/client/dom/elements/bindings/shared.js
 function gn(e) {
 	var t = H, n = G;
-	W(null), Kn(null);
+	W(null), K(null);
 	try {
 		return e();
 	} finally {
-		W(t), Kn(n);
+		W(t), K(n);
 	}
 }
 function _n(e, t, n, r = n) {
@@ -1416,12 +1407,12 @@ function W(e) {
 	H = e;
 }
 var G = null;
-function Kn(e) {
+function K(e) {
 	G = e;
 }
-var K = null;
+var Kn = null;
 function qn(t) {
-	H !== null && (!e || H.f & 2) && (K === null ? K = [t] : K.push(t));
+	H !== null && (!e || H.f & 2) && (Kn ??= /* @__PURE__ */ new Set()).add(t);
 }
 var q = null, J = 0, Y = null;
 function Jn(e) {
@@ -1448,14 +1439,14 @@ function er(e) {
 }
 function tr(t, n, r = !0) {
 	var i = t.reactions;
-	if (i !== null && !(!e && K !== null && c.call(K, t))) for (var a = 0; a < i.length; a++) {
+	if (i !== null && !(!e && Kn !== null && Kn.has(t))) for (var a = 0; a < i.length; a++) {
 		var o = i[a];
 		o.f & 2 ? tr(o, n, !1) : n === o && (r ? A(o, C) : o.f & 1024 && A(o, w), Tt(o));
 	}
 }
 function nr(e) {
-	var t = q, n = J, r = Y, i = H, a = K, o = k, s = U, c = Zn, l = e.f;
-	q = null, J = 0, Y = null, H = l & 96 ? null : e, K = null, Ke(e.ctx), U = !1, Zn = ++Xn, e.ac !== null && (gn(() => {
+	var t = q, n = J, r = Y, i = H, a = Kn, o = k, s = U, c = Zn, l = e.f;
+	q = null, J = 0, Y = null, H = l & 96 ? null : e, Kn = null, Ke(e.ctx), U = !1, Zn = ++Xn, e.ac !== null && (gn(() => {
 		e.ac.abort(be);
 	}), e.ac = null);
 	try {
@@ -1479,7 +1470,7 @@ function nr(e) {
 	} catch (e) {
 		return et(e);
 	} finally {
-		e.f ^= le, q = t, J = n, Y = r, H = i, K = a, Ke(o), U = s, Zn = c;
+		e.f ^= le, q = t, J = n, Y = r, H = i, Kn = a, Ke(o), U = s, Zn = c;
 	}
 }
 function rr(e, t) {
@@ -1523,7 +1514,7 @@ async function or() {
 }
 function X(e) {
 	var t = (e.f & 2) != 0;
-	if (Hn?.add(e), H !== null && !U && !(G !== null && G.f & 16384) && (K === null || !c.call(K, e))) {
+	if (Hn?.add(e), H !== null && !U && !(G !== null && G.f & 16384) && (Kn === null || !Kn.has(e))) {
 		var n = H.deps;
 		if (H.f & 2097152) e.rv < Xn && (e.rv = Xn, q === null && n !== null && n[J] === e ? J++ : q === null ? q = [e] : q.push(e));
 		else {
@@ -1633,7 +1624,7 @@ function _r(e) {
 			}
 		});
 		var u = H, f = G;
-		W(null), Kn(null);
+		W(null), K(null);
 		try {
 			for (var p, m = []; a !== null && a !== t;) {
 				try {
@@ -1652,7 +1643,7 @@ function _r(e) {
 				throw p;
 			}
 		} finally {
-			e[dr] = t, delete e.currentTarget, W(u), Kn(f);
+			e[dr] = t, delete e.currentTarget, W(u), K(f);
 		}
 	}
 }
