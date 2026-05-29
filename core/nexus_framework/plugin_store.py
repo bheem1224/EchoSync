@@ -613,7 +613,59 @@ class PluginStore:
                 except Exception as e:
                     logger.error(f"Failed to inject manifest metadata for {plugin_id}: {e}")
 
+
+                # PHASE 1: Cross-Database Relational Snapshotting
+                state_snapshot = {}
+                if is_update and target_plugin_id:
+                    try:
+                        from database.config_database import get_config_database
+                        from database.working_database import get_working_database
+                        from sqlalchemy import text
+
+                        db = get_config_database()
+                        w_db = get_working_database()
+
+                        service_id = db.get_service_id(target_plugin_id)
+
+                        if service_id:
+                            with db._get_connection() as conn:
+                                c = conn.cursor()
+                                # 1. Config.db Service Configurations
+                                c.execute("SELECT config_key, config_value, is_sensitive FROM service_config WHERE service_id=?", (service_id,))
+                                state_snapshot["service_config"] = [dict(row) for row in c.fetchall()]
+
+                                # 2. Config.db Plugin Accounts & Tokens
+                                c.execute("SELECT id, name, user_id, provider_id, external_id FROM accounts WHERE service_id=?", (service_id,))
+                                accounts = [dict(row) for row in c.fetchall()]
+                                state_snapshot["accounts"] = accounts
+
+                                account_ids = [acc['id'] for acc in accounts]
+                                state_snapshot["tokens"] = []
+                                if account_ids:
+                                    placeholders = ','.join('?' * len(account_ids))
+                                    c.execute(f"SELECT account_id, token_data, expires_at FROM auth_tokens WHERE account_id IN ({placeholders})", account_ids)
+                                    state_snapshot["tokens"] = [dict(row) for row in c.fetchall()]
+
+                            # 3. Working.db Local KVS states
+                            with w_db.session_scope() as session:
+                                kvs_rows = session.execute(text("SELECT key, value FROM plugin_state_kvs WHERE plugin_id=:pid"), {"pid": str(target_plugin_id)}).fetchall()
+                                state_snapshot["kvs"] = [dict(row._mapping) for row in kvs_rows]
+
+                            # 4. Sandbox Storage DBs
+                            sandbox_db_path = dest_dir / f"{manifest_name}.db"
+                            sandbox_backup_path = dest_dir / "beta_backup" / f"{manifest_name}.db"
+                            if sandbox_db_path.exists():
+                                beta_backup_dir = dest_dir / "beta_backup"
+                                beta_backup_dir.mkdir(exist_ok=True)
+                                import shutil
+                                shutil.copy2(sandbox_db_path, sandbox_backup_path)
+                                state_snapshot["sandbox_db_path"] = sandbox_backup_path
+
+                    except Exception as e:
+                        logger.error(f"Failed to capture state snapshot for {target_plugin_id}: {e}")
+
                 # Task 3: Atomic Swap
+
                 if channel == "stable" and beta_dir.exists():
                     shutil.rmtree(beta_dir, ignore_errors=True)
 
@@ -669,37 +721,6 @@ class PluginStore:
                 config_manager.set(f'plugins.{clean_id}.channel', channel)
                 logger.info(f"Persisted channel '{channel}' for plugin {clean_id}")
 
-                # Task 6: Blue/Green Namespace Shifting (Only during updates)
-                if is_update:
-                    if target_plugin_id:
-                        int_plugin_id = target_plugin_id
-                    else:
-                        from database.config_database import get_config_database
-                        db = get_config_database()
-                        with db._get_connection() as conn:
-                            c = conn.cursor()
-                            c.execute("SELECT plugin_id FROM services WHERE LOWER(name)=LOWER(?)", (clean_id,))
-                            row = c.fetchone()
-                            if not row:
-                                raise ValueError(f"Plugin {clean_id} not found in services table")
-                            int_plugin_id = row[0]
-
-                    if channel == "beta":
-                        try:
-                            self._fork_namespace(int_plugin_id)
-                            logger.info(f"Forked data namespace for {int_plugin_id} (Blue/Green)")
-                        except Exception as e:
-                            logger.error(f"Failed to fork namespace for {int_plugin_id}: {e}")
-                    elif channel == "stable":
-                        try:
-                            self._cutover_namespace(int_plugin_id)
-                            logger.info(f"Executed data cutover for {int_plugin_id} (Stable Promotion)")
-                        except Exception as e:
-                            logger.error(f"Failed to cutover namespace for {int_plugin_id}: {e}")
-
-
-
-
                 # State Synchronization: Synchronize with the authoritative SQLite registry
                 try:
                     from database.config_database import get_config_database
@@ -749,8 +770,60 @@ class PluginStore:
                         logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}).")
                     except Exception as e:
                         logger.error(f"Live-swap failed for {plugin_id}: {e}")
+
+                        # Atomic State Rollback
+                        if is_update and target_plugin_id and 'service_config' in state_snapshot:
+                            try:
+                                logger.warning("Initiating Atomic State Rollback...")
+
+                                # 1. Filesystem Rollback
+                                if backup_dir and backup_dir.exists():
+                                    shutil.rmtree(target_dir, ignore_errors=True)
+                                    os.rename(str(backup_dir), str(target_dir))
+
+                                if "sandbox_db_path" in state_snapshot and state_snapshot["sandbox_db_path"].exists():
+                                    shutil.copy2(state_snapshot["sandbox_db_path"], dest_dir / f"{manifest_name}.db")
+
+                                # 2. Database Rollback
+                                db = get_config_database()
+                                w_db = get_working_database()
+                                service_id = db.get_service_id(target_plugin_id)
+
+                                with db._get_connection() as conn:
+                                    c = conn.cursor()
+                                    # Purge corrupted rows
+                                    c.execute("DELETE FROM service_config WHERE service_id=?", (service_id,))
+                                    c.execute("DELETE FROM auth_tokens WHERE account_id IN (SELECT id FROM accounts WHERE service_id=?)", (service_id,))
+                                    c.execute("DELETE FROM accounts WHERE service_id=?", (service_id,))
+
+                                    # Restore snapshots
+                                    for row in state_snapshot["service_config"]:
+                                        c.execute("INSERT INTO service_config (service_id, config_key, config_value, is_sensitive) VALUES (?, ?, ?, ?)",
+                                                  (service_id, row['config_key'], row['config_value'], row['is_sensitive']))
+
+                                    for row in state_snapshot["accounts"]:
+                                        c.execute("INSERT INTO accounts (id, service_id, name, user_id, provider_id, external_id) VALUES (?, ?, ?, ?, ?, ?)",
+                                                  (row['id'], service_id, row['name'], row['user_id'], row['provider_id'], row['external_id']))
+
+                                    for row in state_snapshot["tokens"]:
+                                        c.execute("INSERT INTO auth_tokens (account_id, token_data, expires_at) VALUES (?, ?, ?)",
+                                                  (row['account_id'], row['token_data'], row['expires_at']))
+
+                                    conn.commit()
+
+                                with w_db.session_scope() as session:
+                                    session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:pid"), {"pid": str(target_plugin_id)})
+                                    for row in state_snapshot["kvs"]:
+                                        session.execute(text("INSERT INTO plugin_state_kvs (plugin_id, key, value) VALUES (:pid, :k, :v)"),
+                                                        {"pid": str(target_plugin_id), "k": row['key'], "v": row['value']})
+
+                                logger.info("Atomic State Rollback completed successfully.")
+                            except Exception as rollback_err:
+                                logger.critical(f"FATAL: Atomic State Rollback failed: {rollback_err}")
+
                         system_state.restart_pending = True
-                        raise RuntimeError(f"Live-swap failed: {e}")
+                        return False
+
                 else:
                     logger.info(f"Fresh installation complete for {plugin_id}. Hot-swap skipped.")
                     try:
