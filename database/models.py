@@ -47,6 +47,7 @@ class Account(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     service_id = Column(Integer, ForeignKey("services.id", ondelete="CASCADE"), nullable=False)
     account_name = Column(String)
+    display_name = Column(String)
     user_id = Column(String)
     account_email = Column(String)
     is_active = Column(Boolean, default=False)

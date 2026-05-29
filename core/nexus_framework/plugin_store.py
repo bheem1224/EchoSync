@@ -624,7 +624,9 @@ class PluginStore:
                     try:
                         from database.config_database import get_config_database
                         from database.working_database import get_working_database
-                        from sqlalchemy import text
+                        from sqlalchemy import text, create_engine
+                        from sqlalchemy.orm import sessionmaker
+                        from database.models import ServiceConfig, Account, AccountToken
 
                         db = get_config_database()
                         w_db = get_working_database()
@@ -632,30 +634,61 @@ class PluginStore:
                         service_id = db.get_service_id(target_plugin_id)
 
                         if service_id:
-                            with db._get_connection() as conn:
-                                c = conn.cursor()
-                                # 1. Config.db Service Configurations
-                                c.execute("SELECT config_key, config_value, is_sensitive FROM service_config WHERE service_id=?", (service_id,))
-                                state_snapshot["service_config"] = [dict(row) for row in c.fetchall()]
+                            # 1. Config.db Service Configurations and Plugin Accounts & Tokens using SQLAlchemy ORM
+                            config_engine = create_engine(f"sqlite:///{db.database_path}")
+                            ConfigSession = sessionmaker(bind=config_engine)
+                            with ConfigSession() as config_session:
+                                # Fetch ServiceConfigs
+                                configs = config_session.query(ServiceConfig).filter(ServiceConfig.service_id == service_id).all()
+                                state_snapshot["service_config"] = [
+                                    {
+                                        "config_key": cfg.config_key,
+                                        "config_value": cfg.config_value,
+                                        "is_sensitive": cfg.is_sensitive
+                                    }
+                                    for cfg in configs
+                                ]
 
-                                # 2. Config.db Plugin Accounts & Tokens
-                                c.execute("SELECT id, service_id, account_name, display_name, user_id, account_email, is_active, is_authenticated, last_authenticated_at FROM accounts WHERE service_id=?", (service_id,))
-                                accounts = [dict(row) for row in c.fetchall()]
-                                state_snapshot["accounts"] = accounts
+                                # Fetch Accounts
+                                accounts = config_session.query(Account).filter(Account.service_id == service_id).all()
+                                state_snapshot["accounts"] = [
+                                    {
+                                        "id": acc.id,
+                                        "service_id": acc.service_id,
+                                        "account_name": acc.account_name,
+                                        "display_name": acc.display_name,
+                                        "user_id": acc.user_id,
+                                        "account_email": acc.account_email,
+                                        "is_active": acc.is_active,
+                                        "is_authenticated": acc.is_authenticated,
+                                        "last_authenticated_at": acc.last_authenticated_at
+                                    }
+                                    for acc in accounts
+                                ]
 
-                                account_ids = [acc['id'] for acc in accounts]
+                                # Fetch Tokens
+                                account_ids = [acc.id for acc in accounts]
                                 state_snapshot["tokens"] = []
                                 if account_ids:
-                                    placeholders = ','.join('?' * len(account_ids))
-                                    c.execute(f"SELECT account_id, access_token, refresh_token, token_type, expires_at, scope FROM account_tokens WHERE account_id IN ({placeholders})", account_ids)
-                                    state_snapshot["tokens"] = [dict(row) for row in c.fetchall()]
+                                    tokens = config_session.query(AccountToken).filter(AccountToken.account_id.in_(account_ids)).all()
+                                    state_snapshot["tokens"] = [
+                                        {
+                                            "account_id": tok.account_id,
+                                            "access_token": tok.access_token,
+                                            "refresh_token": tok.refresh_token,
+                                            "token_type": tok.token_type,
+                                            "expires_at": tok.expires_at,
+                                            "scope": tok.scope
+                                        }
+                                        for tok in tokens
+                                    ]
 
-                            # 3. Working.db Local KVS states
+                            # 2. Working.db Local KVS states
                             with w_db.session_scope() as session:
                                 kvs_rows = session.execute(text("SELECT key, value FROM plugin_state_kvs WHERE plugin_id=:pid"), {"pid": str(target_plugin_id)}).fetchall()
                                 state_snapshot["kvs"] = [dict(row._mapping) for row in kvs_rows]
 
-                            # 4. Sandbox Storage DBs
+                            # 3. Sandbox Storage DBs
                             sandbox_db_path = dest_dir / f"{manifest_name}.db"
                             sandbox_backup_path = dest_dir / "beta_backup" / f"{manifest_name}.db"
                             if sandbox_db_path.exists():
@@ -794,27 +827,65 @@ class PluginStore:
                                 w_db = get_working_database()
                                 service_id = db.get_service_id(target_plugin_id)
 
-                                with db._get_connection() as conn:
-                                    c = conn.cursor()
-                                    # Purge corrupted rows
-                                    c.execute("DELETE FROM service_config WHERE service_id=?", (service_id,))
-                                    c.execute("DELETE FROM account_tokens WHERE account_id IN (SELECT id FROM accounts WHERE service_id=?)", (service_id,))
-                                    c.execute("DELETE FROM accounts WHERE service_id=?", (service_id,))
+                                from sqlalchemy import create_engine
+                                from sqlalchemy.orm import sessionmaker
+                                from database.models import ServiceConfig, Account, AccountToken
 
-                                    # Restore snapshots
-                                    for row in state_snapshot["service_config"]:
-                                        c.execute("INSERT INTO service_config (service_id, config_key, config_value, is_sensitive) VALUES (?, ?, ?, ?)",
-                                                  (service_id, row['config_key'], row['config_value'], row['is_sensitive']))
+                                config_engine = create_engine(f"sqlite:///{db.database_path}")
+                                ConfigSession = sessionmaker(bind=config_engine)
+                                with ConfigSession() as config_session:
+                                    try:
+                                        # Purge corrupted rows
+                                        config_session.query(ServiceConfig).filter(ServiceConfig.service_id == service_id).delete()
+                                        
+                                        # Delete tokens and accounts
+                                        accounts_to_delete = config_session.query(Account).filter(Account.service_id == service_id).all()
+                                        acc_ids = [acc.id for acc in accounts_to_delete]
+                                        if acc_ids:
+                                            config_session.query(AccountToken).filter(AccountToken.account_id.in_(acc_ids)).delete(synchronize_session=False)
+                                        config_session.query(Account).filter(Account.service_id == service_id).delete(synchronize_session=False)
 
-                                    for row in state_snapshot["accounts"]:
-                                        c.execute("INSERT INTO accounts (id, service_id, account_name, display_name, user_id, account_email, is_active, is_authenticated, last_authenticated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                                  (row['id'], service_id, row['account_name'], row['display_name'], row['user_id'], row['account_email'], row['is_active'], row['is_authenticated'], row['last_authenticated_at']))
+                                        # Restore service configs
+                                        for row in state_snapshot["service_config"]:
+                                            cfg = ServiceConfig(
+                                                service_id=service_id,
+                                                config_key=row['config_key'],
+                                                config_value=row['config_value'],
+                                                is_sensitive=row['is_sensitive']
+                                            )
+                                            config_session.add(cfg)
 
-                                    for row in state_snapshot["tokens"]:
-                                        c.execute("INSERT INTO account_tokens (account_id, access_token, refresh_token, token_type, expires_at, scope) VALUES (?, ?, ?, ?, ?, ?)",
-                                                  (row['account_id'], row['access_token'], row['refresh_token'], row['token_type'], row['expires_at'], row['scope']))
+                                        # Restore accounts
+                                        for row in state_snapshot["accounts"]:
+                                            acc = Account(
+                                                id=row['id'],
+                                                service_id=service_id,
+                                                account_name=row['account_name'],
+                                                display_name=row['display_name'],
+                                                user_id=row['user_id'],
+                                                account_email=row['account_email'],
+                                                is_active=row['is_active'],
+                                                is_authenticated=row['is_authenticated'],
+                                                last_authenticated_at=row['last_authenticated_at']
+                                            )
+                                            config_session.add(acc)
 
-                                    conn.commit()
+                                        # Restore tokens
+                                        for row in state_snapshot["tokens"]:
+                                            tok = AccountToken(
+                                                account_id=row['account_id'],
+                                                access_token=row['access_token'],
+                                                refresh_token=row['refresh_token'],
+                                                token_type=row['token_type'],
+                                                expires_at=row['expires_at'],
+                                                scope=row['scope']
+                                            )
+                                            config_session.add(tok)
+
+                                        config_session.commit()
+                                    except Exception as db_rollback_err:
+                                        config_session.rollback()
+                                        raise db_rollback_err
 
                                 with w_db.session_scope() as session:
                                     session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:pid"), {"pid": str(target_plugin_id)})

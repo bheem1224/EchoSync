@@ -23,6 +23,69 @@ from core.settings import config_manager
 logger = get_logger("plugin_loader")
 import zlib
 
+# Case-Preserved Namespace Aliasing Finder & Loader
+from importlib.abc import MetaPathFinder, Loader
+from importlib.machinery import ModuleSpec
+
+class CaseInsensitiveAliasFinder(MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if not fullname.startswith("plugins."):
+            return None
+        
+        req_lower = fullname.lower()
+        
+        for existing_name in list(sys.modules.keys()):
+            if not existing_name.startswith("plugins."):
+                continue
+            
+            existing_lower = existing_name.lower()
+            
+            # Match 1: Exact case-insensitive match
+            if existing_lower == req_lower:
+                return ModuleSpec(fullname, CaseInsensitiveLoader(existing_name))
+                
+            # Match 2: existing has .beta, req does not
+            if ".beta" in existing_lower:
+                existing_no_beta = existing_lower.replace(".beta", "")
+                if existing_no_beta == req_lower:
+                    return ModuleSpec(fullname, CaseInsensitiveLoader(existing_name))
+                    
+            # Match 3: req does not have .beta, existing has .beta
+            if ".beta" in existing_lower:
+                if req_lower + ".beta" == existing_lower:
+                    return ModuleSpec(fullname, CaseInsensitiveLoader(existing_name))
+                    
+                req_parts = req_lower.split('.')
+                if len(req_parts) >= 3:
+                    # Insert 'beta' at index 3
+                    with_beta_parts = req_parts[:3] + ['beta'] + req_parts[3:]
+                    with_beta = ".".join(with_beta_parts)
+                    if with_beta == existing_lower:
+                        return ModuleSpec(fullname, CaseInsensitiveLoader(existing_name))
+        return None
+
+class CaseInsensitiveLoader(Loader):
+    def __init__(self, target_name):
+        self.target_name = target_name
+        
+    def create_module(self, spec):
+        import sys
+        import importlib
+        if self.target_name not in sys.modules:
+            importlib.import_module(self.target_name)
+        return sys.modules[self.target_name]
+        
+    def exec_module(self, module):
+        pass
+
+_finder_registered = False
+def ensure_alias_finder():
+    global _finder_registered
+    if not _finder_registered:
+        import sys
+        sys.meta_path.insert(0, CaseInsensitiveAliasFinder())
+        _finder_registered = True
+
 def generate_plugin_id(name: str) -> int:
     """Generate a consistent 32-bit integer ID from a plugin name."""
     return zlib.crc32(name.encode('utf-8')) & 0xFFFFFFFF
@@ -305,6 +368,10 @@ class PluginLoader:
         self.app_root = Path(app_root)
         self.plugins_dir = Path(config_manager.get_plugins_dir())
         self.loaded_blueprints: List[Blueprint] = []
+        from core.hook_manager import hook_manager
+        from database.config_database import get_config_database
+        self.hook_manager = hook_manager
+        self.config_db = get_config_database()
 
 
     def reload_plugin(self, plugin_id: int):
@@ -699,12 +766,7 @@ class PluginLoader:
                 try:
                     relative_path = package_dir.relative_to(self.plugins_dir)
                     parts = list(relative_path.parts)
-                    base_ns = ".".join(parts)
-                    module_path = f"plugins.{base_ns}"
-
-                    if is_beta and not module_path.endswith('.beta'):
-                         module_path = f"{module_path}.beta"
-
+                    module_path = "plugins." + ".".join(parts)
                     logger.debug(f"Resolved module path casing: {module_path}")
                 except Exception as e:
                     logger.warning(f"Could not derive relative path for {package_dir}: {e}")
@@ -804,7 +866,13 @@ class PluginLoader:
                     snapshot_modules = dict(sys.modules)
                     try:
                         importlib.invalidate_caches()
+                        ensure_alias_finder()
                         module = importlib.import_module(module_path)
+                        
+                        # Programmatically register case-insensitive direct key aliases in sys.modules
+                        sys.modules[f"plugins.{clean_ns.lower()}"] = module
+                        if is_beta:
+                            sys.modules[f"plugins.{clean_ns.lower()}.beta"] = module
                     except Exception as e:
                         logger.error(f"Module compilation failed: {e}")
                         sys.modules.clear()
@@ -865,6 +933,17 @@ class PluginLoader:
                             break
                     if not found:
                         logger.debug(f"No PluginBase found in {module_path}")
+
+                # Core-Driven Inversion of Control (IoC) Startup Hooks
+                try:
+                    plugin_cls = PluginRegistry.get_plugin_class(provider_id)
+                    if plugin_cls:
+                        # Instantiate the plugin class
+                        plugin_instance = plugin_cls()
+                        if hasattr(plugin_instance, "on_plugin_startup"):
+                            plugin_instance.on_plugin_startup(self.hook_manager, self.config_db)
+                except Exception as init_err:
+                    logger.error(f"Failed to execute startup hook on validation for {provider_id}: {init_err}")
 
                 # Sprint 6: Sync UI manifest into ui_components table
                 try:
