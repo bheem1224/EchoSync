@@ -23,119 +23,8 @@ from core.settings import config_manager
 logger = get_logger("plugin_loader")
 import zlib
 
-# Case-Preserved Namespace Aliasing Finder & Loader
-from importlib.abc import MetaPathFinder, Loader
-from importlib.machinery import ModuleSpec
-
-class CaseInsensitiveAliasFinder(MetaPathFinder):
-    def find_spec(self, fullname, path, target=None):
-        if not fullname.startswith("plugins."):
-            return None
-        
-        req_lower = fullname.lower()
-        
-        # Check existing sys.modules keys first for exact/beta mapping
-        for existing_name in list(sys.modules.keys()):
-            if not existing_name.startswith("plugins."):
-                continue
-            
-            existing_lower = existing_name.lower()
-            
-            # Match 1: Exact case-insensitive match
-            if existing_lower == req_lower:
-                return ModuleSpec(fullname, CaseInsensitiveLoader(existing_name))
-                
-            # Match 2: existing has .beta, req does not
-            if ".beta" in existing_lower:
-                existing_no_beta = existing_lower.replace(".beta", "")
-                if existing_no_beta == req_lower:
-                    return ModuleSpec(fullname, CaseInsensitiveLoader(existing_name))
-                    
-            # Match 3: req does not have .beta, existing has .beta
-            if ".beta" in existing_lower:
-                if req_lower + ".beta" == existing_lower:
-                    return ModuleSpec(fullname, CaseInsensitiveLoader(existing_name))
-                    
-                req_parts = req_lower.split('.')
-                if len(req_parts) >= 3:
-                    # Insert 'beta' at index 3
-                    with_beta_parts = req_parts[:3] + ['beta'] + req_parts[3:]
-                    with_beta = ".".join(with_beta_parts)
-                    if with_beta == existing_lower:
-                        return ModuleSpec(fullname, CaseInsensitiveLoader(existing_name))
-        
-        # Fallback: Resolve casing and channel dynamically from disk
-        resolved_name = self.resolve_casing(fullname)
-        if resolved_name and resolved_name != fullname:
-            return ModuleSpec(fullname, CaseInsensitiveLoader(resolved_name))
-            
-        return None
-
-    def resolve_casing(self, fullname: str) -> Optional[str]:
-        parts = fullname.split('.')
-        resolved_parts = ["plugins"]
-        from core.settings import config_manager
-        plugins_dir = Path(config_manager.get_plugins_dir())
-        current_path = plugins_dir
-        
-        idx = 1
-        while idx < len(parts):
-            part = parts[idx]
-            part_lower = part.lower()
-            
-            matched_name = None
-            if current_path.exists() and current_path.is_dir():
-                try:
-                    for item in current_path.iterdir():
-                        if item.name.lower() == part_lower:
-                            matched_name = item.name
-                            break
-                except OSError:
-                    pass
-            
-            if matched_name:
-                resolved_parts.append(matched_name)
-                current_path = current_path / matched_name
-            else:
-                resolved_parts.append(part)
-                current_path = current_path / part
-            
-            # After matching part 2 (length of resolved_parts is 3: plugins, Author, Plugin)
-            if len(resolved_parts) == 3:
-                plugin_id = f"{resolved_parts[1]}.{resolved_parts[2]}"
-                channel = config_manager.get_plugin_channel(plugin_id)
-                if channel == 'beta' and (current_path / 'beta').exists():
-                    resolved_parts.append('beta')
-                    current_path = current_path / 'beta'
-                    # If next part in parts is explicitly 'beta', skip it
-                    if idx + 1 < len(parts) and parts[idx + 1].lower() == 'beta':
-                        idx += 1
-            
-            idx += 1
-            
-        return ".".join(resolved_parts)
-
-class CaseInsensitiveLoader(Loader):
-    def __init__(self, target_name):
-        self.target_name = target_name
-        
-    def create_module(self, spec):
-        import sys
-        import importlib
-        if self.target_name not in sys.modules:
-            importlib.import_module(self.target_name)
-        return sys.modules[self.target_name]
-        
-    def exec_module(self, module):
-        pass
-
-_finder_registered = False
-def ensure_alias_finder():
-    global _finder_registered
-    if not _finder_registered:
-        import sys
-        sys.meta_path.insert(0, CaseInsensitiveAliasFinder())
-        _finder_registered = True
+# The sys.meta_path hooks (CaseInsensitiveAliasFinder) have been excised.
+# We now use One-Time Authoritative Module Pre-Registration directly in _load_plugin_package.
 
 def generate_plugin_id(name: str) -> int:
     """Generate a consistent 32-bit integer ID from a plugin name."""
@@ -917,13 +806,24 @@ class PluginLoader:
                     snapshot_modules = dict(sys.modules)
                     try:
                         importlib.invalidate_caches()
-                        ensure_alias_finder()
-                        module = importlib.import_module(module_path)
                         
-                        # Programmatically register case-insensitive direct key aliases in sys.modules
+                        import importlib.util
+                        spec = importlib.util.find_spec(module_path)
+                        if spec is None:
+                            raise ModuleNotFoundError(f"No module named {module_path}")
+                        
+                        module = importlib.util.module_from_spec(spec)
+                        
+                        # One-Time Authoritative Module Pre-Registration
+                        # Inject the case-preserved module path reference into sys.modules prior to execution
+                        sys.modules[module_path] = module
                         sys.modules[f"plugins.{clean_ns.lower()}"] = module
                         if is_beta:
                             sys.modules[f"plugins.{clean_ns.lower()}.beta"] = module
+                            
+                        # Execute the module code
+                        spec.loader.exec_module(module)
+                        
                     except Exception as e:
                         logger.error(f"Module compilation failed: {e}")
                         sys.modules.clear()
