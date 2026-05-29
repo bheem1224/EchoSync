@@ -57,6 +57,13 @@ def _query_ui_registry() -> dict:
             plugin_name = row["plugin_name"]
             is_core = bool(row["is_core"])
 
+            # If stored as relative path, reconstruct the absolute endpoint URL
+            if entry_path and not (entry_path.startswith("/") or entry_path.startswith("http://") or entry_path.startswith("https://")):
+                ident = plugin_name.lower() if plugin_name else str(plugin_id)
+                entry = f"/api/system/plugins/{ident}/{entry_path}"
+            else:
+                entry = entry_path
+
             # Pluralise the type key for the response (card → cards, page → pages)
             type_key = f"{comp_type}s" if not comp_type.endswith("s") else comp_type
 
@@ -65,7 +72,7 @@ def _query_ui_registry() -> dict:
 
             registry[type_key].append({
                 "tag_name": tag_name,
-                "entry": entry_path,
+                "entry": entry,
                 "plugin_id": plugin_id,
                 "plugin_name": plugin_name,
                 "is_core": is_core,

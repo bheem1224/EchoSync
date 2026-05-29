@@ -454,32 +454,26 @@ def serve_plugin_ui(plugin_id, filename):
 
     ui_dir = None
     if install_path:
-        path = os.path.abspath(os.path.join(install_path, 'ui'))
-        if os.path.exists(path):
-            ui_dir = path
-        else:
-            path = os.path.abspath(os.path.join(install_path, 'beta', 'ui'))
-            if os.path.exists(path):
-                ui_dir = path
+        from core.nexus_framework.plugin_loader import find_case_insensitive_path
+        resolved_install = find_case_insensitive_path(Path(install_path))
+        if resolved_install:
+            resolved_ui = find_case_insensitive_path(resolved_install / "ui")
+            if resolved_ui:
+                ui_dir = str(resolved_ui)
 
     if not ui_dir:
         # Strip prefixes if present
         clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
         plugins_dir = config_manager.get_plugins_dir()
-        base_dirs = [str(plugins_dir)]
-
-        for base in base_dirs:
-            # Check standard folder
-            path = os.path.abspath(os.path.join(base, clean_id, 'ui'))
-            if os.path.exists(path):
-                ui_dir = path
-                break
-            
-            # Check beta folder
-            path = os.path.abspath(os.path.join(base, clean_id, 'beta', 'ui'))
-            if os.path.exists(path):
-                ui_dir = path
-                break
+        
+        from core.nexus_framework.plugin_loader import find_case_insensitive_path
+        resolved_ui = find_case_insensitive_path(Path(plugins_dir) / clean_id / "ui")
+        if resolved_ui:
+            ui_dir = str(resolved_ui)
+        else:
+            resolved_ui = find_case_insensitive_path(Path(plugins_dir) / clean_id / "beta" / "ui")
+            if resolved_ui:
+                ui_dir = str(resolved_ui)
 
     if not ui_dir:
         logger.error(f"Plugin UI folder NOT FOUND for {plugin_id}.")
@@ -520,32 +514,26 @@ def serve_plugin_static(plugin_id, filename):
 
     static_dir = None
     if install_path:
-        path = os.path.abspath(os.path.join(install_path, 'static'))
-        if os.path.exists(path):
-            static_dir = path
-        else:
-            path = os.path.abspath(os.path.join(install_path, 'beta', 'static'))
-            if os.path.exists(path):
-                static_dir = path
+        from core.nexus_framework.plugin_loader import find_case_insensitive_path
+        resolved_install = find_case_insensitive_path(Path(install_path))
+        if resolved_install:
+            resolved_static = find_case_insensitive_path(resolved_install / "static")
+            if resolved_static:
+                static_dir = str(resolved_static)
 
     if not static_dir:
         # Strip prefixes if present
         clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
         plugins_dir = config_manager.get_plugins_dir()
-        base_dirs = [str(plugins_dir)]
 
-        for base in base_dirs:
-            # Check standard static folder
-            path = os.path.abspath(os.path.join(base, clean_id, 'static'))
-            if os.path.exists(path):
-                static_dir = path
-                break
-            
-            # Check beta folder static folder
-            path = os.path.abspath(os.path.join(base, clean_id, 'beta', 'static'))
-            if os.path.exists(path):
-                static_dir = path
-                break
+        from core.nexus_framework.plugin_loader import find_case_insensitive_path
+        resolved_static = find_case_insensitive_path(Path(plugins_dir) / clean_id / "static")
+        if resolved_static:
+            static_dir = str(resolved_static)
+        else:
+            resolved_static = find_case_insensitive_path(Path(plugins_dir) / clean_id / "beta" / "static")
+            if resolved_static:
+                static_dir = str(resolved_static)
 
     if not static_dir:
         logger.error(f"Plugin asset folder NOT FOUND for {plugin_id}.")

@@ -28,6 +28,33 @@ def generate_plugin_id(name: str) -> int:
     return zlib.crc32(name.encode('utf-8')) & 0xFFFFFFFF
 
 
+def get_relative_entry_path(url_or_path: str) -> str:
+    """
+    Extracts the relative path within the plugin's install directory from
+    absolute paths, relative paths, or URL paths (e.g. `/api/system/plugins/spotify/static/bundle.js` -> `static/bundle.js`).
+    """
+    if not url_or_path:
+        return ""
+    if url_or_path.startswith("http://") or url_or_path.startswith("https://"):
+        return url_or_path
+    
+    # Normalize slashes
+    normalized = url_or_path.replace("\\", "/").lstrip("/")
+    parts = normalized.split("/")
+    
+    # 1. Check for /api/system/plugins/<plugin_id>/<relative_path>
+    if len(parts) >= 4 and parts[0] == "api" and parts[1] == "system" and parts[2] == "plugins":
+        return "/".join(parts[4:])
+    # 2. Check for /api/plugins/<plugin_id>/<relative_path>
+    elif len(parts) >= 3 and parts[0] == "api" and parts[1] == "plugins":
+        return "/".join(parts[3:])
+    # 3. Check for /plugins/<plugin_id>/<relative_path>
+    elif len(parts) >= 2 and parts[0] == "plugins":
+        return "/".join(parts[2:])
+        
+    return normalized
+
+
 def _sync_ui_components_to_db(plugin_id: int, install_path: str, is_core: bool = False) -> None:
     """Read ui_manifest.json once and UPSERT component definitions into ui_components.
 
@@ -38,8 +65,14 @@ def _sync_ui_components_to_db(plugin_id: int, install_path: str, is_core: bool =
     from database import execute_write
 
     manifest_path = Path(install_path) / "ui_manifest.json"
-    if not manifest_path.exists():
-        return
+    resolved_manifest = find_case_insensitive_path(manifest_path)
+    if not resolved_manifest:
+        # Check standard and beta fallbacks just in case
+        manifest_path = Path(install_path) / "beta" / "ui_manifest.json"
+        resolved_manifest = find_case_insensitive_path(manifest_path)
+        if not resolved_manifest:
+            return
+    manifest_path = resolved_manifest
 
     try:
         manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -72,18 +105,22 @@ def _sync_ui_components_to_db(plugin_id: int, install_path: str, is_core: bool =
     entries: list[tuple[str, str, str]] = []
     for category, value in raw_components.items():
         if isinstance(value, str):
-            entries.append((value, category, bundle_url))
+            rel_path = get_relative_entry_path(bundle_url)
+            entries.append((value, category, rel_path))
         elif isinstance(value, dict):
             tag = value.get("element_tag", "")
             entry = value.get("bundle_url") or bundle_url
             if tag:
-                entries.append((tag, category, entry))
+                rel_path = get_relative_entry_path(entry)
+                entries.append((tag, category, rel_path))
 
     # Also materialise views as component_type="view"
     for view in manifest_data.get("views", []):
         if isinstance(view, dict) and view.get("id"):
             tag = f"es-view-{view['id']}"
-            entries.append((tag, "view", view.get("yaml_path", "")))
+            yaml_path = view.get("yaml_path", "")
+            rel_path = get_relative_entry_path(yaml_path)
+            entries.append((tag, "view", rel_path))
 
     if not entries:
         return
