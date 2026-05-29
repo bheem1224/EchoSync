@@ -611,14 +611,31 @@ class PluginStore:
                 if channel == "stable" and beta_dir.exists():
                     shutil.rmtree(beta_dir, ignore_errors=True)
 
+                backup_dir = None
                 if target_dir.exists():
-                    shutil.rmtree(target_dir, ignore_errors=True)
+                    backup_dir = target_dir.parent / f"{target_dir.name}_backup"
+                    if backup_dir.exists():
+                        shutil.rmtree(backup_dir, ignore_errors=True)
+                    try:
+                        os.rename(str(target_dir), str(backup_dir))
+                        logger.info(f"Backed up target_dir to {backup_dir}")
+                    except Exception as backup_err:
+                        logger.warning(f"Failed to backup target_dir, falling back to direct removal: {backup_err}")
+                        shutil.rmtree(target_dir, ignore_errors=True)
+                        backup_dir = None
 
-                if not target_dir.parent.exists():
-                    target_dir.parent.mkdir(parents=True, exist_ok=True)
-
-                os.rename(str(tmp_dir), str(target_dir))
-                logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
+                try:
+                    if not target_dir.parent.exists():
+                        target_dir.parent.mkdir(parents=True, exist_ok=True)
+                    os.rename(str(tmp_dir), str(target_dir))
+                    logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
+                    if backup_dir and backup_dir.exists():
+                        shutil.rmtree(backup_dir, ignore_errors=True)
+                except Exception as swap_err:
+                    logger.error(f"Atomic swap failed, rolling back: {swap_err}")
+                    if backup_dir and backup_dir.exists():
+                        os.rename(str(backup_dir), str(target_dir))
+                    raise swap_err
 
                 # Task 1: Localized Dependency Installation (Micro-Venv)
                 requirements_file = target_dir / "requirements.txt"
@@ -684,6 +701,18 @@ class PluginStore:
                     db = get_config_database()
                     
                     is_official = "raw.githubusercontent.com/bheem1224/EchoSync" in download_url
+                    manifest_verified = 1 if (is_official or new_manifest.get("verified_source") == "official") else 0
+                    manifest_privileged = 1 if (new_manifest.get("privileged") is True or new_manifest.get("permissions", {}).get("privileged_mode") is True) else 0
+                    
+                    manifest_permissions = '[]'
+                    m_perms = new_manifest.get("permissions")
+                    if m_perms is not None:
+                        if isinstance(m_perms, list):
+                            manifest_permissions = json.dumps(m_perms)
+                        elif isinstance(m_perms, str):
+                            manifest_permissions = m_perms
+                        elif isinstance(m_perms, dict):
+                            manifest_permissions = json.dumps(m_perms)
                     
                     computed_plugin_id = target_plugin_id if target_plugin_id else binascii.crc32(strict_namespace.lower().encode('utf-8')) & 0xFFFFFFFF
 
@@ -693,15 +722,13 @@ class PluginStore:
                         description=manifest_desc,
                         absolute_install_path=str(target_dir.resolve()),
                         plugin_id=computed_plugin_id,
-                        version=manifest_version
+                        version=manifest_version,
+                        beta_opt_in=1 if channel == "beta" else 0,
+                        verified_source=manifest_verified,
+                        privileged_mode=manifest_privileged,
+                        permissions=manifest_permissions
                     )
                     
-                    with db._get_connection() as conn:
-                        c = conn.cursor()
-                        c.execute("UPDATE services SET verified_source=?, beta_opt_in=? WHERE plugin_id=?", 
-                                 (1 if is_official else 0, 1 if channel == "beta" else 0, computed_plugin_id))
-                        conn.commit()
-                            
                     logger.info(f"Synchronized database state for plugin {strict_namespace} (CRC32: {computed_plugin_id})")
                 except Exception as e:
                     logger.error(f"Failed to synchronize database state for {strict_namespace}: {e}")

@@ -453,7 +453,7 @@ class ConfigDatabase:
 
         return 0
 
-    def register_service(self, name: str, service_type: str, description: str, absolute_install_path: Optional[str] = None, plugin_id: Optional[int] = None, version: Optional[str] = None, loaded_modules: Optional[str] = None) -> int:
+    def register_service(self, name: str, service_type: str, description: str, absolute_install_path: Optional[str] = None, plugin_id: Optional[int] = None, version: Optional[str] = None, loaded_modules: Optional[str] = None, beta_opt_in: Optional[int] = None, verified_source: Optional[int] = None, privileged_mode: Optional[int] = None, permissions: Optional[str] = None) -> int:
         import binascii
         if plugin_id is None:
             # Fallback CRC32 generation if not provided (ALWAYS use full lowercase namespace for consistency)
@@ -471,17 +471,21 @@ class ConfigDatabase:
             execute_write_sql(
                 str(self.database_path), 
                 """
-                INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active)
-                VALUES(?,?,?,?,?,?,?,1)
+                INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active, beta_opt_in, verified_source, privileged_mode, permissions)
+                VALUES(?,?,?,?,?,?,?,1,COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, '[]'))
                 ON CONFLICT(plugin_id) DO UPDATE SET 
                     name=excluded.name,
                     absolute_install_path=excluded.absolute_install_path,
                     loaded_modules=excluded.loaded_modules,
                     version=excluded.version,
                     is_active=1,
+                    beta_opt_in=COALESCE(excluded.beta_opt_in, services.beta_opt_in, 0),
+                    verified_source=COALESCE(excluded.verified_source, services.verified_source, 0),
+                    privileged_mode=COALESCE(excluded.privileged_mode, services.privileged_mode, 0),
+                    permissions=COALESCE(excluded.permissions, services.permissions, '[]'),
                     updated_at=strftime('%s','now')
                 """, 
-                (name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version)
+                (name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, beta_opt_in, verified_source, privileged_mode, permissions)
             )
         except Exception as e:
             logger.error(f"Error registering service '{name}': {e}")

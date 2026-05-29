@@ -254,6 +254,36 @@ class PluginSecurityScanner(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def find_case_insensitive_path(path: Path) -> Optional[Path]:
+    """
+    Recursively scans the filesystem to match path components case-insensitively.
+    Returns the resolved Path with correct casing if found, or None.
+    """
+    if path.exists():
+        return path
+    parts = path.parts
+    if not parts:
+        return None
+    
+    # Start from root or drive letter
+    curr = Path(parts[0])
+    for part in parts[1:]:
+        if not curr.exists() or not curr.is_dir():
+            return None
+        matched = False
+        try:
+            for child in curr.iterdir():
+                if child.name.lower() == part.lower():
+                    curr = child
+                    matched = True
+                    break
+        except Exception:
+            return None
+        if not matched:
+            return None
+    return curr
+
+
 class PluginLoader:
     """
     Scans and loads providers from 'providers/' (core) and 'plugins/' (community).
@@ -341,11 +371,10 @@ class PluginLoader:
         
         import sqlite3
         import binascii
-        import shutil
         from database.config_database import get_config_database
         db = get_config_database()
         
-        # 1. Clean up physical plugin folders in the wrong structure or directory
+        # 1. Check physical plugin folders in the wrong structure or directory
         plugins_dir = Path(config_manager.get_plugins_dir())
         if plugins_dir.exists():
             for author_item in list(plugins_dir.iterdir()):
@@ -355,8 +384,7 @@ class PluginLoader:
                 # Check for legacy flat plugin (contains manifest.json, __init__.py, or main.wasm directly in plugins_dir/item)
                 is_flat_plugin = (author_item / "manifest.json").exists() or (author_item / "__init__.py").exists() or (author_item / "main.wasm").exists()
                 if is_flat_plugin:
-                    logger.warning(f"Pruning invalid flat legacy plugin folder: {author_item}")
-                    shutil.rmtree(author_item, ignore_errors=True)
+                    logger.warning(f"Found invalid flat legacy plugin folder: {author_item}")
                     continue
                 
                 # Nested author folder structure check
@@ -374,8 +402,7 @@ class PluginLoader:
                         (plugin_item / "beta" / "main.wasm").exists()
                     )
                     if not has_entry:
-                        logger.warning(f"Pruning invalid plugin subfolder without entry points: {plugin_item}")
-                        shutil.rmtree(plugin_item, ignore_errors=True)
+                        logger.warning(f"Found invalid plugin subfolder without entry points: {plugin_item}")
                         continue
                     
                     # Check if manifest.json exists and parse it to make sure the author/plugin matches the folder structure
@@ -401,13 +428,12 @@ class PluginLoader:
                                 plugin_ok = (norm_plugin == norm_exp_plugin)
                                 
                                 if not author_ok or not plugin_ok:
-                                    logger.warning(f"Pruning folder {plugin_item} because it does not match manifest ID '{manifest_id}'")
-                                    shutil.rmtree(plugin_item, ignore_errors=True)
+                                    logger.warning(f"Folder {plugin_item} does not match manifest ID '{manifest_id}'")
                                     continue
                         except Exception as e:
                             logger.error(f"Error validating manifest in {plugin_item}: {e}")
 
-        # 2. Physical Scan of Plugins after physical cleanup
+        # 2. Physical Scan of Plugins after physical scan
         physical_plugins = get_all_plugins()
         # Map physical plugins by their CRC32 integer of lowercase ID to match database plugin_id perfectly
         physical_plugin_map = {}
@@ -424,12 +450,26 @@ class PluginLoader:
         app_root = self.app_root
         core_path = str((app_root / "core").resolve())
         
+        def has_valid_entry_point(path: Path) -> bool:
+            return (
+                (path / "manifest.json").exists() or 
+                (path / "__init__.py").exists() or 
+                (path / "main.wasm").exists() or
+                (path / "beta" / "manifest.json").exists() or
+                (path / "beta" / "__init__.py").exists() or
+                (path / "beta" / "main.wasm").exists()
+            )
+        
         with db._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
             
-            # Fetch existing records
-            c.execute("SELECT id, name, plugin_id, service_type, absolute_install_path, is_active, version FROM services")
+            # Fetch existing records with all metadata fields to ensure we don't write NULLs
+            c.execute("""
+                SELECT id, name, plugin_id, service_type, absolute_install_path, is_active, version, 
+                       beta_opt_in, verified_source, privileged_mode, permissions 
+                FROM services
+            """)
             existing_rows = c.fetchall()
             
             seen_plugin_ids = set()
@@ -443,6 +483,10 @@ class PluginLoader:
                 install_path = row['absolute_install_path']
                 version = row['version']
                 is_active = row['is_active']
+                beta_opt_in = row['beta_opt_in']
+                verified_source = row['verified_source']
+                privileged_mode = row['privileged_mode']
+                permissions = row['permissions']
                 
                 # Check for duplicates or invalid names
                 is_duplicate = False
@@ -466,9 +510,12 @@ class PluginLoader:
                     logger.info(f"Overwriting and populating core service: {name} (install path -> {core_path})")
                     c.execute("""
                         UPDATE services 
-                        SET plugin_id=?, absolute_install_path=?, version=?, service_type=?, is_active=?, description=?, updated_at=strftime('%s','now')
+                        SET plugin_id=?, absolute_install_path=?, version=?, service_type=?, is_active=?, 
+                            description=?, beta_opt_in=?, verified_source=?, privileged_mode=?, permissions=?, 
+                            updated_at=strftime('%s','now')
                         WHERE id=?
-                    """, (target_plugin_id, core_path, '2.5.2', 'streaming', is_active if is_active is not None else 1, f"{name.capitalize()} service", db_id))
+                    """, (target_plugin_id, core_path, '2.5.2', 'system', 1, 
+                          f"{name.capitalize()} service", 0, 1, 1, '[]', db_id))
                     continue
                 
                 # Community Plugin handling
@@ -480,79 +527,88 @@ class PluginLoader:
                     is_invalid = True
                     reason = "Duplicate record"
                 else:
-                    plugin_info = physical_plugin_map.get(p_id) if p_id is not None else None
-                    if not plugin_info:
+                    if not install_path:
                         is_invalid = True
-                        reason = "No physically scanned plugin matching plugin_id"
+                        reason = "Empty absolute_install_path in database"
                     else:
-                        p_id_str = plugin_info.get('id')
-                        parts = p_id_str.split('.')
-                        if len(parts) < 2:
-                            is_invalid = True
-                            reason = f"Scanned plugin ID '{p_id_str}' does not follow author.plugin schema"
-                        else:
-                            dev_name, plugin_name = parts[0], parts[1]
-                            expected_base = (plugins_dir / dev_name / plugin_name).resolve()
-                            expected_beta = (plugins_dir / dev_name / plugin_name / "beta").resolve()
+                        try:
+                            resolved_install = Path(install_path).resolve()
+                            resolved_plugins_dir = Path(plugins_dir).resolve()
                             
-                            # Path verification: must match user defined/derived install folder
-                            if not install_path:
+                            is_in_plugins_dir = str(resolved_install).lower().startswith(str(resolved_plugins_dir).lower())
+                            
+                            if not is_in_plugins_dir:
                                 is_invalid = True
-                                reason = "Empty absolute_install_path in database"
+                                reason = f"Install path '{install_path}' is outside plugins directory '{plugins_dir}'"
                             else:
-                                try:
-                                    resolved_install = Path(install_path).resolve()
-                                    if resolved_install != expected_base and resolved_install != expected_beta:
+                                resolved_install_case = find_case_insensitive_path(resolved_install)
+                                if resolved_install_case:
+                                    resolved_install = resolved_install_case
+                                    install_path = str(resolved_install)
+                                    
+                                    if not has_valid_entry_point(resolved_install):
                                         is_invalid = True
-                                        reason = f"Install path '{install_path}' does not match expected derived folder structure: {expected_base}"
-                                    elif not resolved_install.exists():
-                                        is_invalid = True
-                                        reason = f"Physical install path does not exist: {install_path}"
-                                except Exception as e:
-                                    is_invalid = True
-                                    reason = f"Invalid path syntax: {e}"
-                            
-                            # Name in database does not match the manifest name
-                            manifest_name = plugin_info.get('name')
-                            if manifest_name and name != manifest_name:
-                                is_invalid = True
-                                reason = f"Database name '{name}' does not match manifest name '{manifest_name}'"
+                                        reason = f"Install path '{install_path}' does not contain entry points"
+                                else:
+                                    # Path does not exist physically on disk, but it is inside the plugins directory.
+                                    # We skip pruning to be robust across environments (e.g. host vs container).
+                                    logger.debug(f"Install path '{install_path}' does not exist, but is inside plugins directory. Skipping pruning.")
+                        except Exception as e:
+                            is_invalid = True
+                            reason = f"Invalid path syntax: {e}"
                 
                 if is_invalid:
-                    logger.warning(f"🚨 Authoritative Pruning: Deleting invalid database record and cleanup service: {name} (ID: {db_id}, Reason: {reason})")
+                    logger.warning(f"🚨 Authoritative Pruning: Deleting invalid database record: {name} (ID: {db_id}, Reason: {reason})")
                     c.execute("DELETE FROM services WHERE id=?", (db_id,))
                     c.execute("DELETE FROM service_config WHERE service_id=?", (db_id,))
                     if p_id is not None:
                         c.execute("DELETE FROM ui_components WHERE plugin_id=?", (p_id,))
-                    
-                    # Clean up physical files associated if they exist
-                    if install_path:
-                        try:
-                            p_path = Path(install_path).resolve()
-                            # Critical safety check: Only prune if the path is safely inside plugins_dir
-                            if p_path.exists() and p_path.is_dir():
-                                try:
-                                    p_path.relative_to(plugins_dir.resolve())
-                                    logger.info(f"Removing invalid plugin files at safely scoped path: {install_path}")
-                                    shutil.rmtree(p_path, ignore_errors=True)
-                                except ValueError:
-                                    logger.warning(f"Refusing to delete physical files at {install_path} as it is outside the plugins directory sandbox.")
-                        except Exception as e:
-                            logger.error(f"Error pruning physical files at {install_path}: {e}")
                     continue
                 
                 # Valid physical plugin: overwrite/update details to ensure consistency and prevent stale data
-                manifest_display_name = plugin_info.get('name') or name
-                manifest_version = plugin_info.get('version', '1.0.0')
-                manifest_desc = plugin_info.get('description', 'Community plugin')
-                manifest_type = plugin_info.get('type') or service_type or 'provider'
-                manifest_path = plugin_info.get('abs_path') or install_path
+                plugin_info = physical_plugin_map.get(p_id) if p_id is not None else None
+                manifest_display_name = (plugin_info.get('name') if plugin_info else None) or name
+                manifest_version = (plugin_info.get('version') if plugin_info else None) or version or '1.0.0'
+                manifest_desc = (plugin_info.get('description') if plugin_info else None) or 'Community plugin'
+                manifest_type = (plugin_info.get('type') if plugin_info else None) or service_type or 'provider'
+                manifest_path = install_path
                 
+                manifest_verified = 0
+                manifest_privileged = 0
+                manifest_permissions = '[]'
+                if manifest_path:
+                    m_file = Path(manifest_path) / "manifest.json"
+                    if not m_file.exists() and (Path(manifest_path) / "beta" / "manifest.json").exists():
+                        m_file = Path(manifest_path) / "beta" / "manifest.json"
+                    if m_file.exists():
+                        try:
+                            m_data = json.loads(m_file.read_text(encoding="utf-8"))
+                            if m_data.get("verified_source") == "official":
+                                manifest_verified = 1
+                            if m_data.get("privileged") is True:
+                                manifest_privileged = 1
+                            if isinstance(m_data.get("permissions"), list):
+                                manifest_permissions = json.dumps(m_data.get("permissions"))
+                            elif isinstance(m_data.get("permissions"), str):
+                                manifest_permissions = m_data.get("permissions")
+                        except Exception:
+                            pass
+
+                # Preserve current database values if not None, otherwise use manifest or defaults
+                beta_opt_in = 0 if beta_opt_in is None else beta_opt_in
+                verified_source = manifest_verified if verified_source is None else verified_source
+                privileged_mode = manifest_privileged if privileged_mode is None else privileged_mode
+                permissions = manifest_permissions if permissions is None else permissions
+                is_active = 1 if is_active is None else is_active
+
                 c.execute("""
                     UPDATE services 
-                    SET name=?, plugin_id=?, absolute_install_path=?, version=?, service_type=?, description=?, updated_at=strftime('%s','now')
+                    SET name=?, plugin_id=?, absolute_install_path=?, version=?, service_type=?, description=?, 
+                        is_active=?, beta_opt_in=?, verified_source=?, privileged_mode=?, permissions=?, 
+                        updated_at=strftime('%s','now')
                     WHERE id=?
-                """, (manifest_display_name, p_id, manifest_path, manifest_version, manifest_type, manifest_desc, db_id))
+                """, (manifest_display_name, p_id, manifest_path, manifest_version, manifest_type, manifest_desc, 
+                      is_active, beta_opt_in, verified_source, privileged_mode, permissions, db_id))
 
                 # Sprint 6: Sync UI manifest into ui_components table
                 try:
@@ -573,11 +629,34 @@ class PluginLoader:
                     manifest_type = p_info.get('type') or 'provider'
                     manifest_path = p_info.get('abs_path')
                     
+                    manifest_verified = 0
+                    manifest_privileged = 0
+                    manifest_permissions = '[]'
+                    if manifest_path:
+                        m_file = Path(manifest_path) / "manifest.json"
+                        if not m_file.exists() and (Path(manifest_path) / "beta" / "manifest.json").exists():
+                            m_file = Path(manifest_path) / "beta" / "manifest.json"
+                        if m_file.exists():
+                            try:
+                                m_data = json.loads(m_file.read_text(encoding="utf-8"))
+                                if m_data.get("verified_source") == "official":
+                                    manifest_verified = 1
+                                if m_data.get("privileged") is True:
+                                    manifest_privileged = 1
+                                if isinstance(m_data.get("permissions"), list):
+                                    manifest_permissions = json.dumps(m_data.get("permissions"))
+                                elif isinstance(m_data.get("permissions"), str):
+                                    manifest_permissions = m_data.get("permissions")
+                            except Exception:
+                                pass
+                    
                     logger.info(f"Registering newly discovered physical plugin: {p_info.get('id')} (path: {manifest_path})")
                     c.execute("""
-                        INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, created_at, updated_at)
-                        VALUES(?, ?, ?, ?, ?, ?, 1, strftime('%s','now'), strftime('%s','now'))
-                    """, (manifest_display_name, p_crc, manifest_type, manifest_desc, manifest_path, manifest_version))
+                        INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, 
+                                             beta_opt_in, verified_source, privileged_mode, permissions, created_at, updated_at)
+                        VALUES(?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, strftime('%s','now'), strftime('%s','now'))
+                    """, (manifest_display_name, p_crc, manifest_type, manifest_desc, manifest_path, manifest_version,
+                          manifest_verified, manifest_privileged, manifest_permissions))
             
             # 6. Ensure all core services are present in the database (bootstrap if missing)
             for name in core_services:
@@ -586,8 +665,9 @@ class PluginLoader:
                 if not c.fetchone():
                     logger.info(f"Bootstrapping missing core service: {name} (install path -> {core_path})")
                     c.execute("""
-                        INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, created_at, updated_at)
-                        VALUES(?, ?, 'streaming', ?, ?, '2.5.2', 1, strftime('%s','now'), strftime('%s','now'))
+                        INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, 
+                                             beta_opt_in, verified_source, privileged_mode, permissions, created_at, updated_at)
+                        VALUES(?, ?, 'system', ?, ?, '2.5.2', 1, 0, 1, 1, '[]', strftime('%s','now'), strftime('%s','now'))
                     """, (name, target_plugin_id, f"{name.capitalize()} service", core_path))
             
             conn.commit()

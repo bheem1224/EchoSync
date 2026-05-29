@@ -584,10 +584,35 @@ def cleanup_orphaned_plugin_databases():
         records = c.fetchall()
         for row in records:
             service_id, plugin_id, absolute_path = row[0], row[1], row[2]
-            if absolute_path and not Path(absolute_path).exists():
-                logger.warning(f"Sweeper detected missing plugin folder for plugin_id {plugin_id}. Removing ghost registry entry.")
-                # We could delete the service, or just mark it inactive. Safest is to delete completely if the folder is gone.
-                c.execute("DELETE FROM services WHERE id=?", (service_id,))
+            
+            is_in_plugins_dir = False
+            if absolute_path:
+                try:
+                    resolved_path = Path(absolute_path).resolve()
+                    resolved_plugins_dir = Path(config_manager.get_plugins_dir()).resolve()
+                    is_in_plugins_dir = str(resolved_path).lower().startswith(str(resolved_plugins_dir).lower())
+                except Exception:
+                    is_in_plugins_dir = False
+            
+            if absolute_path:
+                exists = False
+                if is_in_plugins_dir:
+                    try:
+                        from core.nexus_framework.plugin_loader import find_case_insensitive_path
+                        exists = find_case_insensitive_path(Path(absolute_path)) is not None
+                    except Exception:
+                        exists = False
+                else:
+                    try:
+                        exists = Path(absolute_path).exists()
+                    except Exception:
+                        exists = False
+
+                if not exists and not is_in_plugins_dir:
+                    logger.warning(f"Sweeper detected missing plugin folder outside plugins dir for plugin_id {plugin_id}: {absolute_path}. Removing ghost registry entry.")
+                    c.execute("DELETE FROM services WHERE id=?", (service_id,))
+                elif plugin_id:
+                    active_ids.add(str(plugin_id))
             elif plugin_id:
                 active_ids.add(str(plugin_id))
         conn.commit()
