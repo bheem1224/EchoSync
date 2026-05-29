@@ -453,10 +453,13 @@ def toggle_plugin(plugin_id):
 
     return jsonify({"success": True})
 
-@bp.route('/<plugin_id>/ui/<path:filename>', methods=['GET'])
+@bp.route('/<plugin_id>/<path:filename>', methods=['GET'])
 @require_auth
-def serve_plugin_ui(plugin_id, filename):
-    # Try resolving via database record first
+def serve_plugin_asset(plugin_id, filename):
+    """
+    Serve static assets (JS bundles, CSS, UI files, etc.) for a plugin.
+    Uses the database's absolute_install_path and appends the requested path.
+    """
     from database.config_database import get_config_database
     db = get_config_database()
     service_id = db.get_service_id(plugin_id)
@@ -469,103 +472,41 @@ def serve_plugin_ui(plugin_id, filename):
             if row and row[0]:
                 install_path = row[0]
 
-    ui_dir = None
     if install_path:
         from core.nexus_framework.plugin_loader import find_case_insensitive_path
         resolved_install = find_case_insensitive_path(Path(install_path))
         if resolved_install:
-            resolved_ui = find_case_insensitive_path(resolved_install / "ui")
-            if resolved_ui:
-                ui_dir = str(resolved_ui)
+            file_path = find_case_insensitive_path(resolved_install / filename)
+            if file_path and file_path.exists():
+                resolved_file = os.path.abspath(str(file_path))
+                resolved_base = os.path.abspath(str(resolved_install))
+                if not resolved_file.startswith(resolved_base):
+                    logger.warning(f"Security: Blocked traversal attempt for {plugin_id}: {filename}")
+                    abort(403)
+                logger.info(f"Serving plugin asset: {resolved_file}")
+                return send_from_directory(str(file_path.parent), file_path.name)
 
-    if not ui_dir:
-        # Strip prefixes if present
-        clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
-        plugins_dir = config_manager.get_plugins_dir()
+    # Fallback to generic plugins directory if not found in db or file doesn't exist
+    clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
+    plugins_dir = config_manager.get_plugins_dir()
+    from core.nexus_framework.plugin_loader import find_case_insensitive_path
+
+    for sub in ["", "beta"]:
+        candidate_base = Path(plugins_dir) / clean_id
+        if sub:
+            candidate_base = candidate_base / sub
         
-        from core.nexus_framework.plugin_loader import find_case_insensitive_path
-        resolved_ui = find_case_insensitive_path(Path(plugins_dir) / clean_id / "ui")
-        if resolved_ui:
-            ui_dir = str(resolved_ui)
-        else:
-            resolved_ui = find_case_insensitive_path(Path(plugins_dir) / clean_id / "beta" / "ui")
-            if resolved_ui:
-                ui_dir = str(resolved_ui)
+        resolved_base = find_case_insensitive_path(candidate_base)
+        if resolved_base:
+            file_path = find_case_insensitive_path(resolved_base / filename)
+            if file_path and file_path.exists():
+                resolved_file = os.path.abspath(str(file_path))
+                resolved_base_abs = os.path.abspath(str(resolved_base))
+                if not resolved_file.startswith(resolved_base_abs):
+                    logger.warning(f"Security: Blocked traversal attempt for {plugin_id}: {filename}")
+                    abort(403)
+                logger.info(f"Serving plugin asset (fallback): {resolved_file}")
+                return send_from_directory(str(file_path.parent), file_path.name)
 
-    if not ui_dir:
-        logger.error(f"Plugin UI folder NOT FOUND for {plugin_id}.")
-        abort(404)
-
-    # Security check
-    file_path = os.path.abspath(os.path.join(ui_dir, filename))
-    if not file_path.startswith(ui_dir):
-        logger.warning(f"Security: Blocked UI traversal attempt for {plugin_id}: {filename}")
-        abort(403)
-
-    if not os.path.exists(file_path):
-        logger.error(f"Plugin UI file NOT FOUND: {file_path}")
-        abort(404)
-
-    return send_from_directory(ui_dir, filename)
-
-
-@bp.route('/<plugin_id>/static/<path:filename>', methods=['GET'])
-@require_auth
-def serve_plugin_static(plugin_id, filename):
-    """
-    Serve static assets (JS bundles, CSS, etc.) for a plugin.
-    Checks community plugins, beta channel, and core plugins.
-    """
-    # Try resolving via database record first
-    from database.config_database import get_config_database
-    db = get_config_database()
-    service_id = db.get_service_id(plugin_id)
-    install_path = None
-    if service_id:
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT absolute_install_path FROM services WHERE id=?", (service_id,))
-            row = c.fetchone()
-            if row and row[0]:
-                install_path = row[0]
-
-    static_dir = None
-    if install_path:
-        from core.nexus_framework.plugin_loader import find_case_insensitive_path
-        resolved_install = find_case_insensitive_path(Path(install_path))
-        if resolved_install:
-            resolved_static = find_case_insensitive_path(resolved_install / "static")
-            if resolved_static:
-                static_dir = str(resolved_static)
-
-    if not static_dir:
-        # Strip prefixes if present
-        clean_id = plugin_id.replace('core.', '').replace('plugin.', '').replace('.', '/')
-        plugins_dir = config_manager.get_plugins_dir()
-
-        from core.nexus_framework.plugin_loader import find_case_insensitive_path
-        resolved_static = find_case_insensitive_path(Path(plugins_dir) / clean_id / "static")
-        if resolved_static:
-            static_dir = str(resolved_static)
-        else:
-            resolved_static = find_case_insensitive_path(Path(plugins_dir) / clean_id / "beta" / "static")
-            if resolved_static:
-                static_dir = str(resolved_static)
-
-    if not static_dir:
-        logger.error(f"Plugin asset folder NOT FOUND for {plugin_id}.")
-        abort(404)
-
-    # Security check: Ensure we are not serving files outside the plugin static folder
-    # filename is already sanitized by Flask/Werkzeug to some extent
-    file_path = os.path.abspath(os.path.join(static_dir, filename))
-    if not file_path.startswith(static_dir):
-        logger.warning(f"Security: Blocked traversal attempt for {plugin_id}: {filename}")
-        abort(403)
-
-    if not os.path.exists(file_path):
-        logger.error(f"Plugin asset file NOT FOUND: {file_path}")
-        abort(404)
-
-    logger.info(f"Serving plugin asset: {file_path}")
-    return send_from_directory(static_dir, filename)
+    logger.error(f"Plugin asset folder or file NOT FOUND for {plugin_id}: {filename}")
+    abort(404)
