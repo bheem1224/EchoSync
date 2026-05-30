@@ -17,7 +17,7 @@
         .filter(p => {
           return (
             p.service_type === 'download_client' ||
-            ['slskd', 'transmission', 'qbittorrent'].includes((p.id || p.name || '').toLowerCase().replace('core.', ''))
+            ['slskd', 'transmission', 'qbittorrent'].includes(String(p.name || p.id || '').toLowerCase())
           );
         });
     } catch (err) {
