@@ -157,9 +157,9 @@
         .filter(item => item != null && item.tag)
         .filter((value, index, self) =>
           self.findIndex(item => {
-            // Deduplicate by normalizing IDs (strip core./plugin. prefixes) and comparing tags
-            const norm1 = String(item.plugin.id).replace('core.', '').replace('plugin.', '');
-            const norm2 = String(value.plugin.id).replace('core.', '').replace('plugin.', '');
+            // Deduplicate by normalizing IDs and comparing tags
+            const norm1 = String(item.plugin?.id || item.plugin_id);
+            const norm2 = String(value.plugin?.id || value.plugin_id);
             return (norm1 === norm2 && item.tag === value.tag);
           }) === index
         );

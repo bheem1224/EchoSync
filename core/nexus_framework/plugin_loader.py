@@ -713,8 +713,6 @@ class PluginLoader:
                         pass
 
                 clean_ns = plugin_name
-                if is_beta and not clean_ns.endswith(".beta"):
-                    clean_ns = f"{clean_ns}.beta"
 
                 from pathlib import Path
                 package_dir = Path(absolute_install_path)
@@ -722,7 +720,7 @@ class PluginLoader:
                 if not package_dir.exists():
                     raise ValueError(f"Plugin package {plugin_id} path {package_dir} does not exist on disk")
 
-                module_path = f"plugins.{clean_ns}.beta" if is_beta else f"plugins.{clean_ns}"
+                module_path = f"plugins.{clean_ns}.beta" if is_beta and not clean_ns.endswith(".beta") else f"plugins.{clean_ns}"
 
                 # 2. Extract metadata from manifest
                 version = "Unknown"

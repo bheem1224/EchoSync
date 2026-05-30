@@ -30,7 +30,7 @@
             p.capabilities?.fetch_metadata ||
             p.capabilities?.resolve_fingerprint ||
             p.service_type === 'metadata' ||
-            ['musicbrainz', 'acoustid', 'lrclib', 'listenbrainz'].includes((p.id || p.name || '').toLowerCase().replace('core.', ''))
+            ['musicbrainz', 'acoustid', 'lrclib', 'listenbrainz'].includes(String(p.name || p.id || '').toLowerCase())
           );
         });
     } catch (err) {
@@ -90,7 +90,7 @@
                       <div class="provider-card">
                         <div class="provider-header">
                           <div class="provider-title">
-                            <span class="provider-icon">{getProviderIcon(provider.id.replace('core.', ''))}</span>
+                            <span class="provider-icon">{getProviderIcon(String(provider.name || provider.id).toLowerCase())}</span>
                             <div>
                               <h2>{provider.display_name || provider.name}</h2>
                               <p class="provider-type">
@@ -109,7 +109,7 @@
                         </div>
                         <p class="provider-description">{provider.description ?? 'Metadata provider service.'}</p>
                         <div class="provider-actions">
-                           <a href="/settings/metadata/{provider.id.replace('core.', '')}" class="link">Configure →</a>
+                           <a href="/settings/metadata/{String(provider.name || provider.id).toLowerCase()}" class="link">Configure →</a>
                         </div>
                       </div>
                     {/each}

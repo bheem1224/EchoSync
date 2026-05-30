@@ -42,18 +42,22 @@
         }
       }
 
-      for (const src of scriptsToLoad) {
-        // Check if already injected to prevent duplicates
-        if (!document.querySelector(`script[src^="${CSS.escape ? CSS.escape(src) : src}"]`)) {
+      await Promise.all(Array.from(scriptsToLoad).map(src => {
+        return new Promise((resolve) => {
+          if (document.querySelector(`script[src^="${CSS.escape ? CSS.escape(src) : src}"]`)) {
+            return resolve();
+          }
           const script = document.createElement('script');
           script.type = 'module';
           script.src = src;
+          script.onload = () => resolve();
           script.onerror = () => {
-            console.error(`[Dashboard] Script injection failed for path: ${src}`);
+            console.error(`[Dashboard] Script injection failed for path: ${src} (HTTP 404)`);
+            resolve(); // Gracefully catch error so it doesn't freeze the pipeline
           };
           document.head.appendChild(script);
-        }
-      }
+        });
+      }));
     }
 
     // 2. Fetch layout

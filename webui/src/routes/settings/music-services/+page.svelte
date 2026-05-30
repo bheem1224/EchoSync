@@ -21,7 +21,7 @@
         .filter(p => !p.disabled)
         .filter(p => {
           // Keep streaming and relevant services for this page
-          const id = (p.id || '').toLowerCase().replace('core.', '');
+          const id = String(p.name || p.id || '').toLowerCase();
           return (
             p.capabilities?.supports_playlists !== 'NONE' ||
             p.capabilities?.supports_sync ||
