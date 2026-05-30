@@ -30,7 +30,10 @@ class PluginStore:
             if isinstance(custom_repos, list):
                 repos.extend(custom_repos)
         except Exception as e:
-            logger.error(f"Error reading custom repositories: {e}")
+            logger.error("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
+            logger.debug("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
         return repos
 
     def add_repository(self, url: str) -> bool:
@@ -43,7 +46,10 @@ class PluginStore:
                 config_manager.save_settings(config)
             return True
         except Exception as e:
-            logger.error(f"Error saving custom repository {url}: {e}")
+            logger.error("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
+            logger.debug("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
             return False
 
     def remove_repository(self, url: str) -> bool:
@@ -56,7 +62,10 @@ class PluginStore:
                 config_manager.save_settings(config)
             return True
         except Exception as e:
-            logger.error(f"Error removing custom repository {url}: {e}")
+            logger.error("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
+            logger.debug("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
             return False
 
 
@@ -86,7 +95,7 @@ class PluginStore:
                 if repo_url in etags:
                     headers["If-None-Match"] = etags[repo_url]["etag"]
                 
-                resp = req_mgr.get(repo_url, headers=headers, timeout=10)
+                resp = req_mgr.get(repo_url, headers=headers, timeout=10, allow_redirects=False)
                 if resp.status_code == 304:
                     plugins = etags[repo_url].get("plugins", [])
                 elif resp.status_code == 200:
@@ -131,7 +140,10 @@ class PluginStore:
                     filtered_plugins.append(p)
                 return filtered_plugins
             except Exception as e:
-                logger.error(f"Failed to scan direct JSON repo {repo_url}: {e}")
+                logger.error("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
                 return []
 
         # Case 2: GitHub Browser URL (Legacy/Custom)
@@ -159,7 +171,7 @@ class PluginStore:
                         headers["If-None-Match"] = etags[check_url]["etag"]
 
                     try:
-                        resp = req_mgr.get(check_url, headers=headers, timeout=10)
+                        resp = req_mgr.get(check_url, headers=headers, timeout=10, allow_redirects=False)
                         if resp.status_code == 304:
                             plugins = etags[check_url].get("plugins", [])
                             break
@@ -176,7 +188,10 @@ class PluginStore:
                                     json.dump(etags, f)
                             break
                     except Exception as e:
-                        logger.debug(f"Could not fetch {check_url}: {e}")
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                        logger.debug(f"Raw exception data: {e}", exc_info=True)
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                        logger.debug(f"Raw exception data: {e}", exc_info=True)
                 
                 if not plugins:
                     return self._scan_github_api(user, repo, branch, subfolder, repo_url)
@@ -211,7 +226,10 @@ class PluginStore:
                     filtered_plugins.append(p)
                 return filtered_plugins
             except Exception as e:
-                logger.error(f"Error scanning repository {repo_url}: {e}", exc_info=True)
+                logger.error("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
         return []
 
     def _scan_github_api(self, user: str, repo: str, branch: str, subfolder: str, original_repo_url: str) -> List[Dict]:
@@ -222,18 +240,18 @@ class PluginStore:
         
         plugins = []
         try:
-            resp = requests.get(api_url, timeout=10)
+            resp = requests.get(api_url, timeout=10, allow_redirects=False)
             if resp.status_code == 200:
                 contents = resp.json()
                 for item in contents:
                     if item.get("type") == "dir":
                         dir_url = item.get("url")
-                        dir_resp = requests.get(dir_url, timeout=10)
+                        dir_resp = requests.get(dir_url, timeout=10, allow_redirects=False)
                         if dir_resp.status_code == 200:
                             dir_contents = dir_resp.json()
                             for file_item in dir_contents:
                                 if file_item.get("name") == "manifest.json":
-                                    manifest_resp = requests.get(file_item.get("download_url"), timeout=10)
+                                    manifest_resp = requests.get(file_item.get("download_url"), timeout=10, allow_redirects=False)
                                     if manifest_resp.status_code == 200:
                                         plugin_info = manifest_resp.json()
                                         plugin_info["_source_repo"] = original_repo_url
@@ -246,7 +264,10 @@ class PluginStore:
                                         plugin_info["_folder_path"] = item.get("path")
                                         plugins.append(plugin_info)
         except Exception as e:
-            logger.error(f"Error scanning GitHub API for {user}/{repo}: {e}")
+            logger.error("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
+            logger.debug("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
 
         return plugins
 
@@ -356,7 +377,10 @@ class PluginStore:
                             if remote_version != local_version:
                                 plugin["update_available"] = True
                 except Exception as e:
-                    logger.debug(f"Error checking local version for {plugin_id}: {e}")
+                    logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
+                    logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
             
             # 2. Check for active Grace Period (Snapshots)
             from database.config_database import get_config_database
@@ -468,8 +492,30 @@ class PluginStore:
 
         try:
             logger.info(f"Direct downloading {plugin_id} ({channel}) from {download_url}")
+
+            import urllib.parse
+            parsed_url = urllib.parse.urlparse(download_url)
+            if parsed_url.scheme not in ("https",):
+                logger.error("Installation halted: Security validation failed (Invalid URL scheme).")
+                return False
+            if parsed_url.netloc not in ("github.com", "raw.githubusercontent.com", "api.github.com"):
+                logger.error("Installation halted: Security validation failed (Untrusted hostname).")
+                return False
+
+            import urllib.parse
+            parsed_url = urllib.parse.urlparse(download_url)
+            if parsed_url.scheme not in ("https",):
+                logger.error("Installation halted: Security validation failed (Invalid URL scheme).")
+                return False
+            if parsed_url.netloc not in ("github.com", "raw.githubusercontent.com", "api.github.com"):
+                logger.error("Installation halted: Security validation failed (Untrusted hostname).")
+                return False
             req_mgr = RequestManager(provider="system")
-            resp = req_mgr.get(download_url, timeout=30)
+            resp = req_mgr.get(download_url, timeout=30, allow_redirects=False)
+
+            if resp.status_code in (301, 302, 307):
+                logger.error("Installation halted: Untrusted remote redirection detected (SSRF Prevention).")
+                return False
             
             if resp.status_code != 200:
                 if channel == "beta" and plugin_info.get("download_url") and plugin_info.get("download_url") != download_url:
@@ -477,7 +523,11 @@ class PluginStore:
                     logger.warning(
                         f"Beta artifact unavailable for {plugin_id} at {download_url}; falling back to stable artifact {stable_url}"
                     )
-                    resp = req_mgr.get(stable_url, timeout=30)
+                    resp = req_mgr.get(stable_url, timeout=30, allow_redirects=False)
+
+                    if resp.status_code in (301, 302, 307):
+                        logger.error("Installation halted: Untrusted remote redirection detected (SSRF Prevention).")
+                        return False
                     download_url = stable_url
                     if resp.status_code != 200:
                         logger.error(
@@ -512,7 +562,10 @@ class PluginStore:
                         finally:
                             conn.close()
                     except Exception as e:
-                        logger.error(f"Failed to set previous_version_path: {e}")
+                        logger.error("Rollback operation halted: Atomic state restoration failed.")
+                        logger.debug(f"Raw exception data: {e}", exc_info=True)
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                        logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Task 2: Artifact Extraction (Direct Root Level)
                 with zipfile.ZipFile(tmp_zip_path, 'r') as z:
@@ -601,7 +654,10 @@ class PluginStore:
                         except PrivilegeEscalationError:
                             raise
                         except Exception as e:
-                            logger.error(f"Error during pre-flight manifest check: {e}")
+                            logger.error("Rollback operation halted: Atomic state restoration failed.")
+                            logger.debug(f"Raw exception data: {e}", exc_info=True)
+                            logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                            logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Task 4: Inject Verified Source Block and Enforce Target Version
                 try:
@@ -624,7 +680,10 @@ class PluginStore:
                         json.dump(manifest_data, f, indent=2)
                     logger.info(f"Injected manifest metadata for {plugin_id}")
                 except Exception as e:
-                    logger.error(f"Failed to inject manifest metadata for {plugin_id}: {e}")
+                    logger.error("Rollback operation halted: Atomic state restoration failed.")
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
+                    logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
 
 
                 # PHASE 1: Cross-Database Relational Snapshotting
@@ -722,7 +781,10 @@ class PluginStore:
                                 state_snapshot["sandbox_db_path"] = sandbox_backup_path
 
                     except Exception as e:
-                        logger.error(f"Failed to capture state snapshot for {target_plugin_id}: {e}")
+                        logger.error("Rollback operation halted: Atomic state restoration failed.")
+                        logger.debug(f"Raw exception data: {e}", exc_info=True)
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                        logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Task 3: Atomic Swap
 
@@ -738,7 +800,9 @@ class PluginStore:
                         os.rename(str(target_dir), str(backup_dir))
                         logger.info(f"Backed up target_dir to {backup_dir}")
                     except Exception as backup_err:
-                        logger.warning(f"Failed to backup target_dir, falling back to direct removal: {backup_err}")
+                        logger.warning("Framework encountered an unexpected error during execution.")
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                        logger.debug(f"Raw exception data: {backup_err}", exc_info=True)
                         shutil.rmtree(target_dir, ignore_errors=True)
                         backup_dir = None
 
@@ -750,7 +814,9 @@ class PluginStore:
                     if backup_dir and backup_dir.exists():
                         shutil.rmtree(backup_dir, ignore_errors=True)
                 except Exception as swap_err:
-                    logger.error(f"Atomic swap failed, rolling back: {swap_err}")
+                    logger.error("Installation halted: Atomic directory swap failed.")
+                    logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                    logger.debug(f"Raw exception data: {swap_err}", exc_info=True)
                     if backup_dir and backup_dir.exists():
                         os.rename(str(backup_dir), str(target_dir))
                     raise swap_err
@@ -787,7 +853,9 @@ class PluginStore:
                     import binascii
                     db = get_config_database()
                     
-                    is_official = "raw.githubusercontent.com/bheem1224/EchoSync" in download_url
+                    import urllib.parse
+                    parsed_dl = urllib.parse.urlparse(download_url)
+                    is_official = parsed_dl.netloc == "raw.githubusercontent.com" and parsed_dl.path.startswith("/bheem1224/EchoSync")
                     manifest_verified = 1 if (is_official or new_manifest.get("verified_source") == "official") else 0
                     manifest_privileged = 1 if (new_manifest.get("privileged") is True or new_manifest.get("permissions", {}).get("privileged_mode") is True) else 0
                     
@@ -819,7 +887,10 @@ class PluginStore:
                     
                     logger.info(f"Synchronized database state for plugin {strict_namespace} (CRC32: {computed_plugin_id})")
                 except Exception as e:
-                    logger.error(f"Failed to synchronize database state for {strict_namespace}: {e}")
+                    logger.error("Rollback operation halted: Atomic state restoration failed.")
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
+                    logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Hot-Swap Architecture: Perform Zero-Downtime Reload (Only during updates)
                 if is_update:
@@ -830,12 +901,18 @@ class PluginStore:
                         loader.reload_plugin(int_plugin_id)
                         logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}).")
                     except Exception as e:
-                        logger.error(f"Live-swap failed for {plugin_id}: {e}")
+                        logger.error("Rollback operation halted: Atomic state restoration failed.")
+                        logger.debug(f"Raw exception data: {e}", exc_info=True)
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                        logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                         # Atomic State Rollback
                         if is_update and target_plugin_id and 'service_config' in state_snapshot:
                             try:
-                                logger.warning("Initiating Atomic State Rollback...")
+                                logger.warning("Rollback operation halted: Atomic state restoration failed.")
+                                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                                logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                                logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                                 # 1. Filesystem Rollback
                                 if backup_dir and backup_dir.exists():
@@ -928,9 +1005,11 @@ class PluginStore:
                                 finally:
                                     session.close()
 
-                                logger.info("Atomic State Rollback completed successfully.")
+                                logger.warning("Rollback operation halted: Atomic state restoration failed.")
+                                logger.debug(f"Raw exception data: {e}", exc_info=True)
                             except Exception as rollback_err:
-                                logger.critical(f"FATAL: Atomic State Rollback failed: {rollback_err}")
+                                logger.critical("Rollback operation halted: Atomic state restoration failed.")
+                                logger.debug(f"Raw exception data: {rollback_err}", exc_info=True)
 
                         system_state.restart_pending = True
                         return False
@@ -944,7 +1023,9 @@ class PluginStore:
                         _sync_ui_components_to_db(plugin_id_int, str(target_dir.resolve()))
                         logger.info(f"Dynamically discovered and registered UI components for fresh installed plugin {strict_namespace}")
                     except Exception as ui_err:
-                        logger.error(f"Failed to run UI component discovery for fresh installed plugin {strict_namespace}: {ui_err}")
+                        logger.error("UI Registry operation failed: Component discovery error.")
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                        logger.debug(f"Raw exception data: {ui_err}", exc_info=True)
 
                 return True
 
@@ -953,7 +1034,10 @@ class PluginStore:
                 if tmp_dir.exists(): shutil.rmtree(tmp_dir, ignore_errors=True)
 
         except Exception as e:
-            logger.error(f"Fatal error during artifact installation: {e}", exc_info=True)
+            logger.error("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
+            logger.debug("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
             return False
 
     def _cleanup_beta_subfolder(self, folder_id: str) -> bool:
@@ -1066,7 +1150,10 @@ class PluginStore:
                 job_queue.kill_jobs_by_plugin(db_plugin_id)
                 job_queue.kill_jobs_by_plugin(service_id)
             except Exception as e:
-                logger.warning(f"Failed to kill workers for {db_plugin_id}: {e}")
+                logger.warning("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # Unregister health checks for the plugin
             try:
@@ -1081,7 +1168,10 @@ class PluginStore:
                 job_queue.unregister_job(f"health_check_{clean_id}")
                 job_queue.unregister_job(f"health_check_{short_name}")
             except Exception as e:
-                logger.warning(f"Failed to unregister health check for {clean_id}: {e}")
+                logger.warning("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # Fallback/Additional check: inspect sys.modules
             if absolute_install_path:
@@ -1120,7 +1210,10 @@ class PluginStore:
                         except Exception:
                             pass
             except Exception as e:
-                logger.warning(f"Failed to teardown dynamic tables for {db_plugin_id}: {e}")
+                logger.warning("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # 4. Delete config keys, UI components, and remove from services table
             conn = db._get_connection()
@@ -1162,7 +1255,10 @@ class PluginStore:
                 finally:
                     session.close()
             except Exception as e:
-                logger.warning(f"Error purging working state KVS for {db_plugin_id}: {e}")
+                logger.warning("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # Remove from JSON config if exists
             try:
@@ -1173,7 +1269,10 @@ class PluginStore:
                     del all_settings['plugins'][clean_target]
                     config_manager.save_settings(all_settings)
             except Exception as e:
-                logger.warning(f"Error removing from json config: {e}")
+                logger.warning("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # 5. Delete physical folder
             if absolute_install_path:
@@ -1189,6 +1288,9 @@ class PluginStore:
                 logger.info(f"Successfully deleted plugin family directory: {dest_dir}")
             return True
         except Exception as e:
-            logger.error(f"Failed to uninstall plugin {plugin_id}: {e}")
+            logger.error("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
+            logger.debug("Rollback operation halted: Atomic state restoration failed.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
             return False
 plugin_store = PluginStore()
