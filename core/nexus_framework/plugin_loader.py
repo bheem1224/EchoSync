@@ -76,7 +76,8 @@ def _sync_ui_components_to_db(plugin_id: int, install_path: str, is_core: bool =
     try:
         manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception as exc:
-        logger.warning(f"[UIRegistry] Failed to parse ui_manifest.json for plugin {plugin_id}: {exc}")
+        logger.warning("UI Registry operation failed due to an unexpected error.")
+        logger.debug(f"Raw exception data: {exc}", exc_info=True)
         return
 
     raw_components = manifest_data.get("components", {})
@@ -159,7 +160,8 @@ def _sync_ui_components_to_db(plugin_id: int, install_path: str, is_core: bool =
         execute_write(str(db.database_path), _upsert)
         logger.info(f"[UIRegistry] Synced {len(entries)} UI components for plugin {plugin_id}")
     except Exception as exc:
-        logger.error(f"[UIRegistry] Failed to sync UI components for plugin {plugin_id}: {exc}")
+        logger.error("UI Registry operation failed due to an unexpected error.")
+        logger.debug(f"Raw exception data: {exc}", exc_info=True)
 
 # ---------------------------------------------------------------------------
 # Zero-Trust Plugin Security Scanner
@@ -346,7 +348,9 @@ class PluginLoader:
             from core.job_queue import job_queue
             job_queue.kill_jobs_by_plugin(plugin_id)
         except Exception as e:
-            logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
+            logger.warning("Failed to kill workers for the target plugin.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
 
         # 3. Purge Memory (Recursive)
         module_name = f"plugins.{clean_ns}"
@@ -372,7 +376,9 @@ class PluginLoader:
                 raise Exception(f"Live-swap failed to load module for {plugin_id}")
             logger.info(f"✅ Successfully live-swapped: {plugin_id}")
         except Exception as e:
-            logger.error(f"Live-swap failed for {plugin_id}: {e}", exc_info=True)
+            logger.error("An error occurred during framework execution.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
             raise
 
     def reconcile_services(self):
@@ -528,7 +534,8 @@ class PluginLoader:
         try:
             self.reconcile_services()
         except Exception as err:
-            logger.error(f"Failed to reconcile services registry at startup: {err}", exc_info=True)
+            logger.error("Startup reconciliation halted: Services registry validation failed.")
+            logger.debug(f"Raw exception data: {err}", exc_info=True)
 
         import sqlite3
         from database.config_database import get_config_database
@@ -545,7 +552,9 @@ class PluginLoader:
             finally:
                 conn.close()
         except Exception as e:
-            logger.error(f"Failed to query active services: {e}")
+            logger.error("Failed to query active services from the database.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
             return
 
         for row in active_services:
@@ -660,7 +669,9 @@ class PluginLoader:
             finally:
                 conn.close()
         except Exception as e:
-            logger.error(f"Failed to update version in DB for {provider_id}: {e}")
+            logger.error("An error occurred during framework execution.")
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
+            logger.debug(f"Raw exception data: {e}", exc_info=True)
 
     def _load_plugin_package(self, plugin_id: int, is_beta: bool = False, is_disabled: bool = False, absolute_install_path: str = None):
         """
@@ -709,7 +720,7 @@ class PluginLoader:
                 if not package_dir.exists():
                     raise ValueError(f"Plugin package {plugin_id} path {package_dir} does not exist on disk")
 
-                module_path = f"plugins.{clean_ns}"
+                module_path = f"plugins.{clean_ns}.beta" if is_beta else f"plugins.{clean_ns}"
 
                 # 2. Extract metadata from manifest
                 version = "Unknown"
@@ -772,7 +783,9 @@ class PluginLoader:
                     importlib.invalidate_caches()
                     module = importlib.import_module(module_path)
                 except Exception as e:
-                    logger.error(f"Module compilation failed for {module_path}: {e}")
+                    logger.error("An error occurred during framework execution.")
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
                     raise
 
                 # Registration
@@ -800,19 +813,23 @@ class PluginLoader:
                         if hasattr(plugin_instance, "on_plugin_startup"):
                             plugin_instance.on_plugin_startup(self.hook_manager, self.config_db)
                 except Exception as init_err:
-                    logger.error(f"Failed to execute startup hook on validation for {provider_id}: {init_err}")
+                    logger.error("Plugin initialization halted: Startup hook execution failed.")
+                    logger.debug(f"Raw exception data: {init_err}", exc_info=True)
 
                 # Sprint 6: Sync UI manifest into ui_components table
                 try:
                     _sync_ui_components_to_db(plugin_id, str(package_dir.absolute()))
                 except Exception as ui_err:
-                    logger.warning(f"[UIRegistry] Failed to sync UI components during load for plugin {plugin_id}: {ui_err}")
+                    logger.warning("UI Registry operation failed due to an unexpected error.")
+                    logger.debug(f"Raw exception data: {ui_err}", exc_info=True)
 
                 # Tear down existing blueprints for this plugin
                 try:
                     self.loaded_blueprints = [bp for bp in self.loaded_blueprints if not bp.name.startswith(f"{provider_id}_")]
                 except Exception as e:
-                    logger.warning(f"Failed to unregister blueprints for {provider_id}: {e}")
+                    logger.warning("An error occurred during framework execution.")
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Collect Blueprints
                 for bp_attr in ('RouteBlueprint', 'RouteBlueprint2', 'RouteBlueprint3'):
@@ -822,10 +839,28 @@ class PluginLoader:
                         blueprint.url_prefix = f"/api/plugins/{clean_ns}"
                         self.loaded_blueprints.append(blueprint)
 
+
+                # Persist loaded_modules to DB
+                try:
+                    import json
+                    loaded_mods = [m for m in sys.modules.keys() if m.startswith(module_path)]
+                    from database.config_database import get_config_database
+                    db = get_config_database()
+                    conn = db._get_connection()
+                    try:
+                        conn.execute("UPDATE services SET loaded_modules = ? WHERE plugin_id = ?", (json.dumps(loaded_mods), plugin_id))
+                        conn.commit()
+                    finally:
+                        conn.close()
+                except Exception as db_err:
+                    logger.debug(f"Failed to update loaded_modules for {plugin_id}: {db_err}")
+
                 return True
 
             except Exception as e:
-                logger.error(f"Error loading plugin {plugin_id}: {e}", exc_info=True)
+                logger.error("An error occurred during framework execution.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
                 # Auto-disable on fatal load error
                 try:
                     from database.config_database import get_config_database
@@ -901,7 +936,9 @@ def get_all_plugins() -> list:
             }
             plugins_map[name] = plugin_info
     except Exception as e:
-        logging.getLogger("plugin_loader").error(f"Failed to fetch plugins from DB: {e}")
+        logging.getLogger("plugin_loader").error("Database query failed: Unable to fetch plugin registry state.")
+        logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
+        logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
     finally:
         conn.close()
 
@@ -959,7 +996,9 @@ class PluginRegistry:
                 try:
                     plugins.append(cls.create_instance(name))
                 except Exception as e:
-                    logger.error(f"Failed to instantiate plugin '{name}': {e}")
+                    logger.error("An error occurred during framework execution.")
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
         return plugins
 
     @classmethod
@@ -1025,7 +1064,9 @@ class PluginRegistry:
                     else:
                         active.append(name)
                 except Exception as e:
-                    logger.error(f"Failed to check configuration for active service {name}: {e}")
+                    logger.error("An error occurred during framework execution.")
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
+                    logger.debug(f"Raw exception data: {e}", exc_info=True)
                     # If we can't even instantiate it, it's not active
                     continue
             return active
@@ -1044,7 +1085,9 @@ class PluginRegistry:
             try:
                 instances.append(cls.create_instance(name, *args, **kwargs))
             except Exception as e:
-                logger.error(f"Failed to instantiate plugin '{name}': {e}")
+                logger.error("An error occurred during framework execution.")
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                logger.debug(f"Raw exception data: {e}", exc_info=True)
         return instances
 
     @classmethod
@@ -1098,7 +1141,9 @@ class PluginRegistry:
             if isinstance(e, ValueError) and "not found in database" in str(e):
                 raise
             import logging
-            logging.getLogger(__name__).warning(f"Failed to resolve integer plugin_id '{original_name}': {e}")
+            logging.getLogger("plugin_loader").warning("Database query failed: Unable to fetch plugin registry state.")
+            logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
+            logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
 
         # Double check against config manager to ensure latest state
         from core.settings import config_manager
