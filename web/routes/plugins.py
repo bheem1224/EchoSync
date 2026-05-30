@@ -8,9 +8,51 @@ from pathlib import Path
 from core.nexus_framework.plugin_loader import get_all_plugins
 from core.nexus_framework.plugin_store import plugin_store
 from core.tiered_logger import get_logger
+from contextlib import contextmanager
+from sqlalchemy import create_engine, func
+from sqlalchemy.orm import sessionmaker, Session
+from typing import Generator
+from database.models import Service
 
 logger = get_logger("plugins_route")
 bp = Blueprint('plugins', __name__, url_prefix='/api/system/plugins')
+
+
+@contextmanager
+def config_db_connection():
+    from database.config_database import get_config_database
+    db = get_config_database()
+    conn = db._get_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def resolve_case_insensitive_path(path: Path) -> Path:
+    if path.exists():
+        return path
+    parts = path.parts
+    if not parts:
+        return path
+    current = Path(parts[0])
+    for part in parts[1:]:
+        if (current / part).exists():
+            current = current / part
+        else:
+            found = False
+            if current.is_dir():
+                try:
+                    for child in current.iterdir():
+                        if child.name.lower() == part.lower():
+                            current = child
+                            found = True
+                            break
+                except Exception:
+                    pass
+            if not found:
+                current = current / part
+    return current
 
 @bp.route('', methods=['GET'])
 @require_auth
@@ -209,15 +251,12 @@ def update_plugin():
         # 2. Retrieve the plugin_id column from the database
         db_plugin_id = None
         if plugin_id_int is not None:
-            conn = db._get_connection()
-            try:
+            with config_db_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
                 row = c.fetchone()
                 if row:
                     db_plugin_id = row['plugin_id']
-            finally:
-                conn.close()
                     
         if not db_plugin_id:
             return jsonify({"error": f"Plugin {plugin_name} not found in database registry."}), 404
@@ -257,15 +296,12 @@ def rollback_plugin():
         # 2. Retrieve the plugin_id column from the database
         db_plugin_id = None
         if plugin_id_int is not None:
-            conn = db._get_connection()
-            try:
+            with config_db_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
                 row = c.fetchone()
                 if row:
                     db_plugin_id = row['plugin_id']
-            finally:
-                conn.close()
                     
         if not db_plugin_id:
             return jsonify({"error": f"Plugin {plugin_name} not found in database registry."}), 404
@@ -295,15 +331,12 @@ def rollback_plugin_direct(plugin_id):
                 
         db_plugin_id = None
         if plugin_id_int is not None:
-            conn = db._get_connection()
-            try:
+            with config_db_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
                 row = c.fetchone()
                 if row:
                     db_plugin_id = row['plugin_id']
-            finally:
-                conn.close()
                     
         if not db_plugin_id:
             return jsonify({"error": f"Plugin {plugin_id} not found"}), 404
@@ -340,26 +373,17 @@ def set_plugin_beta_opt(plugin_id):
                 
         db_plugin_id = None
         if plugin_id_int is not None:
-            conn = db._get_connection()
-            try:
+            with config_db_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
                 row = c.fetchone()
                 if row:
                     db_plugin_id = row['plugin_id']
-            finally:
-                conn.close()
+                    c.execute("UPDATE services SET beta_opt_in=? WHERE plugin_id=?", (db_val, db_plugin_id))
+                    conn.commit()
                     
         if not db_plugin_id:
             return jsonify({"error": f"Plugin {plugin_id} not found"}), 404
-            
-        conn = db._get_connection()
-        try:
-            c = conn.cursor()
-            c.execute("UPDATE services SET beta_opt_in=? WHERE plugin_id=?", (db_val, db_plugin_id))
-            conn.commit()
-        finally:
-            conn.close()
             
         try:
             from core.nexus_framework.plugin_loader import PluginLoader
@@ -396,8 +420,7 @@ def uninstall_plugin_route():
         service_id = db.get_service_id(f"{author}.{plugin_name}")
 
     if service_id:
-        conn = db._get_connection()
-        try:
+        with config_db_connection() as conn:
             c = conn.cursor()
             c.execute("SELECT plugin_id FROM services WHERE id=?", (service_id,))
             row = c.fetchone()
@@ -405,8 +428,6 @@ def uninstall_plugin_route():
                 plugin_id = int(row['plugin_id'])
             else:
                 plugin_id = service_id
-        finally:
-            conn.close()
     else:
         if isinstance(plugin_id_raw, int):
             plugin_id = plugin_id_raw
@@ -479,38 +500,37 @@ def serve_plugin_asset(plugin_id, filename):
     Uses the database's absolute_install_path and appends the requested path.
     """
     logger.info(f"[serve_plugin_asset] Request received for plugin_id={plugin_id}, filename={filename}")
-    from database.config_database import get_config_database
-    db = get_config_database()
-
     install_path = None
-    conn = db._get_connection()
     try:
-        c = conn.cursor()
-        
-        # Explicit integer casting or case-insensitive string matching
-        if str(plugin_id).isdigit():
-            c.execute("SELECT absolute_install_path FROM services WHERE CAST(plugin_id AS TEXT) = ? OR CAST(id AS TEXT) = ?", (str(plugin_id), str(plugin_id)))
-        else:
-            c.execute("SELECT absolute_install_path FROM services WHERE LOWER(name)=? OR name=?", (str(plugin_id).lower(), plugin_id))
-            
-        row = c.fetchone()
-        if row and row[0]:
-            install_path = row[0]
-        else:
-            # Fallback for complex namespace mismatches
-            service_id = db.get_service_id(plugin_id)
-            if service_id:
-                c.execute("SELECT absolute_install_path FROM services WHERE id=?", (service_id,))
-                row = c.fetchone()
-                if row and row[0]:
-                    install_path = row[0]
-    finally:
-        conn.close()
+        with config_db_connection() as conn:
+            c = conn.cursor()
+            if str(plugin_id).isdigit():
+                pid_int = int(plugin_id)
+                c.execute("SELECT absolute_install_path FROM services WHERE plugin_id = ? OR id = ?", (pid_int, pid_int))
+            else:
+                c.execute("SELECT absolute_install_path FROM services WHERE LOWER(name) = ?", (str(plugin_id).lower(),))
+
+            row = c.fetchone()
+            if row and row[0]:
+                install_path = row[0]
+            else:
+                # Fallback for complex namespace mismatches
+                from database.config_database import get_config_database
+                db = get_config_database()
+                service_id = db.get_service_id(plugin_id)
+                if service_id:
+                    c.execute("SELECT absolute_install_path FROM services WHERE id = ?", (service_id,))
+                    row = c.fetchone()
+                    if row and row[0]:
+                        install_path = row[0]
+    except Exception as e:
+        logger.error(f"Error querying service {plugin_id}: {e}", exc_info=True)
 
     logger.info(f"[serve_plugin_asset] Retrieve absolute_install_path={install_path} for plugin_id={plugin_id}")
 
     if install_path:
         resolved_install = Path(install_path).resolve()
+        resolved_install = resolve_case_insensitive_path(resolved_install)
 
         from werkzeug.security import safe_join
         safe_path = safe_join(str(resolved_install), filename)

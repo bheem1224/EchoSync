@@ -702,6 +702,8 @@ class PluginLoader:
                         pass
 
                 clean_ns = plugin_name
+                if is_beta and not clean_ns.endswith(".beta"):
+                    clean_ns = f"{clean_ns}.beta"
 
                 from pathlib import Path
                 package_dir = Path(absolute_install_path)
@@ -767,10 +769,45 @@ class PluginLoader:
                     self._update_db_version(provider_id, version, clean_ns)
                     return True
 
+                plugins_root = Path("/data/plugins")
+                if str(plugins_root) not in sys.path:
+                    sys.path.insert(0, str(plugins_root))
+
                 sys.path.insert(0, str(package_dir))
                 try:
+                    before_modules = set(sys.modules.keys())
                     importlib.invalidate_caches()
                     module = importlib.import_module(module_path)
+                    after_modules = set(sys.modules.keys())
+                    newly_loaded = after_modules - before_modules
+                    newly_loaded.add(module_path)
+
+                    plugin_modules = set()
+                    plugin_path_str = str(package_dir.resolve())
+                    for mod_name in newly_loaded:
+                        if mod_name.startswith(f"plugins.{clean_ns}"):
+                            plugin_modules.add(mod_name)
+                        else:
+                            mod = sys.modules.get(mod_name)
+                            mod_file = getattr(mod, '__file__', None)
+                            if mod_file and str(Path(mod_file).resolve()).startswith(plugin_path_str):
+                                plugin_modules.add(mod_name)
+
+                    try:
+                        from database.config_database import get_config_database
+                        db_conf = get_config_database()
+                        conn = db_conf._get_connection()
+                        try:
+                            c = conn.cursor()
+                            c.execute(
+                                "UPDATE services SET loaded_modules = ? WHERE plugin_id = ?",
+                                (json.dumps(list(plugin_modules)), plugin_id)
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
+                    except Exception as db_e:
+                        logger.warning(f"Failed to persist dynamically tracked loaded modules in database for plugin ID {plugin_id}: {db_e}")
                 except Exception as e:
                     logger.error(f"Module compilation failed for {module_path}: {e}")
                     raise
