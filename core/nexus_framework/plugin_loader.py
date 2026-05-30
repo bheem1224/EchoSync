@@ -948,76 +948,65 @@ def get_plugin(name: str) -> Optional[PluginBase]:
 
 
 def get_all_plugins() -> list:
+    from database.config_database import get_config_database
+    import contextlib
+    import json
+    from pathlib import Path
+    import logging
+
     plugins_map = {}
-    community_dir = Path(config_manager.get_plugins_dir())
+    db = get_config_database()
+    
+    try:
+        with contextlib.closing(db._get_connection()) as conn:
+            c = conn.cursor()
+            c.execute("SELECT name, plugin_id, absolute_install_path, description, version, is_active FROM services")
+            rows = c.fetchall()
+            
+            for row in rows:
+                name = row['name']
+                if name.lower() == 'system':
+                    continue
+                    
+                abs_path = row['absolute_install_path']
+                
+                plugin_info = {
+                    "id": name,
+                    "name": name,
+                    "description": row['description'] or "Community plugin",
+                    "type": "community",
+                    "version": row['version'] or "Unknown",
+                    "abs_path": abs_path,
+                    "enabled": bool(row['is_active'])
+                }
 
-    if not community_dir.exists():
-        return []
+                if abs_path:
+                    current_item = Path(abs_path)
+                    json_file = current_item / "manifest.json"
+                    if json_file.exists():
+                        try:
+                            data = json.loads(json_file.read_text(encoding="utf-8"))
+                            plugin_info.update({
+                                "name": data.get("name", plugin_info["name"]),
+                                "description": data.get("description", plugin_info["description"]),
+                                "author": data.get("author", "Unknown"),
+                                "id": data.get("id", plugin_info["id"])
+                            })
+                        except Exception:
+                            pass
 
-    # 1. Identify all plugin candidates (Nexus Schema: plugins/{author}/{plugin})
-    candidates = []
-    for item in community_dir.iterdir():
-        if not item.is_dir() or item.name.startswith('_'):
-            continue
-        
-        # Case 1: Author/Plugin structure
-        for subitem in item.iterdir():
-            if subitem.is_dir() and not subitem.name.startswith('_'):
-                has_entry = (
-                    (subitem / "manifest.json").exists() or 
-                    (subitem / "__init__.py").exists() or 
-                    (subitem / "main.wasm").exists() or
-                    (subitem / "beta" / "manifest.json").exists() or
-                    (subitem / "beta" / "__init__.py").exists() or
-                    (subitem / "beta" / "main.wasm").exists()
-                )
-                if has_entry:
-                    candidates.append((subitem, f"{item.name}.{subitem.name}"))
+                    ui_manifest_file = current_item / "ui_manifest.json"
+                    if ui_manifest_file.exists():
+                        try:
+                            plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
+                        except Exception:
+                            pass
 
-    for item, p_id in candidates:
-        current_item = item
-        channel = config_manager.get_plugin_channel(p_id)
-        if channel == 'beta' and (item / 'beta').exists():
-            current_item = item / 'beta'
+                plugins_map[plugin_info["id"]] = plugin_info
+    except Exception as e:
+        logging.getLogger("plugin_loader").error(f"Failed to fetch plugins from DB: {e}")
 
-        plugin_info = {
-            "id": p_id,
-            "name": str(p_id),
-            "description": "Community plugin",
-            "type": "community",
-
-            "abs_path": str(current_item.absolute())
-        }
-
-        json_file = current_item / "manifest.json"
-        if json_file.exists():
-            try:
-                data = json.loads(json_file.read_text(encoding="utf-8"))
-                plugin_info.update({
-                    "name": data.get("name", plugin_info["name"]),
-                    "description": data.get("description", plugin_info["description"]),
-                    "version": data.get("version", "Unknown"),
-                    "author": data.get("author", "Unknown"),
-                    "id": data.get("id", plugin_info["id"])
-                })
-            except Exception:
-                pass
-
-        ui_manifest_file = current_item / "ui_manifest.json"
-        if ui_manifest_file.exists():
-            try:
-                plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-
-        plugins_map[plugin_info["id"]] = plugin_info
-
-    disabled = config_manager.get_disabled_plugins()
-    final_plugins = list(plugins_map.values())
-    for p in final_plugins:
-        p["enabled"] = p["id"].lower() not in [d.lower() for d in disabled]
-
-    return final_plugins
+    return list(plugins_map.values())
 
 
 class PluginRegistry:

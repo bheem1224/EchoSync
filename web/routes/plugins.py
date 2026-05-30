@@ -463,19 +463,33 @@ def serve_plugin_asset(plugin_id, filename):
     logger.info(f"[serve_plugin_asset] Request received for plugin_id={plugin_id}, filename={filename}")
     from database.config_database import get_config_database
     db = get_config_database()
-    service_id = db.get_service_id(plugin_id)
-    logger.info(f"[serve_plugin_asset] Resolved service_id={service_id} for plugin_id={plugin_id}")
 
     install_path = None
-    if service_id:
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT absolute_install_path FROM services WHERE id=?", (service_id,))
-            row = c.fetchone()
-            if row and row[0]:
-                install_path = row[0]
+    conn = db._get_connection()
+    try:
+        c = conn.cursor()
+        
+        # Explicit integer casting or case-insensitive string matching
+        if str(plugin_id).isdigit():
+            c.execute("SELECT absolute_install_path FROM services WHERE CAST(plugin_id AS TEXT) = ? OR CAST(id AS TEXT) = ?", (str(plugin_id), str(plugin_id)))
+        else:
+            c.execute("SELECT absolute_install_path FROM services WHERE LOWER(name)=? OR name=?", (str(plugin_id).lower(), plugin_id))
+            
+        row = c.fetchone()
+        if row and row[0]:
+            install_path = row[0]
+        else:
+            # Fallback for complex namespace mismatches
+            service_id = db.get_service_id(plugin_id)
+            if service_id:
+                c.execute("SELECT absolute_install_path FROM services WHERE id=?", (service_id,))
+                row = c.fetchone()
+                if row and row[0]:
+                    install_path = row[0]
+    finally:
+        conn.close()
 
-    logger.info(f"[serve_plugin_asset] Retrieve absolute_install_path={install_path} for service_id={service_id}")
+    logger.info(f"[serve_plugin_asset] Retrieve absolute_install_path={install_path} for plugin_id={plugin_id}")
 
     if install_path:
         resolved_install = Path(install_path).resolve()

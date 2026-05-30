@@ -30,24 +30,24 @@ def _query_ui_registry() -> dict:
     db = get_config_database()
     registry: dict[str, list[dict]] = {}
 
+    conn = db._get_connection()
     try:
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("""
-                SELECT
-                    uc.tag_name,
-                    uc.component_type,
-                    uc.entry_path,
-                    uc.plugin_id,
-                    uc.is_core,
-                    s.name AS plugin_name
-                FROM ui_components uc
-                LEFT JOIN services s ON s.plugin_id = uc.plugin_id
-                WHERE uc.is_core = 1
-                   OR s.is_active = 1
-                ORDER BY uc.component_type, uc.tag_name
-            """)
-            rows = c.fetchall()
+        c = conn.cursor()
+        c.execute("""
+            SELECT
+                uc.tag_name,
+                uc.component_type,
+                uc.entry_path,
+                uc.plugin_id,
+                uc.is_core,
+                s.name AS plugin_name
+            FROM ui_components uc
+            LEFT JOIN services s ON CAST(s.plugin_id AS TEXT) = CAST(uc.plugin_id AS TEXT)
+            WHERE uc.is_core = 1
+               OR s.is_active = 1
+            ORDER BY uc.component_type, uc.tag_name
+        """)
+        rows = c.fetchall()
 
         for row in rows:
             tag_name = row["tag_name"]
@@ -80,6 +80,8 @@ def _query_ui_registry() -> dict:
 
     except Exception as exc:
         logger.error(f"[UIRegistry] Failed to query ui_components: {exc}", exc_info=True)
+    finally:
+        conn.close()
 
     return registry
 
