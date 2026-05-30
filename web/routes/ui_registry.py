@@ -42,7 +42,7 @@ def _query_ui_registry() -> dict:
                 uc.is_core,
                 s.name AS plugin_name
             FROM ui_components uc
-            LEFT JOIN services s ON CAST(s.plugin_id AS TEXT) = CAST(uc.plugin_id AS TEXT)
+            LEFT JOIN services s ON s.plugin_id = uc.plugin_id
             WHERE uc.is_core = 1
                OR s.is_active = 1
             ORDER BY uc.component_type, uc.tag_name

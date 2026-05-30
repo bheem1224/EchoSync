@@ -209,12 +209,15 @@ def update_plugin():
         # 2. Retrieve the plugin_id column from the database
         db_plugin_id = None
         if plugin_id_int is not None:
-            with db._get_connection() as conn:
+            conn = db._get_connection()
+            try:
                 c = conn.cursor()
                 c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
                 row = c.fetchone()
                 if row:
                     db_plugin_id = row['plugin_id']
+            finally:
+                conn.close()
                     
         if not db_plugin_id:
             return jsonify({"error": f"Plugin {plugin_name} not found in database registry."}), 404
@@ -254,12 +257,15 @@ def rollback_plugin():
         # 2. Retrieve the plugin_id column from the database
         db_plugin_id = None
         if plugin_id_int is not None:
-            with db._get_connection() as conn:
+            conn = db._get_connection()
+            try:
                 c = conn.cursor()
                 c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
                 row = c.fetchone()
                 if row:
                     db_plugin_id = row['plugin_id']
+            finally:
+                conn.close()
                     
         if not db_plugin_id:
             return jsonify({"error": f"Plugin {plugin_name} not found in database registry."}), 404
@@ -289,12 +295,15 @@ def rollback_plugin_direct(plugin_id):
                 
         db_plugin_id = None
         if plugin_id_int is not None:
-            with db._get_connection() as conn:
+            conn = db._get_connection()
+            try:
                 c = conn.cursor()
                 c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
                 row = c.fetchone()
                 if row:
                     db_plugin_id = row['plugin_id']
+            finally:
+                conn.close()
                     
         if not db_plugin_id:
             return jsonify({"error": f"Plugin {plugin_id} not found"}), 404
@@ -331,20 +340,26 @@ def set_plugin_beta_opt(plugin_id):
                 
         db_plugin_id = None
         if plugin_id_int is not None:
-            with db._get_connection() as conn:
+            conn = db._get_connection()
+            try:
                 c = conn.cursor()
                 c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
                 row = c.fetchone()
                 if row:
                     db_plugin_id = row['plugin_id']
+            finally:
+                conn.close()
                     
         if not db_plugin_id:
             return jsonify({"error": f"Plugin {plugin_id} not found"}), 404
             
-        with db._get_connection() as conn:
+        conn = db._get_connection()
+        try:
             c = conn.cursor()
             c.execute("UPDATE services SET beta_opt_in=? WHERE plugin_id=?", (db_val, db_plugin_id))
             conn.commit()
+        finally:
+            conn.close()
             
         try:
             from core.nexus_framework.plugin_loader import PluginLoader
@@ -381,7 +396,8 @@ def uninstall_plugin_route():
         service_id = db.get_service_id(f"{author}.{plugin_name}")
 
     if service_id:
-        with db._get_connection() as conn:
+        conn = db._get_connection()
+        try:
             c = conn.cursor()
             c.execute("SELECT plugin_id FROM services WHERE id=?", (service_id,))
             row = c.fetchone()
@@ -389,6 +405,8 @@ def uninstall_plugin_route():
                 plugin_id = int(row['plugin_id'])
             else:
                 plugin_id = service_id
+        finally:
+            conn.close()
     else:
         if isinstance(plugin_id_raw, int):
             plugin_id = plugin_id_raw

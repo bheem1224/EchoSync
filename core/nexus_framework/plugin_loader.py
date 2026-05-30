@@ -349,21 +349,14 @@ class PluginLoader:
             logger.warning(f"Failed to kill workers for {plugin_id}: {e}")
 
         # 3. Purge Memory (Recursive)
-        # We purge all casing variants to ensure modules are re-imported correctly on case-sensitive filesystems
-        module_names = [
-            f"plugins.{clean_ns}",
-            f"plugins.{clean_ns.replace('.', '_')}",
-            f"plugins.{clean_ns.lower()}",
-            f"plugins.{clean_ns.lower().replace('.', '_')}"
-        ]
+        module_name = f"plugins.{clean_ns}"
         
-        for module_name in module_names:
-            if module_name in sys.modules:
-                logger.debug(f"Purging {module_name} and submodules from sys.modules")
-                submodules = [m for m in list(sys.modules.keys()) if m.startswith(module_name + ".")]
-                for m in submodules:
-                    del sys.modules[m]
-                del sys.modules[module_name]
+        if module_name in sys.modules:
+            logger.debug(f"Purging {module_name} and submodules from sys.modules")
+            submodules = [m for m in list(sys.modules.keys()) if m.startswith(module_name + ".")]
+            for m in submodules:
+                del sys.modules[m]
+            del sys.modules[module_name]
 
         # 4. Reload Package
         try:
@@ -716,15 +709,7 @@ class PluginLoader:
                 if not package_dir.exists():
                     raise ValueError(f"Plugin package {plugin_id} path {package_dir} does not exist on disk")
 
-                # Resolve module path
-                try:
-                    relative_path = package_dir.relative_to(self.plugins_dir)
-                    parts = list(relative_path.parts)
-                    module_path = "plugins." + ".".join(parts)
-                    logger.debug(f"Resolved module path casing: {module_path}")
-                except Exception as e:
-                    logger.warning(f"Could not derive relative path for {package_dir}: {e}")
-                    module_path = f"plugins.{plugin_name}"
+                module_path = f"plugins.{clean_ns}"
 
                 # 2. Extract metadata from manifest
                 version = "Unknown"
@@ -782,73 +767,13 @@ class PluginLoader:
                     self._update_db_version(provider_id, version, clean_ns)
                     return True
 
-                # Dynamic import with Namespace Bridging
-                plugins_parent_str = str(self.plugins_dir.parent)
-                added_to_path = False
-                if plugins_parent_str not in sys.path:
-                    sys.path.insert(0, plugins_parent_str)
-                    added_to_path = True
-                
+                sys.path.insert(0, str(package_dir))
                 try:
-                    # Micro-Venv Injection
-                    micro_venv_dir = package_dir / "micro-venv"
-                    micro_venv_str = str(micro_venv_dir)
-                    added_micro_venv = False
-                    if micro_venv_dir.exists():
-                        sys.path.insert(0, micro_venv_str)
-                        added_micro_venv = True
-
-                    before_modules = set(sys.modules.keys())
-                    snapshot_modules = dict(sys.modules)
-
-                    try:
-                        importlib.invalidate_caches()
-                        module = importlib.import_module(module_path)
-                    except Exception as e:
-                        logger.error(f"Module compilation failed for {module_path}: {e}")
-                        # Surgical rollback of any modules imported during this import attempt
-                        for key in list(sys.modules):
-                            if key not in snapshot_modules:
-                                del sys.modules[key]
-                        raise
-                    finally:
-                        if added_micro_venv:
-                            sys.path.remove(micro_venv_str)
-
-                    after_modules = set(sys.modules.keys())
-                    newly_loaded = after_modules - before_modules
-                    newly_loaded.add(module_path)
-
-                    plugin_modules = set()
-                    plugin_path_str = str(Path(absolute_install_path).resolve())
-                    for mod_name in newly_loaded:
-                        if mod_name.startswith(f"plugins.{clean_ns}"):
-                            plugin_modules.add(mod_name)
-                        else:
-                            mod = sys.modules.get(mod_name)
-                            mod_file = getattr(mod, '__file__', None)
-                            if mod_file and str(Path(mod_file).resolve()).startswith(plugin_path_str):
-                                plugin_modules.add(mod_name)
-
-                    try:
-                        from database.config_database import get_config_database
-                        db_conf = get_config_database()
-                        conn = db_conf._get_connection()
-                        try:
-                            c = conn.cursor()
-                            c.execute(
-                                "UPDATE services SET loaded_modules = ? WHERE plugin_id = ?",
-                                (json.dumps(list(plugin_modules)), plugin_id)
-                            )
-                            conn.commit()
-                        finally:
-                            conn.close()
-                        logger.info(f"Dynamically tracked and saved {len(plugin_modules)} loaded modules in services registry for plugin ID {plugin_id}")
-                    except Exception as db_e:
-                        logger.warning(f"Failed to persist dynamically tracked loaded modules in database for plugin ID {plugin_id}: {db_e}")
-                finally:
-                    if added_to_path:
-                        sys.path.remove(plugins_parent_str)
+                    importlib.invalidate_caches()
+                    module = importlib.import_module(module_path)
+                except Exception as e:
+                    logger.error(f"Module compilation failed for {module_path}: {e}")
+                    raise
 
                 # Registration
                 if hasattr(module, 'ProviderClass'):
@@ -949,62 +874,36 @@ def get_plugin(name: str) -> Optional[PluginBase]:
 
 def get_all_plugins() -> list:
     from database.config_database import get_config_database
-    import contextlib
-    import json
-    from pathlib import Path
     import logging
 
     plugins_map = {}
     db = get_config_database()
     
+    conn = db._get_connection()
     try:
-        with contextlib.closing(db._get_connection()) as conn:
-            c = conn.cursor()
-            c.execute("SELECT name, plugin_id, absolute_install_path, description, version, is_active FROM services")
-            rows = c.fetchall()
-            
-            for row in rows:
-                name = row['name']
-                if name.lower() == 'system':
-                    continue
-                    
-                abs_path = row['absolute_install_path']
+        c = conn.cursor()
+        c.execute("SELECT name, plugin_id, absolute_install_path, description, version, is_active FROM services")
+        rows = c.fetchall()
+        
+        for row in rows:
+            name = row['name']
+            if name.lower() == 'system':
+                continue
                 
-                plugin_info = {
-                    "id": name,
-                    "name": name,
-                    "description": row['description'] or "Community plugin",
-                    "type": "community",
-                    "version": row['version'] or "Unknown",
-                    "abs_path": abs_path,
-                    "enabled": bool(row['is_active'])
-                }
-
-                if abs_path:
-                    current_item = Path(abs_path)
-                    json_file = current_item / "manifest.json"
-                    if json_file.exists():
-                        try:
-                            data = json.loads(json_file.read_text(encoding="utf-8"))
-                            plugin_info.update({
-                                "name": data.get("name", plugin_info["name"]),
-                                "description": data.get("description", plugin_info["description"]),
-                                "author": data.get("author", "Unknown"),
-                                "id": data.get("id", plugin_info["id"])
-                            })
-                        except Exception:
-                            pass
-
-                    ui_manifest_file = current_item / "ui_manifest.json"
-                    if ui_manifest_file.exists():
-                        try:
-                            plugin_info["ui_manifest"] = json.loads(ui_manifest_file.read_text(encoding="utf-8"))
-                        except Exception:
-                            pass
-
-                plugins_map[plugin_info["id"]] = plugin_info
+            plugin_info = {
+                "id": name,
+                "name": name,
+                "description": row['description'] or "Community plugin",
+                "type": "community",
+                "version": row['version'] or "Unknown",
+                "abs_path": row['absolute_install_path'],
+                "enabled": bool(row['is_active'])
+            }
+            plugins_map[name] = plugin_info
     except Exception as e:
         logging.getLogger("plugin_loader").error(f"Failed to fetch plugins from DB: {e}")
+    finally:
+        conn.close()
 
     return list(plugins_map.values())
 
