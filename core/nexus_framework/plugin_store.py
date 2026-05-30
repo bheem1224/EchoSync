@@ -296,7 +296,8 @@ class PluginStore:
                 db = get_config_database()
                 db_id = db.get_service_id(plugin_id)
                 if db_id:
-                    with db._get_connection() as conn:
+                    conn = db._get_connection()
+                    try:
                         c = conn.cursor()
                         c.execute("SELECT beta_opt_in, previous_version_path, plugin_id, absolute_install_path FROM services WHERE id=?", (db_id,))
                         row = c.fetchone()
@@ -307,6 +308,8 @@ class PluginStore:
                             absolute_install_path = row[3]
                             if row[0] == 1:
                                 plugin["installed_channel"] = "beta"
+                    finally:
+                        conn.close()
             except Exception:
                 pass
             
@@ -374,10 +377,13 @@ class PluginStore:
         """Downloads the update and hot swaps it."""
         from database.config_database import get_config_database
         db = get_config_database()
-        with db._get_connection() as conn:
+        conn = db._get_connection()
+        try:
             c = conn.cursor()
             c.execute("SELECT name, beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,))
             row = c.fetchone()
+        finally:
+            conn.close()
             if not row:
                 logger.error(f"Cannot update plugin: ID {plugin_id} not found in database.")
                 return False
@@ -495,13 +501,16 @@ class PluginStore:
                     try:
                         from database.config_database import get_config_database
                         db = get_config_database()
-                        with db._get_connection() as conn:
+                        conn = db._get_connection()
+                        try:
                             c = conn.cursor()
                             c.execute("SELECT absolute_install_path FROM services WHERE plugin_id=?", (target_plugin_id,))
                             row = c.fetchone()
                             if row and row[0]:
                                 c.execute("UPDATE services SET previous_version_path=? WHERE plugin_id=?", (row[0], target_plugin_id))
                                 conn.commit()
+                        finally:
+                            conn.close()
                     except Exception as e:
                         logger.error(f"Failed to set previous_version_path: {e}")
 
@@ -637,7 +646,8 @@ class PluginStore:
                             # 1. Config.db Service Configurations and Plugin Accounts & Tokens using SQLAlchemy ORM
                             config_engine = create_engine(f"sqlite:///{db.database_path}")
                             ConfigSession = sessionmaker(bind=config_engine)
-                            with ConfigSession() as config_session:
+                            config_session = ConfigSession()
+                            try:
                                 # Fetch ServiceConfigs
                                 configs = config_session.query(ServiceConfig).filter(ServiceConfig.service_id == service_id).all()
                                 state_snapshot["service_config"] = [
@@ -682,11 +692,24 @@ class PluginStore:
                                         }
                                         for tok in tokens
                                     ]
+                            finally:
+                                config_session.flush()
+                                config_session.commit()
+                                config_session.close()
+                                config_engine.dispose()
 
                             # 2. Working.db Local KVS states
-                            with w_db.session_scope() as session:
+                            session = w_db.session()
+                            try:
                                 kvs_rows = session.execute(text("SELECT key, value FROM plugin_state_kvs WHERE plugin_id=:pid"), {"pid": str(target_plugin_id)}).fetchall()
                                 state_snapshot["kvs"] = [dict(row._mapping) for row in kvs_rows]
+                                session.flush()
+                                session.commit()
+                            except Exception:
+                                session.rollback()
+                                raise
+                            finally:
+                                session.close()
 
                             # 3. Sandbox Storage DBs
                             sandbox_db_path = dest_dir / f"{manifest_name}.db"
@@ -882,16 +905,28 @@ class PluginStore:
                                             )
                                             config_session.add(tok)
 
+                                        config_session.flush()
                                         config_session.commit()
                                     except Exception as db_rollback_err:
                                         config_session.rollback()
                                         raise db_rollback_err
+                                    finally:
+                                        config_session.close()
+                                        config_engine.dispose()
 
-                                with w_db.session_scope() as session:
+                                session = w_db.session()
+                                try:
                                     session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id=:pid"), {"pid": str(target_plugin_id)})
                                     for row in state_snapshot["kvs"]:
                                         session.execute(text("INSERT INTO plugin_state_kvs (plugin_id, key, value) VALUES (:pid, :k, :v)"),
                                                         {"pid": str(target_plugin_id), "k": row['key'], "v": row['value']})
+                                    session.flush()
+                                    session.commit()
+                                except Exception:
+                                    session.rollback()
+                                    raise
+                                finally:
+                                    session.close()
 
                                 logger.info("Atomic State Rollback completed successfully.")
                             except Exception as rollback_err:
@@ -982,12 +1017,15 @@ class PluginStore:
             service_id = db.get_service_id(plugin_id)
             if not service_id:
                 # Fallback: check if plugin_id matches either id or plugin_id in DB
-                with db._get_connection() as conn:
+                conn = db._get_connection()
+                try:
                     c = conn.cursor()
                     c.execute("SELECT id FROM services WHERE id=? OR plugin_id=?", (plugin_id, plugin_id))
                     row = c.fetchone()
                     if row:
                         service_id = row[0]
+                finally:
+                    conn.close()
             
             if not service_id:
                 logger.error(f"Cannot uninstall plugin {plugin_id}: service not found in database.")
@@ -999,10 +1037,13 @@ class PluginStore:
             clean_id = str(plugin_id)
             db_plugin_id = None
             
-            with db._get_connection() as conn:
+            conn = db._get_connection()
+            try:
                 c = conn.cursor()
                 c.execute("SELECT id, name, plugin_id, absolute_install_path, loaded_modules FROM services WHERE id=?", (service_id,))
                 row = c.fetchone()
+            finally:
+                conn.close()
                 if row:
                     clean_id = row['name']
                     db_plugin_id = row['plugin_id']
@@ -1082,7 +1123,8 @@ class PluginStore:
                 logger.warning(f"Failed to teardown dynamic tables for {db_plugin_id}: {e}")
 
             # 4. Delete config keys, UI components, and remove from services table
-            with db._get_connection() as conn:
+            conn = db._get_connection()
+            try:
                 c = conn.cursor()
                 c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")
                 c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (db_plugin_id,))
@@ -1098,17 +1140,27 @@ class PluginStore:
                 
                 c.execute("DELETE FROM services WHERE id=?", (service_id,))
                 conn.commit()
+            finally:
+                conn.close()
 
             # 4b. Delete working state KVS entries to prevent orphaned data
             try:
                 from database.working_database import get_working_database
                 w_db = get_working_database()
-                with w_db.session_scope() as session:
+                session = w_db.session()
+                try:
                     from sqlalchemy import text
                     session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": str(db_plugin_id)})
                     session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": f"{db_plugin_id}@beta"})
                     session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": f"{db_plugin_id}@archive"})
                     session.execute(text("DELETE FROM plugin_state_kvs WHERE plugin_id = :pid"), {"pid": str(service_id)})
+                    session.flush()
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    raise
+                finally:
+                    session.close()
             except Exception as e:
                 logger.warning(f"Error purging working state KVS for {db_plugin_id}: {e}")
 

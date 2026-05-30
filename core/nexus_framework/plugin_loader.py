@@ -3,14 +3,11 @@ import threading
 
 import ast
 import importlib
-#import importlib.util
 import os
 import sys
 import json
 from pathlib import Path
 from typing import Type, TypeVar, Protocol, List, Optional, Dict, Any
-
-from core.nexus_framework.plugin_venv import setup_plugin_venv
 
 from flask import Blueprint
 
@@ -24,8 +21,6 @@ logger = get_logger("plugin_loader")
 import zlib
 import types
 
-# The sys.meta_path hooks (CaseInsensitiveAliasFinder) have been excised.
-# We now use One-Time Authoritative Module Pre-Registration directly in _load_plugin_package.
 
 def generate_plugin_id(name: str) -> int:
     """Generate a consistent 32-bit integer ID from a plugin name."""
@@ -323,7 +318,8 @@ class PluginLoader:
         from database.config_database import get_config_database
         db = get_config_database()
         
-        with db._get_connection() as conn:
+        conn = db._get_connection()
+        try:
             c = conn.cursor()
             c.execute("SELECT absolute_install_path, name, beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,))
             row = c.fetchone()
@@ -333,6 +329,8 @@ class PluginLoader:
                 is_beta = bool(row[2])
             else:
                 raise ValueError(f"Plugin ID {plugin_id} not found in database for reload or missing absolute_install_path")
+        finally:
+            conn.close()
 
         clean_ns = base_ns.split('@')[0]
         channel = 'beta' if is_beta else 'stable'
@@ -410,7 +408,8 @@ class PluginLoader:
 
         active_db_paths = set()
 
-        with db._get_connection() as conn:
+        conn = db._get_connection()
+        try:
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
             
@@ -496,6 +495,8 @@ class PluginLoader:
                         VALUES(?, ?, 'system', ?, ?, '2.5.2', 1, 0, 1, 1, '[]', strftime('%s','now'), strftime('%s','now'))
                     """, (name, target_plugin_id, f"{name.capitalize()} service", core_path))
             conn.commit()
+        finally:
+            conn.close()
 
         # Startup Garbage Collection Sweep
         if plugins_dir.exists():
@@ -542,11 +543,14 @@ class PluginLoader:
         
         active_services = []
         try:
-            with db._get_connection() as conn:
+            conn = db._get_connection()
+            try:
                 conn.row_factory = sqlite3.Row
                 c = conn.cursor()
                 c.execute("SELECT name, plugin_id, absolute_install_path, loaded_modules, beta_opt_in FROM services WHERE is_active = 1")
                 active_services = c.fetchall()
+            finally:
+                conn.close()
         except Exception as e:
             logger.error(f"Failed to query active services: {e}")
             return
@@ -648,7 +652,8 @@ class PluginLoader:
         try:
             from database.config_database import get_config_database
             db = get_config_database()
-            with db._get_connection() as conn:
+            conn = db._get_connection()
+            try:
                 c = conn.cursor()
                 # Use a flexible match for clean_name/provider_id to catch mismatches in plugin. vs core. prefixes
                 c.execute("""
@@ -659,6 +664,8 @@ class PluginLoader:
                 updated = c.rowcount
                 conn.commit()
                 logger.info(f"Stamped version {version} for {provider_id}")
+            finally:
+                conn.close()
         except Exception as e:
             logger.error(f"Failed to update version in DB for {provider_id}: {e}")
 
@@ -672,7 +679,8 @@ class PluginLoader:
                 if not absolute_install_path:
                     from database.config_database import get_config_database
                     db = get_config_database()
-                    with db._get_connection() as conn:
+                    conn = db._get_connection()
+                    try:
                         c = conn.cursor()
                         c.execute("SELECT absolute_install_path, name FROM services WHERE plugin_id=?", (plugin_id,))
                         row = c.fetchone()
@@ -681,17 +689,22 @@ class PluginLoader:
                             plugin_name = row[1]
                         else:
                             raise ValueError(f"Plugin package for plugin_id {plugin_id} not found in database registry or has no path.")
+                    finally:
+                        conn.close()
                 else:
                     plugin_name = str(plugin_id) # Fallback
                     try:
                         from database.config_database import get_config_database
                         db = get_config_database()
-                        with db._get_connection() as conn:
+                        conn = db._get_connection()
+                        try:
                             c = conn.cursor()
                             c.execute("SELECT name FROM services WHERE plugin_id=?", (plugin_id,))
                             row = c.fetchone()
                             if row and row[0]:
                                 plugin_name = row[0]
+                        finally:
+                            conn.close()
                     except Exception:
                         pass
 
@@ -820,13 +833,16 @@ class PluginLoader:
                     try:
                         from database.config_database import get_config_database
                         db_conf = get_config_database()
-                        with db_conf._get_connection() as conn:
+                        conn = db_conf._get_connection()
+                        try:
                             c = conn.cursor()
                             c.execute(
                                 "UPDATE services SET loaded_modules = ? WHERE plugin_id = ?",
                                 (json.dumps(list(plugin_modules)), plugin_id)
                             )
                             conn.commit()
+                        finally:
+                            conn.close()
                         logger.info(f"Dynamically tracked and saved {len(plugin_modules)} loaded modules in services registry for plugin ID {plugin_id}")
                     except Exception as db_e:
                         logger.warning(f"Failed to persist dynamically tracked loaded modules in database for plugin ID {plugin_id}: {db_e}")
@@ -867,6 +883,12 @@ class PluginLoader:
                 except Exception as ui_err:
                     logger.warning(f"[UIRegistry] Failed to sync UI components during load for plugin {plugin_id}: {ui_err}")
 
+                # Tear down existing blueprints for this plugin
+                try:
+                    self.loaded_blueprints = [bp for bp in self.loaded_blueprints if not bp.name.startswith(f"{provider_id}_")]
+                except Exception as e:
+                    logger.warning(f"Failed to unregister blueprints for {provider_id}: {e}")
+
                 # Collect Blueprints
                 for bp_attr in ('RouteBlueprint', 'RouteBlueprint2', 'RouteBlueprint3'):
                     blueprint = getattr(module, bp_attr, None)
@@ -883,8 +905,12 @@ class PluginLoader:
                 try:
                     from database.config_database import get_config_database
                     db = get_config_database()
-                    with db._get_connection() as conn:
+                    conn = db._get_connection()
+                    try:
                         conn.execute("UPDATE services SET is_active = 0 WHERE plugin_id = ?", (plugin_id,))
+                        conn.commit()
+                    finally:
+                        conn.close()
                 except Exception: pass
                 return False
 

@@ -456,30 +456,21 @@ class StateKVS:
 
     def get(self, key: str, default=None) -> str:
         from database.working_database import get_working_database
-        from core.security import decrypt_string
         db = get_working_database()
         val = None
         with db.session_scope() as session:
             from sqlalchemy.sql import text
-            res = session.execute(text("SELECT value, is_sensitive FROM plugin_state_kvs WHERE plugin_id=:ns AND key=:k"), {"ns": self.plugin_id, "k": key}).fetchone()
+            res = session.execute(text("SELECT value FROM plugin_state_kvs WHERE plugin_id=:ns AND key=:k"), {"ns": self.plugin_id, "k": key}).fetchone()
             if res:
-                val, is_sensitive = res[0], res[1]
-                if is_sensitive and val:
-                    try:
-                        val = decrypt_string(val)
-                    except Exception:
-                        pass
+                val = res[0]
         return val if val is not None else default
 
-    def set(self, key: str, value: str, is_sensitive: bool = False) -> None:
+    def set(self, key: str, value: str) -> None:
         from database.working_database import get_working_database
-        from core.security import encrypt_string
         db = get_working_database()
-        if is_sensitive and value:
-            value = encrypt_string(value)
         with db.session_scope() as session:
             from sqlalchemy.sql import text
-            session.execute(text("INSERT OR REPLACE INTO plugin_state_kvs (plugin_id, key, value, is_sensitive) VALUES (:ns, :k, :v, :sens)"), {"ns": self.plugin_id, "k": key, "v": value, "sens": is_sensitive})
+            session.execute(text("INSERT OR REPLACE INTO plugin_state_kvs (plugin_id, key, value) VALUES (:ns, :k, :v)"), {"ns": self.plugin_id, "k": key, "v": value})
 
 class _PluginModelFacade:
     def __init__(self):
@@ -547,6 +538,9 @@ class PluginBase(ABC):
     # Default rate limit (requests per second). Can be overridden by subclasses.
     # None = unlimited/config driven.
     rate_limit: float = None
+    
+    # State key-value store facade explicitly mapped for the plugin
+    kvs: StateKVS
 
     def __init__(self):
         """Initialize provider with HTTP client."""
@@ -567,6 +561,7 @@ class PluginBase(ABC):
         self.accounts = _AccountsSDKFacade()
         self.plugins = _PluginsSDKFacade()
         self.file = _FileSDKFacade()
+        self.kvs = StateKVS(self.name)
 
         self.models = _PluginModelFacade()
 
