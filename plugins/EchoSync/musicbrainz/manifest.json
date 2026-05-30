@@ -8,7 +8,6 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "verified_source": "official",
   "ui_manifest": "ui_manifest.json",
   "settings": {
     "api_base_url": {
@@ -17,5 +16,5 @@
       "description": "Base URL for the MusicBrainz API"
     }
   },
-  "beta_version": "2.4.3-beta.26"
+  "beta_version": "2.4.3-beta.27"
 }

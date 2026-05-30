@@ -21,8 +21,6 @@
   loading  – Optional override for the loading state.
 -->
 <script>
-  import { onMount } from 'svelte';
-
   // ── Props ──────────────────────────────────────────────────────────────
   /** Category key to look up in plugin.components (e.g. "music_service") */
   export let category = '';
@@ -30,12 +28,6 @@
   export let passProps = {};
   /** Whether to render the default slot when no plugins are available */
   export let showEmpty = true;
-
-  // ── State ──────────────────────────────────────────────────────────────
-  /** Plugins resolved for this category */
-  let resolvedPlugins = [];
-  let loading = true;
-  let error = null;
 
   // Keep track of <script> tags we've already injected so we never double-inject.
   const _injectedUrls = new Set();
@@ -52,12 +44,6 @@
 
     if (_injectedUrls.has(finalUrl)) return Promise.resolve();
 
-    // Double-check the DOM to survive HMR / multiple mounts
-    // We check for the base URL to see if any version of this script is already loaded, 
-    // or we can check for the exact finalUrl. 
-    // For cache busting, if the version changed, we might WANT a new script tag, 
-    // but browser might have already executed the old one. 
-    // Usually, one script per base URL is enough per session.
     if (document.querySelector(`script[src^="${CSS.escape ? CSS.escape(url) : url}"]`)) {
       _injectedUrls.add(finalUrl);
       return Promise.resolve();
@@ -68,7 +54,10 @@
       el.type = 'module';
       el.src = finalUrl;
       el.onload  = () => { _injectedUrls.add(finalUrl); resolve(); };
-      el.onerror = () => reject(new Error(`Failed to load plugin bundle: ${url}`));
+      el.onerror = () => {
+        console.error(`[DynamicPluginLoader] Script injection failed for path: ${url}`);
+        reject(new Error(`Failed to load plugin bundle: ${url}`));
+      };
       document.head.appendChild(el);
     });
   }
@@ -87,11 +76,8 @@
   }
 
   // ── Data fetching ──────────────────────────────────────────────────────
-  onMount(async () => {
-    if (!category) {
-      loading = false;
-      return;
-    }
+  async function fetchPlugins(cat) {
+    if (!cat) return [];
 
     try {
       // 1. Fetch the UI manifest from the backend
@@ -101,21 +87,19 @@
 
       if (!resp.ok) {
         if (resp.status === 404) {
-          console.warn(`[DynamicPluginLoader] /api/ui/registry not found. No plugins will load for category="${category}".`);
-          loading = false;
-          return;
+          console.warn(`[DynamicPluginLoader] /api/ui/registry not found. No plugins will load for category="${cat}".`);
+          return [];
         }
         throw new Error(`UI registry fetch failed: ${resp.status} ${resp.statusText}`);
       }
 
       const data = await resp.json();
-      const typeKey = category.endsWith('s') ? category : `${category}s`;
+      const typeKey = cat.endsWith('s') ? cat : `${cat}s`;
       const components = Array.isArray(data?.[typeKey]) ? data[typeKey] : [];
 
       if (components.length === 0) {
-        console.warn(`[DynamicPluginLoader] No plugins found for category="${category}".`);
-        loading = false;
-        return;
+        console.warn(`[DynamicPluginLoader] No plugins found for category="${cat}".`);
+        return [];
       }
 
       // 3. Inject each plugin's bundle script and await registration
@@ -125,9 +109,10 @@
           const tag = comp.tag_name;
           if (!bundleUrl || !tag) return null;
           
+          // Natively track paths using exactly the plugin_id
           const absoluteUrl = (bundleUrl.startsWith('http') || bundleUrl.startsWith('/'))
             ? bundleUrl
-            : `/api/system/plugins/${comp.plugin_name || comp.plugin_id}/ui/${bundleUrl.replace(/^\//, '')}`;
+            : `/api/system/plugins/${comp.plugin_id}/ui/${bundleUrl.replace(/^\//, '')}`;
             
           try {
             await injectScript(absoluteUrl, null);
@@ -139,26 +124,27 @@
               `Timeout waiting for Custom Element "${tag}" registration`
             );
             
-            const pluginId = comp.plugin_name || String(comp.plugin_id);
+            const pluginId = String(comp.plugin_id);
             return {
               plugin: {
                 id: pluginId,
-                plugin_id: comp.plugin_id
+                name: comp.plugin_name || pluginId
               },
               tag,
-              apiBase: `/api/plugins/${pluginId}`,
-              failed: false
+              apiBase: `/api/plugins/${comp.plugin_name || pluginId}`,
+              failed: false,
+              is_active: true
             };
           } catch (err) {
-            console.error(`[DynamicPluginLoader] Error loading plugin ${comp.plugin_id}:`, err);
-            const pluginId = comp.plugin_name || String(comp.plugin_id);
+            console.error(`[DynamicPluginLoader] Error loading plugin ${comp.plugin_id} at path ${absoluteUrl}:`, err);
+            const pluginId = String(comp.plugin_id);
             return {
               plugin: {
                 id: pluginId,
-                plugin_id: comp.plugin_id
+                name: comp.plugin_name || pluginId
               },
               tag,
-              apiBase: `/api/plugins/${pluginId}`,
+              apiBase: `/api/plugins/${comp.plugin_name || pluginId}`,
               failed: true,
               errorMsg: err?.message ?? 'Unknown loading error'
             };
@@ -167,7 +153,7 @@
       );
 
       // 4. Collect loaded plugins (including failed ones for error cards) with strict deduplication
-      resolvedPlugins = loadResults
+      return loadResults
         .filter(item => item != null && item.tag)
         .filter((value, index, self) =>
           self.findIndex(item => {
@@ -180,11 +166,12 @@
 
     } catch (err) {
       console.warn('[DynamicPluginLoader] Failed to load plugin manifest:', err?.message ?? err);
-      error = err?.message ?? 'Plugin loader failed';
-    } finally {
-      loading = false;
+      throw err;
     }
-  });
+  }
+
+  // Authoritative Async Gating via reactive promise
+  $: pluginsPromise = fetchPlugins(category);
 
   function initCard(node, { apiBase, pluginId }) {
     // Set properties directly on the element object
@@ -214,7 +201,7 @@
 </script>
 
 <!-- ── Render ─────────────────────────────────────────────────────────────── -->
-{#if loading}
+{#await pluginsPromise}
   <!-- Loading slot – override with <svelte:fragment slot="loading"> -->
   <slot name="loading">
     <div class="plugin-loader-spinner" aria-label="Loading plugins…">
@@ -222,46 +209,47 @@
     </div>
   </slot>
 
-{:else if resolvedPlugins.length > 0}
-  <!-- One element per resolved Web Component -->
-  <div class="plugin-loader-grid" data-category={category}>
-    {#each resolvedPlugins as { tag, apiBase, plugin, failed, errorMsg } (plugin.id || `${tag}-${apiBase}`)}
-      {#if failed}
-        <div class="plugin-error-card">
-          <h4>Failed to load {plugin.name || plugin.id}</h4>
-          <p>{errorMsg}</p>
-        </div>
-      {:else}
-        <svelte:element
-          this={tag}
-          use:initCard={{ apiBase, pluginId: plugin.id }}
-          api-base={apiBase}
-          apiBase={apiBase}
-          apibase={apiBase}
-          plugin-id={plugin.id}
-          {...passProps}
-        />
-      {/if}
-    {/each}
-  </div>
-
-{:else if showEmpty}
-  <!-- Fallback slot when no plugins loaded -->
-  <slot>
-    <!-- Default empty state – pages can override this slot -->
-    <div class="plugin-loader-empty">
-      <slot name="empty-state">
-        <p class="plugin-loader-empty__msg">
-          No <strong>{category.replace(/_/g, ' ')}</strong> plugins are currently active.
-        </p>
-      </slot>
+{:then resolvedPlugins}
+  {#if resolvedPlugins.length > 0}
+    <!-- One element per resolved Web Component -->
+    <div class="plugin-loader-grid" data-category={category}>
+      {#each resolvedPlugins as { tag, apiBase, plugin, failed, errorMsg } (plugin.id || `${tag}-${apiBase}`)}
+        {#if failed}
+          <div class="plugin-error-card">
+            <h4>Failed to load {plugin.name || plugin.id}</h4>
+            <p>{errorMsg}</p>
+          </div>
+        {:else}
+          <svelte:element
+            this={tag}
+            use:initCard={{ apiBase, pluginId: plugin.id }}
+            api-base={apiBase}
+            apiBase={apiBase}
+            apibase={apiBase}
+            plugin-id={plugin.id}
+            {...passProps}
+          />
+        {/if}
+      {/each}
     </div>
-  </slot>
-{/if}
 
-{#if error}
-  <p class="plugin-loader-error" role="alert">⚠ {error}</p>
-{/if}
+  {:else if showEmpty}
+    <!-- Fallback slot when no plugins loaded -->
+    <slot>
+      <!-- Default empty state – pages can override this slot -->
+      <div class="plugin-loader-empty">
+        <slot name="empty-state">
+          <p class="plugin-loader-empty__msg">
+            No <strong>{category.replace(/_/g, ' ')}</strong> plugins are currently active.
+          </p>
+        </slot>
+      </div>
+    </slot>
+  {/if}
+
+{:catch error}
+  <p class="plugin-loader-error" role="alert">⚠ {error.message}</p>
+{/await}
 
 <style>
   .plugin-loader-grid {
