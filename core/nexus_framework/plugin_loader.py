@@ -712,15 +712,40 @@ class PluginLoader:
                     except Exception:
                         pass
 
-                clean_ns = plugin_name
-
                 from pathlib import Path
                 package_dir = Path(absolute_install_path)
 
                 if not package_dir.exists():
                     raise ValueError(f"Plugin package {plugin_id} path {package_dir} does not exist on disk")
 
-                module_path = f"plugins.{clean_ns}.beta" if is_beta and not clean_ns.endswith(".beta") else f"plugins.{clean_ns}"
+                # Find the directory containing the 'plugins' folder
+                plugins_root = Path(package_dir)
+                found_plugins = False
+                while plugins_root.parent != plugins_root:
+                    if plugins_root.name == 'plugins':
+                        found_plugins = True
+                        break
+                    plugins_root = plugins_root.parent
+
+                if found_plugins:
+                    plugins_root = plugins_root.parent # go one up from 'plugins'
+                    if str(plugins_root) not in sys.path:
+                        sys.path.insert(0, str(plugins_root))
+
+                    try:
+                        rel_parts = package_dir.relative_to(plugins_root).parts
+                        module_path = ".".join(rel_parts)
+                        clean_ns = ".".join(rel_parts[1:]) # skip 'plugins'
+                    except Exception:
+                        clean_ns = plugin_name
+                        module_path = f"plugins.{clean_ns}.beta" if is_beta and not clean_ns.endswith(".beta") else f"plugins.{clean_ns}"
+                else:
+                    # Fallback for test environments without 'plugins' in path
+                    plugins_root = Path(package_dir).parent.parent
+                    if str(plugins_root) not in sys.path:
+                        sys.path.insert(0, str(plugins_root))
+                    clean_ns = plugin_name
+                    module_path = f"plugins.{clean_ns}.beta" if is_beta and not clean_ns.endswith(".beta") else f"plugins.{clean_ns}"
 
                 # 2. Extract metadata from manifest
                 version = "Unknown"
@@ -777,10 +802,6 @@ class PluginLoader:
                     PluginRegistry.register(WasmClass, name=provider_id, source_type='community')
                     self._update_db_version(provider_id, version, clean_ns)
                     return True
-
-                plugins_root = Path("/data/plugins")
-                if str(plugins_root) not in sys.path:
-                    sys.path.insert(0, str(plugins_root))
 
                 sys.path.insert(0, str(package_dir))
                 try:
@@ -877,7 +898,6 @@ class PluginLoader:
 
                 # Persist loaded_modules to DB
                 try:
-                    import json
                     loaded_mods = [m for m in sys.modules.keys() if m.startswith(module_path)]
                     from database.config_database import get_config_database
                     db = get_config_database()
