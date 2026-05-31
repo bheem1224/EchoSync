@@ -888,18 +888,13 @@ class PluginStore:
                         loader.reload_plugin(int_plugin_id)
                         logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}).")
                     except Exception as e:
-                        logger.error("Rollback operation halted: Atomic state restoration failed.")
-                        logger.debug(f"Raw exception data: {e}", exc_info=True)
-                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
+                        logger.error(f"Live-swap failed for {plugin_id}. Initiating rollback...")
                         logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                         # Atomic State Rollback
                         if is_update and target_plugin_id and 'service_config' in state_snapshot:
                             try:
-                                logger.warning("Rollback operation halted: Atomic state restoration failed.")
-                                logger.debug(f"Raw exception data: {e}", exc_info=True)
-                                logger.debug("Rollback operation halted: Atomic state restoration failed.")
-                                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                                logger.info(f"Restoring previous state for {plugin_id}...")
 
                                 # 1. Filesystem Rollback
                                 if backup_dir and backup_dir.exists():
@@ -992,13 +987,24 @@ class PluginStore:
                                 finally:
                                     session.close()
 
-                                logger.warning("Rollback operation halted: Atomic state restoration failed.")
-                                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                                logger.info("Rollback of files and database completed.")
+                                
+                                # Attempt to resurrect the old plugin module in memory
+                                try:
+                                    logger.info(f"Resurrecting old version of {plugin_id} in memory...")
+                                    loader.reload_plugin(int_plugin_id)
+                                    logger.info(f"Successfully resurrected old version of {plugin_id}.")
+                                except Exception as resurrect_err:
+                                    logger.critical(f"Failed to resurrect old module. Restart required: {resurrect_err}")
+                                    system_state.restart_pending = True
+
                             except Exception as rollback_err:
                                 logger.critical("Rollback operation halted: Atomic state restoration failed.")
                                 logger.debug(f"Raw exception data: {rollback_err}", exc_info=True)
+                                system_state.restart_pending = True
+                        else:
+                            system_state.restart_pending = True
 
-                        system_state.restart_pending = True
                         return False
 
                 else:

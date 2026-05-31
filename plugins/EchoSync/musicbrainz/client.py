@@ -887,4 +887,4 @@ class MusicBrainzClient(PluginBase):
 MusicBrainzProvider = MusicBrainzClient
 
 # Ensure plugin loader/runtime registry can resolve this provider class.
-PluginRegistry.register(MusicBrainzClient)
+
