@@ -326,3 +326,49 @@ def debug_account(account_id):
     except Exception as e:
         logger.error(f"Error debugging account: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# OAuth / Auth — consumed by TidalCard.svelte authenticate()
+# ---------------------------------------------------------------------------
+
+@bp.get('/auth')
+def begin_auth():
+    """Initiate Tidal OAuth device-code flow for the given account_id.
+    Query params: account_id (required)
+    Returns: { auth_url } to open in a new tab, or { device_code_url } for device flow.
+    """
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    try:
+        account_id = request.args.get('account_id')
+        if not account_id:
+            return jsonify({'error': 'account_id parameter is required'}), 400
+
+        from core.nexus_framework.plugin_loader import get_plugin
+        plugin = get_plugin('EchoSync/tidal')
+        if not plugin:
+            return jsonify({'error': 'Tidal plugin not loaded'}), 503
+
+        client_id = plugin.config.get('client_id')
+        if not client_id:
+            return jsonify({'error': 'Tidal client_id not configured'}), 400
+
+        # Build the TIDAL device-auth URL — browser opens this for user login
+        # The plugin's own callback/polling handles the rest
+        redirect_uri = plugin.config.get('redirect_uri') or ''
+        auth_url = f"https://login.tidal.com/oauth2/authorization?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope=r_usr+w_usr"
+
+        # Delegate to plugin client if it exposes a richer auth-start helper
+        try:
+            from .client import TidalClient
+            tc = TidalClient(account_id=int(account_id))
+            if hasattr(tc, 'get_auth_url'):
+                auth_url = tc.get_auth_url()
+        except Exception:
+            pass  # fall back to the URL we built above
+
+        logger.info(f"Generated Tidal auth URL for account {account_id}")
+        return jsonify({'auth_url': auth_url}), 200
+    except Exception as e:
+        logger.error(f"Error generating Tidal auth URL: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500

@@ -88,6 +88,68 @@ def save_settings():
         return jsonify({'error': str(e)}), 500
 
 
+# ---------------------------------------------------------------------------
+# Account management — consumed by SpotifyCard.svelte
+# ---------------------------------------------------------------------------
+
+@bp.get('/accounts')
+def list_accounts():
+    """Return all Spotify accounts."""
+    from core.nexus_framework.plugin_SDK import sdk
+    try:
+        accounts = sdk.accounts.get_all()
+        return jsonify({'accounts': accounts}), 200
+    except Exception as e:
+        logger.error(f"Failed to list Spotify accounts: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.post('/accounts')
+def create_account():
+    """Create a new Spotify account entry."""
+    from core.nexus_framework.plugin_SDK import sdk
+    try:
+        data = request.get_json() or {}
+        account_name = (data.get('account_name') or '').strip()
+        display_name = (data.get('display_name') or account_name).strip()
+        if not account_name:
+            return jsonify({'error': 'account_name is required'}), 400
+        account_id = sdk.accounts.ensure_account(account_name=account_name, display_name=display_name)
+        if not account_id:
+            return jsonify({'error': 'Failed to create account'}), 500
+        return jsonify({'account': {'id': account_id, 'account_name': account_name,
+                                    'display_name': display_name, 'is_active': False,
+                                    'is_authenticated': False}}), 201
+    except Exception as e:
+        logger.error(f"Failed to create Spotify account: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.put('/accounts/<int:account_id>/activate')
+def activate_account(account_id):
+    """Toggle active state for a Spotify account."""
+    from core.nexus_framework.plugin_SDK import sdk
+    try:
+        data = request.get_json() or {}
+        is_active = bool(data.get('is_active', True))
+        sdk.accounts.toggle_account_active(account_id, is_active)
+        return jsonify({'success': True, 'is_active': is_active}), 200
+    except Exception as e:
+        logger.error(f"Failed to toggle Spotify account {account_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.delete('/accounts/<int:account_id>')
+def delete_account(account_id):
+    """Delete a Spotify account and its tokens."""
+    from core.nexus_framework.plugin_SDK import sdk
+    try:
+        sdk.accounts.delete_account(account_id)
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        logger.error(f"Failed to delete Spotify account {account_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @bp.get('/auth')
 def begin_auth():
     """Start OAuth flow for Spotify. Returns an auth URL to redirect the user to.
