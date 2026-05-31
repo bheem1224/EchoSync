@@ -13,7 +13,7 @@ bp = Blueprint('navidrome_routes', __name__, url_prefix='/api/navidrome')
 def get_settings():
     """Get Navidrome server settings (base_url, username, password status)."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-    if PluginRegistry.is_provider_disabled('navidrome'):
+    if PluginRegistry.is_plugin_disabled('navidrome'):
         return jsonify({'settings': {}}), 200
     try:
         base_url = ServiceRegistry.get_sdk("navidrome").config.get('navidrome.base_url', '')
@@ -73,7 +73,7 @@ def get_settings():
 def save_settings():
     """Save Navidrome server settings."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-    if PluginRegistry.is_provider_disabled('navidrome'):
+    if PluginRegistry.is_plugin_disabled('navidrome'):
         return jsonify({'error': 'Navidrome provider disabled'}), 403
     try:
         data = request.get_json(force=True) or {}

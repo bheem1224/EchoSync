@@ -13,7 +13,7 @@ def list_accounts():
     # Use the namespaced ID
     plugin_id = 'EchoSync/tidal'
     
-    if PluginRegistry.is_provider_disabled(plugin_id) or PluginRegistry.is_provider_disabled('tidal'):
+    if PluginRegistry.is_plugin_disabled(plugin_id) or PluginRegistry.is_plugin_disabled('tidal'):
         return jsonify({'accounts': [], 'redirect_uri': ''}), 200
 
     try:
@@ -45,7 +45,8 @@ def list_accounts():
             accounts.append(normalized)
         
         # Get global redirect URI from config facade
-        redirect_uri = plugin.config.get('redirect_uri') or 'http://127.0.0.1:8000/api/tidal/callback'
+        from core.network_utils import get_lan_ip
+        redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/tidal"
         
         return jsonify({
             'accounts': accounts,
@@ -64,7 +65,7 @@ def create_account():
     """
     from core.nexus_framework.plugin_loader import PluginRegistry
     plugin_id = 'EchoSync/tidal'
-    if PluginRegistry.is_provider_disabled(plugin_id) or PluginRegistry.is_provider_disabled('tidal'):
+    if PluginRegistry.is_plugin_disabled(plugin_id) or PluginRegistry.is_plugin_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         payload = request.get_json(force=True) or {}
@@ -116,7 +117,7 @@ def get_account(account_id):
     """Get a specific Tidal account with credentials."""
     from core.nexus_framework.plugin_loader import PluginRegistry
     plugin_id = 'EchoSync/tidal'
-    if PluginRegistry.is_provider_disabled(plugin_id) or PluginRegistry.is_provider_disabled('tidal'):
+    if PluginRegistry.is_plugin_disabled(plugin_id) or PluginRegistry.is_plugin_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         from core.nexus_framework.plugin_loader import get_plugin
@@ -158,7 +159,7 @@ def update_account(account_id):
     Body: { account_name?, client_id?, client_secret? }
     """
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-    if PluginRegistry.is_provider_disabled('tidal'):
+    if PluginRegistry.is_plugin_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         
@@ -217,7 +218,7 @@ def update_account(account_id):
 def activate_account(account_id):
     """Activate a Tidal account."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-    if PluginRegistry.is_provider_disabled('tidal'):
+    if PluginRegistry.is_plugin_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         
@@ -245,7 +246,7 @@ def activate_account(account_id):
 def delete_account(account_id):
     """Delete a Tidal account."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-    if PluginRegistry.is_provider_disabled('tidal'):
+    if PluginRegistry.is_plugin_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         
@@ -355,7 +356,8 @@ def begin_auth():
 
         # Build the TIDAL device-auth URL — browser opens this for user login
         # The plugin's own callback/polling handles the rest
-        redirect_uri = plugin.config.get('redirect_uri') or ''
+        from core.network_utils import get_lan_ip
+        redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/tidal"
         auth_url = f"https://login.tidal.com/oauth2/authorization?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope=r_usr+w_usr"
 
         # Delegate to plugin client if it exposes a richer auth-start helper

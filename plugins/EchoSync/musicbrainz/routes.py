@@ -86,8 +86,8 @@ _SCOPES = "profile email submit_isrc tag rating collection"
 def list_accounts():
     """List all MusicBrainz accounts with authentication status."""
     try:
-        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-        if PluginRegistry.is_provider_disabled("musicbrainz"):
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        if PluginRegistry.is_plugin_disabled("musicbrainz"):
             return jsonify({"accounts": [], "redirect_uri": ""}), 200
 
         
@@ -111,7 +111,8 @@ def list_accounts():
         ]
 
         from .client import MusicBrainzClient
-        redirect_uri = MusicBrainzClient().get_oauth_redirect_uri()
+        from core.network_utils import get_lan_ip
+        redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/musicbrainz"
 
         client_id = sdk.config.get('client_id')
         client_secret_configured = bool(sdk.config.get('client_secret'))
@@ -236,7 +237,8 @@ def begin_auth():
 
         # Derive redirect URI from centralized PluginBase helper (OAuth sidecar)
         from .client import MusicBrainzClient
-        redirect_uri = MusicBrainzClient().get_oauth_redirect_uri()
+        from core.network_utils import get_lan_ip
+    redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/musicbrainz"
 
         # Generate PKCE verifier / challenge pair
         verifier = secrets.token_urlsafe(64)[:128]

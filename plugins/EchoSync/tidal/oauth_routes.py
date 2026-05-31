@@ -44,7 +44,8 @@ def begin_auth():
         logger.info(f"Tidal auth for account {account_id}: client_id={'present' if client_id else 'MISSING'}, client_secret={'present' if client_secret else 'MISSING'}")
         
         # Global redirect URI (shared across all Tidal accounts)
-        redirect_uri = sdk.config.get('redirect_uri') or 'http://127.0.0.1:8000/api/tidal/callback'
+        from core.network_utils import get_lan_ip
+    redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/tidal"
         
         if not client_id or not client_secret:
             # Try to fetch account to see if it exists

@@ -17,7 +17,7 @@ bp = Blueprint('plex_routes', __name__, url_prefix='/api/plex')
 def get_settings():
     """Get Plex server settings (base_url, token status)."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-    if PluginRegistry.is_provider_disabled('plex'):
+    if PluginRegistry.is_plugin_disabled('plex'):
         return jsonify({'settings': {}}), 200
     try:
         # Load Hybrid Configuration
@@ -81,6 +81,7 @@ def get_settings():
 def save_settings():
     """Save Plex server settings."""
     try:
+        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         data = request.get_json(force=True) or {}
         plex_config = ServiceRegistry.get_sdk("plex").config.get('plex', {})
         
@@ -228,7 +229,9 @@ def start_oauth():
         pin_login._getCode()
 
         # We need a dummy forward URL to satisfy OAuth, even though Plex uses PINs
-        oauth_url = pin_login.oauthUrl('http://127.0.0.1:5173/settings/music-services')
+        origin = request.headers.get('Origin')
+        forward_url = f"{origin}/settings/music-services" if origin else "http://127.0.0.1:5173/settings/music-services"
+        oauth_url = pin_login.oauthUrl(forward_url)
 
         logger.info(f"Plex OAuth session started: {session_id} with pin id: {pin_login._id}")
 

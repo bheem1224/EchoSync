@@ -157,7 +157,7 @@ def begin_auth():
     """
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     from .client import SpotifyClient
-    if PluginRegistry.is_provider_disabled('spotify'):
+    if PluginRegistry.is_plugin_disabled('spotify'):
         return jsonify({'error': 'Spotify provider is disabled'}), 403
     try:
         account_id = request.args.get('account_id')
@@ -174,8 +174,8 @@ def begin_auth():
         client_secret = sdk.secrets.get('client_secret')
 
         # We now use the sidecar's redirect URI systematically, ignoring what is in config
-        sp_client = PluginRegistry.create_instance('spotify') or SpotifyClient(account_id=int(account_id))
-        redirect_uri = sp_client.get_oauth_redirect_uri()
+        from core.network_utils import get_lan_ip
+        redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/spotify"
 
         # Seed into storage if we have app credentials
         if client_id and client_secret:
@@ -212,7 +212,7 @@ def oauth_callback():
     Expects query params: code, state
     """
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-    if PluginRegistry.is_provider_disabled('spotify'):
+    if PluginRegistry.is_plugin_disabled('spotify'):
         return jsonify({'error': 'Spotify provider is disabled'}), 403
     try:
         code = request.args.get('code')
@@ -245,15 +245,14 @@ def oauth_callback():
         from core.security import decrypt_string
         client_id = sdk.config.get('client_id')
         client_secret = sdk.secrets.get('client_secret')
-        redirect_uri = sdk.config.get('redirect_uri') or None
-
+        from core.network_utils import get_lan_ip
+        redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/spotify"
         # Fallback to legacy config.json and seed storage if needed
-        if not client_id or not client_secret or not redirect_uri:
+        if not client_id or not client_secret:
             try:
                 spotify_conf = ServiceRegistry.get_sdk("spotify").config.get_all()
                 client_id = client_id or spotify_conf.get('client_id')
                 client_secret = client_secret or spotify_conf.get('client_secret')
-                redirect_uri = redirect_uri or spotify_conf.get('redirect_uri') or None
                 _normalize_and_seed_credentials(sdk, client_id, client_secret, redirect_uri)
             except Exception:
                 pass
