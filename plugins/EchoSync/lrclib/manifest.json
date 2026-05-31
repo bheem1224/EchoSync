@@ -1,5 +1,5 @@
 {
-  "id": "EchoSync.lrclib",
+  "id": "EchoSync.Lrclib",
   "name": "Lrclib",
   "description": "Official EchoSync provider for lrclib",
   "version": "2.4.2",
@@ -8,5 +8,5 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "beta_version": "2.4.3-beta.15"
+  "beta_version": "2.4.3-beta.16"
 }

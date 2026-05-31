@@ -1,5 +1,5 @@
 {
-  "id": "EchoSync.musicbrainz",
+  "id": "EchoSync.Musicbrainz",
   "name": "Musicbrainz",
   "description": "Official EchoSync provider for musicbrainz",
   "version": "2.4.2",
@@ -16,5 +16,5 @@
       "description": "Base URL for the MusicBrainz API"
     }
   },
-  "beta_version": "2.4.3-beta.30"
+  "beta_version": "2.4.3-beta.31"
 }

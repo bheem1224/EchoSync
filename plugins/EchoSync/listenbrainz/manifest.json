@@ -1,5 +1,5 @@
 {
-  "id": "EchoSync.listenbrainz",
+  "id": "EchoSync.Listenbrainz",
   "name": "Listenbrainz",
   "description": "Official EchoSync provider for listenbrainz",
   "version": "2.4.2",
@@ -8,5 +8,5 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "beta_version": "2.4.3-beta.27"
+  "beta_version": "2.4.3-beta.28"
 }
