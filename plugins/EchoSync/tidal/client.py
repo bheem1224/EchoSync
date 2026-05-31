@@ -351,7 +351,6 @@ class TidalClient(SyncServiceProvider):
 
             # Log a warning if they are missing
             if not self.client_id or not self.client_secret:
-                logger.debug("Tidal client ID or secret not configured in database")
                 return False
             logger.info(f"Loaded Tidal config from database with client ID: {self.client_id[:8]}...")
             return True
@@ -363,7 +362,6 @@ class TidalClient(SyncServiceProvider):
         """Load saved tokens from encrypted database using standardized SDK facades"""
         try:
             if not self.account_id:
-                logger.debug("No account_id specified for Tidal client")
                 return
             
             token_data = self.sdk.accounts.get_token(int(self.account_id))

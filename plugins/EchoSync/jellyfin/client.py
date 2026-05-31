@@ -10,7 +10,7 @@ from time_utils import ensure_utc, utc_now
 
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
-    """AST-compliant alternative to getattr()."""
+    """AST-compliant alternative to _safe_getattr()."""
     if hasattr(obj, attr):
         try:
             return obj.__getattribute__(attr)
@@ -1406,9 +1406,9 @@ class JellyfinClient(MediaServerProvider):
             # Fallback: rebuild playlist with remaining tracks if API variant rejects removal request.
             current_tracks = self.get_playlist_tracks(playlist_obj.id)
             remaining_ids = [
-                str(getattr(track, 'ratingKey', ''))
+                str(_safe_getattr(track, 'ratingKey', ''))
                 for track in current_tracks
-                if str(getattr(track, 'ratingKey', '')) and str(getattr(track, 'ratingKey', '')) not in set(valid_ids)
+                if str(_safe_getattr(track, 'ratingKey', '')) and str(_safe_getattr(track, 'ratingKey', '')) not in set(valid_ids)
             ]
 
             # Delete old playlist
@@ -1655,8 +1655,8 @@ class JellyfinClient(MediaServerProvider):
             try:
                 recent_updated_tracks = self.get_recently_updated_tracks(400)
                 # Remove duplicates
-                added_ids = {getattr(t, 'ratingKey', None) for t in all_recent_tracks}
-                unique_updated = [t for t in recent_updated_tracks if getattr(t, 'ratingKey', None) not in added_ids]
+                added_ids = {_safe_getattr(t, 'ratingKey', None) for t in all_recent_tracks}
+                unique_updated = [t for t in recent_updated_tracks if _safe_getattr(t, 'ratingKey', None) not in added_ids]
                 all_recent_tracks.extend(unique_updated)
                 logger.info(f"Found {len(unique_updated)} additional recently updated tracks")
             except Exception as e:
@@ -1672,7 +1672,7 @@ class JellyfinClient(MediaServerProvider):
             
             for track in all_recent_tracks:
                 try:
-                    track_id = str(getattr(track, 'ratingKey', ''))
+                    track_id = str(_safe_getattr(track, 'ratingKey', ''))
                     # In real implementation, would check database here
                     # For now, assume all recent tracks are new
                     new_tracks.append(track)
@@ -1859,7 +1859,7 @@ class JellyfinClient(MediaServerProvider):
         """Check if artist is manually marked to be ignored"""
         try:
             # Check overview field where we store timestamps and ignore flags
-            overview = getattr(artist, 'overview', '') or ''
+            overview = _safe_getattr(artist, 'overview', '') or ''
             return '-IgnoreUpdate' in overview
         except Exception as e:
             logger.debug(f"Error checking ignore status for {artist.title}: {e}")
@@ -1900,14 +1900,14 @@ class JellyfinClient(MediaServerProvider):
         
         try:
             # Get album ID from the album object
-            album_id = getattr(album, 'Id', getattr(album, 'id', None))
+            album_id = _safe_getattr(album, 'Id', _safe_getattr(album, 'id', None))
             if not album_id:
                 logger.warning("Could not get album ID for Jellyfin album")
                 return echo_sync_tracks
             
             # Get tracks for this album
             tracks = self.get_tracks_for_album(album_id)
-            logger.debug(f"Getting {len(tracks)} tracks from Jellyfin album '{getattr(album, 'title', 'Unknown')}'")
+            logger.debug(f"Getting {len(tracks)} tracks from Jellyfin album '{_safe_getattr(album, 'title', 'Unknown')}'")
             
             failed_count = 0
             for track in tracks:
@@ -1923,7 +1923,7 @@ class JellyfinClient(MediaServerProvider):
                     logger.error(f"Error converting Jellyfin track: {track_err}")
             
             if failed_count > 0:
-                logger.warning(f"⚠️ Jellyfin album '{getattr(album, 'title', 'Unknown')}': {len(tracks)} tracks, {len(echo_sync_tracks)} converted, {failed_count} failed")
+                logger.warning(f"⚠️ Jellyfin album '{_safe_getattr(album, 'title', 'Unknown')}': {len(tracks)} tracks, {len(echo_sync_tracks)} converted, {failed_count} failed")
                 
         except Exception as e:
             logger.error(f"Error getting Jellyfin album tracks as EchosyncTrack: {e}")

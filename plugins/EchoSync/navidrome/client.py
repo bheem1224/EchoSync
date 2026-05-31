@@ -12,7 +12,7 @@ from time_utils import utc_now
 
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
-    """AST-compliant alternative to getattr()."""
+    """AST-compliant alternative to _safe_getattr()."""
     if hasattr(obj, attr):
         try:
             return obj.__getattribute__(attr)
@@ -888,7 +888,7 @@ class NavidromeClient(MediaServerProvider):
             # Sort by addedAt date (newest first) and take recent ones
             try:
                 def get_sort_date(album):
-                    date_val = getattr(album, 'addedAt', None)
+                    date_val = _safe_getattr(album, 'addedAt', None)
                     if date_val is None:
                         return 0
                     return date_val
@@ -1074,14 +1074,14 @@ class NavidromeClient(MediaServerProvider):
         
         try:
             # Get album ID from the album object
-            album_id = getattr(album, 'id', getattr(album, 'ratingKey', None))
+            album_id = _safe_getattr(album, 'id', _safe_getattr(album, 'ratingKey', None))
             if not album_id:
                 logger.warning("Could not get album ID for Navidrome album")
                 return echo_sync_tracks
             
             # Get tracks for this album
             tracks = self.get_tracks_for_album(album_id)
-            logger.debug(f"Getting {len(tracks)} tracks from Navidrome album '{getattr(album, 'title', 'Unknown')}'")
+            logger.debug(f"Getting {len(tracks)} tracks from Navidrome album '{_safe_getattr(album, 'title', 'Unknown')}'")
             
             failed_count = 0
             for track in tracks:
@@ -1097,7 +1097,7 @@ class NavidromeClient(MediaServerProvider):
                     logger.error(f"Error converting Navidrome track: {track_err}")
             
             if failed_count > 0:
-                logger.warning(f"⚠️ Navidrome album '{getattr(album, 'title', 'Unknown')}': {len(tracks)} tracks, {len(echo_sync_tracks)} converted, {failed_count} failed")
+                logger.warning(f"⚠️ Navidrome album '{_safe_getattr(album, 'title', 'Unknown')}': {len(tracks)} tracks, {len(echo_sync_tracks)} converted, {failed_count} failed")
                 
         except Exception as e:
             logger.error(f"Error getting Navidrome album tracks as EchosyncTrack: {e}")

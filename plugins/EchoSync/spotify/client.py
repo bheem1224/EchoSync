@@ -177,9 +177,8 @@ class SpotifyClient(SyncServiceProvider):
             # If still None, try to find the first available account
             if account_id is None:
                 try:
-                    from core.file_handling.storage import get_storage_service
-                    storage = get_storage_service()
-                    accounts = storage.list_accounts('spotify')
+                    from core.nexus_framework.plugin_SDK import sdk
+                    accounts = sdk.accounts.get_all()
                     if accounts:
                         # Pick the first one
                         account_id = accounts[0]['id']
@@ -267,17 +266,16 @@ class SpotifyClient(SyncServiceProvider):
                     # if anything goes wrong, we'll fall back to global values
                     pass
 
-            from core.file_handling.storage import get_storage_service
-            storage = get_storage_service()
-            # if we still haven't obtained values from the account, read global
-            # service configuration (old single‑account path).
+            from core.nexus_framework.plugin_SDK import sdk
+
+            # Fetch Spotify OAuth credentials globally from SDK (not bound to an account_id)
             if not creds['client_id']:
-                creds['client_id'] = storage.get_service_config('spotify', 'client_id')
+                creds['client_id'] = sdk.config.get('client_id')
             if not creds['client_secret']:
-                # StorageService automatically decrypts sensitive config
-                creds['client_secret'] = storage.get_service_config('spotify', 'client_secret')
+                # sdk.secrets decrypts transparently
+                creds['client_secret'] = sdk.secrets.get('client_secret')
             if not creds['redirect_uri']:
-                creds['redirect_uri'] = storage.get_service_config('spotify', 'redirect_uri')
+                creds['redirect_uri'] = sdk.config.get('redirect_uri')
 
             if not creds['client_id'] or not creds['client_secret']:
                 # do not log secrets, include account id for diagnostics
@@ -422,7 +420,7 @@ class SpotifyClient(SyncServiceProvider):
         """Handle the OAuth callback redirect from the Spotify authorization page."""
         from flask import jsonify, redirect
         import time
-        from core.file_handling.storage import get_storage_service
+        from core.nexus_framework.plugin_SDK import sdk
         from spotipy.oauth2 import SpotifyOAuth
 
         try:
@@ -448,10 +446,9 @@ class SpotifyClient(SyncServiceProvider):
                 account_id = int(state)
             except (ValueError, TypeError):
                 account_id = None
-            from core.file_handling.storage import get_storage_service
-            storage = get_storage_service()
-            client_id = storage.get_service_config('spotify', 'client_id')
-            client_secret = storage.get_service_config('spotify', 'client_secret')
+            from core.nexus_framework.plugin_SDK import sdk
+            client_id = sdk.config.get('client_id')
+            client_secret = sdk.secrets.get('client_secret')
             redirect_uri = self.get_oauth_redirect_uri()
 
             if not client_id or not client_secret:
@@ -459,7 +456,7 @@ class SpotifyClient(SyncServiceProvider):
 
             auth_manager = SpotifyOAuth(
                 client_id=client_id,
-                client_secret=client_secret, # Decrypted by get_service_config
+                client_secret=client_secret,
                 redirect_uri=redirect_uri,
                 scope="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private",
                 cache_handler=CallbackBypassCacheHandler()
@@ -479,22 +476,25 @@ class SpotifyClient(SyncServiceProvider):
             scope = token_info.get('scope') or "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
 
             if not account_id:
-                account_id = storage.ensure_account('spotify', account_name=f"spotify_{int(time.time())}")
+                account_id = sdk.accounts.ensure_account(account_name=f"spotify_{int(time.time())}")
 
+            # Persist tokens and mark authenticated
             try:
-                storage.save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at, scope)
-                storage.mark_account_authenticated(account_id)
+                sdk.accounts.save_token(account_id, access_token, refresh_token, expires_at)
+                sdk.accounts.mark_account_authenticated(account_id)
             except Exception as e:
-                logger.error(f"Failed to persist tokens to config.db: {e}")
+                logger.error(f"Failed to persist tokens to settings database: {e}")
 
+            # Optionally activate the account
             try:
-                storage.toggle_account_active(account_id, True)
+                sdk.accounts.toggle_account_active(account_id, True)
             except Exception:
                 pass
 
             # Generate redirect URL using Flask request context
             from flask import request as flask_request
-            ui_base = storage.get_service_config('webui', 'base_url')
+            from core.settings import config_manager
+            ui_base = config_manager.get('webui.base_url')
             if ui_base:
                 ui_redirect = ui_base.rstrip('/') + '/settings/music-services'
             else:
@@ -513,10 +513,9 @@ class SpotifyClient(SyncServiceProvider):
         if self.sp is not None:
              return True
         # Check storage if we can potentially configure it
-        from core.file_handling.storage import get_storage_service
-        storage = get_storage_service()
-        return bool(storage.get_service_config('spotify', 'client_id') and
-                    storage.get_service_config('spotify', 'client_secret'))
+        from core.nexus_framework.plugin_SDK import sdk
+        return bool(sdk.config.get('client_id') and
+                    sdk.secrets.get('client_secret'))
 
     def get_logo_url(self) -> str:
         return "/static/img/spotify_logo.png"

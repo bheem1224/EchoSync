@@ -25,13 +25,12 @@ def _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_
         # Seed into storage if we have app credentials
         if client_id and client_secret:
             try:
-                storage.ensure_service('spotify', service_type='streaming', description='Spotify music streaming service')
-                storage.set_service_config('spotify', 'client_id', client_id, is_sensitive=False)
-                storage.set_service_config('spotify', 'client_secret', client_secret, is_sensitive=True)
+                sdk.config.set('client_id', client_id)
+                sdk.secrets.set('client_secret', client_secret)
                 if redirect_uri:
-                    storage.set_service_config('spotify', 'redirect_uri', redirect_uri, is_sensitive=False)
+                    sdk.config.set('redirect_uri', redirect_uri)
             except Exception as e:
-                logger.warning(f"Failed to seed Spotify service config into config.db: {e}")
+                logger.warning(f"Failed to seed Spotify service config into settings database: {e}")
 
     except Exception:
         # Don't block auth on normalization failures
@@ -55,12 +54,11 @@ def begin_auth():
             return jsonify({'error': 'account_id parameter is required'}), 400
         
         # Read client credentials from storage (service config)
-        from core.file_handling.storage import get_storage_service
-        storage = get_storage_service()
+        from core.nexus_framework.plugin_SDK import sdk
 
         from core.security import decrypt_string
-        client_id = storage.get_service_config('spotify', 'client_id')
-        client_secret = storage.get_service_config('spotify', 'client_secret')
+        client_id = sdk.config.get('client_id')
+        client_secret = sdk.secrets.get('client_secret')
 
         # We now use the sidecar's redirect URI systematically, ignoring what is in config
         sp_client = PluginRegistry.create_instance('spotify') or SpotifyClient(account_id=int(account_id))
@@ -68,7 +66,7 @@ def begin_auth():
 
         # Seed into storage if we have app credentials
         if client_id and client_secret:
-            _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_uri)
+            _normalize_and_seed_credentials(sdk, client_id, client_secret, redirect_uri)
 
         if not client_id or not client_secret:
             return jsonify({'error': 'Spotify client_id or client_secret not configured'}), 400
@@ -129,13 +127,12 @@ def oauth_callback():
         except (ValueError, TypeError):
             account_id = None
 
-        from core.file_handling.storage import get_storage_service
-        storage = get_storage_service()
+        from core.nexus_framework.plugin_SDK import sdk
 
         from core.security import decrypt_string
-        client_id = storage.get_service_config('spotify', 'client_id')
-        client_secret = storage.get_service_config('spotify', 'client_secret')
-        redirect_uri = storage.get_service_config('spotify', 'redirect_uri') or None
+        client_id = sdk.config.get('client_id')
+        client_secret = sdk.secrets.get('client_secret')
+        redirect_uri = sdk.config.get('redirect_uri') or None
 
         # Fallback to legacy config.json and seed storage if needed
         if not client_id or not client_secret or not redirect_uri:
@@ -144,7 +141,7 @@ def oauth_callback():
                 client_id = client_id or spotify_conf.get('client_id')
                 client_secret = client_secret or spotify_conf.get('client_secret')
                 redirect_uri = redirect_uri or spotify_conf.get('redirect_uri') or None
-                _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_uri)
+                _normalize_and_seed_credentials(sdk, client_id, client_secret, redirect_uri)
             except Exception:
                 pass
 
@@ -178,25 +175,24 @@ def oauth_callback():
 
         # If no account_id passed, create a new account entry
         if not account_id:
-            account_id = storage.ensure_account('spotify', account_name=f"spotify_{int(time.time())}")
+            account_id = sdk.accounts.ensure_account(account_name=f"spotify_{int(time.time())}")
 
         # Persist tokens and mark authenticated
         try:
-            storage.save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at, scope)
-            storage.mark_account_authenticated(account_id)
+            sdk.accounts.save_token(account_id, access_token, refresh_token, expires_at)
+            sdk.accounts.mark_account_authenticated(account_id)
         except Exception as e:
-            logger.error(f"Failed to persist tokens to config.db: {e}")
+            logger.error(f"Failed to persist tokens to settings database: {e}")
 
         # Optionally activate the account
         try:
-            storage.toggle_account_active(account_id, True)
+            sdk.accounts.toggle_account_active(account_id, True)
         except Exception:
             pass
 
         # Redirect back to the web UI settings.
-        # If a `webui.base_url` is configured in storage, use that as the base.
-        # Otherwise use the actual request host/scheme to avoid hardcoded localhost.
-        ui_base = storage.get_service_config('webui', 'base_url')
+        from core.settings import config_manager
+        ui_base = config_manager.get('webui.base_url')
         if ui_base:
             ui_redirect = ui_base.rstrip('/') + '/settings/music-services'
         else:

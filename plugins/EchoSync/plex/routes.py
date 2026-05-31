@@ -395,7 +395,7 @@ from web.auth import require_auth
 @bp.post("/sync_users")
 @require_auth
 def sync_plex_users():
-    """Sync Plex admin and managed users into config.db and return the updated list."""
+    """Sync Plex admin and managed users into settings database and return the updated list."""
     try:
         from .client import PlexClient
         from core.file_handling.storage import get_storage_service

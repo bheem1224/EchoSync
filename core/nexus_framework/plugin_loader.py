@@ -517,6 +517,7 @@ class PluginLoader:
                     if str(plugin_item.resolve()) in active_db_paths:
                         has_active_children = True
                     elif plugin_item.is_dir():
+                        
                         # check children like beta
                         for sub_item in plugin_item.iterdir():
                             if str(sub_item.resolve()) in active_db_paths:

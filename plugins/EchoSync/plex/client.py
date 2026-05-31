@@ -22,7 +22,7 @@ from core.user_history import UserTrackInteraction
 logger = get_logger("plex_client")
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
-    """AST-compliant alternative to getattr()."""
+    """AST-compliant alternative to _safe_getattr()."""
     if obj is None:
         return default
     if hasattr(obj, attr):
@@ -1151,7 +1151,7 @@ class PlexClient(PluginBase):
         base_url = plex_config.get('base_url') or plex_config.get('server_url')
         if not base_url:
             # Fallback to explicit dot-notation just in case
-            base_url = getattr(self, 'kvs', None) and (self.kvs.get('base_url') or self.kvs.get('server_url'))
+            base_url = _safe_getattr(self, 'kvs', None) and (self.kvs.get('base_url') or self.kvs.get('server_url'))
 
         if not base_url:
             logger.warning("Plex server URL not configured")
@@ -1183,7 +1183,7 @@ class PlexClient(PluginBase):
             self.server = None
 
     def import_managed_users(self) -> List[Dict[str, Any]]:
-        """Import the Plex admin account and managed users into config.db account rows."""
+        """Import the Plex admin account and managed users into settings database account rows."""
         if not self.ensure_connection() or not self.server:
             logger.error("Cannot import Plex managed users without an active Plex connection")
             return []
@@ -1515,13 +1515,13 @@ class PlexClient(PluginBase):
                 history_items = target_server.history(maxresults=limit, accountID=plex_account_id)
                 for item in history_items or []:
                     # Strictly filter for audio tracks to avoid crashing on photos/extras
-                    if getattr(item, 'type', None) != 'track':
+                    if _safe_getattr(item, 'type', None) != 'track':
                         continue
                     interaction = self._track_to_interaction(item)
                     if interaction:
                         # Plex history rows often omit viewCount; each history row still
                         # represents at least one play event for the selected account.
-                        if int(getattr(interaction, 'play_count', 0) or 0) <= 0:
+                        if int(_safe_getattr(interaction, 'play_count', 0) or 0) <= 0:
                             interaction.play_count = 1
                         interactions.append(interaction)
 

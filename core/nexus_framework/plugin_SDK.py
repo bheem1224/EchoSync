@@ -103,6 +103,33 @@ class _AccountsSDKFacade:
         service_id = db.get_or_create_service_id(plugin_id_str)
         return db.get_accounts(service_id=service_id)
 
+    def ensure_account(self, account_id: int = None, account_name: str = None, display_name: str = None, user_id: str = None) -> int:
+        from database.config_database import get_config_database
+        db = get_config_database()
+        
+        frame = inspect.currentframe().f_back
+        caller_mod = frame.f_globals.get('__name__', '')
+        
+        plugin_id_str = ""
+        if caller_mod.startswith('plugins.'):
+            parts = caller_mod.split('.')
+            plugin_id_str = f"{parts[1]}.{parts[2]}" if len(parts) >= 3 else parts[1]
+        elif caller_mod.startswith('core.providers.'):
+            plugin_id_str = caller_mod.split('.')[2]
+        else:
+            plugin_id_str = caller_mod
+
+        service_id = db.get_or_create_service_id(plugin_id_str)
+        return db.ensure_account(service_id=service_id, account_id=account_id, account_name=account_name, display_name=display_name, user_id=user_id)
+
+    def mark_account_authenticated(self, account_id: int):
+        from database.config_database import get_config_database
+        get_config_database().mark_account_authenticated(account_id)
+
+    def toggle_account_active(self, account_id: int, is_active: bool):
+        from database.config_database import get_config_database
+        get_config_database().toggle_account_active(account_id, is_active)
+
 class _PluginsSDKFacade:
     def invoke(self, target_plugin_id: str, action: str, payload: dict):
         # Determine if target is enabled/exists

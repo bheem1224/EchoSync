@@ -81,7 +81,7 @@ class ConfigManager:
         config_dir_env = os.environ.get('ECHOSYNC_CONFIG_DIR')
         if config_dir_env:
             self.config_dir = Path(config_dir_env)
-        elif Path('/config').exists() and os.path.isdir('/config'):
+        elif os.name != 'nt' and Path('/config').exists() and os.path.isdir('/config'):
             # Running in container with a mounted /config (Unix/Docker)
             self.config_dir = Path('/config')
         else:
@@ -92,7 +92,7 @@ class ConfigManager:
         data_dir_env = os.environ.get('ECHOSYNC_DATA_DIR')
         if data_dir_env:
             self.data_dir = Path(data_dir_env)
-        elif Path('/data').exists() and os.path.isdir('/data'):
+        elif os.name != 'nt' and Path('/data').exists() and os.path.isdir('/data'):
             # Running in container with a mounted /data (Unix/Docker)
             self.data_dir = Path('/data')
         else:

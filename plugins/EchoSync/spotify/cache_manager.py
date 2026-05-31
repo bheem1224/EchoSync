@@ -5,7 +5,7 @@ from sqlalchemy import Column, String, JSON, DateTime
 from core.tiered_logger import get_logger
 from core.event_bus import event_bus
 from core.matching_engine.text_utils import generate_deterministic_id
-from core.file_handling.storage import get_storage_service
+
 
 logger = get_logger("spotify_cache_manager")
 
