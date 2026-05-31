@@ -370,6 +370,11 @@ class ConfigDatabase:
 
     # Service helpers
     def get_or_create_service_id(self, name: str) -> int:
+        # Strip channel-suffix (@beta / @stable) produced by SDK._get_plugin_id()
+        # so all lookups operate on the canonical plugin name regardless of active channel.
+        if name and '@' in name:
+            name = name.split('@')[0]
+
         # 1. Try to find existing using the extremely robust get_service_id
         existing_id = self.get_service_id(name)
         if existing_id:

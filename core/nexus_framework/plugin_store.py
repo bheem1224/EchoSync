@@ -662,6 +662,10 @@ class PluginStore:
                     with open(manifest_file, "w") as f:
                         json.dump(manifest_data, f, indent=2)
                     logger.info(f"Injected manifest metadata for {plugin_id}")
+                    # Re-read the authoritative version AFTER injection so the DB always
+                    # receives the correct stamped string (e.g. "2.4.3-beta.42") rather
+                    # than the stale raw-zip value that was captured earlier.
+                    manifest_version = manifest_data.get("version", manifest_version)
                 except Exception as e:
                     logger.error("Rollback operation halted: Atomic state restoration failed.")
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
