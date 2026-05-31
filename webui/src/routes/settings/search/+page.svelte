@@ -81,9 +81,8 @@
       <div class="flex flex-col gap-3">
         {#each searchProvidersList as provider}
           <div class="flex items-center justify-between p-4 bg-black/20 border border-white/5 rounded-lg hover:bg-white/5 transition-colors">
-            <div class="flex flex-col">
-              <span class="font-medium text-white text-sm">{provider.name}</span>
-              <span class="text-xs text-muted font-mono">{provider.id || ''}</span>
+            <div class="flex flex-col justify-center">
+              <span class="font-medium text-white text-base">{provider.manifest?.name || provider.name.replace(/^EchoSync\./i, '').replace(/^\w/, c => c.toUpperCase())}</span>
             </div>
             
             <label class="relative inline-flex items-center cursor-pointer">
@@ -93,7 +92,7 @@
                 checked={enabledProviders.includes(provider.name)}
                 on:change={() => toggleProvider(provider.name)}
               >
-              <div class="w-11 h-6 bg-black/40 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent peer-checked:after:bg-white border border-glass-border"></div>
+              <div class="w-11 h-6 bg-black/40 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent)] peer-checked:after:bg-white border border-glass-border"></div>
             </label>
           </div>
         {/each}

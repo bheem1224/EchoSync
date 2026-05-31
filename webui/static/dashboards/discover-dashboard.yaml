@@ -1,0 +1,13 @@
+# ── Discover Dashboard ──────────────────────────────────
+# This dashboard uses Home Assistant Lovelace syntax.
+# Drop in your custom Web Component cards here!
+views:
+  - title: Discover
+    sections:
+      - title: "Trending"
+        cards:
+          # Placeholders for future discover widgets
+          # - type: echosync-trending-artists
+      - title: "Recommendations"
+        cards:
+          # - type: echosync-recommended-albums
