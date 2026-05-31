@@ -1,9 +1,12 @@
 from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, JSON, UniqueConstraint, CheckConstraint
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
-from sqlalchemy.types import DateTime
+import time
 
 Base = declarative_base()
+
+def current_epoch():
+    return int(time.time())
 
 class Service(Base):
     __tablename__ = "services"
@@ -15,8 +18,8 @@ class Service(Base):
     plugin_id = Column(Integer, nullable=True)
     service_type = Column(String)
     description = Column(Text)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(Integer, default=current_epoch)
+    updated_at = Column(Integer, default=current_epoch, onupdate=current_epoch)
     is_active = Column(Boolean, default=True) 
     beta_opt_in = Column(Boolean, nullable=True, default=None)
     previous_version_path = Column(String, nullable=True)
@@ -37,8 +40,8 @@ class ServiceConfig(Base):
     config_key = Column(String, nullable=False)
     config_value = Column(Text)
     is_sensitive = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(Integer, default=current_epoch)
+    updated_at = Column(Integer, default=current_epoch, onupdate=current_epoch)
 
     service = relationship("Service", back_populates="configs")
 
@@ -52,9 +55,9 @@ class Account(Base):
     account_email = Column(String)
     is_active = Column(Boolean, default=False)
     is_authenticated = Column(Boolean, default=False)
-    last_authenticated_at = Column(DateTime)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    last_authenticated_at = Column(Integer)
+    created_at = Column(Integer, default=current_epoch)
+    updated_at = Column(Integer, default=current_epoch, onupdate=current_epoch)
 
     service = relationship("Service", back_populates="accounts")
     token = relationship("AccountToken", back_populates="account", uselist=False, cascade="all, delete-orphan")
@@ -68,8 +71,8 @@ class AccountToken(Base):
     token_type = Column(String, default="Bearer")
     expires_at = Column(Integer)
     scope = Column(String)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(Integer, default=current_epoch)
+    updated_at = Column(Integer, default=current_epoch, onupdate=current_epoch)
 
     account = relationship("Account", back_populates="token")
 
@@ -77,7 +80,7 @@ class SystemSetting(Base):
     __tablename__ = "system_settings"
     key = Column(String, primary_key=True)
     value = Column(Text)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    updated_at = Column(Integer, default=current_epoch, onupdate=current_epoch)
 
 class QualityProfile(Base):
     __tablename__ = "quality_profiles"
@@ -116,8 +119,8 @@ class AccountMapping(Base):
     source_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     mapped_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(Integer, default=current_epoch)
+    updated_at = Column(Integer, default=current_epoch, onupdate=current_epoch)
 
     # 2. Database-Level Deduplication & Safety Rules
     __table_args__ = (
@@ -138,7 +141,7 @@ class PluginSnapshot(Base):
     plugin_id = Column(Integer, nullable=False, unique=True)
     snapshot_data = Column(Text, nullable=False)
     expires_at = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=func.now())
+    created_at = Column(Integer, default=current_epoch)
 
 class UIComponent(Base):
     """Central UI Registry — all Web Component, Theme, and Dashboard awareness.
@@ -153,8 +156,8 @@ class UIComponent(Base):
     component_type = Column(String, nullable=False, index=True)  # card, page, settings, theme
     entry_path = Column(String, nullable=False)              # static route path to compiled .js
     is_core = Column(Boolean, default=False, server_default='0')
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(Integer, default=current_epoch)
+    updated_at = Column(Integer, default=current_epoch, onupdate=current_epoch)
 
     service = relationship("Service", back_populates="ui_components",
                            foreign_keys=[plugin_id],
