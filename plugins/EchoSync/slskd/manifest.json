@@ -1,5 +1,5 @@
 {
-  "id": "EchoSync.slskd",
+  "id": "EchoSync.Slskd",
   "name": "Slskd",
   "description": "Official EchoSync provider for slskd",
   "version": "2.4.2",
@@ -9,5 +9,5 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "ui_manifest": "ui_manifest.json",
-  "beta_version": "2.4.3-beta.29"
+  "beta_version": "2.4.3-beta.30"
 }
