@@ -89,6 +89,7 @@
   $: hasBetaUpdate = isNewer(latestBeta, installedVersion);
   $: isInstalled = !!(plugin.is_installed || plugin._installed);
   $: useBeta = globalBetaEnabled || installedChannel === 'beta';
+  $: canInstallOrUpdate = !isInstalled || (useBeta ? hasBetaUpdate : hasStableUpdate);
 
   // Action Handlers
   function handleMainAction() {
@@ -325,7 +326,7 @@
         <!-- Rule 1: Standard Single Button -->
         <button 
           class="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-slate-500 disabled:border-white/10 text-white text-xs font-bold rounded-lg transition-all border-none flex items-center gap-2 cursor-pointer"
-          disabled={downloading}
+          disabled={downloading || !canInstallOrUpdate}
           on:click={handleMainAction}
         >
           {#if downloading}
@@ -341,7 +342,7 @@
           <!-- Main Action -->
           <button 
             class="pl-4 pr-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-bold border-none transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer"
-            disabled={downloading}
+            disabled={downloading || !canInstallOrUpdate}
             on:click={handleMainAction}
           >
             {#if downloading}
