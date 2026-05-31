@@ -41,7 +41,7 @@
 
   async function loadSystemStatus() {
     try {
-      const resp = await fetch(`${apiBase}/api/system/status`);
+      const resp = await fetch(`${apiBase}/api/status`);
       if (resp.ok) systemStatus = await resp.json();
     } catch (e) { /* ignore */ }
   }
@@ -115,7 +115,7 @@
     <!-- Header -->
     <header class="so-header">
       <div class="so-title-group">
-        <h2 class="so-title">Nexus Core Overview</h2>
+        <h2 class="so-title">Overview</h2>
         <p class="so-subtitle">Real-time database and service health</p>
       </div>
       <div class="so-status-badge" class:online={systemStatus?.status === 'online'}>
@@ -132,7 +132,7 @@
         </div>
         <div class="stat-content">
           <div class="stat-value">{formatNumber(libraryStats?.total_tracks ?? libraryStats?.tracks ?? 0)}</div>
-          <div class="stat-label">Indexed Tracks</div>
+          <div class="stat-label">Tracks</div>
         </div>
       </div>
 
@@ -142,7 +142,7 @@
         </div>
         <div class="stat-content">
           <div class="stat-value">{formatNumber(libraryStats?.total_albums ?? libraryStats?.albums ?? 0)}</div>
-          <div class="stat-label">Collections</div>
+          <div class="stat-label">Albums</div>
         </div>
       </div>
 
@@ -152,17 +152,7 @@
         </div>
         <div class="stat-content">
           <div class="stat-value">{formatNumber(libraryStats?.total_artists ?? libraryStats?.artists ?? 0)}</div>
-          <div class="stat-label">Unique Artists</div>
-        </div>
-      </div>
-
-      <div class="so-card stat-card">
-        <div class="stat-icon jobs">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-        </div>
-        <div class="stat-content">
-          <div class="stat-value">{jobsSummary?.running_jobs ?? 0}</div>
-          <div class="stat-label">Active Workers</div>
+          <div class="stat-label">Artists</div>
         </div>
       </div>
     </div>
@@ -197,35 +187,12 @@
                 <span class="detail-value">{updateStatus?.progress?.artists ?? 0}</span>
               </div>
             </div>
-            <button class="btn-cancel" on:click={cancelUpdate}>Abort Scan</button>
+            <button class="btn-cancel" on:click={cancelUpdate}>Abort Sync</button>
           </div>
         {:else}
           <div class="update-controls">
-            <div class="mode-toggle">
-              <button 
-                class="mode-btn" 
-                class:active={updateMode === 'incremental'}
-                on:click={() => updateMode = 'incremental'}
-              >
-                Incremental
-              </button>
-              <button 
-                class="mode-btn" 
-                class:active={updateMode === 'full'}
-                on:click={() => updateMode = 'full'}
-              >
-                Full Sync
-              </button>
-            </div>
-            <p class="control-help">
-              {#if updateMode === 'incremental'}
-                Only scan for new files and metadata updates since last run.
-              {:else}
-                Perform a complete sweep of all library providers and re-validate matching.
-              {/if}
-            </p>
             <button class="btn-primary-large" on:click={triggerUpdate}>
-              Start Library Refresh
+              Database Sync
             </button>
           </div>
         {/if}
@@ -233,31 +200,6 @@
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
-      </div>
-
-      <!-- Environment / Health -->
-      <div class="so-card side-card">
-        <h3 class="card-title">Environment</h3>
-        <ul class="info-list">
-          <li>
-            <span class="info-label">Host OS</span>
-            <span class="info-value">{systemStatus?.platform || 'Linux (Docker)'}</span>
-          </li>
-          <li>
-            <span class="info-label">Python Runtime</span>
-            <span class="info-value">{systemStatus?.python_version || '3.11.x'}</span>
-          </li>
-          <li>
-            <span class="info-label">Worker Pool</span>
-            <span class="info-value">{jobsSummary?.queued_jobs ?? 0} queued tasks</span>
-          </li>
-          <li>
-            <span class="info-label">Memory State</span>
-            <span class="info-value" class:warn={systemStatus?.restart_pending}>
-              {systemStatus?.restart_pending ? 'Restart Required' : 'Optimized'}
-            </span>
-          </li>
-        </ul>
       </div>
     </div>
   {/if}
@@ -425,7 +367,7 @@
   /* ── Content Layout ──────────────────────────────────────────────── */
   .so-content-row {
     display: grid;
-    grid-template-columns: 2fr 1fr;
+    grid-template-columns: 1fr;
     gap: 24px;
   }
 

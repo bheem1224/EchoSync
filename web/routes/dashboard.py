@@ -17,9 +17,6 @@ views:
     sections:
       - cards:
           - type: echosync-system-overview
-      - cards:
-          - type: spotify-dashboard-card
-          - type: plex-dashboard-card
 """
 
 def _ensure_file():
