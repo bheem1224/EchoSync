@@ -1109,13 +1109,14 @@ class PluginRegistry:
             from core.enums import Capability
             active = []
             for p in cls.get_plugins_with_capability(Capability.FETCH_METADATA):
-                if p.name.lower() not in cls._disabled_plugins:
+                reg_name = getattr(p, '_registered_name', p.name)
+                if reg_name.lower() not in cls._disabled_plugins and p.name.lower() not in cls._disabled_plugins:
                     # Verify configuration if possible
                     if hasattr(p, 'is_configured'):
                         if p.is_configured():
-                            active.append(p.name)
+                            active.append(reg_name)
                     else:
-                        active.append(p.name)
+                        active.append(reg_name)
             return active
 
         # Standard plugin-type lookup
@@ -1179,7 +1180,19 @@ class PluginRegistry:
 
     @classmethod
     def get_plugin_class(cls, name: str) -> Optional[Type[PluginBase]]:
-        return cls._plugins.get(name.lower())
+        key = name.lower()
+        if key in cls._plugins:
+            return cls._plugins[key]
+
+        # Normalization fallback for prefixes (e.g. EchoSync.local_metadata vs core.local_metadata)
+        def normalize(n: str) -> str:
+            return n.lower().replace('plugin.', '').replace('echosync.', '').replace('core.', '').strip()
+
+        norm_key = normalize(name)
+        for reg_name, p_cls in cls._plugins.items():
+            if normalize(reg_name) == norm_key:
+                return p_cls
+        return None
 
     @classmethod
     def list_plugins(cls):
@@ -1220,16 +1233,34 @@ class PluginRegistry:
         if disabled is None:
             disabled = []
 
-        if name.lower() in [d.lower() for d in disabled]:
+        def normalize(n: str) -> str:
+            return n.lower().replace('plugin.', '').replace('echosync.', '').replace('core.', '').strip()
+
+        norm_name = normalize(name)
+        disabled_lower = [d.lower() for d in disabled]
+        norm_disabled = [normalize(d) for d in disabled]
+        if name.lower() in disabled_lower or norm_name in norm_disabled:
              raise ValueError(f"Plugin '{name}' is disabled via config")
 
-        if name.lower() in cls._disabled_plugins:
+        norm_disabled_plugins = [normalize(d) for d in cls._disabled_plugins]
+        if name.lower() in cls._disabled_plugins or norm_name in norm_disabled_plugins:
             raise ValueError(f"Plugin '{name}' is disabled")
 
         plugin_cls = cls.get_plugin_class(name)
         if not plugin_cls:
             raise ValueError(f"Plugin '{name}' not registered")
-        return plugin_cls(*args, **kwargs)
+
+        instance = plugin_cls(*args, **kwargs)
+        
+        # Store the canonical registered name on the instance for backend services to refer back to
+        for reg_name, p_cls in cls._plugins.items():
+            if p_cls == plugin_cls:
+                instance._registered_name = reg_name
+                break
+        else:
+            instance._registered_name = name
+            
+        return instance
 
     @classmethod
     def get_plugin(cls, name: str) -> Optional[PluginBase]:

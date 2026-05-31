@@ -810,6 +810,12 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error adding tracks to Navidrome playlist {playlist_id}: {e}")
             return False
 
+    def _trigger_scan_api(self, path: Optional[str] = None) -> bool:
+        """
+        Navidrome-specific: Trigger library scan on the Navidrome server API.
+        """
+        return self._trigger_library_scan_api(path)
+
     def _trigger_library_scan_api(self, path: Optional[str] = None) -> bool:
         """
         Navidrome-specific: Trigger library scan.

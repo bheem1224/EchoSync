@@ -287,3 +287,49 @@ class ListenBrainzClient(PluginBase):
                 "musicbrainz_id": "mock-mbid-2"
             }
         ]
+
+    # =========================================================================
+    # PluginBase Abstract Method Implementations (Stubs)
+    # =========================================================================
+
+    def authenticate(self, **kwargs) -> bool:
+        """Authenticate is not supported by the client itself."""
+        return self.is_authenticated()
+
+    def search(
+        self,
+        query: str,
+        type: str = "track",
+        limit: int = 10,
+        quality_profile: Optional[Dict[str, Any]] = None,
+        includes: Optional[List[str]] = None,
+        excludes: Optional[List[str]] = None,
+        **kwargs,
+    ) -> List[Any]:
+        """Search is not supported by ListenBrainzClient."""
+        return []
+
+    def get_track(self, track_id: str) -> Optional[Any]:
+        """Get track metadata is not supported by ListenBrainzClient."""
+        return None
+
+    def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
+        """Get album metadata is not supported by ListenBrainzClient."""
+        return None
+
+    def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
+        """Get artist metadata is not supported by ListenBrainzClient."""
+        return None
+
+    def get_playlist_tracks(self, playlist_id: str) -> List[Any]:
+        """Get playlist tracks is not supported by ListenBrainzClient."""
+        return []
+
+    def is_configured(self) -> bool:
+        """Check if ListenBrainzClient is configured."""
+        return self.is_authenticated()
+
+    def get_logo_url(self) -> str:
+        """Get logo URL for ListenBrainz."""
+        return "https://listenbrainz.org/static/img/listenbrainz-logo.svg"
+
