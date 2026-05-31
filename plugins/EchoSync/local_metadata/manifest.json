@@ -1,5 +1,5 @@
 {
-  "id": "EchoSync.Local Metadata",
+  "id": "EchoSync.local_metadata",
   "name": "Local Metadata",
   "description": "Official EchoSync provider for local_metadata",
   "version": "2.4.2",

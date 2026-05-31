@@ -1,5 +1,5 @@
 {
-  "id": "EchoSync.Local Player",
+  "id": "EchoSync.local_player",
   "name": "Local Player",
   "description": "Official EchoSync provider for local_player",
   "version": "2.4.2",

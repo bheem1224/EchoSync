@@ -45,7 +45,7 @@ def begin_auth():
         
         # Global redirect URI (shared across all Tidal accounts)
         from core.network_utils import get_lan_ip
-    redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/tidal"
+        redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/tidal"
         
         if not client_id or not client_secret:
             # Try to fetch account to see if it exists

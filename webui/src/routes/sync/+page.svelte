@@ -101,6 +101,14 @@
   $: selectedPlaylistItems = playlists.filter((_, index) => selectedPlaylists.includes(index));
   $: selectedTargetLabel = formatTargetWithContext(targetProvider, selectedPlaylistItems);
 
+  function formatPluginName(name) {
+    if (!name) return '';
+    const parts = name.split('.');
+    const displayName = parts[parts.length - 1];
+    // capitalize first letter and replace underscores with spaces
+    return displayName.charAt(0).toUpperCase() + displayName.slice(1).replace(/_/g, ' ');
+  }
+
   async function loadPlaylists() {
     if (!sourceProvider) {
       console.log('[Sync] No source provider selected');
@@ -114,7 +122,7 @@
 
     try {
       console.log(`[Sync] Loading playlists for provider: ${sourceProvider}`);
-      const response = await apiClient.get(`/providers/${sourceProvider}/playlists`);
+      const response = await apiClient.get(`/plugins/${sourceProvider}/playlists`);
       console.log('[Sync] Full response object:', response);
       console.log('[Sync] Response data:', response.data);
       console.log('[Sync] Response data type:', typeof response.data);
@@ -538,7 +546,7 @@
             }}>
             <option value="">-- Select Source --</option>
             {#each playlistProviders as p}
-              <option value={p.id}>{p.name}</option>
+              <option value={p.id}>{formatPluginName(p.name)}</option>
             {/each}
           </select>
         </div>
@@ -556,7 +564,7 @@
             <option value="">-- Select Target --</option>
             {#each syncTargets as p}
               {#if p.id !== sourceProvider}
-                <option value={p.id}>{p.name}</option>
+                <option value={p.id}>{formatPluginName(p.name)}</option>
               {/if}
             {/each}
           </select>

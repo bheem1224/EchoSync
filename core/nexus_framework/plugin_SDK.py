@@ -372,6 +372,11 @@ class _SDK:
         return _SecretsFacade(self._get_plugin_id())
 
     @property
+    def storage(self):
+        from core.file_handling.storage import get_storage_service
+        return get_storage_service()
+
+    @property
     def accounts(self):
         return self._accounts
         

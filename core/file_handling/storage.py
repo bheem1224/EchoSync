@@ -277,8 +277,8 @@ class StorageService:
 
     def get_music_database(self):
         """SDK-compliant way to get the music database."""
-        from database.music_database import get_music_database
-        return get_music_database()
+        from database.music_database import get_database
+        return get_database()
 
 
 # global singleton -------------------------------------------------------------

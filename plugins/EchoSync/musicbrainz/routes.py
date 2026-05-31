@@ -238,7 +238,7 @@ def begin_auth():
         # Derive redirect URI from centralized PluginBase helper (OAuth sidecar)
         from .client import MusicBrainzClient
         from core.network_utils import get_lan_ip
-    redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/musicbrainz"
+        redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/musicbrainz"
 
         # Generate PKCE verifier / challenge pair
         verifier = secrets.token_urlsafe(64)[:128]

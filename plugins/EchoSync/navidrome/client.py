@@ -167,7 +167,7 @@ class NavidromeClient(MediaServerProvider):
     def authenticate(self, **kwargs) -> bool:
         return self.ensure_connection()
 
-    def search(self, query: str, limit: int = 10) -> list:
+    def search(self, query: str, type: str = "track", limit: int = 10, quality_profile: Optional[Dict[str, Any]] = None) -> list:
         if not self.ensure_connection():
             return []
         # Stub: implement actual search logic

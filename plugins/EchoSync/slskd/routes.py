@@ -31,12 +31,15 @@ bp = Blueprint("soulseek_routes", __name__, url_prefix="/api/plugins/Slskd")
 @bp.get("/providers/download-clients/active")
 def get_active_download_client():
     """Proxy: return the currently active download client."""
+    def _safe_get(obj, attr, default):
+        return obj.__getattribute__(attr) if hasattr(obj, attr) else default
+        
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry
         clients = PluginRegistry.get_download_clients()
-        active = next((c for c in clients if getattr(c, 'is_active', False)), None)
+        active = next((c for c in clients if _safe_get(c, 'is_active', False)), None)
         if active:
-            name = getattr(active, 'name', 'slskd')
+            name = _safe_get(active, 'name', 'slskd')
             return jsonify({"active": True, "name": name, "provider": name}), 200
         return jsonify({"active": False, "name": None}), 200
     except Exception as e:

@@ -1,5 +1,5 @@
 {
-  "id": "EchoSync.Outbound Gateway",
+  "id": "EchoSync.outbound_gateway",
   "name": "Outbound Gateway",
   "description": "Official EchoSync provider for outbound_gateway",
   "version": "2.4.2",
