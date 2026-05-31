@@ -17,8 +17,8 @@ logger = get_logger("spotify_adapter")
 # SpotifyAdapter class deprecated - use convert_spotify_track_to_echosync instead
 class SpotifyAdapter:
     def __init__(self, spotify_client=None):
-        from database.music_database import get_music_database
-        db = get_music_database()
+        # (removed get_music_database import)
+        db = None # deprecated
         super().__init__(db=db, provider_type="spotify")
         self.spotify = spotify_client
 

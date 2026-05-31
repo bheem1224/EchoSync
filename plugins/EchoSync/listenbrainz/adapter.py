@@ -11,7 +11,7 @@ from typing import List
 from core.tiered_logger import get_logger
 from core.models import Track
 from core.nexus_framework.plugin_SDK import sdk
-from database.music_database import get_music_database
+# (removed get_music_database import)
 
 logger = get_logger("listenbrainz_adapter")
 
@@ -19,7 +19,7 @@ logger = get_logger("listenbrainz_adapter")
 class ListenBrainzAdapter:
     def __init__(self, listenbrainz_client=None):
         
-        db = get_music_database()
+        db = None # deprecated
         # Use MUSICBRAINZ provider type for recording references
         super().__init__(db=db, provider_type="musicbrainz")
         self.lb = listenbrainz_client

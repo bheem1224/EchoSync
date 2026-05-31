@@ -500,9 +500,7 @@ class JellyfinClient(MediaServerProvider):
 
                     # Store preference in database
                     from core.nexus_framework.plugin_SDK import sdk
-                    from database.music_database import get_music_database
-                    db = get_music_database()
-                    db.set_preference('jellyfin_music_library', library_name)
+                    sdk.config.set('jellyfin_music_library', library_name)
 
                     return True
 

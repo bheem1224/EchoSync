@@ -905,7 +905,7 @@ class PluginLoader:
                     blueprint = getattr(module, bp_attr, None)
                     if isinstance(blueprint, Blueprint):
                         blueprint.name = f"{provider_id}_{bp_attr.lower()}"
-                        blueprint.url_prefix = f"/api/plugins/{clean_ns}"
+                        blueprint.url_prefix = f"/api/plugins/{plugin_name}"
                         self.loaded_blueprints.append(blueprint)
 
 

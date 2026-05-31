@@ -11,7 +11,7 @@ from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
 from core.models import Track
 from core.nexus_framework.plugin_SDK import sdk
-from database.music_database import get_music_database
+# (removed get_music_database import)
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
@@ -157,7 +157,7 @@ def convert_navidrome_track_to_echosync(navidrome_track) -> Optional[EchosyncTra
 class NavidromeAdapter:
     def __init__(self, navidrome_client=None):
         
-        db = get_music_database()
+        db = None # deprecated
         super().__init__(db=db, provider_type="navidrome")
         self.navidrome = navidrome_client
 

@@ -9,9 +9,9 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 
 from typing import List, Optional
 from core.tiered_logger import get_logger
-from database.music_database import Track
+from core.models import Track
 from core.nexus_framework.plugin_SDK import sdk
-from database.music_database import get_music_database
+# (removed get_music_database import)
 from typing import Any
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
@@ -31,7 +31,7 @@ logger = get_logger("tidal_adapter")
 class TidalAdapter:
     def __init__(self, tidal_client=None):
         
-        db = get_music_database()
+        db = None # deprecated
         super().__init__(db=db, provider_type="tidal")
         self.tidal = tidal_client
 

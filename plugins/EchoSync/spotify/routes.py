@@ -37,6 +37,57 @@ def _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_
         pass
 
 
+@bp.get('/settings')
+def get_settings():
+    """Retrieve Spotify plugin settings."""
+    from core.nexus_framework.plugin_SDK import sdk
+    try:
+        client_id = sdk.config.get('client_id', '')
+        client_secret = sdk.secrets.get('client_secret', '')
+        redirect_uri = sdk.config.get('redirect_uri', '')
+
+        # Fallback to local if not set
+        if not redirect_uri:
+            from core.nexus_framework.plugin_loader import PluginRegistry
+            from .client import SpotifyClient
+            sp_client = PluginRegistry.create_instance('spotify') or SpotifyClient(account_id=0)
+            redirect_uri = sp_client.get_oauth_redirect_uri()
+
+        return jsonify({
+            'settings': {
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'redirect_uri': redirect_uri
+            }
+        }), 200
+    except Exception as e:
+        logger.error(f"Failed to get Spotify settings: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@bp.post('/settings')
+def save_settings():
+    """Save Spotify plugin settings securely using the SDK."""
+    from core.nexus_framework.plugin_SDK import sdk
+    try:
+        data = request.get_json() or {}
+        client_id = data.get('client_id', '').strip()
+        client_secret = data.get('client_secret', '').strip()
+        redirect_uri = data.get('redirect_uri', '').strip()
+
+        if client_id:
+            sdk.config.set('client_id', client_id)
+        if client_secret:
+            sdk.secrets.set('client_secret', client_secret)
+        if redirect_uri:
+            sdk.config.set('redirect_uri', redirect_uri)
+
+        logger.info("Spotify credentials saved securely via SDK")
+        return jsonify({'success': True, 'message': 'Spotify credentials saved securely'}), 200
+    except Exception as e:
+        logger.error(f"Failed to save Spotify settings: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @bp.get('/auth')
 def begin_auth():
     """Start OAuth flow for Spotify. Returns an auth URL to redirect the user to.
