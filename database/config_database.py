@@ -476,7 +476,7 @@ class ConfigDatabase:
     def get_service_config(self, service_id: int, key: str) -> Optional[str]:
         try:
             import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
+            with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT config_value, is_sensitive FROM service_config WHERE service_id=? AND config_key=?", (service_id, key))
                 row = c.fetchone()
@@ -497,7 +497,7 @@ class ConfigDatabase:
     def get_all_service_config(self, service_id: int) -> Dict[str, Any]:
         try:
             import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
+            with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT config_key, config_value, is_sensitive FROM service_config WHERE service_id=?", (service_id,))
                 rows = c.fetchall()
@@ -561,7 +561,7 @@ class ConfigDatabase:
     def get_accounts(self, service_id: Optional[int] = None, is_active: Optional[bool] = None) -> List[Dict[str, Any]]:
         try:
             import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
+            with self._get_connection() as conn:
                 c = conn.cursor()
                 query = "SELECT id, service_id, account_name, display_name, user_id, account_email, is_active, is_authenticated, last_authenticated_at FROM accounts WHERE 1=1"
                 params: list[Any] = []
@@ -591,7 +591,7 @@ class ConfigDatabase:
             # If explicit account_id is provided, check existence using a reader
             if account_id is not None:
                 import contextlib
-                with contextlib.closing(self._get_connection()) as conn:
+                with self._get_connection() as conn:
                     c = conn.cursor()
                     c.execute("SELECT id FROM accounts WHERE id = ?", (account_id,))
                     row = c.fetchone()
@@ -642,7 +642,7 @@ class ConfigDatabase:
         try:
             import contextlib
 
-            with contextlib.closing(self._get_connection()) as conn:
+            with self._get_connection() as conn:
                 c = conn.cursor()
 
                 row = None
@@ -819,7 +819,7 @@ class ConfigDatabase:
         try:
             import json
             import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
+            with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT details FROM accounts WHERE id = ?", (account_id,))
                 row = c.fetchone()
@@ -837,7 +837,7 @@ class ConfigDatabase:
     def get_account_token(self, account_id: int) -> Optional[Dict[str, Any]]:
         try:
             import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
+            with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT access_token, refresh_token, token_type, expires_at, scope FROM account_tokens WHERE account_id = ?", (account_id,))
                 row = c.fetchone()
@@ -881,7 +881,7 @@ class ConfigDatabase:
     def get_pkce_session(self, pkce_id: str) -> Optional[Dict[str, Any]]:
         try:
             import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
+            with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, created_at, expires_at FROM pkce_sessions WHERE pkce_id = ?", (pkce_id,))
                 row = c.fetchone()
@@ -919,7 +919,7 @@ class ConfigDatabase:
         try:
             import json
             import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
+            with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT config_value FROM service_config WHERE service_id IS NULL AND config_key = ?", ("download_provider_priority",))
                 row = c.fetchone()
@@ -1009,7 +1009,7 @@ class ConfigDatabase:
         """Retrieve account mapping rows, optionally filtered by a specific account ID."""
         try:
             import contextlib
-            with contextlib.closing(self._get_connection()) as conn:
+            with self._get_connection() as conn:
                 c = conn.cursor()
                 query = "SELECT id, source_account_id, mapped_account_id, created_at, updated_at FROM account_mappings WHERE 1=1"
                 params: list = []
@@ -1091,7 +1091,7 @@ class ConfigDatabase:
         try:
             import contextlib
             import json
-            with contextlib.closing(self._get_connection()) as conn:
+            with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT snapshot_data, expires_at FROM plugin_snapshots WHERE plugin_id = ?", (plugin_id,))
                 row = c.fetchone()
