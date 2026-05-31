@@ -57,12 +57,16 @@ class ConfigDatabase:
                 raise
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.database_path), timeout=30.0)
+        conn = sqlite3.connect(str(self.database_path), timeout=60.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -2000")
+        conn.execute("PRAGMA wal_autocheckpoint = 100")
         return conn
+
 
     def _initialize_schema(self):
         try:

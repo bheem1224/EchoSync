@@ -2,50 +2,116 @@ import sqlite3
 import threading
 import queue
 import time
+import logging
 from typing import Callable, Any, Optional
+
+_engine_logger = logging.getLogger("database.engine")
+
+# SQLite error messages that indicate the connection itself is permanently broken
+# and must be recycled rather than just rolled back.
+_FATAL_IO_MSGS = ("disk i/o error", "database disk image is malformed")
+
+
+def _is_fatal_connection_error(exc: Exception) -> bool:
+    """Return True if the exception indicates the connection is permanently broken."""
+    msg = str(exc).lower()
+    return any(pat in msg for pat in _FATAL_IO_MSGS)
 
 
 class _DBWriter:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._tasks: "queue.Queue[tuple]" = queue.Queue()
-        self._thread = threading.Thread(target=self._run, daemon=True)
         self._stop = threading.Event()
+        self._thread = self._make_thread()
         self._thread.start()
 
+    def _make_thread(self) -> threading.Thread:
+        t = threading.Thread(target=self._run, daemon=True, name=f"DBWriter:{self.db_path}")
+        return t
+
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, timeout=60.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -2000")
+        conn.execute("PRAGMA wal_autocheckpoint = 100")
         return conn
 
     def _run(self):
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        conn = None
+        cursor = None
+
+        def _connect():
+            nonlocal conn, cursor
+            # Close any stale connection before reconnecting
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            retries = 0
+            while not self._stop.is_set():
+                try:
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    return
+                except Exception as exc:
+                    retries += 1
+                    wait = min(2 ** retries, 30)
+                    _engine_logger.warning(
+                        f"[DBWriter] Cannot open {self.db_path}, retrying in {wait}s: {exc}"
+                    )
+                    time.sleep(wait)
+
+        _connect()
+
         while not self._stop.is_set():
             try:
                 task, result_q = self._tasks.get(timeout=0.1)
             except queue.Empty:
                 continue
+
             try:
-                # task is a callable that receives a cursor
                 res = task(cursor)
                 conn.commit()
                 if result_q:
                     result_q.put((True, res))
             except Exception as e:
+                # Attempt rollback; if it fails, the connection is broken
                 try:
                     conn.rollback()
                 except Exception:
                     pass
-                if result_q:
-                    result_q.put((False, e))
+
+                if _is_fatal_connection_error(e):
+                    _engine_logger.error(
+                        f"[DBWriter] Fatal connection error on {self.db_path}, reconnecting: {e}"
+                    )
+                    # Fail this task to its caller, then reconnect for the next one
+                    if result_q:
+                        result_q.put((False, e))
+                    _connect()
+                else:
+                    if result_q:
+                        result_q.put((False, e))
             finally:
                 self._tasks.task_done()
 
+    def _ensure_alive(self):
+        """Restart the writer thread if it has died unexpectedly."""
+        if not self._thread.is_alive():
+            _engine_logger.warning(
+                f"[DBWriter] Writer thread for {self.db_path} died — restarting."
+            )
+            self._thread = self._make_thread()
+            self._thread.start()
+
     def enqueue(self, fn: Callable[[sqlite3.Cursor], Any], wait: bool = True, timeout: Optional[float] = None):
+        self._ensure_alive()
         result_q: Optional[queue.Queue] = queue.Queue() if wait else None
         self._tasks.put((fn, result_q))
         if not wait:
@@ -56,7 +122,6 @@ class _DBWriter:
                 raise value
             return value
         finally:
-            # help GC
             pass
 
     def stop(self):
@@ -66,12 +131,14 @@ class _DBWriter:
 
 
 _writers: dict[str, _DBWriter] = {}
+_writers_lock = threading.Lock()
 
 
 def ensure_writer(db_path: str) -> _DBWriter:
     key = str(db_PATH_normalize(db_path))
-    if key not in _writers:
-        _writers[key] = _DBWriter(key)
+    with _writers_lock:
+        if key not in _writers:
+            _writers[key] = _DBWriter(key)
     return _writers[key]
 
 
