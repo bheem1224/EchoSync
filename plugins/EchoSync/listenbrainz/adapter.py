@@ -10,15 +10,16 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 from typing import List
 from core.tiered_logger import get_logger
 from core.models import Track
-from core.file_handling.storage import get_storage_service
+from core.nexus_framework.plugin_SDK import sdk
+from database.music_database import get_music_database
 
 logger = get_logger("listenbrainz_adapter")
 
 # ListenBrainzAdapter class deprecated - use convert_listenbrainz_track_to_echosync instead
 class ListenBrainzAdapter:
     def __init__(self, listenbrainz_client=None):
-        storage = get_storage_service()
-        db = storage.get_music_database()
+        
+        db = get_music_database()
         # Use MUSICBRAINZ provider type for recording references
         super().__init__(db=db, provider_type="musicbrainz")
         self.lb = listenbrainz_client

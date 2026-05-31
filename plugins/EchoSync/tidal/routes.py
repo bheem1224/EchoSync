@@ -161,8 +161,8 @@ def update_account(account_id):
     if PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
-        storage = get_storage_service()
-        accounts = storage.list_accounts('tidal')
+        
+        accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
@@ -174,7 +174,7 @@ def update_account(account_id):
         if payload.get('account_name'):
             new_name = payload.get('account_name').strip()
             if new_name:
-                storage.update_account_name(account_id, new_name)
+                sdk.accounts.update_account_name(account_id, new_name)
         
         # Update credentials if provided (non-empty)
         logger.info(f"UPDATE PAYLOAD for account {account_id}: client_id={'present' if payload.get('client_id') else 'missing'}, client_secret={'present' if payload.get('client_secret') else 'missing'}")
@@ -193,7 +193,7 @@ def update_account(account_id):
             if plugin: plugin.secrets.set('client_secret', client_secret_value)
         
         # Return updated account
-        accounts = storage.list_accounts('tidal')
+        accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
         return jsonify({
@@ -220,8 +220,8 @@ def activate_account(account_id):
     if PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
-        storage = get_storage_service()
-        accounts = storage.list_accounts('tidal')
+        
+        accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
@@ -231,9 +231,9 @@ def activate_account(account_id):
         is_active = payload.get('is_active', True)
         
         if is_active:
-            storage.toggle_account_active(account_id, True)
+            sdk.accounts.toggle_account_active(account_id, True)
         else:
-            storage.toggle_account_active(account_id, False)
+            sdk.accounts.toggle_account_active(account_id, False)
         
         return jsonify({'status': 'ok', 'is_active': is_active})
     except Exception as e:
@@ -248,8 +248,8 @@ def delete_account(account_id):
     if PluginRegistry.is_provider_disabled('tidal'):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
-        storage = get_storage_service()
-        deleted = storage.delete_account(account_id)
+        
+        deleted = sdk.accounts.delete_account(account_id)
         
         if not deleted:
             return jsonify({'error': 'Account not found'}), 404
@@ -296,10 +296,10 @@ def debug_account(account_id):
     Debug endpoint to inspect what's stored for an account.
     """
     try:
-        storage = get_storage_service()
+        
         
         # Check if account exists
-        accounts = storage.list_accounts('tidal')
+        accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:

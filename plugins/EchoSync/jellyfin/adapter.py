@@ -8,7 +8,8 @@ and attaches Jellyfin PluginRef. Adheres to Track-centric architecture.
 from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
 from core.models import Track
-from core.file_handling.storage import get_storage_service
+from core.nexus_framework.plugin_SDK import sdk
+from database.music_database import get_music_database
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
@@ -155,8 +156,8 @@ def convert_jellyfin_track_to_echosync(jellyfin_track) -> Optional[EchosyncTrack
 
 class JellyfinAdapter:
     def __init__(self, jellyfin_client=None):
-        storage = get_storage_service()
-        db = storage.get_music_database()
+        
+        db = get_music_database()
         super().__init__(db=db, provider_type="jellyfin")
         self.jellyfin = jellyfin_client
 

@@ -108,17 +108,10 @@ class TidalClient(SyncServiceProvider):
                 # Persist refreshed tokens to config.db
                 try:
                     if self.account_id and self.access_token:
-                        from core.file_handling.storage import get_storage_service
-                        storage = get_storage_service()
-                        storage.save_account_token(
-                            account_id=int(self.account_id),
-                            access_token=self.access_token,
-                            refresh_token=self.refresh_token if self.refresh_token else None,
-                            token_type='Bearer',
-                            expires_at=int(self.token_expires_at),
-                            scope=None,
-                        )
-                        storage.mark_account_authenticated(int(self.account_id))
+                        from core.nexus_framework.plugin_SDK import sdk
+                        sdk.accounts.save_token(
+                            account_id=int(self.account_id), access_token=self.access_token, refresh_token=self.refresh_token if self.refresh_token else None, expires_at=int(self.token_expires_at))
+                        sdk.accounts.mark_account_authenticated(int(self.account_id))
                 except Exception:
                     pass
                 logger.info("Tidal access token refreshed successfully")

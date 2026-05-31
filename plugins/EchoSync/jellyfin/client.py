@@ -499,8 +499,9 @@ class JellyfinClient(MediaServerProvider):
                     logger.info(f"Set music library to: {library_name}")
 
                     # Store preference in database
-                    from core.file_handling.storage import get_storage_service
-                    db = get_storage_service().get_music_database()
+                    from core.nexus_framework.plugin_SDK import sdk
+                    from database.music_database import get_music_database
+                    db = get_music_database()
                     db.set_preference('jellyfin_music_library', library_name)
 
                     return True

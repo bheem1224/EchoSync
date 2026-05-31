@@ -1,6 +1,6 @@
 """Tidal OAuth routes - handles PKCE-based OAuth flow for Tidal accounts."""
 from flask import Blueprint, request, jsonify, redirect
-from core.file_handling.storage import get_storage_service
+from core.nexus_framework.plugin_SDK import sdk
 from core.tiered_logger import get_logger
 import json
 import base64
@@ -27,10 +27,10 @@ def begin_auth():
             return jsonify({'error': 'account_id is required'}), 400
 
         account_id = int(account_id)
-        storage = get_storage_service()
+        
 
         # Verify account exists
-        accounts = storage.list_accounts('tidal')
+        accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         if not account:
             return jsonify({'error': 'Account not found'}), 404
@@ -44,11 +44,11 @@ def begin_auth():
         logger.info(f"Tidal auth for account {account_id}: client_id={'present' if client_id else 'MISSING'}, client_secret={'present' if client_secret else 'MISSING'}")
         
         # Global redirect URI (shared across all Tidal accounts)
-        redirect_uri = storage.get_service_config('tidal', 'redirect_uri') or 'http://127.0.0.1:8000/api/tidal/callback'
+        redirect_uri = sdk.config.get('redirect_uri') or 'http://127.0.0.1:8000/api/tidal/callback'
         
         if not client_id or not client_secret:
             # Try to fetch account to see if it exists
-            accounts = storage.list_accounts('tidal')
+            accounts = sdk.accounts.get_all()
             account_exists = any(a.get('id') == account_id for a in accounts)
             logger.error(f"Tidal account {account_id} exists: {account_exists}, but credentials missing")
             return jsonify({'error': 'Account missing client_id or client_secret. Please edit the account to configure credentials.'}), 400
@@ -145,7 +145,7 @@ def oauth_callback():
             return jsonify({"error": f"Invalid state parameter: {e}"}), 400
 
         # Retrieve PKCE entry from config.db
-        storage = get_storage_service()
+        
         pkce_entry = storage.get_pkce_session(pkce_id)
         
         if not pkce_entry:
@@ -199,15 +199,9 @@ def oauth_callback():
         from core.security import encrypt_string
         # Persist tokens to storage
         try:
-            storage.save_account_token(
-                account_id,
-                encrypt_string(access_token),
-                encrypt_string(refresh_token) if refresh_token else None,
-                'Bearer',
-                expires_at,
-                scope
-            )
-            storage.mark_account_authenticated(account_id)
+            sdk.accounts.save_token(
+                account_id, encrypt_string(access_token), encrypt_string(refresh_token) if refresh_token else None, expires_at)
+            sdk.accounts.mark_account_authenticated(account_id)
             logger.info(f"Tokens saved for Tidal account {account_id}")
         except Exception as e:
             logger.error(f"Failed to persist tokens: {e}")
@@ -216,7 +210,7 @@ def oauth_callback():
         storage.delete_pkce_session(pkce_id)
 
         # Redirect back to UI
-        ui_base = storage.get_service_config('webui', 'base_url')
+        ui_base = sdk.config.get('base_url')
         if ui_base:
             ui_redirect = ui_base.rstrip('/') + '/settings/music-services'
         else:

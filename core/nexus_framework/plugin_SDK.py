@@ -130,6 +130,14 @@ class _AccountsSDKFacade:
         from database.config_database import get_config_database
         get_config_database().toggle_account_active(account_id, is_active)
 
+    def delete_account(self, account_id: int) -> bool:
+        from database.config_database import get_config_database
+        return get_config_database().delete_account(account_id)
+
+    def update_account_name(self, account_id: int, new_name: str):
+        from database.config_database import get_config_database
+        get_config_database().update_account_name(account_id, new_name)
+
 class _PluginsSDKFacade:
     def invoke(self, target_plugin_id: str, action: str, payload: dict):
         # Determine if target is enabled/exists

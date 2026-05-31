@@ -19,7 +19,7 @@ import uuid
 
 from flask import Blueprint, jsonify, request
 
-from core.file_handling.storage import get_storage_service
+from core.nexus_framework.plugin_SDK import sdk
 from core.tiered_logger import get_logger
 
 logger = get_logger("musicbrainz_routes")
@@ -34,9 +34,9 @@ config_bp = Blueprint("musicbrainz_config", __name__, url_prefix="/api/plugins/m
 def get_config():
     """Return the current MusicBrainz settings-card configuration."""
     try:
-        storage = get_storage_service()
-        token = storage.get_service_config("musicbrainz", "user_token")
-        auto_contribute = storage.get_service_config("musicbrainz", "auto_contribute")
+        
+        token = sdk.config.get('user_token')
+        auto_contribute = sdk.config.get('auto_contribute')
         return jsonify({
             "token_configured": bool(token),
             "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute),
@@ -51,18 +51,18 @@ def save_config():
     """Persist MusicBrainz settings-card values (user token + auto-contribute flag)."""
     try:
         payload = request.get_json(force=True) or {}
-        storage = get_storage_service()
+        
         storage.ensure_service("musicbrainz", service_type="metadata")
 
         if "user_token" in payload and payload["user_token"].strip():
             from core.security import encrypt_string
-            storage.set_service_config("musicbrainz", "user_token", encrypt_string(payload["user_token"].strip()))
+            sdk.config.set('user_token', encrypt_string(payload["user_token"].strip()))
 
         if "auto_contribute" in payload:
-            storage.set_service_config("musicbrainz", "auto_contribute", str(bool(payload["auto_contribute"])).lower())
+            sdk.config.set('auto_contribute', str(bool(payload["auto_contribute"])).lower())
 
-        token = storage.get_service_config("musicbrainz", "user_token")
-        auto_contribute = storage.get_service_config("musicbrainz", "auto_contribute")
+        token = sdk.config.get('user_token')
+        auto_contribute = sdk.config.get('auto_contribute')
         return jsonify({
             "success": True,
             "token_configured": bool(token),
@@ -90,14 +90,14 @@ def list_accounts():
         if PluginRegistry.is_provider_disabled("musicbrainz"):
             return jsonify({"accounts": [], "redirect_uri": ""}), 200
 
-        storage = get_storage_service()
+        
         storage.ensure_service(
             "musicbrainz",
             service_type="metadata",
             description="Open music encyclopedia providing comprehensive metadata",
         )
 
-        db_accounts = storage.list_accounts("musicbrainz")
+        db_accounts = sdk.accounts.get_all()
         accounts = [
             {
                 "id": a.get("id"),
@@ -113,8 +113,8 @@ def list_accounts():
         from .client import MusicBrainzClient
         redirect_uri = MusicBrainzClient().get_oauth_redirect_uri()
 
-        client_id = storage.get_service_config("musicbrainz", "client_id")
-        client_secret_configured = bool(storage.get_service_config("musicbrainz", "client_secret"))
+        client_id = sdk.config.get('client_id')
+        client_secret_configured = bool(sdk.config.get('client_secret'))
 
         return jsonify({
             "accounts": accounts,
@@ -140,7 +140,7 @@ def create_account():
         if not account_name:
             return jsonify({"error": "account_name is required"}), 400
 
-        storage = get_storage_service()
+        
         storage.ensure_service("musicbrainz", service_type="metadata")
 
         account_id = storage.ensure_account(
@@ -169,8 +169,8 @@ def create_account():
 def delete_account(account_id: int):
     """Delete a MusicBrainz account and its stored tokens."""
     try:
-        storage = get_storage_service()
-        ok = storage.delete_account(account_id)
+        
+        ok = sdk.accounts.delete_account(account_id)
         if ok:
             return jsonify({"success": True}), 200
         return jsonify({"error": "Account not found or deletion failed"}), 404
@@ -185,8 +185,8 @@ def activate_account(account_id: int):
     try:
         payload = request.get_json(force=True) or {}
         is_active = bool(payload.get("is_active", True))
-        storage = get_storage_service()
-        ok = storage.toggle_account_active(account_id, is_active)
+        
+        ok = sdk.accounts.toggle_account_active(account_id, is_active)
         if ok:
             return jsonify({"success": True, "is_active": is_active}), 200
         return jsonify({"error": "Failed to update account status"}), 500
@@ -213,15 +213,15 @@ def begin_auth():
             return jsonify({"error": "account_id is required"}), 400
         account_id = int(raw_id)
 
-        storage = get_storage_service()
+        
 
         # Verify the account exists
-        accounts = storage.list_accounts("musicbrainz")
+        accounts = sdk.accounts.get_all()
         if not any(a.get("id") == account_id for a in accounts):
             return jsonify({"error": "Account not found"}), 404
 
         # Application credentials must be configured before an auth flow can start
-        client_id = storage.get_service_config("musicbrainz", "client_id")
+        client_id = sdk.config.get('client_id')
         if not client_id:
             return jsonify({
                 "error": (
@@ -231,7 +231,7 @@ def begin_auth():
                 )
             }), 400
 
-        if not storage.get_service_config("musicbrainz", "client_secret"):
+        if not sdk.config.get('client_secret'):
             return jsonify({"error": "MusicBrainz client_secret is not configured."}), 400
 
         # Derive redirect URI from centralized PluginBase helper (OAuth sidecar)
@@ -319,7 +319,7 @@ def oauth_callback():
         logger.error(f"Failed to decode OAuth state: {e}")
         return jsonify({"error": f"Invalid state parameter: {e}"}), 400
 
-    storage = get_storage_service()
+    
     pkce = storage.get_pkce_session(pkce_id)
     if not pkce:
         return jsonify({"error": "OAuth session not found or expired. Please start the flow again."}), 400
@@ -335,7 +335,7 @@ def oauth_callback():
     account_id = int(account_id)  # narrow type: None already excluded by all() guard above
 
     from core.security import decrypt_string
-    raw_secret = storage.get_service_config("musicbrainz", "client_secret")
+    raw_secret = sdk.config.get('client_secret')
     if not raw_secret:
         return jsonify({"error": "client_secret not configured"}), 400
     client_secret = decrypt_string(raw_secret)
@@ -371,15 +371,9 @@ def oauth_callback():
         return jsonify({"error": "No access_token in token response"}), 400
 
     from core.security import encrypt_string
-    storage.save_account_token(
-        account_id=account_id,
-        access_token=encrypt_string(access_token),
-        refresh_token=encrypt_string(refresh_token) if refresh_token else None,
-        token_type="Bearer",
-        expires_at=expires_at,
-        scope=scope,
-    )
-    storage.mark_account_authenticated(account_id)
+    sdk.accounts.save_token(
+        account_id=account_id, access_token=encrypt_string(access_token), refresh_token=encrypt_string(refresh_token) if refresh_token else None, expires_at=expires_at)
+    sdk.accounts.mark_account_authenticated(account_id)
     storage.delete_pkce_session(pkce_id)
 
     # Enrich account with the authenticated MusicBrainz username

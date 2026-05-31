@@ -15,9 +15,8 @@ def get_settings():
         slskd_url = ServiceRegistry.get_sdk("slskd").config.get('soulseek.slskd_url', '')
         server_name = ServiceRegistry.get_sdk("slskd").config.get('soulseek.server_name', '')
         # api_key is sensitive; prefer the storage helper which persists to DB
-        from core.file_handling.storage import get_storage_service
-        storage = get_storage_service()
-        api_key = storage.get_service_config('soulseek', 'api_key') or ''
+        from core.nexus_framework.plugin_SDK import sdk
+        api_key = sdk.config.get('api_key') or ''
         
         # also update in-memory config in case UI reads it
         # (key is filtered out on save but may still exist transiently)
@@ -62,9 +61,8 @@ def save_settings():
         # Only update API key if provided (don't overwrite with empty string)
         if api_key:
             # write secret via storage service to ensure DB persistence
-            from core.file_handling.storage import get_storage_service
-            storage = get_storage_service()
-            storage.set_service_config('soulseek', 'api_key', api_key, is_sensitive=True)
+            from core.nexus_framework.plugin_SDK import sdk
+            sdk.config.set('api_key', api_key)
             # mirror to config_manager so GET requests can see it immediately
             ServiceRegistry.get_sdk("slskd").config.set('soulseek.api_key', api_key)
         

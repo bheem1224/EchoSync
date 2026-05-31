@@ -15,7 +15,7 @@ from rapidfuzz import fuzz
 
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from .models import PluginMusicbrainzCache
-from core.file_handling.storage import get_storage_service
+from core.nexus_framework.plugin_SDK import sdk
 from core.tiered_logger import get_logger
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
@@ -834,9 +834,8 @@ class MusicBrainzClient(PluginBase):
 
         # Opt-in check: only submit if auto_contribute is enabled in settings
         try:
-            from core.file_handling.storage import get_storage_service
-            storage = get_storage_service()
-            auto_contribute = storage.get_service_config("musicbrainz", "auto_contribute")
+            from core.nexus_framework.plugin_SDK import sdk
+            auto_contribute = sdk.config.get('auto_contribute')
             if not (auto_contribute == "true" or auto_contribute is True):
                 logger.debug("Skipping MusicBrainz ISRC submission: auto_contribute is disabled")
                 return False

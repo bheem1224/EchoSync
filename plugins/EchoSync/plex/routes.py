@@ -26,10 +26,10 @@ def get_settings():
         server_name = plex_config.get('server_name') or ServiceRegistry.get_sdk("plex").config.get('plex.server_name', '')
         
         # Retrieve token from Singleton Account
-        from core.file_handling.storage import get_storage_service
+        from core.nexus_framework.plugin_SDK import sdk
         from core.security import decrypt_string
-        storage = get_storage_service()
-        accounts = storage.list_accounts('plex')
+        
+        accounts = sdk.accounts.get_all()
 
         token = ''
         if accounts:
@@ -99,26 +99,20 @@ def save_settings():
         if 'token' in data:
             # We don't save tokens to config_manager anymore. We save them to account_tokens
             token = data['token'].strip()
-            from core.file_handling.storage import get_storage_service
+            from core.nexus_framework.plugin_SDK import sdk
             from core.security import encrypt_string
             from .client import PlexClient
             import time
-            storage = get_storage_service()
+            
 
-            accounts = storage.list_accounts('plex')
+            accounts = sdk.accounts.get_all()
             if accounts:
                 account_id = accounts[0].get('id')
             else:
-                account_id = storage.ensure_account('plex', account_name=f"plex_user_{int(time.time())}")
+                account_id = sdk.accounts.ensure_account(account_name=f"plex_user_{int(time.time())}")
 
-            storage.save_account_token(
-                account_id=account_id,
-                access_token=encrypt_string(token),
-                refresh_token=None,
-                token_type='Bearer'
-            )
-            storage.mark_account_authenticated(account_id)
-            storage.toggle_account_active(account_id, True)
+            sdk.accounts.save_token(
+                account_id=account_id, access_token=encrypt_string(token), refresh_token=None, expires_at=None)
             logger.info(f"Plex token saved to SQLite account {account_id}")
 
             try:
@@ -130,7 +124,7 @@ def save_settings():
             import json
             path_mappings = data['path_mappings']
             plex_config['path_mappings'] = path_mappings
-            ServiceRegistry.get_sdk("plex").config.set('plex.path_mappings', json.dumps(path_mappings)) # Legacy fallback
+            ServiceRegistry.get_sdk("plex").config.set('plex.path_mappings', path_mappings) # Legacy fallback
             logger.info(f"Plex path_mappings saved: {len(path_mappings)} mappings")
 
         ServiceRegistry.get_sdk("plex").config.set('plex', plex_config)
@@ -168,11 +162,11 @@ def test_connection():
             or ServiceRegistry.get_sdk("plex").config.get('plex.base_url', '')
         ).strip()
 
-        from core.file_handling.storage import get_storage_service
+        from core.nexus_framework.plugin_SDK import sdk
         from core.security import decrypt_string
 
-        storage = get_storage_service()
-        accounts = storage.list_accounts('plex')
+        
+        accounts = sdk.accounts.get_all()
 
         token = ''
         if accounts:
@@ -311,13 +305,13 @@ def poll_oauth(session_id: str):
             logger.debug(f"Plex poll API check failed: {e}")
 
         if is_logged_in and auth_token:
-            from core.file_handling.storage import get_storage_service
+            from core.nexus_framework.plugin_SDK import sdk
             from core.security import encrypt_string
             from .client import PlexClient
-            storage = get_storage_service()
+            
 
             # Plex follows a Singleton Account Pattern. Look for an existing account first.
-            accounts = storage.list_accounts('plex')
+            accounts = sdk.accounts.get_all()
 
             if accounts:
                 # Upsert existing account
@@ -326,7 +320,7 @@ def poll_oauth(session_id: str):
                 logger.info(f"Plex Singleton: Found existing account {account_id}, updating token.")
             else:
                 # Fallback to fetching user details if we create a new one
-                account_name = storage.get_service_config('plex', 'base_url') or storage.get_service_config('plex', 'server_url') or "Default Plex Server"
+                account_name = sdk.config.get('base_url') or sdk.config.get('server_url') or "Default Plex Server"
                 try:
                     from plexapi.myplex import MyPlexAccount
                     myplex_acc = MyPlexAccount(token=auth_token)
@@ -335,21 +329,15 @@ def poll_oauth(session_id: str):
                     logger.warning(f"Failed to fetch Plex username: {e}")
 
                 # Ensure the new singleton account exists
-                account_id = storage.ensure_account('plex', account_name=account_name)
+                account_id = sdk.accounts.ensure_account(account_name=account_name)
                 logger.info(f"Plex Singleton: Created new account {account_id} ({account_name}).")
 
             # Encrypt and save token to account_tokens
             try:
-                storage.save_account_token(
-                    account_id=account_id,
-                    access_token=encrypt_string(auth_token),
-                    refresh_token=None,  # Plex tokens do not use standard OAuth refresh tokens
-                    token_type='Bearer',
-                    expires_at=None,
-                    scope=None
-                )
-                storage.mark_account_authenticated(account_id)
-                storage.toggle_account_active(account_id, True)
+                sdk.accounts.save_token(
+                    account_id=account_id, access_token=encrypt_string(auth_token), refresh_token=None, expires_at=None)
+                sdk.accounts.mark_account_authenticated(account_id)
+                sdk.accounts.toggle_account_active(account_id, True)
                 logger.info(f"Plex OAuth completed and token securely saved for account: {account_name}")
                 try:
                     PlexClient(account_id=account_id).import_managed_users()
@@ -398,13 +386,13 @@ def sync_plex_users():
     """Sync Plex admin and managed users into settings database and return the updated list."""
     try:
         from .client import PlexClient
-        from core.file_handling.storage import get_storage_service
+        from core.nexus_framework.plugin_SDK import sdk
 
         client = PlexClient()
         client.import_managed_users()
 
-        storage = get_storage_service()
-        accounts = storage.list_accounts('plex')
+        
+        accounts = sdk.accounts.get_all()
         return jsonify({
             'service': 'plex',
             'accounts': accounts,

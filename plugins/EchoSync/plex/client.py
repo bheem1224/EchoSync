@@ -1132,9 +1132,9 @@ class PlexClient(PluginBase):
             logger.warning("No Plex account_id provided to setup connection")
             return
 
-        from core.file_handling.storage import get_storage_service
+        from core.nexus_framework.plugin_SDK import sdk
         from core.security import decrypt_string
-        storage = get_storage_service()
+        
 
         # Load tokens from account_tokens securely
         token_data = storage.get_account_token(self.account_id)
@@ -1188,9 +1188,7 @@ class PlexClient(PluginBase):
             logger.error("Cannot import Plex managed users without an active Plex connection")
             return []
 
-        from core.file_handling.storage import get_storage_service
-
-        storage = get_storage_service()
+        from core.nexus_framework.plugin_SDK import sdk
         token_data = storage.get_account_token(self.account_id) if self.account_id else None
 
         try:
@@ -1229,13 +1227,8 @@ class PlexClient(PluginBase):
             self.account_id = int(admin_account_id)
 
             if token_data and token_data.get('access_token'):
-                storage.save_account_token(
-                    account_id=self.account_id,
-                    access_token=token_data.get('access_token'),
-                    refresh_token=token_data.get('refresh_token'),
-                    token_type=token_data.get('token_type', 'Bearer'),
-                    expires_at=token_data.get('expires_at'),
-                    scope=token_data.get('scope'),
+                sdk.accounts.save_token(
+                    self.account_id, token_data.get('access_token'), token_data.get('refresh_token'), None
                 )
 
         users = []
@@ -1250,19 +1243,15 @@ class PlexClient(PluginBase):
             display_name = _safe_getattr(user, 'title', None) or _safe_getattr(user, 'username', None) or username
             email = _safe_getattr(user, 'email', None)
 
-            managed_account_id = storage.upsert_account(
-                'plex',
+            managed_account_id = sdk.accounts.ensure_account(
                 account_name=username or display_name,
                 display_name=display_name,
-                user_id=str(user_id) if user_id is not None else None,
-                account_email=email,
-                is_active=True,
-                is_authenticated=False,
+                user_id=str(user_id) if user_id is not None else None
             )
             if managed_account_id:
                 imported_ids.append(int(managed_account_id))
 
-        accounts = storage.list_accounts('plex') or []
+        accounts = sdk.accounts.get_all() or []
         imported = [account for account in accounts if account.get('id') in set(imported_ids)]
         logger.info(f"Imported {len(imported)} Plex account rows (admin + managed users)")
         return imported
@@ -1313,10 +1302,8 @@ class PlexClient(PluginBase):
         if account_id is None:
             return None, None, None
 
-        from core.file_handling.storage import get_storage_service
-
-        storage = get_storage_service()
-        accounts = storage.list_accounts('plex') or []
+        from core.nexus_framework.plugin_SDK import sdk
+        accounts = sdk.accounts.get_all() or []
         account = next((item for item in accounts if item.get('id') == account_id), None)
         if not account:
             logger.warning(f"No Plex account found for history sync account_id={account_id}")

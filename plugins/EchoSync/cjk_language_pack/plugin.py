@@ -314,10 +314,11 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
         return db_track
 
     try:
-        from core.file_handling.storage import get_storage_service
+        from core.nexus_framework.plugin_SDK import sdk
+        from database.music_database import get_music_database
         from sqlalchemy import text
 
-        db = get_storage_service().get_music_database()
+        db = get_music_database()
         with db.session_scope() as session:
             # ── Track aliases ─────────────────────────────────────────────
             for a in raw_track_aliases:
