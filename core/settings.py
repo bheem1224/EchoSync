@@ -803,3 +803,11 @@ class ConfigManager:
         return getattr(self, '_auto_generated_key', False)
 
 config_manager = ConfigManager()
+
+def get_setting(key: str, default: Any = None) -> Any:
+    """Retrieve a setting from config_manager (for backward compatibility)."""
+    return config_manager.get(key, default)
+
+def set_setting(key: str, value: Any) -> None:
+    """Save a setting in config_manager (for backward compatibility)."""
+    config_manager.set(key, value)

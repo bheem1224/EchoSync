@@ -7,6 +7,7 @@ from core.nexus_framework.plugin_SDK import (
     ProviderCapabilities,
     PlaylistSupport,
     SearchCapabilities,
+)
 from core.request_manager import RateLimitConfig
 import asyncio
 import hashlib
