@@ -1,5 +1,5 @@
 {
-  "id": "EchoSync.plex",
+  "id": "EchoSync.Plex",
   "name": "Plex",
   "description": "Official EchoSync provider for plex",
   "version": "2.4.2",
@@ -9,5 +9,5 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "ui_manifest": "ui_manifest.json",
-  "beta_version": "2.4.3-beta.38"
+  "beta_version": "2.4.3-beta.39"
 }
