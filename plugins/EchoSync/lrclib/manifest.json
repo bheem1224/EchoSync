@@ -1,5 +1,5 @@
 {
-  "id": "core.lrclib",
+  "id": "EchoSync.lrclib",
   "name": "Lrclib",
   "description": "Official EchoSync provider for lrclib",
   "version": "2.4.2",

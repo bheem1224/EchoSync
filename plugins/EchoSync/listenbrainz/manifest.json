@@ -1,5 +1,5 @@
 {
-  "id": "core.listenbrainz",
+  "id": "EchoSync.listenbrainz",
   "name": "Listenbrainz",
   "description": "Official EchoSync provider for listenbrainz",
   "version": "2.4.2",

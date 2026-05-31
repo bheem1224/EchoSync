@@ -82,6 +82,11 @@ jobs:
           with open(manifest_path, "r") as f:
               manifest = json.load(f)
 
+          # Auto-correct the 'id' field to match the exact DB CRC32 format (Author.Name)
+          author = manifest.get("author", "EchoSync")
+          name = manifest.get("name", plugin_name)
+          manifest["id"] = f"{author}.{name}"
+
           current_version = manifest.get("version", "0.0.0")
           major, minor, patch = map(int, current_version.split("."))
 
@@ -184,6 +189,11 @@ jobs:
                   try:
                       plugin_data = json.load(f)
                       folder_name = os.path.basename(os.path.dirname(manifest_file))
+                      
+                      # Auto-correct 'id' field in the store manifest
+                      author = plugin_data.get("author", "EchoSync")
+                      name = plugin_data.get("name", folder_name)
+                      plugin_data["id"] = f"{author}.{name}"
                       
                       plugin_data["plugin_id"] = folder_name
                       plugin_data["source_url"] = f"https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/{folder_name}"

@@ -1,5 +1,5 @@
 {
-  "id": "core.musicbrainz",
+  "id": "EchoSync.musicbrainz",
   "name": "Musicbrainz",
   "description": "Official EchoSync provider for musicbrainz",
   "version": "2.4.2",
