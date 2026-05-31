@@ -318,6 +318,7 @@ class PluginLoader:
         
         # 1. Resolve Namespace and Channel from DB
         from database.config_database import get_config_database
+        from pathlib import Path
         db = get_config_database()
         
         conn = db._get_connection()
@@ -481,6 +482,11 @@ class PluginLoader:
                     if p_id is not None:
                         c.execute("DELETE FROM ui_components WHERE plugin_id=?", (p_id,))
                     continue
+                else:
+                    disabled_plugins = config_manager.get_disabled_plugins() or []
+                    is_disabled = (name in disabled_plugins) or (str(p_id) in disabled_plugins)
+                    target_active = 0 if is_disabled else 1
+                    c.execute("UPDATE services SET is_active = ? WHERE id = ?", (target_active, db_id))
 
             # Ensure all core services are present
             for name in core_services:
@@ -781,6 +787,8 @@ class PluginLoader:
                     return True
 
                 plugins_root = Path("/data/plugins")
+                if str(plugins_root.parent) not in sys.path:
+                    sys.path.insert(0, str(plugins_root.parent))
                 if str(plugins_root) not in sys.path:
                     sys.path.insert(0, str(plugins_root))
 

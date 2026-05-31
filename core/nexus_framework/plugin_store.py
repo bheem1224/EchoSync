@@ -320,43 +320,29 @@ class PluginStore:
                     conn = db._get_connection()
                     try:
                         c = conn.cursor()
-                        c.execute("SELECT beta_opt_in, previous_version_path, plugin_id, absolute_install_path FROM services WHERE id=?", (db_id,))
+                        c.execute("SELECT beta_opt_in, previous_version_path, plugin_id, absolute_install_path, version, verified_source FROM services WHERE id=?", (db_id,))
                         row = c.fetchone()
                         if row:
                             plugin["beta_opt_in"] = row[0]
                             plugin["previous_version_path"] = row[1]
                             plugin["int_plugin_id"] = row[2]
                             absolute_install_path = row[3]
+                            plugin["installed_version"] = row[4]
+                            plugin["_installed"] = True
+                            if row[5] == 1:
+                                plugin["verified_source"] = "official"
                             if row[0] == 1:
                                 plugin["installed_channel"] = "beta"
                     finally:
                         conn.close()
             except Exception:
                 pass
-            
-            active_manifest_path = None
-            if absolute_install_path:
-                comm_dir = Path(absolute_install_path)
-                if comm_dir.exists():
-                    comm_manifest = comm_dir / "manifest.json"
-                    if comm_manifest.exists():
-                        plugin["_installed"] = True
-                        active_manifest_path = comm_manifest
 
             plugin["update_available"] = False
 
-            if plugin["_installed"] and active_manifest_path:
+            if plugin["_installed"]:
                 try:
-                    with open(active_manifest_path, "r") as f:
-                        local_manifest = json.load(f)
-                    
-                    # Merge local verified status (overrides remote if mismatch)
-                    if local_manifest.get("verified_source") == "official":
-                        plugin["verified_source"] = "official"
-
-                    local_version = local_manifest.get("version", "0.0.0")
-                    plugin["installed_version"] = local_version
-                    
+                    local_version = plugin["installed_version"] or "0.0.0"
                     remote_version = plugin.get("version", "0.0.0")
                     # If on beta track, compare against beta version
                     if plugin["installed_channel"] == "beta" and plugin.get("beta_version"):
@@ -377,10 +363,7 @@ class PluginStore:
                             if remote_version != local_version:
                                 plugin["update_available"] = True
                 except Exception as e:
-                    logger.debug("Rollback operation halted: Atomic state restoration failed.")
-                    logger.debug(f"Raw exception data: {e}", exc_info=True)
-                    logger.debug("Rollback operation halted: Atomic state restoration failed.")
-                    logger.debug(f"Raw exception data: {e}", exc_info=True)
+                    logger.debug(f"Error checking updates for {plugin_id}: {e}")
             
             # 2. Check for active Grace Period (Snapshots)
             from database.config_database import get_config_database
