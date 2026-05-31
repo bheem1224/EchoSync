@@ -191,7 +191,7 @@ class SpotifyClient(SyncServiceProvider):
         # Initialize the cache manager
         try:
             from .cache_manager import SpotifyCacheManager
-            self.cache_manager = SpotifyCacheManager(sdk=self.sdk)
+            self.cache_manager = SpotifyCacheManager(plugin=self)
         except Exception as e:
             logger.error(f"Failed to initialize SpotifyCacheManager: {e}")
             self.cache_manager = None

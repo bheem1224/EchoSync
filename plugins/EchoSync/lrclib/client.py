@@ -5,7 +5,7 @@ from core.tiered_logger import get_logger
 from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
 from core.file_handling.base_io import safe_write_text
-from typing import Any
+from typing import Any, Optional
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     """AST-compliant alternative to getattr()."""

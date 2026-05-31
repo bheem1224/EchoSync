@@ -12,12 +12,12 @@ logger = get_logger("spotify_cache_manager")
 class SpotifyCacheManager:
     """Manages local caching of Spotify playlists to optimize syncs and reduce API calls."""
 
-    def __init__(self, sdk=None):
-        self.sdk = sdk
-        if self.sdk:
-            self.engine = self.sdk.get_database_connection(write_access=True)
+    def __init__(self, plugin=None):
+        self.plugin = plugin
+        if self.plugin:
+            self.engine = self.plugin.get_database_connection(write_access=True)
         else:
-            raise ValueError("SpotifyCacheManager requires SDK instance to acquire isolated DB engine")
+            raise ValueError("SpotifyCacheManager requires plugin instance to acquire isolated DB engine")
 
         self.metadata = MetaData()
         self._ensure_tables()

@@ -60,7 +60,7 @@ class PlexClient(PluginBase):
         # Provision the high-speed relational cache using the isolated db
         try:
             from sqlalchemy import text
-            engine = self.sdk.get_database_connection()
+            engine = self.get_database_connection()
             with engine.begin() as conn:
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS plex_media (
@@ -110,6 +110,7 @@ class PlexClient(PluginBase):
         if not self.is_configured():
             return
         
+        from core.health_check import HealthCheckResult
         def plex_health_check() -> HealthCheckResult:
             try:
                 connected = self.ensure_connection()
