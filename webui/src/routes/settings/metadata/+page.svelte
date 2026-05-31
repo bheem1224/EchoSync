@@ -29,8 +29,8 @@
           return (
             p.capabilities?.fetch_metadata ||
             p.capabilities?.resolve_fingerprint ||
-            p.service_type === 'metadata' ||
-            ['musicbrainz', 'acoustid', 'lrclib', 'listenbrainz'].includes(String(p.name || p.id || '').toLowerCase())
+            p.capabilities?.supports_lyrics ||
+            p.service_type === 'metadata'
           );
         });
     } catch (err) {

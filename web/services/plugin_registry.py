@@ -28,8 +28,26 @@ def _clean_mocks(val):
         return [_clean_mocks(item) for item in val if type(item).__name__ not in ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock')]
     return val
 
+def _normalize_name(name_str: str) -> str:
+    if not name_str:
+        return ""
+    return name_str.lower().replace('plugin.', '').replace('echosync.', '').replace('core.', '').strip()
+
 def list_plugins() -> List[Dict]:
     """List all registered plugins with enriched capability metadata."""
+    from database.config_database import get_config_database
+    db = get_config_database()
+    db_services = {}
+    try:
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT name, service_type FROM services")
+            for row in c.fetchall():
+                db_name = _normalize_name(row['name'])
+                db_services[db_name] = row['service_type']
+    except Exception:
+        pass
+
     plugins = []
     for name in CorePluginRegistry.list_plugins():
         cls = CorePluginRegistry.get_plugin_class(name)
@@ -38,13 +56,19 @@ def list_plugins() -> List[Dict]:
             display_name = name.replace('plugin.', '').title()
             source_type = CorePluginRegistry.get_plugin_source(name) or 'core'
             
+            # service_type resolution from class or fallback to DB
+            service_type = getattr(cls, 'service_type', None)
+            if not service_type:
+                norm_name = _normalize_name(name)
+                service_type = db_services.get(norm_name)
+
             plugin_dict = {
                 'id': name,  # Unique ID (e.g. plugin.plex)
                 'name': name,
                 'display_name': display_name,  # Friendly name (e.g. Plex)
                 'source_type': source_type,    # 'core' or 'community'
                 'category': getattr(cls, 'category', 'plugin'),
-                'service_type': getattr(cls, 'service_type', None),
+                'service_type': service_type,
                 'disabled': is_disabled,
                 'version': getattr(cls, 'version', 'Unknown'),
                 'author': getattr(cls, 'author', 'Official' if source_type == 'core' else 'Unknown'),
@@ -88,6 +112,7 @@ def list_plugins() -> List[Dict]:
                     # Add metadata-specific capabilities
                     'fetch_metadata': getattr(caps, 'supports_metadata_fetch', False),
                     'resolve_fingerprint': getattr(caps, 'supports_fingerprinting', False),
+                    'supports_lyrics': getattr(caps, 'supports_lyrics', False),
                 }
             except (KeyError, AttributeError, ValueError):
                 # Plugin not in capability registry, check class-level capabilities
@@ -108,6 +133,7 @@ def list_plugins() -> List[Dict]:
                     'search_capabilities': default_search,
                     'fetch_metadata': Capability.FETCH_METADATA in class_caps if isinstance(class_caps, list) else False,
                     'resolve_fingerprint': Capability.RESOLVE_FINGERPRINT in class_caps if isinstance(class_caps, list) else False,
+                    'supports_lyrics': getattr(cls, 'supports_lyrics', False),
                 }
             plugins.append(plugin_dict)
     return _clean_mocks(plugins)

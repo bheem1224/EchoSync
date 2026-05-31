@@ -44,7 +44,10 @@
 
       await Promise.all(Array.from(scriptsToLoad).map(src => {
         return new Promise((resolve) => {
-          if (document.querySelector(`script[src^="${CSS.escape ? CSS.escape(src) : src}"]`)) {
+          if (Array.from(document.getElementsByTagName('script')).some(s => {
+            const sAttr = s.getAttribute('src');
+            return sAttr && (sAttr === src || sAttr.startsWith(src));
+          })) {
             return resolve();
           }
           const script = document.createElement('script');

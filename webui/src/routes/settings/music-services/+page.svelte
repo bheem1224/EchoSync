@@ -21,12 +21,11 @@
         .filter(p => !p.disabled)
         .filter(p => {
           // Keep streaming and relevant services for this page
-          const id = String(p.name || p.id || '').toLowerCase();
           return (
             p.capabilities?.supports_playlists !== 'NONE' ||
             p.capabilities?.supports_sync ||
             p.service_type === 'streaming' ||
-            ['spotify', 'tidal', 'deezer', 'qobuz', 'apple_music', 'youtube_music'].includes(id)
+            p.service_type === 'music_service'
           );
         });
     } catch (err) {

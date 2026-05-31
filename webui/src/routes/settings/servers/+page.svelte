@@ -21,8 +21,7 @@
         .filter(p => {
           return (
             p.capabilities?.server ||
-            p.service_type === 'media_server' ||
-            ['plex', 'navidrome', 'jellyfin', 'local_server'].includes(String(p.name || p.id || '').toLowerCase())
+            p.service_type === 'media_server'
           );
         });
     } catch (err) {

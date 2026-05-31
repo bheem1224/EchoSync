@@ -44,7 +44,10 @@
 
     if (_injectedUrls.has(finalUrl)) return Promise.resolve();
 
-    if (document.querySelector(`script[src^="${CSS.escape ? CSS.escape(url) : url}"]`)) {
+    if (Array.from(document.getElementsByTagName('script')).some(s => {
+      const sAttr = s.getAttribute('src');
+      return sAttr && (sAttr === url || sAttr.startsWith(url));
+    })) {
       _injectedUrls.add(finalUrl);
       return Promise.resolve();
     }
