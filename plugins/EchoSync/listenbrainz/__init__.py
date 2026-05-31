@@ -1,6 +1,6 @@
-from .client import ListenBrainzClient
+from .manager import ListenBrainzMetadataProvider
 
-ProviderClass = ListenBrainzClient
+ProviderClass = ListenBrainzMetadataProvider
 
 __all__ = ['ProviderClass']
 

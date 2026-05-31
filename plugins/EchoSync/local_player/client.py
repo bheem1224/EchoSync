@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 from core.nexus_framework.plugin_SDK import PluginBase
-from core.nexus_framework.plugin_SDK import ProviderCapabilities
+from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
@@ -11,9 +11,11 @@ class LocalPlayerProvider(PluginBase):
     enabled = True
 
     capabilities = ProviderCapabilities(
-        capabilities=[
-            Capability.STREAM_AUDIO
-        ]
+        name='EchoSync.local_player',
+        supports_playlists=PlaylistSupport.NONE,
+        search=SearchCapabilities(tracks=False),
+        metadata=MetadataRichness.LOW,
+        supports_streaming=True,
     )
 
     def authenticate(self, **kwargs) -> bool:
