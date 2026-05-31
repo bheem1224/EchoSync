@@ -3,7 +3,8 @@ import os
 import sqlite3
 import re
 import time
-from typing import Any, Dict, Optional, List
+import contextlib
+from typing import Any, Dict, Optional, List, Generator
 from pathlib import Path
 
 from core.settings import config_manager
@@ -56,7 +57,31 @@ class ConfigDatabase:
             else:
                 raise
 
-    def _get_connection(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Context manager that opens a SQLite connection and guarantees it is
+        closed when the ``with`` block exits — even on exceptions.
+
+        Using ``with db._get_connection() as conn:`` previously relied on
+        SQLite's built-in context manager which only manages transactions
+        (commit/rollback) and does NOT close the connection, leaking handles
+        across every health-check and install cycle.
+        """
+        conn = self._open_connection()
+        try:
+            yield conn
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open and return a raw SQLite connection with hardened PRAGMAs.
+
+        Callers MUST close this connection themselves (prefer a try/finally).
+        Prefer ``_get_connection()`` as a context manager where possible.
+        """
         conn = sqlite3.connect(str(self.database_path), timeout=60.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -66,7 +91,6 @@ class ConfigDatabase:
         conn.execute("PRAGMA cache_size = -2000")
         conn.execute("PRAGMA wal_autocheckpoint = 100")
         return conn
-
 
     def _initialize_schema(self):
         try:

@@ -317,7 +317,7 @@ class PluginStore:
                 db = get_config_database()
                 db_id = db.get_service_id(plugin_id)
                 if db_id:
-                    conn = db._get_connection()
+                    conn = db._open_connection()
                     try:
                         c = conn.cursor()
                         c.execute("SELECT beta_opt_in, previous_version_path, plugin_id, absolute_install_path, version, verified_source FROM services WHERE id=?", (db_id,))
@@ -384,7 +384,7 @@ class PluginStore:
         """Downloads the update and hot swaps it."""
         from database.config_database import get_config_database
         db = get_config_database()
-        conn = db._get_connection()
+        conn = db._open_connection()
         try:
             c = conn.cursor()
             c.execute("SELECT name, beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,))
@@ -534,7 +534,7 @@ class PluginStore:
                     try:
                         from database.config_database import get_config_database
                         db = get_config_database()
-                        conn = db._get_connection()
+                        conn = db._open_connection()
                         try:
                             c = conn.cursor()
                             c.execute("SELECT absolute_install_path FROM services WHERE plugin_id=?", (target_plugin_id,))
@@ -1084,7 +1084,7 @@ class PluginStore:
             service_id = db.get_service_id(plugin_id)
             if not service_id:
                 # Fallback: check if plugin_id matches either id or plugin_id in DB
-                conn = db._get_connection()
+                conn = db._open_connection()
                 try:
                     c = conn.cursor()
                     c.execute("SELECT id FROM services WHERE id=? OR plugin_id=?", (plugin_id, plugin_id))
@@ -1104,7 +1104,7 @@ class PluginStore:
             clean_id = str(plugin_id)
             db_plugin_id = None
             
-            conn = db._get_connection()
+            conn = db._open_connection()
             try:
                 c = conn.cursor()
                 c.execute("SELECT id, name, plugin_id, absolute_install_path, loaded_modules FROM services WHERE id=?", (service_id,))
@@ -1199,7 +1199,7 @@ class PluginStore:
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # 4. Delete config keys, UI components, and remove from services table
-            conn = db._get_connection()
+            conn = db._open_connection()
             try:
                 c = conn.cursor()
                 c.execute("CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))")

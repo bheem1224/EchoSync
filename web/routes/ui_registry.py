@@ -24,7 +24,7 @@ ui_registry_bp = Blueprint("ui_registry", __name__, url_prefix="/api/ui")
 def config_db_connection():
     from database.config_database import get_config_database
     db = get_config_database()
-    conn = db._get_connection()
+    conn = db._open_connection()
     try:
         yield conn
     finally:

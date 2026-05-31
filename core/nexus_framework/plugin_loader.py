@@ -321,7 +321,7 @@ class PluginLoader:
         from pathlib import Path
         db = get_config_database()
         
-        conn = db._get_connection()
+        conn = db._open_connection()
         try:
             c = conn.cursor()
             c.execute("SELECT absolute_install_path, name, beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,))
@@ -408,7 +408,7 @@ class PluginLoader:
 
         active_db_paths = set()
 
-        conn = db._get_connection()
+        conn = db._open_connection()
         try:
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
@@ -549,7 +549,7 @@ class PluginLoader:
         
         active_services = []
         try:
-            conn = db._get_connection()
+            conn = db._open_connection()
             try:
                 conn.row_factory = sqlite3.Row
                 c = conn.cursor()
@@ -660,7 +660,7 @@ class PluginLoader:
         try:
             from database.config_database import get_config_database
             db = get_config_database()
-            conn = db._get_connection()
+            conn = db._open_connection()
             try:
                 c = conn.cursor()
                 # Use a flexible match for clean_name/provider_id to catch mismatches in plugin. vs core. prefixes
@@ -689,7 +689,7 @@ class PluginLoader:
                 if not absolute_install_path:
                     from database.config_database import get_config_database
                     db = get_config_database()
-                    conn = db._get_connection()
+                    conn = db._open_connection()
                     try:
                         c = conn.cursor()
                         c.execute("SELECT absolute_install_path, name FROM services WHERE plugin_id=?", (plugin_id,))
@@ -706,7 +706,7 @@ class PluginLoader:
                     try:
                         from database.config_database import get_config_database
                         db = get_config_database()
-                        conn = db._get_connection()
+                        conn = db._open_connection()
                         try:
                             c = conn.cursor()
                             c.execute("SELECT name FROM services WHERE plugin_id=?", (plugin_id,))
@@ -838,7 +838,7 @@ class PluginLoader:
                     try:
                         from database.config_database import get_config_database
                         db_conf = get_config_database()
-                        conn = db_conf._get_connection()
+                        conn = db_conf._open_connection()
                         try:
                             c = conn.cursor()
                             c.execute(
@@ -913,7 +913,7 @@ class PluginLoader:
                     loaded_mods = [m for m in sys.modules.keys() if m.startswith(module_path)]
                     from database.config_database import get_config_database
                     db = get_config_database()
-                    conn = db._get_connection()
+                    conn = db._open_connection()
                     try:
                         conn.execute("UPDATE services SET loaded_modules = ? WHERE plugin_id = ?", (json.dumps(loaded_mods), plugin_id))
                         conn.commit()
@@ -932,7 +932,7 @@ class PluginLoader:
                 try:
                     from database.config_database import get_config_database
                     db = get_config_database()
-                    conn = db._get_connection()
+                    conn = db._open_connection()
                     try:
                         conn.execute("UPDATE services SET is_active = 0 WHERE plugin_id = ?", (plugin_id,))
                         conn.commit()
@@ -981,7 +981,7 @@ def get_all_plugins() -> list:
     plugins_map = {}
     db = get_config_database()
     
-    conn = db._get_connection()
+    conn = db._open_connection()
     try:
         c = conn.cursor()
         c.execute("SELECT name, plugin_id, absolute_install_path, description, version, is_active FROM services")
