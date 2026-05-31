@@ -217,27 +217,27 @@ class SpotifyClient(SyncServiceProvider):
                         message="Spotify client not initialized"
                     )
                 
-                # Check authentication status WITHOUT triggering browser popup
-                # Use token cache check instead of API call
                 if not self.is_authenticated():
-                    # Check if it failed because the refresh token was missing or revoked
-                    auth_manager = self.sp.auth_manager
-                    cached_token = auth_manager.cache_handler.get_cached_token() if auth_manager else None
-                    if cached_token and cached_token.get('refresh_token'):
-                        msg = "Spotify refresh token failed - please re-authenticate"
-                    else:
-                        msg = "Spotify token missing - please authenticate"
-
                     return HealthCheckResult(
                         service_name="spotify",
                         status="unhealthy",
-                        message=msg
+                        message="Spotify token missing or invalid - please authenticate"
+                    )
+                    
+                # Check external connectivity
+                try:
+                    self.sp.current_user()
+                except Exception as api_err:
+                    return HealthCheckResult(
+                        service_name="spotify",
+                        status="unhealthy",
+                        message=f"Spotify API connection failed: {str(api_err)}"
                     )
                     
                 return HealthCheckResult(
                     service_name="spotify",
                     status="healthy",
-                    message="Spotify token is valid"
+                    message="Spotify token is valid and API is reachable"
                 )
             except Exception as e:
                 return HealthCheckResult(

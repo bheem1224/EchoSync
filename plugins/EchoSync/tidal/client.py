@@ -83,9 +83,9 @@ class TidalClient(SyncServiceProvider):
         self.code_verifier = None
         self.code_challenge = None
         self.country_code = "US"  # Default country code
-        # Load configuration from the database
         self._load_config()
         self._load_saved_tokens()
+        self._register_health_check()
         
     def _refresh_access_token(self):
         """Refresh the Tidal access token using the refresh token."""
@@ -137,6 +137,62 @@ class TidalClient(SyncServiceProvider):
     def search(self, query: str, type: str = "track", limit: int = 10) -> list:
         # Stub implementation
         return []
+
+    def is_configured(self) -> bool:
+        """Check if Tidal is configured with required credentials."""
+        return bool(self.client_id and self.client_secret)
+
+    def _register_health_check(self):
+        """Register periodic health check for Tidal API."""
+        if not self.is_configured():
+            return
+            
+        from core.health_check import HealthCheckResult
+        
+        def tidal_health_check() -> HealthCheckResult:
+            try:
+                if not self.access_token:
+                    return HealthCheckResult(
+                        service_name="tidal",
+                        status="unhealthy",
+                        message="Tidal token missing - please authenticate"
+                    )
+                
+                # Check external connectivity
+                try:
+                    response = self.http.get(f"{self.base_url}/users/me", headers={"Authorization": f"Bearer {self.access_token}"})
+                    if response.status_code == 401:
+                        return HealthCheckResult(
+                            service_name="tidal",
+                            status="unhealthy",
+                            message="Tidal token invalid or expired"
+                        )
+                    elif response.status_code != 200:
+                        return HealthCheckResult(
+                            service_name="tidal",
+                            status="unhealthy",
+                            message=f"Tidal API error: {response.status_code}"
+                        )
+                except Exception as api_err:
+                    return HealthCheckResult(
+                        service_name="tidal",
+                        status="unhealthy",
+                        message=f"Tidal API connection failed: {str(api_err)}"
+                    )
+                    
+                return HealthCheckResult(
+                    service_name="tidal",
+                    status="healthy",
+                    message="Tidal token is valid and API is reachable"
+                )
+            except Exception as e:
+                return HealthCheckResult(
+                    service_name="tidal",
+                    status="unhealthy",
+                    message=f"Tidal health check error: {str(e)}"
+                )
+        
+        self.sdk.health.register(tidal_health_check, interval_seconds=300)
 
     def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Fetch user playlists with detailed metadata."""
@@ -295,7 +351,7 @@ class TidalClient(SyncServiceProvider):
 
             # Log a warning if they are missing
             if not self.client_id or not self.client_secret:
-                logger.warning("Tidal client ID or secret not configured in database")
+                logger.debug("Tidal client ID or secret not configured in database")
                 return False
             logger.info(f"Loaded Tidal config from database with client ID: {self.client_id[:8]}...")
             return True
@@ -307,7 +363,7 @@ class TidalClient(SyncServiceProvider):
         """Load saved tokens from encrypted database using standardized SDK facades"""
         try:
             if not self.account_id:
-                logger.warning("No account_id specified for Tidal client")
+                logger.debug("No account_id specified for Tidal client")
                 return
             
             token_data = self.sdk.accounts.get_token(int(self.account_id))

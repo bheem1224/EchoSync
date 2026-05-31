@@ -84,7 +84,7 @@ def get_system_health() -> Dict[str, Any]:
                 elif clean_name == 'lrclib':
                     enabled_providers_count += 1
         except Exception as e:
-            logger.debug(f"Dynamic health check config check failed for {svc_name}: {e}")
+            pass
 
     # 3. Calculate Operational Services
     # Start with Core
