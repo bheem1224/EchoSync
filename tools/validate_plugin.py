@@ -93,12 +93,13 @@ def validate_plugin(directory):
         return False
 
     plugin_id = manifest.get('id')
-    author = manifest.get('author')
+    version = manifest.get('version')
     name = manifest.get('name')
+    author = manifest.get('author', 'Unknown')
     privileged = manifest.get('privileged', False)
 
-    if not plugin_id or not author or not name:
-        error(f"manifest.json missing required keys (id, author, name)")
+    if not plugin_id or not version or not name:
+        error(f"manifest.json missing required keys (id, version, name)")
         return False
 
     expected_folder = plugin_id.split('.')[-1]
@@ -108,7 +109,10 @@ def validate_plugin(directory):
         error(f"Folder name mismatch. Expected '{expected_folder}' based on manifest ID, got '{actual_folder}'.")
         return False
 
-    # Phase 1: Dynamic Database Path & UI Asset Simulator
+    # Phase 1: Layout & Asset Checking
+    init_path = os.path.join(directory, '__init__.py')
+    if not os.path.exists(init_path):
+        warn(f"__init__.py is missing in '{directory}'. Ensure the plugin acts as a valid declarative Python package.")
     simulated_stable_path = f"/data/plugins/{author}/{name}/"
     # Beta channel simulated logic would append /beta but for existence we check locally.
 

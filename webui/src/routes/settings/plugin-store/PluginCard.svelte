@@ -325,11 +325,13 @@
       {#if !globalBetaEnabled}
         <!-- Rule 1: Standard Single Button -->
         <button 
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-slate-500 disabled:border-white/10 text-white text-xs font-bold rounded-lg transition-all border-none flex items-center gap-2 cursor-pointer"
+          class="px-4 py-2 {typeof downloading === 'string' && downloading.startsWith('error-') ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white disabled:bg-white/5 disabled:text-slate-500 disabled:border-white/10'} text-xs font-bold rounded-lg transition-all border-none flex items-center gap-2 cursor-pointer"
           disabled={downloading || !canInstallOrUpdate}
           on:click={handleMainAction}
         >
-          {#if downloading}
+          {#if typeof downloading === 'string' && downloading.startsWith('error-')}
+            <span>❌ Failed</span>
+          {:else if downloading}
             <span class="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
             <span>{isInstalled ? 'Updating...' : 'Installing...'}</span>
           {:else}
@@ -341,11 +343,13 @@
         <div class="flex rounded-lg overflow-hidden shadow-lg shadow-blue-900/20">
           <!-- Main Action -->
           <button 
-            class="pl-4 pr-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-bold border-none transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer"
+            class="pl-4 pr-3 py-2 {typeof downloading === 'string' && downloading.startsWith('error-') ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white disabled:bg-slate-800 disabled:text-slate-500'} text-xs font-bold border-none transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer"
             disabled={downloading || !canInstallOrUpdate}
             on:click={handleMainAction}
           >
-            {#if downloading}
+            {#if typeof downloading === 'string' && downloading.startsWith('error-')}
+              <span>❌ Failed</span>
+            {:else if downloading}
               <span class="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
               <span>Processing...</span>
             {:else}

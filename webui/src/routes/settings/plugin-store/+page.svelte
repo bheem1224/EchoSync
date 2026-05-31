@@ -285,7 +285,7 @@
         <PluginCard 
           {plugin} 
           globalBetaEnabled={betaOpt} 
-          downloading={downloading === (plugin.id || plugin.name)}
+          downloading={downloading === (plugin.id || plugin.name) || downloading === 'error-' + (plugin.id || plugin.name) ? downloading : false}
           on:install={(e) => installPlugin(e.detail)}
           on:uninstall={(e) => requestUninstall(e.detail)}
         />
