@@ -32,6 +32,31 @@ def _normalize_sensitive_value_for_save(key, value):
     return value
 
 
+def _resolve_plugin_name(plugin_id: str) -> str:
+    """Normalize plugin identifiers from route paths to canonical plugin IDs."""
+    plugin_name = str(plugin_id or '').strip()
+    if not plugin_name:
+        return plugin_name
+
+    try:
+        from core.nexus_framework.plugin_loader import get_all_plugins
+        normalized = plugin_name.lower()
+        for p in get_all_plugins():
+            p_id = str(p.get('id', '')).strip()
+            p_name = str(p.get('name', '')).strip()
+            if not p_id and not p_name:
+                continue
+            if (normalized == p_id.lower() or
+                normalized == p_name.lower() or
+                p_id.lower().endswith(f".{normalized}") or
+                p_name.lower().endswith(f".{normalized}")):
+                return p_id
+    except Exception as e:
+        logger.debug(f"Unable to resolve plugin provider '{plugin_name}' to canonical plugin ID: {e}")
+
+    return plugin_name
+
+
 def _build_active_plex_user_map():
     """Build a display-name to Plex user_id map from active config.db accounts."""
     try:
@@ -395,8 +420,11 @@ def get_plugin_settings(plugin_id):
         config_db = get_config_database()
         
         # Ensure service exists in config.db
+        normalized_plugin_id = _resolve_plugin_name(plugin_id)
         try:
-            service_id = config_db.get_or_create_service_id(plugin_id)
+            service_id = config_db.get_or_create_service_id(normalized_plugin_id)
+            if not service_id:
+                return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
         except Exception:
             return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
 
@@ -412,7 +440,8 @@ def get_plugin_settings(plugin_id):
         # Dynamically inject immutable redirect URI for OAuth plugins
         from core.network_utils import get_lan_ip
         lan_ip = get_lan_ip()
-        config['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/plugins/{plugin_id}"
+        callback_id = normalized_plugin_id.split('.')[-1].lower()
+        config['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/plugins/{callback_id}"
         
         # Mock schema for dynamic UI generation (should eventually come from plugin class)
         schema = _get_mock_schema(plugin_id)
@@ -445,9 +474,12 @@ def update_plugin_settings(plugin_id):
         from database.config_database import get_config_database
         config_db = get_config_database()
 
+        normalized_plugin_id = _resolve_plugin_name(plugin_id)
         try:
             # Ensure service exists in config.db
-            service_id = config_db.get_or_create_service_id(plugin_id)
+            service_id = config_db.get_or_create_service_id(normalized_plugin_id)
+            if not service_id:
+                return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
 
             # Default sensitive keys
             sensitive_keys = ['client_secret', 'access_token', 'refresh_token', 'password', 'token', 'api_key']
@@ -603,8 +635,11 @@ def get_plugin_credentials(plugin_id):
     try:
         from database.config_database import get_config_database
         config_db = get_config_database()
-        
-        service_id = config_db.get_or_create_service_id(plugin_id)
+        normalized_plugin_id = _resolve_plugin_name(plugin_id)
+        service_id = config_db.get_or_create_service_id(normalized_plugin_id)
+        if not service_id:
+            return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
+
         # Fetch directly since config_manager might be deprecated for these
         # But we don't have a get_all_service_config endpoint natively, so we fetch keys of interest
         keys_of_interest = ['client_id', 'client_secret', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
@@ -617,7 +652,8 @@ def get_plugin_credentials(plugin_id):
         # Dynamically inject immutable redirect URI
         from core.network_utils import get_lan_ip
         lan_ip = get_lan_ip()
-        credentials['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/plugins/{plugin_id}"
+        callback_id = normalized_plugin_id.split('.')[-1].lower()
+        credentials['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/plugins/{callback_id}"
         
         return jsonify({
             'plugin': plugin_id,
@@ -642,7 +678,10 @@ def set_plugin_credentials(plugin_id):
         
         # Get or create service in config database
         config_db = get_config_database()
-        service_id = config_db.get_or_create_service_id(plugin_id)
+        normalized_plugin_id = _resolve_plugin_name(plugin_id)
+        service_id = config_db.get_or_create_service_id(normalized_plugin_id)
+        if not service_id:
+            return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
         
         # Strip redirect_uri from payload
         if 'redirect_uri' in credentials:

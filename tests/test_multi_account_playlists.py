@@ -68,6 +68,27 @@ def test_provider_credentials_route_uses_plugins_callback_path(client, monkeypat
         assert ':5001/api/oauth/callback/plugins/spotify' in credentials.get('redirect_uri')
 
 
+def test_provider_settings_route_normalizes_plugin_ids_for_service_storage(client, monkeypatch):
+    class FakeConfigDB:
+        def __init__(self):
+            self.requested_name = None
+        def get_or_create_service_id(self, name):
+            self.requested_name = name
+            return 1
+        def get_service_config(self, sid, key):
+            return None
+        def set_service_config(self, service_id, key, value, is_sensitive=False):
+            return True
+
+    fake_db = FakeConfigDB()
+    monkeypatch.setattr('database.config_database.get_config_database', lambda: fake_db)
+    monkeypatch.setattr('core.nexus_framework.plugin_loader.get_all_plugins', lambda: [{'id': 'EchoSync.spotify', 'name': 'spotify'}])
+
+    resp = client.post('/api/plugins/Spotify/settings', json={'client_id': 'db1', 'client_secret': 'db2'})
+    assert resp.status_code == 200
+    assert fake_db.requested_name == 'EchoSync.spotify'
+
+
 def test_providers_playlist_route_includes_account_id(client, monkeypatch):
     """The providers playlist endpoint should return playlists with account_id for multi-account providers."""
     class FakeConfigDB:
