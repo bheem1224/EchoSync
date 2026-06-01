@@ -1,10 +1,12 @@
 from .client import TidalClient
 from .routes import bp
+from . import oauth_routes
 
 ProviderClass = TidalClient
 RouteBlueprint = bp
+RouteBlueprint2 = oauth_routes.bp
 
-__all__ = ['ProviderClass', 'RouteBlueprint']
+__all__ = ['ProviderClass', 'RouteBlueprint', 'RouteBlueprint2']
 
 from core.nexus_framework.plugin_SDK import sdk
 

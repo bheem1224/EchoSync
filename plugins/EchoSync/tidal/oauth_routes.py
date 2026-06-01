@@ -1,6 +1,7 @@
 """Tidal OAuth routes - handles PKCE-based OAuth flow for Tidal accounts."""
 from flask import Blueprint, request, jsonify, redirect
 from core.nexus_framework.plugin_SDK import sdk
+from core.file_handling.storage import get_storage_service
 from core.tiered_logger import get_logger
 import json
 import base64
@@ -9,6 +10,7 @@ import urllib.parse
 import time
 
 logger = get_logger("tidal_oauth")
+storage = get_storage_service()
 bp = Blueprint("tidal_oauth", __name__, url_prefix="/api/tidal")
 
 

@@ -30,7 +30,8 @@ def oauth_callback(provider_name: str):
             from core.nexus_framework.plugin_loader import PluginRegistry
             plugin_cls = PluginRegistry.get_plugin_class(provider_name)
             if plugin_cls is not None:
-                provider_name = getattr(plugin_cls, 'name', provider_name)
+                canonical_name = getattr(plugin_cls, 'name', provider_name)
+                provider_name = canonical_name.split('.')[-1]
         except Exception:
             logger.debug(f"Unable to resolve plugin provider '{provider_name}' to canonical plugin ID", exc_info=True)
 
