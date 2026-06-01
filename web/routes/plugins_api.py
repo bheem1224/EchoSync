@@ -176,6 +176,8 @@ def set_active_download_client():
 @bp.post("/<plugin_id>/toggle")
 @require_auth
 def toggle_plugin(plugin_id):
+    plugin_id = _resolve_plugin_id(plugin_id)
+    plugin_id = _resolve_plugin_id(plugin_id)
     """Toggle a plugin's enabled/disabled status.
     
     Updates both persistent config and in-memory registry state.
@@ -225,6 +227,8 @@ def toggle_plugin(plugin_id):
 @bp.post("/<plugin_id>/rollback")
 @require_auth
 def rollback_plugin(plugin_id):
+    plugin_id = _resolve_plugin_id(plugin_id)
+    plugin_id = _resolve_plugin_id(plugin_id)
     """Roll back a plugin to its previous stable version and state."""
     try:
         from core.nexus_framework.plugin_store import plugin_store
@@ -244,6 +248,8 @@ def rollback_plugin(plugin_id):
 
 @bp.get("/<plugin_id>/playlists")
 def get_plugin_playlists(plugin_id):
+    plugin_id = _resolve_plugin_id(plugin_id)
+    plugin_id = _resolve_plugin_id(plugin_id)
     """Fetch playlists from a specific plugin."""
     try:
         # Get plugin via registry
@@ -385,6 +391,8 @@ def get_plugin_playlists(plugin_id):
 
 @bp.get("/<plugin_id>/settings")
 def get_plugin_settings(plugin_id):
+    plugin_id = _resolve_plugin_id(plugin_id)
+    plugin_id = _resolve_plugin_id(plugin_id)
     """Get settings and schema for a specific plugin.
     
     Returns decrypted credentials for display (show/hide password button in UI).
@@ -428,6 +436,8 @@ def get_plugin_settings(plugin_id):
 @bp.post("/<plugin_id>/settings")
 @require_auth
 def update_plugin_settings(plugin_id):
+    plugin_id = _resolve_plugin_id(plugin_id)
+    plugin_id = _resolve_plugin_id(plugin_id)
     """Update settings for a specific plugin.
     
     SECURITY:
@@ -583,6 +593,8 @@ def get_plugins_by_capability(capability):
 
 @bp.get("/<plugin_id>")
 def get_plugin_details(plugin_id):
+    plugin_id = _resolve_plugin_id(plugin_id)
+    plugin_id = _resolve_plugin_id(plugin_id)
     """Get full details for a specific plugin."""
     try:
         plugin = get_plugin(plugin_id)
@@ -599,6 +611,8 @@ def get_plugin_details(plugin_id):
 
 @bp.get("/<plugin_id>/credentials")
 def get_plugin_credentials(plugin_id):
+    plugin_id = _resolve_plugin_id(plugin_id)
+    plugin_id = _resolve_plugin_id(plugin_id)
     """Get credentials/configuration for a specific plugin."""
     try:
         from database.config_database import get_config_database
@@ -630,6 +644,8 @@ def get_plugin_credentials(plugin_id):
 @bp.post("/<plugin_id>/credentials")
 @require_auth
 def set_plugin_credentials(plugin_id):
+    plugin_id = _resolve_plugin_id(plugin_id)
+    plugin_id = _resolve_plugin_id(plugin_id)
     """Set credentials/configuration for a specific plugin."""
     try:
         from database.config_database import get_config_database
