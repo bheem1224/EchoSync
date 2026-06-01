@@ -15,6 +15,7 @@ logger = get_logger("oauth_sidecar")
 app = Flask("oauth_sidecar")
 
 @app.route("/api/oauth/callback/<provider_name>")
+@app.route("/api/oauth/callback/plugins/<provider_name>")
 def oauth_callback(provider_name: str):
     """
     Universal callback route for OAuth. Acts as a dumb proxy,
@@ -23,9 +24,12 @@ def oauth_callback(provider_name: str):
     lan_ip = get_lan_ip()
     main_port = get_main_app_port()
 
-    # Construct redirect URL
     query_string = request.query_string.decode('utf-8')
-    redirect_url = f"http://{lan_ip}:{main_port}/api/{provider_name}/callback"
+    if request.path.startswith('/api/oauth/callback/plugins/'):
+        redirect_url = f"http://{lan_ip}:{main_port}/api/plugins/{provider_name}/callback"
+    else:
+        redirect_url = f"http://{lan_ip}:{main_port}/api/{provider_name}/callback"
+
     if query_string:
         redirect_url += f"?{query_string}"
 

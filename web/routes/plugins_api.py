@@ -412,11 +412,10 @@ def get_plugin_settings(plugin_id):
         # Dynamically inject immutable redirect URI for OAuth plugins
         from core.network_utils import get_lan_ip
         lan_ip = get_lan_ip()
-        config['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/{plugin_id}"
-
+        config['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/plugins/{plugin_id}"
+        
         # Mock schema for dynamic UI generation (should eventually come from plugin class)
         schema = _get_mock_schema(plugin_id)
-        
         return jsonify({
             'plugin': plugin_id,
             'settings': config,
@@ -618,7 +617,7 @@ def get_plugin_credentials(plugin_id):
         # Dynamically inject immutable redirect URI
         from core.network_utils import get_lan_ip
         lan_ip = get_lan_ip()
-        credentials['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/{plugin_id}"
+        credentials['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/plugins/{plugin_id}"
         
         return jsonify({
             'plugin': plugin_id,

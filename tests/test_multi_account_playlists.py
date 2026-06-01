@@ -34,7 +34,7 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
         def get_service_config(self, sid, key):
             if key == 'client_id': return 'db1'
             if key == 'client_secret': return 'db2'
-            if key == 'redirect_uri': return 'db3'
+            if key == 'redirect_uri': return None
             return None
 
     with patch('database.config_database.get_config_database', return_value=FakeConfigDB()):
@@ -44,9 +44,28 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
         settings = data.get('settings', {})
         assert settings.get('client_id') == 'db1'
         assert settings.get('client_secret') == 'db2'
-        # The new dynamic routing ensures redirect_uri contains the sidecar proxy format
         assert 'https://' in settings.get('redirect_uri')
-        assert ':5001/api/oauth/callback/spotify' in settings.get('redirect_uri')
+        assert ':5001/api/oauth/callback/plugins/spotify' in settings.get('redirect_uri')
+
+
+def test_provider_credentials_route_uses_plugins_callback_path(client, monkeypatch):
+    """GET /api/plugins/<provider>/credentials should surface the plugin callback URI."""
+    class FakeConfigDB:
+        def get_or_create_service_id(self, name):
+            return 1
+        def get_service_config(self, sid, key):
+            if key == 'client_id': return 'db1'
+            if key == 'client_secret': return 'db2'
+            return None
+
+    with patch('database.config_database.get_config_database', return_value=FakeConfigDB()):
+        resp = client.get('/api/plugins/spotify/credentials')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        credentials = data.get('credentials', {})
+        assert credentials.get('client_id') == 'db1'
+        assert credentials.get('client_secret') == 'db2'
+        assert ':5001/api/oauth/callback/plugins/spotify' in credentials.get('redirect_uri')
 
 
 def test_providers_playlist_route_includes_account_id(client, monkeypatch):

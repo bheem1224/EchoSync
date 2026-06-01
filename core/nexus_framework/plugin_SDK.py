@@ -692,8 +692,11 @@ class PluginBase(ABC):
         # Strip existing port if present
         host = host.split(":")[0]
 
+        # The OAuth path for plugin providers uses the short plugin name segment.
+        provider_name = self.name.split('.')[-1]
+
         # The OAuth sidecar runs securely on port 5001
-        return f"https://{host}:5001/api/oauth/callback/{self.name}"
+        return f"https://{host}:5001/api/oauth/callback/plugins/{provider_name}"
 
     def handle_oauth_callback(self, args: Dict[str, str]) -> Any:
         """

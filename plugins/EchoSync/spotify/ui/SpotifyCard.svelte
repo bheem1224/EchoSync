@@ -1,6 +1,4 @@
-<svelte:options
-  customElement="spotify-dashboard-card"
-/>
+<svelte:options customElement="spotify-dashboard-card" />
 
 <script>
   /**
@@ -24,13 +22,13 @@
   onMount(async () => {
     // Ensure apiBase is trimmed
     apiBase = apiBase.replace(/\/$/, "");
-    
+
     await loadGlobalSettings();
     await loadAccounts();
 
     // Auto-populate redirect URI if empty
     if (!redirectUri && typeof window !== "undefined") {
-      redirectUri = `${window.location.protocol}//${window.location.host}/api/spotify/callback`;
+      redirectUri = `${window.location.protocol}//${window.location.host}/api/oauth/callback/plugins/spotify`;
     }
 
     // Collapse credentials by default if configured
@@ -74,9 +72,9 @@
           redirect_uri: redirectUri,
         }),
       });
-      
+
       if (!resp.ok) throw new Error("Save failed");
-      
+
       console.log("Spotify credentials saved");
     } catch (error) {
       console.error("Failed to save Spotify settings:", error);
@@ -114,9 +112,9 @@
           display_name: newAccountName,
         }),
       });
-      
+
       if (!resp.ok) throw new Error("Add failed");
-      
+
       newAccountName = "";
       showAddAccount = false;
       await loadAccounts();
@@ -166,7 +164,7 @@
       const resp = await fetch(`${apiBase}/auth?account_id=${accountId}`);
       const data = await resp.json();
       if (data?.auth_url) {
-        window.open(data.auth_url, '_blank', 'noopener,noreferrer');
+        window.open(data.auth_url, "_blank", "noopener,noreferrer");
         // Refresh after a delay to catch the callback
         setTimeout(() => loadAccounts(), 5000);
       }
@@ -278,7 +276,9 @@
             />
           </div>
           <div class="actions-row">
-            <button class="btn-primary" on:click={addAccount}>Add Account</button>
+            <button class="btn-primary" on:click={addAccount}
+              >Add Account</button
+            >
           </div>
         </div>
       {/if}
@@ -308,16 +308,17 @@
               >
                 {account.is_authenticated ? "Re-auth" : "Authorize"}
               </button>
-              
+
               <div class="switch-container">
-                 <label class="switch">
-                    <input 
-                      type="checkbox" 
-                      checked={account.is_active} 
-                      on:change={() => toggleAccount(account.id, account.is_active)}
-                    />
-                    <span class="slider round"></span>
-                 </label>
+                <label class="switch">
+                  <input
+                    type="checkbox"
+                    checked={account.is_active}
+                    on:change={() =>
+                      toggleAccount(account.id, account.is_active)}
+                  />
+                  <span class="slider round"></span>
+                </label>
               </div>
 
               <button
@@ -348,7 +349,7 @@
     border-radius: var(--radius, 16px);
     padding: 28px;
     color: var(--text-primary, #f8fafc);
-    font-family: 'Inter', sans-serif;
+    font-family: "Inter", sans-serif;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
     transition: transform 0.2s ease;
   }
@@ -655,7 +656,7 @@
     right: 0;
     bottom: 0;
     background-color: rgba(255, 255, 255, 0.1);
-    transition: .4s;
+    transition: 0.4s;
     border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
   }
 
@@ -667,8 +668,8 @@
     left: 2px;
     bottom: 2px;
     background-color: #94a3b8;
-    transition: .4s;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    transition: 0.4s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   }
 
   input:checked + .slider {
@@ -708,7 +709,9 @@
   }
 
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .add-account-form {
@@ -721,8 +724,14 @@
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .empty-accounts {
@@ -735,8 +744,3 @@
     font-style: italic;
   }
 </style>
-
-
-
-
-

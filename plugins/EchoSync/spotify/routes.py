@@ -25,10 +25,10 @@ def _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_
         # Seed into storage if we have app credentials
         if client_id and client_secret:
             try:
-                sdk.config.set('client_id', client_id)
-                sdk.secrets.set('client_secret', client_secret)
+                storage.config.set('client_id', client_id)
+                storage.secrets.set('client_secret', client_secret)
                 if redirect_uri:
-                    sdk.config.set('redirect_uri', redirect_uri)
+                    storage.config.set('redirect_uri', redirect_uri)
             except Exception as e:
                 logger.warning(f"Failed to seed Spotify service config into settings database: {e}")
 

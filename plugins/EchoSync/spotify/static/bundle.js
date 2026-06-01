@@ -2379,7 +2379,7 @@ function Ti(e, t) {
 	qe(t, !1), Gr(e, wi);
 	let n = oi(t, "apiBase", 12, ""), r = /* @__PURE__ */ P(""), i = /* @__PURE__ */ P(""), a = /* @__PURE__ */ P(""), o = /* @__PURE__ */ P([]), s = /* @__PURE__ */ P(!1), c = /* @__PURE__ */ P(""), l = /* @__PURE__ */ P(!0), u = /* @__PURE__ */ P(!1), d = /* @__PURE__ */ P(!1);
 	Mr(async () => {
-		n(n().replace(/\/$/, "")), await f(), await m(), !X(a) && typeof window < "u" && F(a, `${window.location.protocol}//${window.location.host}/api/spotify/callback`), F(d, !!(X(r) && X(i) && X(a) && X(o).some((e) => e.is_authenticated))), F(l, !1);
+		n(n().replace(/\/$/, "")), await f(), await m(), !X(a) && typeof window < "u" && F(a, `${window.location.protocol}//${window.location.host}/api/oauth/callback/plugins/spotify`), F(d, !!(X(r) && X(i) && X(a) && X(o).some((e) => e.is_authenticated))), F(l, !1);
 	});
 	async function f() {
 		try {
