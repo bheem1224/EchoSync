@@ -40,7 +40,9 @@ def _normalize_and_seed_credentials(storage, client_id, client_secret, redirect_
 @bp.get('/settings')
 def get_settings():
     """Retrieve Spotify plugin settings."""
-    from core.nexus_framework.plugin_SDK import sdk
+    import zlib
+    from core.nexus_framework.plugin_SDK import ProviderStorageBox
+    sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
     try:
         client_id = sdk.config.get('client_id', '')
         client_secret = sdk.secrets.get('client_secret', '')
@@ -67,7 +69,9 @@ def get_settings():
 @bp.post('/settings')
 def save_settings():
     """Save Spotify plugin settings securely using the SDK."""
-    from core.nexus_framework.plugin_SDK import sdk
+    import zlib
+    from core.nexus_framework.plugin_SDK import ProviderStorageBox
+    sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
     try:
         data = request.get_json() or {}
         client_id = data.get('client_id', '').strip()
@@ -95,7 +99,9 @@ def save_settings():
 @bp.get('/accounts')
 def list_accounts():
     """Return all Spotify accounts."""
-    from core.nexus_framework.plugin_SDK import sdk
+    import zlib
+    from core.nexus_framework.plugin_SDK import ProviderStorageBox
+    sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
     try:
         accounts = sdk.accounts.get_all()
         return jsonify({'accounts': accounts}), 200
@@ -107,7 +113,9 @@ def list_accounts():
 @bp.post('/accounts')
 def create_account():
     """Create a new Spotify account entry."""
-    from core.nexus_framework.plugin_SDK import sdk
+    import zlib
+    from core.nexus_framework.plugin_SDK import ProviderStorageBox
+    sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
     try:
         data = request.get_json() or {}
         account_name = (data.get('account_name') or '').strip()
@@ -128,7 +136,9 @@ def create_account():
 @bp.put('/accounts/<int:account_id>/activate')
 def activate_account(account_id):
     """Toggle active state for a Spotify account."""
-    from core.nexus_framework.plugin_SDK import sdk
+    import zlib
+    from core.nexus_framework.plugin_SDK import ProviderStorageBox
+    sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
     try:
         data = request.get_json() or {}
         is_active = bool(data.get('is_active', True))
@@ -142,7 +152,9 @@ def activate_account(account_id):
 @bp.delete('/accounts/<int:account_id>')
 def delete_account(account_id):
     """Delete a Spotify account and its tokens."""
-    from core.nexus_framework.plugin_SDK import sdk
+    import zlib
+    from core.nexus_framework.plugin_SDK import ProviderStorageBox
+    sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
     try:
         sdk.accounts.delete_account(account_id)
         return jsonify({'success': True}), 200
@@ -167,7 +179,9 @@ def begin_auth():
             return jsonify({'error': 'account_id parameter is required'}), 400
         
         # Read client credentials from storage (service config)
-        from core.nexus_framework.plugin_SDK import sdk
+        import zlib
+        from core.nexus_framework.plugin_SDK import ProviderStorageBox
+        sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
 
         from core.security import decrypt_string
         client_id = sdk.config.get('client_id')
@@ -240,7 +254,9 @@ def oauth_callback():
         except (ValueError, TypeError):
             account_id = None
 
-        from core.nexus_framework.plugin_SDK import sdk
+        import zlib
+        from core.nexus_framework.plugin_SDK import ProviderStorageBox
+        sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
 
         from core.security import decrypt_string
         client_id = sdk.config.get('client_id')

@@ -163,6 +163,9 @@ def update_account(account_id):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         
+        import zlib
+        from core.nexus_framework.plugin_SDK import ProviderStorageBox
+        sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.tidal') & 0xFFFFFFFF)
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
@@ -194,6 +197,9 @@ def update_account(account_id):
             if plugin: plugin.secrets.set('client_secret', client_secret_value)
         
         # Return updated account
+        import zlib
+        from core.nexus_framework.plugin_SDK import ProviderStorageBox
+        sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.tidal') & 0xFFFFFFFF)
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
@@ -222,6 +228,9 @@ def activate_account(account_id):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         
+        import zlib
+        from core.nexus_framework.plugin_SDK import ProviderStorageBox
+        sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.tidal') & 0xFFFFFFFF)
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
@@ -250,6 +259,9 @@ def delete_account(account_id):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         
+        import zlib
+        from core.nexus_framework.plugin_SDK import ProviderStorageBox
+        sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.tidal') & 0xFFFFFFFF)
         deleted = sdk.accounts.delete_account(account_id)
         
         if not deleted:
@@ -300,6 +312,9 @@ def debug_account(account_id):
         
         
         # Check if account exists
+        import zlib
+        from core.nexus_framework.plugin_SDK import ProviderStorageBox
+        sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.tidal') & 0xFFFFFFFF)
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         

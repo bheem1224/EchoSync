@@ -19,7 +19,7 @@ def test_oauth_sidecar_plugins_callback_proxies_to_plugin_route(monkeypatch):
         resp = client.get('/api/oauth/callback/plugins/spotify?code=testcode&state=1')
 
     assert resp.status_code == 302
-    assert resp.headers['Location'] == 'http://192.168.1.11:5000/api/plugins/spotify/callback?code=testcode&state=1'
+    assert resp.headers['Location'] == 'http://127.0.0.1:5000/api/plugins/2391116200/callback?code=testcode&state=1'
 
 
 def test_oauth_sidecar_tidal_callback_proxies_to_plugin_route(monkeypatch):
@@ -38,4 +38,4 @@ def test_oauth_sidecar_tidal_callback_proxies_to_plugin_route(monkeypatch):
         resp = client.get('/api/oauth/callback/plugins/tidal?code=testcode&state=1')
 
     assert resp.status_code == 302
-    assert resp.headers['Location'] == 'http://192.168.1.11:5000/api/plugins/tidal/callback?code=testcode&state=1'
+    assert resp.headers['Location'] == 'http://127.0.0.1:5000/api/plugins/3106502486/callback?code=testcode&state=1'
