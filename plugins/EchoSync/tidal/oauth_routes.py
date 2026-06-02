@@ -1,4 +1,5 @@
 """Tidal OAuth routes - handles PKCE-based OAuth flow for Tidal accounts."""
+import logging
 from flask import Blueprint, request, jsonify, redirect
 from core.nexus_framework.plugin_SDK import sdk
 from core.file_handling.storage import get_storage_service
@@ -105,7 +106,7 @@ def begin_auth():
         return jsonify({'error': 'Invalid account_id format'}), 400
     except Exception as e:
         logger.error(f"Error creating Tidal auth URL: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.get('/callback')

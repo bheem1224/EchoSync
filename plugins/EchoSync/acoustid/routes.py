@@ -1,3 +1,4 @@
+import logging
 from flask import Blueprint, jsonify, request
 from core.nexus_framework.plugin_SDK import sdk
 from core.tiered_logger import get_logger
@@ -21,7 +22,7 @@ def get_config():
         }), 200
     except Exception as e:
         logger.error(f"Error reading AcoustID config: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 @config_bp.post("/config")
 def save_config():
@@ -47,4 +48,4 @@ def save_config():
         }), 200
     except Exception as e:
         logger.error(f"Error saving AcoustID config: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500

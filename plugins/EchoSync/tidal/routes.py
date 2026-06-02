@@ -1,4 +1,5 @@
 """Tidal provider routes."""
+import logging
 from flask import Blueprint, request, jsonify
 from core.tiered_logger import get_logger
 
@@ -54,7 +55,7 @@ def list_accounts():
         })
     except Exception as e:
         logger.error(f"Error getting Tidal accounts: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.post('')
@@ -109,7 +110,7 @@ def create_account():
         }), 201
     except Exception as e:
         logger.error(f"Error creating Tidal account: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.get('/<int:account_id>')
@@ -149,7 +150,7 @@ def get_account(account_id):
         })
     except Exception as e:
         logger.error(f"Error getting Tidal account: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.put('/<int:account_id>')
@@ -217,7 +218,7 @@ def update_account(account_id):
         })
     except Exception as e:
         logger.error(f"Error updating Tidal account: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.put('/<int:account_id>/activate')
@@ -248,7 +249,7 @@ def activate_account(account_id):
         return jsonify({'status': 'ok', 'is_active': is_active})
     except Exception as e:
         logger.error(f"Error activating Tidal account: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.delete('/<int:account_id>')
@@ -274,7 +275,7 @@ def delete_account(account_id):
         return jsonify({'status': 'ok', 'message': 'Account deleted'})
     except Exception as e:
         logger.error(f"Error deleting Tidal account: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.post('/redirect-uri')
@@ -300,7 +301,7 @@ def set_redirect_uri():
         return jsonify({'status': 'ok', 'redirect_uri': redirect_uri})
     except Exception as e:
         logger.error(f"Error setting redirect URI: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.get('/<int:account_id>/debug')
@@ -341,7 +342,7 @@ def debug_account(account_id):
         })
     except Exception as e:
         logger.error(f"Error debugging account: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -388,4 +389,4 @@ def begin_auth():
         return jsonify({'auth_url': auth_url}), 200
     except Exception as e:
         logger.error(f"Error generating Tidal auth URL: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500

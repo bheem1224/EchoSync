@@ -12,6 +12,7 @@ SlskdCard.svelte calls:
   GET  ${apiBase}/providers/soulseek/settings/key
 """
 
+import logging
 from flask import Blueprint, jsonify, request
 from core.tiered_logger import get_logger
 import asyncio
@@ -44,7 +45,7 @@ def get_active_download_client():
         return jsonify({"active": False, "name": None}), 200
     except Exception as e:
         logger.error(f"Failed to get active download client: {e}")
-        return jsonify({"active": False, "error": str(e)}), 200
+        return jsonify({"active": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal error checking client"}), 200
 
 
 @bp.post("/providers/download-clients/activate")
@@ -60,7 +61,7 @@ def activate_download_client():
         return core_activate()
     except Exception as e:
         logger.error(f"Failed to activate download client: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +87,7 @@ def get_settings():
         }), 200
     except Exception as e:
         logger.error(f"Failed to get slskd settings: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.route("/providers/soulseek/settings", methods=["POST"])
@@ -114,7 +115,7 @@ def save_settings():
         return jsonify({"success": True}), 200
     except Exception as e:
         logger.error(f"Failed to save slskd settings: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.route("/providers/soulseek/connection/test", methods=["POST"])
@@ -161,7 +162,7 @@ def test_connection():
         return jsonify(result), 200 if result["success"] else 400
     except Exception as e:
         logger.error(f"Failed to test slskd connection: {e}", exc_info=True)
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.route("/providers/soulseek/settings/key", methods=["GET"])
@@ -175,4 +176,4 @@ def get_api_key():
         return jsonify({"api_key": api_key}), 200
     except Exception as e:
         logger.error(f"Failed to fetch API key: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500

@@ -1,3 +1,4 @@
+import logging
 from flask import Blueprint, request, abort, Response, current_app
 
 bp = Blueprint('outbound_gateway_routes', __name__)

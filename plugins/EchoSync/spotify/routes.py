@@ -1,5 +1,6 @@
 """Spotify provider routes."""
 
+import logging
 from flask import Blueprint, request, jsonify, redirect
 from core.tiered_logger import get_logger
 
@@ -64,7 +65,7 @@ def get_settings():
         }), 200
     except Exception as e:
         logger.error(f"Failed to get Spotify settings: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 @bp.post('/settings')
 def save_settings():
@@ -89,7 +90,7 @@ def save_settings():
         return jsonify({'success': True, 'message': 'Spotify credentials saved securely'}), 200
     except Exception as e:
         logger.error(f"Failed to save Spotify settings: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +108,7 @@ def list_accounts():
         return jsonify({'accounts': accounts}), 200
     except Exception as e:
         logger.error(f"Failed to list Spotify accounts: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.post('/accounts')
@@ -130,7 +131,7 @@ def create_account():
                                     'is_authenticated': False}}), 201
     except Exception as e:
         logger.error(f"Failed to create Spotify account: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.put('/accounts/<int:account_id>/activate')
@@ -146,7 +147,7 @@ def activate_account(account_id):
         return jsonify({'success': True, 'is_active': is_active}), 200
     except Exception as e:
         logger.error(f"Failed to toggle Spotify account {account_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.delete('/accounts/<int:account_id>')
@@ -160,7 +161,7 @@ def delete_account(account_id):
         return jsonify({'success': True}), 200
     except Exception as e:
         logger.error(f"Failed to delete Spotify account {account_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 @bp.get('/auth')
 def begin_auth():
@@ -217,7 +218,7 @@ def begin_auth():
         return jsonify({'auth_url': auth_url}), 200
     except Exception as e:
         logger.error(f"Error creating Spotify auth URL: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.get('/callback')
