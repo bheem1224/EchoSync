@@ -446,7 +446,7 @@ class RestrictedConnection:
     def commit(self):
         return self.conn.commit()
 
-class ProviderStorageBox:
+class PluginStorageBox:
     """Sandbox wrapper for providers to create their own tables."""
 
     def __init__(self, provider_name: str, engine, metadata):
@@ -601,9 +601,9 @@ class WorkingDatabase:
             session.commit()
             return system_user.id
 
-    def get_provider_storage(self, provider_name: str) -> ProviderStorageBox:
+    def get_provider_storage(self, provider_name: str) -> PluginStorageBox:
         """Get a sandbox storage wrapper for a specific provider."""
-        return ProviderStorageBox(provider_name, self.engine, WorkingBase.metadata)
+        return PluginStorageBox(provider_name, self.engine, WorkingBase.metadata)
 
     def dispose(self) -> None:
         self.engine.dispose()

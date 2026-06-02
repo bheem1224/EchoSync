@@ -224,7 +224,7 @@ Plugins have no standardized way to save user settings or generic state. `config
 ## 13. Database Scoping
 
 **Current State:**
-Plugins use `ProviderStorageBox` for `working.db`. However, `_PluginModelFacade` in `provider_base.py` exposes raw SQLAlchemy models (`Track`, `Album`, `Artist`) connected to `music_library.db`, granting full write access.
+Plugins use `PluginStorageBox` for `working.db`. However, `_PluginModelFacade` in `provider_base.py` exposes raw SQLAlchemy models (`Track`, `Album`, `Artist`) connected to `music_library.db`, granting full write access.
 
 **Legacy Debt / Dead Code:**
 

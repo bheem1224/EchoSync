@@ -32,10 +32,10 @@ Explore the `core/file_handling/` directory (specifically `local_file_handler.py
 
 EchoSync uses a strict multi-database setup (`config.db`, `music.db`, `working.db`) managed via Alembic migrations. Plugins cannot execute raw `ALTER TABLE` statements or manipulate core tables directly.
 
-### The `ProviderStorageBox`
-Plugins are given their own isolated sandbox for data storage. When you request database access, the system returns a `ProviderStorageBox` object.
+### The `PluginStorageBox`
+Plugins are given their own isolated sandbox for data storage. When you request database access, the system returns a `PluginStorageBox` object.
 
-* **Table Prefixing:** The `ProviderStorageBox` forcefully prepends `prv_{plugin_id}_` to any table you create. This prevents your plugin from accidentally (or maliciously) overwriting core tables like `tracks` or `users`.
+* **Table Prefixing:** The `PluginStorageBox` forcefully prepends `prv_{plugin_id}_` to any table you create. This prevents your plugin from accidentally (or maliciously) overwriting core tables like `tracks` or `users`.
 * **Where to find it:** Check `working_database.py` (specifically `get_provider_storage()`) to see how the wrapper is generated.
 
 ### Core Write Overrides

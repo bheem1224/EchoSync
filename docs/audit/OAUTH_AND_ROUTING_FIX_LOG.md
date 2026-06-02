@@ -24,8 +24,8 @@
     *   Add:
         ```python
         import zlib
-        from core.nexus_framework.plugin_SDK import ProviderStorageBox
-        sdk = ProviderStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
+        from core.nexus_framework.plugin_SDK import PluginStorageBox
+        sdk = PluginStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
         ```
     *   Apply this to all routes requiring the SDK.
 
@@ -41,5 +41,5 @@
 
 ### Step 4: Patch the Undefined SDK in Plugin Routes
 * Edit `plugins/EchoSync/spotify/routes.py`.
-* Replace `from core.nexus_framework.plugin_SDK import sdk` inside all routes with explicit initialisation using `ProviderStorageBox` and the computed CRC32 hash.
+* Replace `from core.nexus_framework.plugin_SDK import sdk` inside all routes with explicit initialisation using `PluginStorageBox` and the computed CRC32 hash.
 * Edit `plugins/EchoSync/tidal/routes.py` similarly to fix `NameError: name 'sdk' is not defined`.

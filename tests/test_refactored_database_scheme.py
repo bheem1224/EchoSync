@@ -3,7 +3,7 @@ Test suite for the refactored split-database schema.
 
 Covers:
 - EchosyncTrack.sync_id @property (MBID path and base64 fallback path)
-- ProviderStorageBox table-name sandboxing (prv_{name}_ prefix enforcement)
+- PluginStorageBox table-name sandboxing (prv_{name}_ prefix enforcement)
 - Operational tables (user_ratings) accepting and returning URN strings for sync_id
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from sqlalchemy import Column, Integer, MetaData, String, create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 from core.matching_engine import EchosyncTrack
-from database.working_database import ProviderStorageBox, UserRating, WorkingBase
+from database.working_database import PluginStorageBox, UserRating, WorkingBase
 
 
 # ---------------------------------------------------------------------------
@@ -154,16 +154,16 @@ class TestEchosyncTrackSyncId:
 
 
 # ---------------------------------------------------------------------------
-# ProviderStorageBox – prefix enforcement
+# PluginStorageBox – prefix enforcement
 # ---------------------------------------------------------------------------
 
 
-class TestProviderStorageBox:
-    """Verify that ProviderStorageBox unconditionally prefixes table names."""
+class TestPluginStorageBox:
+    """Verify that PluginStorageBox unconditionally prefixes table names."""
 
     def test_provider_storage_box_prefixing(self):
         """
-        ProviderStorageBox("spotify") must create a table named
+        PluginStorageBox("spotify") must create a table named
         prv_spotify_playlists (not just 'playlists') when asked to create
         a table with the suffix 'playlists'.
 
@@ -173,7 +173,7 @@ class TestProviderStorageBox:
         engine = create_engine("sqlite:///:memory:", future=True)
         isolated_metadata = MetaData()
 
-        box = ProviderStorageBox("spotify", engine, isolated_metadata)
+        box = PluginStorageBox("spotify", engine, isolated_metadata)
         table = box.create_table(
             "playlists",
             Column("id", Integer, primary_key=True),
@@ -206,15 +206,15 @@ class TestProviderStorageBox:
 
     def test_provider_storage_box_different_providers_are_isolated(self):
         """
-        Two ProviderStorageBox instances with different provider names must
+        Two PluginStorageBox instances with different provider names must
         produce two distinct, non-overlapping table names even when given the
         same suffix.  Neither table name should be ambiguous.
         """
         engine = create_engine("sqlite:///:memory:", future=True)
         isolated_metadata = MetaData()
 
-        spotify_box = ProviderStorageBox("spotify", engine, isolated_metadata)
-        tidal_box = ProviderStorageBox("tidal", engine, isolated_metadata)
+        spotify_box = PluginStorageBox("spotify", engine, isolated_metadata)
+        tidal_box = PluginStorageBox("tidal", engine, isolated_metadata)
 
         spotify_table = spotify_box.create_table(
             "playlists",
@@ -242,7 +242,7 @@ class TestProviderStorageBox:
         engine = create_engine("sqlite:///:memory:", future=True)
         isolated_metadata = MetaData()
 
-        box = ProviderStorageBox("spotify", engine, isolated_metadata)
+        box = PluginStorageBox("spotify", engine, isolated_metadata)
         table_first = box.create_table(
             "cache",
             Column("id", Integer, primary_key=True),
