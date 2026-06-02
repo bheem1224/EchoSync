@@ -25,7 +25,7 @@
   async function activateServer() {
     try {
       activating = true;
-      await fetch(`${apiBase}/navidrome/activate`, { method: 'POST' });
+      await fetch(`${apiBase}/activate`, { method: 'POST' });
       await loadSettings();
     } catch (error) {
       console.error('Failed to activate server:', error);
@@ -36,7 +36,7 @@
 
   async function loadSettings() {
     try {
-      const response = await fetch(`${apiBase}/navidrome/settings`);
+      const response = await fetch(`${apiBase}/settings`);
       const data = await response.json();
       if (data?.settings) {
         baseUrl = data.settings.base_url || '';
@@ -65,7 +65,7 @@
 
     try {
       saving = true;
-      await fetch(`${apiBase}/navidrome/settings`, { 
+      await fetch(`${apiBase}/settings`, {
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({
@@ -86,7 +86,7 @@
   async function testConnection() {
     try {
       testing = true;
-      const response = await fetch(`${apiBase}/navidrome/test-connection`, { method: 'POST' });
+      const response = await fetch(`${apiBase}/test-connection`, { method: 'POST' });
       const data = await response.json();
       if (data?.connected) {
         await loadSettings();

@@ -407,3 +407,57 @@ def oauth_callback():
         200,
         {"Content-Type": "text/html"},
     )
+
+@bp.get("/settings")
+def get_settings():
+    """Get MusicBrainz server settings (e.g. api_base_url)."""
+    try:
+        from core.nexus_framework.plugin_SDK import sdk
+        api_base_url = sdk.config.get('api_base_url', 'https://musicbrainz.org/ws/2')
+        return jsonify({"settings": {"api_base_url": api_base_url}}), 200
+    except Exception as e:
+        logger.error(f"Error reading MusicBrainz settings: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@bp.post("/settings")
+def save_settings():
+    """Save MusicBrainz server settings."""
+    try:
+        from core.nexus_framework.plugin_SDK import sdk
+        payload = request.get_json(force=True) or {}
+        settings = payload.get("settings", {})
+        if "api_base_url" in settings:
+            sdk.config.set('api_base_url', settings["api_base_url"].strip())
+        return jsonify({"success": True}), 200
+    except Exception as e:
+        logger.error(f"Error saving MusicBrainz settings: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@bp.get("/credentials")
+def get_credentials():
+    """Get MusicBrainz OAuth credentials status."""
+    try:
+        from core.nexus_framework.plugin_SDK import sdk
+        client_id = sdk.config.get('client_id', '')
+        client_secret = sdk.config.get('client_secret', '')
+        return jsonify({"credentials": {"client_id": client_id, "has_secret": bool(client_secret)}}), 200
+    except Exception as e:
+        logger.error(f"Error reading MusicBrainz credentials: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@bp.post("/credentials")
+def save_credentials():
+    """Save MusicBrainz OAuth credentials."""
+    try:
+        from core.nexus_framework.plugin_SDK import sdk
+        from core.security import encrypt_string
+        payload = request.get_json(force=True) or {}
+        creds = payload.get("credentials", {})
+        if "client_id" in creds:
+            sdk.config.set('client_id', creds["client_id"].strip())
+        if "client_secret" in creds and creds["client_secret"].strip():
+            sdk.config.set('client_secret', encrypt_string(creds["client_secret"].strip()))
+        return jsonify({"success": True}), 200
+    except Exception as e:
+        logger.error(f"Error saving MusicBrainz credentials: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500

@@ -33,7 +33,7 @@
   async function loadData() {
     try {
       // Status (accounts + redirect URI + credential flags)
-      const statusResp = await fetch(`${apiBase}/musicbrainz/accounts`);
+      const statusResp = await fetch(`${apiBase}/accounts`);
       const statusData = await statusResp.json();
       
       if (statusData) {
@@ -45,13 +45,13 @@
       }
 
       // Load custom API Base URL
-      const settingsResp = await fetch(`${apiBase}/providers/musicbrainz/settings`);
+      const settingsResp = await fetch(`${apiBase}/settings`);
       const settingsData = await settingsResp.json();
       if (settingsData?.settings) {
         customApiBaseUrl = settingsData.settings.api_base_url || 'https://musicbrainz.org/ws/2';
       }
 
-      const credsResp = await fetch(`${apiBase}/providers/musicbrainz/credentials`);
+      const credsResp = await fetch(`${apiBase}/credentials`);
       const credsData = await credsResp.json();
       if (credsData?.credentials) {
         clientId = credsData.credentials.client_id || '';
@@ -79,7 +79,7 @@
 
     try {
       savingCreds = true;
-      await fetch(`${apiBase}/providers/musicbrainz/credentials`, { 
+      await fetch(`${apiBase}/credentials`, {
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({ credentials: creds }) 
@@ -95,7 +95,7 @@
 
   async function saveSettings() {
     try {
-      await fetch(`${apiBase}/providers/musicbrainz/settings`, {
+      await fetch(`${apiBase}/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ settings: { api_base_url: customApiBaseUrl } })
@@ -123,7 +123,7 @@
     
     try {
       savingAccount = true;
-      await fetch(`${apiBase}/musicbrainz/accounts`, { 
+      await fetch(`${apiBase}/accounts`, {
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({ account_name: name }) 
@@ -140,7 +140,7 @@
   async function deleteAccount(accountId, displayName) {
     if (!confirm(`Delete account "${displayName}"?`)) return;
     try {
-      await fetch(`${apiBase}/musicbrainz/accounts/${accountId}`, { method: 'DELETE' });
+      await fetch(`${apiBase}/accounts/${accountId}`, { method: 'DELETE' });
       await loadData();
     } catch (err) {
       console.error('Failed to delete account:', err);
@@ -149,7 +149,7 @@
 
   async function toggleAccount(accountId, currentlyActive) {
     try {
-      await fetch(`${apiBase}/musicbrainz/accounts/${accountId}/activate`, { 
+      await fetch(`${apiBase}/accounts/${accountId}/activate`, {
         method: 'PUT', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({ is_active: !currentlyActive }) 
@@ -166,7 +166,7 @@
       return;
     }
     try {
-      const resp = await fetch(`${apiBase}/musicbrainz/auth?account_id=${accountId}`);
+      const resp = await fetch(`${apiBase}/auth?account_id=${accountId}`);
       const data = await resp.json();
       const url = data?.auth_url;
       if (url) {
