@@ -1,3 +1,4 @@
+from core.nexus_framework.plugin_SDK import PluginStorageBox
 """Plex provider routes."""
 
 import threading
@@ -22,12 +23,13 @@ def get_settings():
         return jsonify({'settings': {}}), 200
     try:
         # Load Hybrid Configuration
-        plex_config = ServiceRegistry.get_sdk("plex").config.get('plex', {})
-        base_url = plex_config.get('base_url') or ServiceRegistry.get_sdk("plex").config.get('plex.base_url', '')
-        server_name = plex_config.get('server_name') or ServiceRegistry.get_sdk("plex").config.get('plex.server_name', '')
+        plex_config = PluginStorageBox().config.get('plex', {})
+        base_url = plex_config.get('base_url') or PluginStorageBox().config.get('plex.base_url', '')
+        server_name = plex_config.get('server_name') or PluginStorageBox().config.get('plex.server_name', '')
         
         # Retrieve token from Singleton Account
-        from core.nexus_framework.plugin_SDK import sdk
+        from core.nexus_framework.plugin_SDK import PluginStorageBox
+        sdk = PluginStorageBox()
         from core.security import decrypt_string
         
         accounts = sdk.accounts.get_all()
@@ -40,7 +42,7 @@ def get_settings():
                 token = decrypt_string(token_data.get('access_token'))
 
         # Check if this is the active media server
-        active_media_server = ServiceRegistry.get_sdk("plex").config.get('active_media_server', 'plex')
+        active_media_server = PluginStorageBox().config.get('active_media_server', 'plex')
         is_active = (active_media_server == 'plex')
         
         # Check connection status
@@ -57,7 +59,7 @@ def get_settings():
         
         # Get path mappings
         import json
-        path_mappings_raw = plex_config.get('path_mappings') or ServiceRegistry.get_sdk("plex").config.get('plex.path_mappings', '[]')
+        path_mappings_raw = plex_config.get('path_mappings') or PluginStorageBox().config.get('plex.path_mappings', '[]')
         try:
             path_mappings = json.loads(path_mappings_raw) if isinstance(path_mappings_raw, str) else path_mappings_raw
         except:
@@ -84,24 +86,25 @@ def save_settings():
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         data = request.get_json(force=True) or {}
-        plex_config = ServiceRegistry.get_sdk("plex").config.get('plex', {})
+        plex_config = PluginStorageBox().config.get('plex', {})
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
             plex_config['base_url'] = base_url
-            ServiceRegistry.get_sdk("plex").config.set('plex.base_url', base_url) # Legacy fallback
+            PluginStorageBox().config.set('plex.base_url', base_url) # Legacy fallback
             logger.info(f"Plex base_url saved: {base_url}")
         
         if 'server_name' in data:
             server_name = data['server_name'].strip()
             plex_config['server_name'] = server_name
-            ServiceRegistry.get_sdk("plex").config.set('plex.server_name', server_name) # Legacy fallback
+            PluginStorageBox().config.set('plex.server_name', server_name) # Legacy fallback
             logger.info(f"Plex server_name saved: {server_name}")
         
         if 'token' in data:
             # We don't save tokens to config_manager anymore. We save them to account_tokens
             token = data['token'].strip()
-            from core.nexus_framework.plugin_SDK import sdk
+            from core.nexus_framework.plugin_SDK import PluginStorageBox
+            sdk = PluginStorageBox()
             from core.security import encrypt_string
             from .client import PlexClient
             import time
@@ -126,10 +129,10 @@ def save_settings():
             import json
             path_mappings = data['path_mappings']
             plex_config['path_mappings'] = path_mappings
-            ServiceRegistry.get_sdk("plex").config.set('plex.path_mappings', path_mappings) # Legacy fallback
+            PluginStorageBox().config.set('plex.path_mappings', path_mappings) # Legacy fallback
             logger.info(f"Plex path_mappings saved: {len(path_mappings)} mappings")
 
-        ServiceRegistry.get_sdk("plex").config.set('plex', plex_config)
+        PluginStorageBox().config.set('plex', plex_config)
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error saving Plex settings: {e}", exc_info=True)
@@ -140,7 +143,7 @@ def save_settings():
 def activate_server():
     """Set Plex as the active media server."""
     try:
-        ServiceRegistry.get_sdk("plex").config.set('active_media_server', 'plex')
+        PluginStorageBox().config.set('active_media_server', 'plex')
         logger.info("Plex set as active media server")
         return jsonify({
             'success': True,
@@ -157,14 +160,15 @@ def test_connection():
     try:
         payload = request.get_json(silent=True) or {}
 
-        plex_config = ServiceRegistry.get_sdk("plex").config.get('plex', {})
+        plex_config = PluginStorageBox().config.get('plex', {})
         base_url = str(
             payload.get('base_url')
             or plex_config.get('base_url')
-            or ServiceRegistry.get_sdk("plex").config.get('plex.base_url', '')
+            or PluginStorageBox().config.get('plex.base_url', '')
         ).strip()
 
-        from core.nexus_framework.plugin_SDK import sdk
+        from core.nexus_framework.plugin_SDK import PluginStorageBox
+        sdk = PluginStorageBox()
         from core.security import decrypt_string
 
         
@@ -309,7 +313,8 @@ def poll_oauth(session_id: str):
             logger.debug(f"Plex poll API check failed: {e}")
 
         if is_logged_in and auth_token:
-            from core.nexus_framework.plugin_SDK import sdk
+            from core.nexus_framework.plugin_SDK import PluginStorageBox
+            sdk = PluginStorageBox()
             from core.security import encrypt_string
             from .client import PlexClient
             
@@ -390,7 +395,8 @@ def sync_plex_users():
     """Sync Plex admin and managed users into settings database and return the updated list."""
     try:
         from .client import PlexClient
-        from core.nexus_framework.plugin_SDK import sdk
+        from core.nexus_framework.plugin_SDK import PluginStorageBox
+        sdk = PluginStorageBox()
 
         client = PlexClient()
         client.import_managed_users()

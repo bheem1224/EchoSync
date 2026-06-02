@@ -420,6 +420,59 @@ class _SDK:
 
 sdk = _SDK()
 
+class PluginStorageBox:
+    def __init__(self):
+        import inspect
+        import os
+        import zlib
+        from database.working_database import PluginStorageBox as InternalStorageBox
+        from database.working_database import get_working_database, WorkingBase
+
+        try:
+            caller_path = inspect.stack()[1].filename
+        except IndexError:
+            raise SecurityError("PluginStorageBox must be instantiated from within a valid plugin module.")
+
+        # Extract Namespace from path like /data/plugins/EchoSync/Jellyfin/beta/routes.py
+        # or /home/user/echosync/plugins/EchoSync/spotify/routes.py
+        namespace = ""
+        path_parts = os.path.normpath(caller_path).split(os.sep)
+        if "plugins" in path_parts:
+            idx = path_parts.index("plugins")
+            if len(path_parts) > idx + 2:
+                author = path_parts[idx + 1]
+                plugin = path_parts[idx + 2]
+                namespace = f"{author}.{plugin}"
+
+        if not namespace:
+            # Fallback for core providers
+            if "providers" in path_parts:
+                idx = path_parts.index("providers")
+                if len(path_parts) > idx + 1:
+                    namespace = path_parts[idx + 1]
+
+        if not namespace:
+            raise RuntimeError(f"Could not determine plugin namespace from path: {caller_path}")
+
+        plugin_id = zlib.crc32(namespace.lower().encode('utf-8')) & 0xFFFFFFFF
+
+        db = get_working_database()
+        self._internal_storage = InternalStorageBox(provider_name=str(plugin_id), engine=db.engine, metadata=WorkingBase.metadata)
+
+        # In order to act as a unified facade for sdk.config, sdk.secrets, etc.
+        # we will hold a reference to the global SDK and proxy to it if internal_storage doesn't have it
+        self._global_sdk = sdk
+
+    def __getattr__(self, name):
+        # 1. Try to get it from the global SDK (for .config, .secrets, .accounts, etc.)
+        if hasattr(self._global_sdk, name):
+            return getattr(self._global_sdk, name)
+        # 2. Try to get it from internal storage (for .connect(), .create_table(), etc.)
+        if hasattr(self._internal_storage, name):
+            return getattr(self._internal_storage, name)
+        raise AttributeError(f"'PluginStorageBox' object has no attribute '{name}'")
+
+
 class WasmPluginWrapper:
     """Wrapper to safely execute .wasm plugins via wasmtime-py"""
     def __init__(self, wasm_path: str):

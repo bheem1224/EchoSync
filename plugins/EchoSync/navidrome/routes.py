@@ -1,3 +1,4 @@
+from core.nexus_framework.plugin_SDK import PluginStorageBox
 """Navidrome provider routes."""
 
 import logging
@@ -17,12 +18,12 @@ def get_settings():
     if PluginRegistry.is_plugin_disabled('navidrome'):
         return jsonify({'settings': {}}), 200
     try:
-        base_url = ServiceRegistry.get_sdk("navidrome").config.get('navidrome.base_url', '')
-        username = ServiceRegistry.get_sdk("navidrome").config.get('navidrome.username', '')
-        password = ServiceRegistry.get_sdk("navidrome").config.get('navidrome.password', '')
+        base_url = PluginStorageBox().config.get('navidrome.base_url', '')
+        username = PluginStorageBox().config.get('navidrome.username', '')
+        password = PluginStorageBox().config.get('navidrome.password', '')
         
         # Check if this is the active media server
-        active_media_server = ServiceRegistry.get_sdk("navidrome").config.get('active_media_server', 'plex')
+        active_media_server = PluginStorageBox().config.get('active_media_server', 'plex')
         is_active = (active_media_server == 'navidrome')
         
         # Check connection status
@@ -49,7 +50,7 @@ def get_settings():
         
         # Get path mappings
         import json
-        path_mappings_str = ServiceRegistry.get_sdk("navidrome").config.get('navidrome.path_mappings', '[]')
+        path_mappings_str = PluginStorageBox().config.get('navidrome.path_mappings', '[]')
         try:
             path_mappings = json.loads(path_mappings_str)
         except:
@@ -81,23 +82,23 @@ def save_settings():
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
-            ServiceRegistry.get_sdk("navidrome").config.set('navidrome.base_url', base_url)
+            PluginStorageBox().config.set('navidrome.base_url', base_url)
             logger.info(f"Navidrome base_url saved: {base_url}")
         
         if 'username' in data:
             username = data['username'].strip()
-            ServiceRegistry.get_sdk("navidrome").config.set('navidrome.username', username)
+            PluginStorageBox().config.set('navidrome.username', username)
             logger.info(f"Navidrome username saved: {username}")
         
         if 'password' in data:
             password = data['password'].strip()
-            ServiceRegistry.get_sdk("navidrome").config.set('navidrome.password', password)
+            PluginStorageBox().config.set('navidrome.password', password)
             logger.info(f"Navidrome password saved")
         
         if 'path_mappings' in data:
             import json
             path_mappings = data['path_mappings']
-            ServiceRegistry.get_sdk("navidrome").config.set('navidrome.path_mappings', json.dumps(path_mappings))
+            PluginStorageBox().config.set('navidrome.path_mappings', json.dumps(path_mappings))
             logger.info(f"Navidrome path_mappings saved: {len(path_mappings)} mappings")
         
         return jsonify({'success': True})
@@ -110,7 +111,7 @@ def save_settings():
 def activate_server():
     """Set Navidrome as the active media server."""
     try:
-        ServiceRegistry.get_sdk("navidrome").config.set('active_media_server', 'navidrome')
+        PluginStorageBox().config.set('active_media_server', 'navidrome')
         logger.info("Navidrome set as active media server")
         return jsonify({
             'success': True,
@@ -125,9 +126,9 @@ def activate_server():
 def test_connection():
     """Test connection to Navidrome server."""
     try:
-        base_url = ServiceRegistry.get_sdk("navidrome").config.get('navidrome.base_url', '').strip()
-        username = ServiceRegistry.get_sdk("navidrome").config.get('navidrome.username', '').strip()
-        password = ServiceRegistry.get_sdk("navidrome").config.get('navidrome.password', '').strip()
+        base_url = PluginStorageBox().config.get('navidrome.base_url', '').strip()
+        username = PluginStorageBox().config.get('navidrome.username', '').strip()
+        password = PluginStorageBox().config.get('navidrome.password', '').strip()
         
         if not base_url:
             return jsonify({'error': 'Server URL is required'}), 400
