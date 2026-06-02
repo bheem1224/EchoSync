@@ -134,7 +134,7 @@
                 name: comp.plugin_name || pluginId
               },
               tag,
-              apiBase: `/api/plugins/${comp.plugin_name || pluginId}`,
+              apiBase: `/api/plugins/${pluginId}`,
               failed: false,
               is_active: true
             };
@@ -147,7 +147,7 @@
                 name: comp.plugin_name || pluginId
               },
               tag,
-              apiBase: `/api/plugins/${comp.plugin_name || pluginId}`,
+              apiBase: `/api/plugins/${pluginId}`,
               failed: true,
               errorMsg: err?.message ?? 'Unknown loading error'
             };

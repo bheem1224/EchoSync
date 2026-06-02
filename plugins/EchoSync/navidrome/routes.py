@@ -1,5 +1,6 @@
 """Navidrome provider routes."""
 
+import logging
 from flask import Blueprint, request, jsonify
 
 from core.tiered_logger import get_logger
@@ -66,7 +67,7 @@ def get_settings():
         })
     except Exception as e:
         logger.error(f"Error getting Navidrome settings: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.post('/settings')
@@ -102,7 +103,7 @@ def save_settings():
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error saving Navidrome settings: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.post('/activate')
@@ -117,7 +118,7 @@ def activate_server():
         })
     except Exception as e:
         logger.error(f"Error activating Navidrome: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
 
 
 @bp.post('/test-connection')
@@ -170,4 +171,4 @@ def test_connection():
         return jsonify({'error': 'requests library not available'}), 500
     except Exception as e:
         logger.error(f"Navidrome connection test failed: {e}", exc_info=True)
-        return jsonify({'connected': False, 'error': str(e)}), 400
+        return jsonify({"connected": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Connection test failed"}), 400

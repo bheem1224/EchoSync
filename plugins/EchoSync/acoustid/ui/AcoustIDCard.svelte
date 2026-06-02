@@ -26,7 +26,7 @@
   async function loadConfig() {
     try {
       const base = apiBase || '';
-      const res = await fetch(`${base}/api/plugins/acoustid/config`);
+      const res = await fetch(`${apiBase}/config`);
       if (res.ok) {
         const data = await res.json();
         keyConfigured = data.api_key_configured ?? false;
@@ -56,7 +56,7 @@
 
     try {
       const base = apiBase || '';
-      const res = await fetch(`${base}/api/plugins/acoustid/config`, {
+      const res = await fetch(`${apiBase}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
