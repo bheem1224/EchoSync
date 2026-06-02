@@ -782,34 +782,34 @@ var At = class {
 //#region node_modules/svelte/src/internal/client/reactivity/async.js
 function jt(e, t, n, r) {
 	let i = Xe() ? Ft : Rt;
-	var a = e.filter((e) => !e.settled);
+	var a = e.filter((e) => !e.settled), o = t.map(i);
 	if (n.length === 0 && a.length === 0) {
-		r(t.map(i));
+		r(o);
 		return;
 	}
-	var o = K, s = Mt(), c = a.length === 1 ? a[0].promise : a.length > 1 ? Promise.all(a.map((e) => e.promise)) : null;
-	function l(e) {
-		if (!(o.f & 16384)) {
-			s();
+	var s = K, c = Mt(), l = a.length === 1 ? a[0].promise : a.length > 1 ? Promise.all(a.map((e) => e.promise)) : null;
+	function u(e) {
+		if (!(s.f & 16384)) {
+			c();
 			try {
-				r(e);
+				r([...o, ...e]);
 			} catch (e) {
-				O(e, o);
+				O(e, s);
 			}
 			Nt();
 		}
 	}
-	var u = Pt();
+	var d = Pt();
 	if (n.length === 0) {
-		c.then(() => l(t.map(i))).finally(u);
+		l.then(() => u([])).finally(d);
 		return;
 	}
-	function d() {
-		Promise.all(n.map((e) => /* @__PURE__ */ Lt(e))).then((e) => l([...t.map(i), ...e])).catch((e) => O(e, o)).finally(u);
+	function f() {
+		Promise.all(n.map((e) => /* @__PURE__ */ Lt(e))).then(u).catch((e) => O(e, s)).finally(d);
 	}
-	c ? c.then(() => {
-		s(), d(), Nt();
-	}) : d();
+	l ? l.then(() => {
+		c(), f(), Nt();
+	}) : f();
 }
 function Mt() {
 	var e = K, t = U, n = E, r = A;
@@ -826,7 +826,7 @@ function Pt() {
 		t?.update_pending_count(-1, n), n.decrement(r, e);
 	};
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function Ft(e) {
 	var t = 2 | b;
 	return K !== null && (K.f |= ce), {
@@ -845,7 +845,7 @@ function Ft(e) {
 	};
 }
 var It = Symbol("obsolete");
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function Lt(e, t, n) {
 	let r = K;
 	r === null && Te();
@@ -883,7 +883,7 @@ function Lt(e, t, n) {
 		t(a);
 	});
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function Rt(e) {
 	let t = /* @__PURE__ */ Ft(e);
 	return t.equals = Ke, t;
@@ -933,12 +933,12 @@ function qt(e, t) {
 		wv: 0
 	};
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function N(e, t) {
 	let n = qt(e, t);
 	return Hn(n), n;
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function P(e, n = !1, r = !0) {
 	let i = qt(e);
 	return n || (i.equals = Ke), t && r && E !== null && E.l !== null && (E.l.s ??= []).push(i), i;
@@ -1110,11 +1110,11 @@ function rn() {
 function an(e = "") {
 	return document.createTextNode(e);
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*@__NO_SIDE_EFFECTS__*/
 function on(e) {
 	return tn.call(e);
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*@__NO_SIDE_EFFECTS__*/
 function I(e) {
 	return nn.call(e);
 }
@@ -1276,7 +1276,9 @@ function En(e, t = 0) {
 }
 function Dn(e, t = [], n = [], r = []) {
 	jt(r, t, n, (t) => {
-		z(8, () => e(...t.map(Q)));
+		z(8, () => {
+			e(...t.map(Q));
+		});
 	});
 }
 function On(e, t = 0) {
@@ -1316,7 +1318,7 @@ function jn(e) {
 }
 function V(e, t = !0) {
 	var n = !1;
-	(t || e.f & 262144) && e.nodes !== null && e.nodes.end !== null && (Mn(e.nodes.start, e.nodes.end), n = !0), k(e, oe), An(e, t && !n), $n(e, 0);
+	(t || e.f & 262144) && e.nodes !== null && e.nodes.end !== null && (Mn(e.nodes.start, e.nodes.end), n = !0), e.f |= oe, An(e, t && !n), $n(e, 0);
 	var r = e.nodes && e.nodes.t;
 	if (r !== null) for (let e of r) e.stop();
 	kn(e), e.f ^= oe, e.f |= ie;
@@ -1651,7 +1653,7 @@ function _r(e, t) {
 		t: null
 	});
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function vr(e, t) {
 	var n = (t & 1) != 0, r = (t & 2) != 0, i, a = !e.startsWith("<!>");
 	return () => {
@@ -2320,7 +2322,7 @@ function ci(e, t) {
 			}), dr("click", t, te), $(e, t);
 		};
 		jr(re, (e) => {
-			Q(r) && (Q(f) || Q(i)) && e(ie);
+			(Q(r) && Q(f) || Q(i)) && e(ie);
 		}), T(y), T(n), T(t), Dn(() => {
 			Lr(g, "type", Q(d) ? "text" : "password"), xr(ne, Q(d) ? "🙈" : "👁️"), b.disabled = Q(c), xr(x, Q(c) ? "Saving..." : "Save Settings");
 		}), Vr(s, () => Q(r), (e) => F(r, e)), Vr(p, () => Q(a), (e) => F(a, e)), Vr(g, () => Q(i), (e) => F(i, e)), dr("click", _, v), dr("click", b, ee), $(e, t);
