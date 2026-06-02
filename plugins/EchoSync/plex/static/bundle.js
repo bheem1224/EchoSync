@@ -782,34 +782,34 @@ var kt = class {
 //#region node_modules/svelte/src/internal/client/reactivity/async.js
 function At(e, t, n, r) {
 	let i = qe() ? Pt : Lt;
-	var a = e.filter((e) => !e.settled), o = t.map(i);
+	var a = e.filter((e) => !e.settled);
 	if (n.length === 0 && a.length === 0) {
-		r(o);
+		r(t.map(i));
 		return;
 	}
-	var s = G, c = jt(), l = a.length === 1 ? a[0].promise : a.length > 1 ? Promise.all(a.map((e) => e.promise)) : null;
-	function u(e) {
-		if (!(s.f & 16384)) {
-			c();
+	var o = G, s = jt(), c = a.length === 1 ? a[0].promise : a.length > 1 ? Promise.all(a.map((e) => e.promise)) : null;
+	function l(e) {
+		if (!(o.f & 16384)) {
+			s();
 			try {
-				r([...o, ...e]);
+				r(e);
 			} catch (e) {
-				$e(e, s);
+				$e(e, o);
 			}
 			Mt();
 		}
 	}
-	var d = Nt();
+	var u = Nt();
 	if (n.length === 0) {
-		l.then(() => u([])).finally(d);
+		c.then(() => l(t.map(i))).finally(u);
 		return;
 	}
-	function f() {
-		Promise.all(n.map((e) => /* @__PURE__ */ It(e))).then(u).catch((e) => $e(e, s)).finally(d);
+	function d() {
+		Promise.all(n.map((e) => /* @__PURE__ */ It(e))).then((e) => l([...t.map(i), ...e])).catch((e) => $e(e, o)).finally(u);
 	}
-	l ? l.then(() => {
-		c(), f(), Mt();
-	}) : f();
+	c ? c.then(() => {
+		s(), d(), Mt();
+	}) : d();
 }
 function jt() {
 	var e = G, t = H, n = k, r = j;
@@ -826,7 +826,7 @@ function Nt() {
 		t?.update_pending_count(-1, n), n.decrement(r, e);
 	};
 }
-/*#__NO_SIDE_EFFECTS__*/
+/* @__NO_SIDE_EFFECTS__ */
 function Pt(e) {
 	var t = 2 | x;
 	return G !== null && (G.f |= w), {
@@ -845,7 +845,7 @@ function Pt(e) {
 	};
 }
 var Ft = Symbol("obsolete");
-/*#__NO_SIDE_EFFECTS__*/
+/* @__NO_SIDE_EFFECTS__ */
 function It(e, t, n) {
 	let r = G;
 	r === null && Se();
@@ -883,7 +883,7 @@ function It(e, t, n) {
 		t(a);
 	});
 }
-/*#__NO_SIDE_EFFECTS__*/
+/* @__NO_SIDE_EFFECTS__ */
 function Lt(e) {
 	let t = /* @__PURE__ */ Pt(e);
 	return t.equals = Ue, t;
@@ -933,12 +933,12 @@ function Kt(e, t) {
 		wv: 0
 	};
 }
-/*#__NO_SIDE_EFFECTS__*/
+/* @__NO_SIDE_EFFECTS__ */
 function qt(e, t) {
 	let n = Kt(e, t);
 	return Un(n), n;
 }
-/*#__NO_SIDE_EFFECTS__*/
+/* @__NO_SIDE_EFFECTS__ */
 function P(e, n = !1, r = !0) {
 	let i = Kt(e);
 	return n || (i.equals = Ue), t && r && k !== null && k.l !== null && (k.l.s ??= []).push(i), i;
@@ -1110,11 +1110,11 @@ function rn() {
 function an(e = "") {
 	return document.createTextNode(e);
 }
-/*@__NO_SIDE_EFFECTS__*/
+/* @__NO_SIDE_EFFECTS__ */
 function on(e) {
 	return tn.call(e);
 }
-/*@__NO_SIDE_EFFECTS__*/
+/* @__NO_SIDE_EFFECTS__ */
 function sn(e) {
 	return nn.call(e);
 }
@@ -1276,9 +1276,7 @@ function Dn(e, t = 0) {
 }
 function On(e, t = [], n = [], r = []) {
 	At(r, t, n, (t) => {
-		R(8, () => {
-			e(...t.map(Z));
-		});
+		R(8, () => e(...t.map(Z)));
 	});
 }
 function kn(e, t = 0) {
@@ -1318,7 +1316,7 @@ function Mn(e) {
 }
 function B(e, t = !0) {
 	var n = !1;
-	(t || e.f & 262144) && e.nodes !== null && e.nodes.end !== null && (Nn(e.nodes.start, e.nodes.end), n = !0), e.f |= ie, jn(e, t && !n), er(e, 0);
+	(t || e.f & 262144) && e.nodes !== null && e.nodes.end !== null && (Nn(e.nodes.start, e.nodes.end), n = !0), A(e, ie), jn(e, t && !n), er(e, 0);
 	var r = e.nodes && e.nodes.t;
 	if (r !== null) for (let e of r) e.stop();
 	An(e), e.f ^= ie, e.f |= ne;
@@ -1653,7 +1651,7 @@ function vr(e, t) {
 		t: null
 	});
 }
-/*#__NO_SIDE_EFFECTS__*/
+/* @__NO_SIDE_EFFECTS__ */
 function Q(e, t) {
 	var n = (t & 1) != 0, r = (t & 2) != 0, i, a = !e.startsWith("<!>");
 	return () => {
