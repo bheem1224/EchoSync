@@ -165,7 +165,8 @@ def update_account(account_id):
     try:
         
         import zlib
-        from core.nexus_framework.plugin_SDK import sdk
+        from core.nexus_framework.plugin_SDK import PluginStorageBox
+        sdk = PluginStorageBox()
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
@@ -198,7 +199,8 @@ def update_account(account_id):
         
         # Return updated account
         import zlib
-        from core.nexus_framework.plugin_SDK import sdk
+        from core.nexus_framework.plugin_SDK import PluginStorageBox
+        sdk = PluginStorageBox()
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
@@ -228,7 +230,8 @@ def activate_account(account_id):
     try:
         
         import zlib
-        from core.nexus_framework.plugin_SDK import sdk
+        from core.nexus_framework.plugin_SDK import PluginStorageBox
+        sdk = PluginStorageBox()
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
@@ -258,7 +261,8 @@ def delete_account(account_id):
     try:
         
         import zlib
-        from core.nexus_framework.plugin_SDK import sdk
+        from core.nexus_framework.plugin_SDK import PluginStorageBox
+        sdk = PluginStorageBox()
         deleted = sdk.accounts.delete_account(account_id)
         
         if not deleted:
@@ -310,7 +314,8 @@ def debug_account(account_id):
         
         # Check if account exists
         import zlib
-        from core.nexus_framework.plugin_SDK import sdk
+        from core.nexus_framework.plugin_SDK import PluginStorageBox
+        sdk = PluginStorageBox()
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
