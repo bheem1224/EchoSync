@@ -4,6 +4,12 @@ on:
   push:
     branches: ["main"]
   workflow_dispatch:
+    inputs:
+      build_all:
+        description: 'Force Rebuild ALL Plugins'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -18,23 +24,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0 # Required to diff feature branches against main
           token: ${{ secrets.COMMIT_PAT }}
-          persist-credentials: true # 🔐 KEY FIX A: Caches token into the local runner configuration
+          persist-credentials: true
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.COMMIT_PAT }} # Uses aligned user token session context
+          password: ${{ secrets.COMMIT_PAT }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      # 🔐 KEY FIX B: Explicitly configure Git to pass the PAT token context to avoid terminal username prompt drops
       - name: Configure Git Authentication
         run: |
           git config --global url."https://x-access-token:${{ secrets.COMMIT_PAT }}@github.com/".insteadOf "https://github.com/"
@@ -45,16 +50,23 @@ jobs:
         env:
           COMMIT_MSG: ${{ github.event.head_commit.message }}
           EVENT_NAME: ${{ github.event_name }}
+          IS_BUILD_ALL: ${{ github.event.inputs.build_all }}
         run: |
           # --- UNIFIED GLOBAL RELEASE DETECTION ---
-          if echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then
+          if [[ "$IS_BUILD_ALL" == "true" ]]; then
+            echo "🚀 Force Build ALL Plugins requested."
+            CHANGED_DIRS=$(find plugins/EchoSync -mindepth 1 -maxdepth 1 -type d)
+            IS_GLOBAL_RELEASE="false"
+            GLOBAL_VERSION="0.0.0"
+          elif echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then
             GLOBAL_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 | sed -E 's/version:\s*v?//i')
             echo "🚀 Global Release detected (v$GLOBAL_VERSION). Syncing ALL plugins."
             CHANGED_DIRS=$(find plugins/EchoSync -mindepth 1 -maxdepth 1 -type d)
             IS_GLOBAL_RELEASE="true"
-          elif [[ "$COMMIT_MSG" == *"[plugin-beta]"* ]] || [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "🚀 Manual trigger or [plugin-beta] override. Building ALL plugins as beta."
-            CHANGED_DIRS=$(find plugins/EchoSync -mindepth 1 -maxdepth 1 -type d)
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "🔍 Manual trigger on feature branch. Detecting changed plugins relative to main."
+            git fetch origin main
+            CHANGED_DIRS=$(git diff --name-only origin/main...HEAD | grep '^plugins/EchoSync/' | cut -d/ -f1,2,3 | sort -u)
             IS_GLOBAL_RELEASE="false"
             GLOBAL_VERSION="0.0.0"
           else
@@ -82,7 +94,6 @@ jobs:
           with open(manifest_path, "r") as f:
               manifest = json.load(f)
 
-          # Auto-correct the 'id' field to match the exact DB CRC32 format (Author.Name)
           author = manifest.get("author", "EchoSync")
           name = manifest.get("name", plugin_name)
           manifest["id"] = f"{author}.{name}"
@@ -91,7 +102,6 @@ jobs:
           major, minor, patch = map(int, current_version.split("."))
 
           build_type = "beta"
-
           override_match = re.search(rf"{plugin_name}:v(\d+\.\d+\.\d+)", commit_msg, re.IGNORECASE)
 
           if override_match:
@@ -121,7 +131,7 @@ jobs:
           python3 -c "import textwrap; open('bump.py', 'w').write(textwrap.dedent(open('raw_bump.py').read()))"
 
           for DIR in $CHANGED_DIRS; do
-            PLUGIN_NAME=$(basename $DIR)
+            PLUGIN_NAME=$(basename "$DIR")
             MANIFEST="$DIR/manifest.json"
             UI_DIR="$DIR/ui"
             STATIC_DIR="$DIR/static"
@@ -135,7 +145,6 @@ jobs:
             echo "========================================"
 
             RESULT=$(python3 bump.py "$PLUGIN_NAME" "$MANIFEST" "$COMMIT_MSG" "$IS_GLOBAL_RELEASE" "$GLOBAL_VERSION")
-
             BUILD_TYPE=$(echo "$RESULT" | cut -d',' -f1)
             NEW_VERSION=$(echo "$RESULT" | cut -d',' -f2)
 
@@ -146,15 +155,12 @@ jobs:
               cd "$UI_DIR"
               
               if [ ! -f "package.json" ]; then
-                echo "📦 Initializing temporary Node environment..."
                 npm init -y > /dev/null
                 npm pkg set scripts.build="vite build"
               fi
 
               npm install
-              echo "📦 Injecting Vite and Svelte compilers..."
               npm install vite svelte @sveltejs/vite-plugin-svelte --no-save
-
               npm run build
               cd ../../../../
               echo "📦 UI Compiled to bundle.js"
@@ -162,16 +168,12 @@ jobs:
 
             cd "$DIR"
             if [ "$BUILD_TYPE" = "stable" ]; then
-              echo "🗜️ Packaging stable release v$NEW_VERSION..."
               mkdir -p "releases"
               DYNAMIC_ZIP_NAME="v${NEW_VERSION}.zip"
               zip -r "releases/$DYNAMIC_ZIP_NAME" . -x "ui/*" -x "src/*" -x "target/*" -x "releases/*" -x "beta.zip" -x "*/__pycache__/*"
-              echo "✅ Created stable package: releases/$DYNAMIC_ZIP_NAME"
             else
-              echo "🗜️ Packaging beta release..."
               rm -f "beta.zip"
               zip -r "beta.zip" . -x "ui/*" -x "src/*" -x "target/*" -x "releases/*" -x "*/__pycache__/*"
-              echo "✅ Created beta package: beta.zip"
             fi
             cd ../../../
           done
@@ -190,11 +192,9 @@ jobs:
                       plugin_data = json.load(f)
                       folder_name = os.path.basename(os.path.dirname(manifest_file))
                       
-                      # Auto-correct 'id' field in the store manifest
                       author = plugin_data.get("author", "EchoSync")
                       name = plugin_data.get("name", folder_name)
                       plugin_data["id"] = f"{author}.{name}"
-                      
                       plugin_data["plugin_id"] = folder_name
                       plugin_data["source_url"] = f"https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/{folder_name}"
                       
@@ -204,17 +204,46 @@ jobs:
                       
                       store_manifest["plugins"].append(plugin_data)
                   except Exception as e:
-                      print(f"Error processing {manifest_file}: {e}")
+                      pass
                       
           with open("plugins/store-manifest.json", "w") as f:
               json.dump(store_manifest, f, indent=2)
           EOF
           python3 -c "import textwrap; open('manifest.py', 'w').write(textwrap.dedent(open('raw_manifest.py').read()))"
           python3 manifest.py
-          echo "✅ plugins/store-manifest.json generated successfully."
 
-      - name: Commit Assets Back to Repo
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore(plugins): sync versions, package artifacts, and update store [skip ci]"
-          file_pattern: "plugins/"
+      - name: Artifact Airlift to Main
+        run: |
+          echo "📦 Isolating Beta Artifacts and Manifests..."
+          mkdir -p /tmp/artifacts/plugins/EchoSync
+          cp plugins/store-manifest.json /tmp/artifacts/plugins/ || true
+          
+          for DIR in plugins/EchoSync/*; do
+            if [ -d "$DIR" ]; then
+              PLUGIN=$(basename "$DIR")
+              mkdir -p "/tmp/artifacts/plugins/EchoSync/$PLUGIN"
+              [ -f "$DIR/beta.zip" ] && cp "$DIR/beta.zip" "/tmp/artifacts/plugins/EchoSync/$PLUGIN/"
+              [ -f "$DIR/manifest.json" ] && cp "$DIR/manifest.json" "/tmp/artifacts/plugins/EchoSync/$PLUGIN/"
+              [ -f "$DIR/ui_manifest.json" ] && cp "$DIR/ui_manifest.json" "/tmp/artifacts/plugins/EchoSync/$PLUGIN/"
+              [ -d "$DIR/releases" ] && cp -r "$DIR/releases" "/tmp/artifacts/plugins/EchoSync/$PLUGIN/"
+            fi
+          done
+
+          echo "🔄 Violently Checking Out Main Branch..."
+          git fetch origin main
+          git checkout main
+          git pull origin main
+
+          echo "📥 Pushing Artifacts to Main workspace..."
+          cp -r /tmp/artifacts/plugins/* plugins/
+
+          echo "🚀 Committing Artifacts to Main..."
+          git add plugins/
+          
+          if git diff --staged --quiet; then
+            echo "ℹ️ No artifact changes to commit to main."
+          else
+            git commit -m "chore(plugins): airlift beta artifacts from ${{ github.ref_name }} [skip ci]"
+            git push origin main
+            echo "✅ Successfully pushed beta artifacts to main! The source code was untouched."
+          fi
