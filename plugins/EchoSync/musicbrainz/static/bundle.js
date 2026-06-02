@@ -785,34 +785,34 @@ var jt = class {
 //#region node_modules/svelte/src/internal/client/reactivity/async.js
 function Mt(e, t, n, r) {
 	let i = Je() ? It : zt;
-	var a = e.filter((e) => !e.settled);
+	var a = e.filter((e) => !e.settled), o = t.map(i);
 	if (n.length === 0 && a.length === 0) {
-		r(t.map(i));
+		r(o);
 		return;
 	}
-	var o = G, s = Nt(), c = a.length === 1 ? a[0].promise : a.length > 1 ? Promise.all(a.map((e) => e.promise)) : null;
-	function l(e) {
-		if (!(o.f & 16384)) {
-			s();
+	var s = G, c = Nt(), l = a.length === 1 ? a[0].promise : a.length > 1 ? Promise.all(a.map((e) => e.promise)) : null;
+	function u(e) {
+		if (!(s.f & 16384)) {
+			c();
 			try {
-				r(e);
+				r([...o, ...e]);
 			} catch (e) {
-				et(e, o);
+				et(e, s);
 			}
 			Pt();
 		}
 	}
-	var u = Ft();
+	var d = Ft();
 	if (n.length === 0) {
-		c.then(() => l(t.map(i))).finally(u);
+		l.then(() => u([])).finally(d);
 		return;
 	}
-	function d() {
-		Promise.all(n.map((e) => /* @__PURE__ */ Rt(e))).then((e) => l([...t.map(i), ...e])).catch((e) => et(e, o)).finally(u);
+	function f() {
+		Promise.all(n.map((e) => /* @__PURE__ */ Rt(e))).then(u).catch((e) => et(e, s)).finally(d);
 	}
-	c ? c.then(() => {
-		s(), d(), Pt();
-	}) : d();
+	l ? l.then(() => {
+		c(), f(), Pt();
+	}) : f();
 }
 function Nt() {
 	var e = G, t = H, n = A, r = M;
@@ -829,7 +829,7 @@ function Ft() {
 		t?.update_pending_count(-1, n), n.decrement(r, e);
 	};
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function It(e) {
 	var t = 2 | C;
 	return G !== null && (G.f |= ie), {
@@ -848,7 +848,7 @@ function It(e) {
 	};
 }
 var Lt = Symbol("obsolete");
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function Rt(e, t, n) {
 	let r = G;
 	r === null && Se();
@@ -886,7 +886,7 @@ function Rt(e, t, n) {
 		t(a);
 	});
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function zt(e) {
 	let t = /* @__PURE__ */ It(e);
 	return t.equals = We, t;
@@ -936,12 +936,12 @@ function Jt(e, t) {
 		wv: 0
 	};
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function Yt(e, t) {
 	let n = Jt(e, t);
 	return Jn(n), n;
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function P(e, n = !1, r = !0) {
 	let i = Jt(e);
 	return n || (i.equals = We), t && r && A !== null && A.l !== null && (A.l.s ??= []).push(i), i;
@@ -1113,11 +1113,11 @@ function on() {
 function I(e = "") {
 	return document.createTextNode(e);
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*@__NO_SIDE_EFFECTS__*/
 function sn(e) {
 	return rn.call(e);
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*@__NO_SIDE_EFFECTS__*/
 function cn(e) {
 	return an.call(e);
 }
@@ -1293,7 +1293,9 @@ function kn(e, t = 0) {
 }
 function An(e, t = [], n = [], r = []) {
 	Mt(r, t, n, (t) => {
-		z(8, () => e(...t.map(Y)));
+		z(8, () => {
+			e(...t.map(Y));
+		});
 	});
 }
 function jn(e, t = 0) {
@@ -1333,7 +1335,7 @@ function Pn(e) {
 }
 function V(e, t = !0) {
 	var n = !1;
-	(t || e.f & 262144) && e.nodes !== null && e.nodes.end !== null && (Fn(e.nodes.start, e.nodes.end), n = !0), j(e, T), Nn(e, t && !n), ar(e, 0);
+	(t || e.f & 262144) && e.nodes !== null && e.nodes.end !== null && (Fn(e.nodes.start, e.nodes.end), n = !0), e.f |= T, Nn(e, t && !n), ar(e, 0);
 	var r = e.nodes && e.nodes.t;
 	if (r !== null) for (let e of r) e.stop();
 	Mn(e), e.f ^= T, e.f |= te;
@@ -1668,7 +1670,7 @@ function xr(e, t) {
 		t: null
 	});
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function Q(e, t) {
 	var n = (t & 1) != 0, r = (t & 2) != 0, i, a = !e.startsWith("<!>");
 	return () => {
@@ -2423,11 +2425,11 @@ function ji(e, t) {
 	});
 	async function v() {
 		try {
-			let e = await (await fetch(`${n()}/musicbrainz/accounts`)).json();
+			let e = await (await fetch(`${n()}/accounts`)).json();
 			e && (F(i, e.accounts || []), F(a, e.redirect_uri || ""), l = e.client_id_configured || !1, u = e.client_secret_configured || !1, F(p, !!Y(a)));
-			let t = await (await fetch(`${n()}/providers/musicbrainz/settings`)).json();
+			let t = await (await fetch(`${n()}/settings`)).json();
 			t?.settings && F(m, t.settings.api_base_url || "https://musicbrainz.org/ws/2");
-			let r = await (await fetch(`${n()}/providers/musicbrainz/credentials`)).json();
+			let r = await (await fetch(`${n()}/credentials`)).json();
 			r?.credentials && (F(o, r.credentials.client_id || ""), F(c, u ? "••••••••" : ""));
 		} catch (e) {
 			console.error("Failed to load MusicBrainz data:", e);
@@ -2445,7 +2447,7 @@ function ji(e, t) {
 			return;
 		}
 		try {
-			F(f, !0), await fetch(`${n()}/providers/musicbrainz/credentials`, {
+			F(f, !0), await fetch(`${n()}/credentials`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ credentials: e })
@@ -2458,7 +2460,7 @@ function ji(e, t) {
 	}
 	async function b() {
 		try {
-			await fetch(`${n()}/providers/musicbrainz/settings`, {
+			await fetch(`${n()}/settings`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ settings: { api_base_url: Y(m) } })
@@ -2476,7 +2478,7 @@ function ji(e, t) {
 	async function C() {
 		let e = Y(g).trim();
 		if (e) try {
-			F(_, !0), await fetch(`${n()}/musicbrainz/accounts`, {
+			F(_, !0), await fetch(`${n()}/accounts`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ account_name: e })
@@ -2489,14 +2491,14 @@ function ji(e, t) {
 	}
 	async function w(e, t) {
 		if (confirm(`Delete account "${t}"?`)) try {
-			await fetch(`${n()}/musicbrainz/accounts/${e}`, { method: "DELETE" }), await v();
+			await fetch(`${n()}/accounts/${e}`, { method: "DELETE" }), await v();
 		} catch (e) {
 			console.error("Failed to delete account:", e);
 		}
 	}
 	async function ee(e, t) {
 		try {
-			await fetch(`${n()}/musicbrainz/accounts/${e}/activate`, {
+			await fetch(`${n()}/accounts/${e}/activate`, {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ is_active: !t })
@@ -2511,7 +2513,7 @@ function ji(e, t) {
 			return;
 		}
 		try {
-			let t = (await (await fetch(`${n()}/musicbrainz/auth?account_id=${e}`)).json())?.auth_url;
+			let t = (await (await fetch(`${n()}/auth?account_id=${e}`)).json())?.auth_url;
 			t && (window.open(t, "_blank", "noopener,noreferrer"), setTimeout(() => v(), 5e3));
 		} catch (e) {
 			console.error("Failed to start OAuth:", e);
@@ -2629,10 +2631,11 @@ function Bi(e, t) {
 	});
 	async function d() {
 		try {
-			let e = n() || "", t = await fetch(`${e}/api/plugins/musicbrainz/config`);
-			if (t.ok) {
-				let e = await t.json();
-				F(c, e.token_configured ?? !1), F(u, e.auto_contribute ?? !1), Y(c) && F(s, "");
+			n();
+			let e = await fetch(`${n()}/config`);
+			if (e.ok) {
+				let t = await e.json();
+				F(c, t.token_configured ?? !1), F(u, t.auto_contribute ?? !1), Y(c) && F(s, "");
 			}
 		} catch (e) {
 			console.error("[MusicBrainzSettingsCard] Failed to load config:", e);
@@ -2647,19 +2650,20 @@ function Bi(e, t) {
 		}
 		F(o, ""), F(i, !0), F(a, !1);
 		try {
-			let t = n() || "", r = await fetch(`${t}/api/plugins/musicbrainz/config`, {
+			n();
+			let t = await fetch(`${n()}/config`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(e)
 			});
-			r.ok ? (F(c, (await r.json()).token_configured ?? Y(c)), F(s, ""), F(a, !0), dispatchEvent(new CustomEvent("musicbrainz-config-saved", {
+			t.ok ? (F(c, (await t.json()).token_configured ?? Y(c)), F(s, ""), F(a, !0), dispatchEvent(new CustomEvent("musicbrainz-config-saved", {
 				bubbles: !0,
 				composed: !0,
 				detail: {
 					auto_contribute: Y(u),
 					token_configured: Y(c)
 				}
-			})), setTimeout(() => F(a, !1), 3e3)) : F(o, (await r.json().catch(() => ({}))).error || "Failed to save configuration.");
+			})), setTimeout(() => F(a, !1), 3e3)) : F(o, (await t.json().catch(() => ({}))).error || "Failed to save configuration.");
 		} catch (e) {
 			console.error("[MusicBrainzSettingsCard] Save error:", e), F(o, "Network error while saving. Please try again.");
 		} finally {
