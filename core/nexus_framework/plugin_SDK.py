@@ -563,6 +563,8 @@ def _verify_caller(expected_plugin_id: str):
     clean_expected = expected_plugin_id
     if clean_expected.startswith('plugin.'):
         clean_expected = clean_expected[7:]
+    if '@beta' in clean_expected:
+        clean_expected = clean_expected.split('@')[0]
     norm_expected = clean_expected.lower()
     
     # Normalize caller_mod: split by '.' and filter out 'beta' (case-insensitive)
@@ -597,6 +599,8 @@ class StateKVS:
                 clean_plugin_id = plugin_id
                 if clean_plugin_id.startswith('plugin.'):
                     clean_plugin_id = clean_plugin_id[7:]
+                if '@beta' in clean_plugin_id:
+                    clean_plugin_id = clean_plugin_id.split('@')[0]
                 norm_expected = f"plugins.{clean_plugin_id}".lower()
                 if not norm_caller.startswith(norm_expected):
                     raise PermissionError(f"Cross-namespace data access forbidden. Caller '{caller_name}' cannot access StateKVS for '{plugin_id}'.")
