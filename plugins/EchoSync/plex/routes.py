@@ -23,7 +23,16 @@ def get_settings():
         return jsonify({'settings': {}}), 200
     try:
         # Load Hybrid Configuration
-        plex_config = PluginStorageBox().config.get('plex', {})
+        plex_config_raw = PluginStorageBox().config.get('plex', '{}')
+        if isinstance(plex_config_raw, str):
+            try:
+                import json
+                plex_config = json.loads(plex_config_raw)
+            except:
+                plex_config = {}
+        else:
+            plex_config = plex_config_raw if isinstance(plex_config_raw, dict) else {}
+
         base_url = plex_config.get('base_url') or PluginStorageBox().config.get('plex.base_url', '')
         server_name = plex_config.get('server_name') or PluginStorageBox().config.get('plex.server_name', '')
         
@@ -36,7 +45,7 @@ def get_settings():
         token = ''
         if accounts:
             account_id = accounts[0].get('id')
-            token_data = storage.get_account_token(account_id)
+            token_data = sdk.accounts.get_token(account_id)
             if token_data and token_data.get('access_token'):
                 token = decrypt_string(token_data.get('access_token'))
 
@@ -85,7 +94,16 @@ def save_settings():
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         data = request.get_json(force=True) or {}
-        plex_config = PluginStorageBox().config.get('plex', {})
+        
+        plex_config_raw = PluginStorageBox().config.get('plex', '{}')
+        if isinstance(plex_config_raw, str):
+            try:
+                import json
+                plex_config = json.loads(plex_config_raw)
+            except:
+                plex_config = {}
+        else:
+            plex_config = plex_config_raw if isinstance(plex_config_raw, dict) else {}
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
@@ -127,10 +145,11 @@ def save_settings():
             import json
             path_mappings = data['path_mappings']
             plex_config['path_mappings'] = path_mappings
-            PluginStorageBox().config.set('plex.path_mappings', path_mappings) # Legacy fallback
+            PluginStorageBox().config.set('plex.path_mappings', json.dumps(path_mappings)) # Legacy fallback
             logger.info(f"Plex path_mappings saved: {len(path_mappings)} mappings")
 
-        PluginStorageBox().config.set('plex', plex_config)
+        import json
+        PluginStorageBox().config.set('plex', json.dumps(plex_config))
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error saving Plex settings: {e}", exc_info=True)
