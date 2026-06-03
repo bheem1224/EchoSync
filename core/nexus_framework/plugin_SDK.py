@@ -49,8 +49,14 @@ class _AccountsSDKFacade:
         if not token: return None
         
         caller_mod = inspect.currentframe().f_back.f_globals.get('__name__', '')
-        # Simple extraction of author.plugin_name from something like plugins.author_plugin_name
-        caller_plugin_id = caller_mod.split('.')[-1] if '.' in caller_mod else caller_mod
+        # Extract the plugin ID from the caller's module path, ignoring 'beta'
+        parts = [p for p in caller_mod.split('.') if p.lower() != 'beta']
+        if parts and parts[0] == 'plugins' and len(parts) >= 3:
+            caller_plugin_id = f"{parts[1]}.{parts[2]}"
+        elif parts and parts[0] == 'plugins' and len(parts) == 2:
+            caller_plugin_id = parts[1]
+        else:
+            caller_plugin_id = parts[-1] if parts else caller_mod
         
         account_owner_plugin_id = token.get('provider', '')
         
@@ -66,7 +72,7 @@ class _AccountsSDKFacade:
         except Exception:
             pass
 
-        if caller_plugin_id == account_owner_plugin_id or privileged:
+        if caller_plugin_id.lower() == account_owner_plugin_id.lower() or privileged:
             return token
             
         # Redact lateral tokens
@@ -553,13 +559,26 @@ def _verify_caller(expected_plugin_id: str):
     if not caller_mod: return
     # Bypass for core
     if caller_mod.startswith('core.') or caller_mod.startswith('providers.'): return
-    # Validate community plugin format
-    caller_id = caller_mod.split('.')[-1] if '.' in caller_mod else caller_mod
     
-    # expected_plugin_id is usually plugin.author.name or just name. Handle both
-    base_expected = expected_plugin_id.split('.')[-1]
+    clean_expected = expected_plugin_id
+    if clean_expected.startswith('plugin.'):
+        clean_expected = clean_expected[7:]
+    norm_expected = clean_expected.lower()
     
-    if caller_id != base_expected and caller_id != expected_plugin_id:
+    # Normalize caller_mod: split by '.' and filter out 'beta' (case-insensitive)
+    parts = [p for p in caller_mod.split('.') if p.lower() != 'beta']
+    
+    # Check if this is a standard community plugin format (starts with plugins)
+    if parts and parts[0] == 'plugins' and len(parts) >= 3:
+        caller_plugin_id = f"{parts[1]}.{parts[2]}"
+        if caller_plugin_id.lower() == norm_expected:
+            return
+            
+    # Validate community plugin format (fallback/compatibility)
+    caller_id = parts[-1] if parts else ''
+    base_expected = norm_expected.split('.')[-1]
+    
+    if caller_id.lower() != base_expected and caller_id.lower() != norm_expected:
          raise PermissionError(f"Namespace Isolation Violation: {caller_mod} attempted to access {expected_plugin_id}")
 
 
@@ -572,8 +591,15 @@ class StateKVS:
         try:
             caller_module = inspect.getmodule(frame.f_back)
             if caller_module and not caller_module.__name__.startswith("core."):
-                if not caller_module.__name__.startswith(f"plugins.{plugin_id}"):
-                    raise PermissionError(f"Cross-namespace data access forbidden. Caller '{caller_module.__name__}' cannot access StateKVS for '{plugin_id}'.")
+                caller_name = caller_module.__name__
+                parts = [p for p in caller_name.split('.') if p.lower() != 'beta']
+                norm_caller = ".".join(parts).lower()
+                clean_plugin_id = plugin_id
+                if clean_plugin_id.startswith('plugin.'):
+                    clean_plugin_id = clean_plugin_id[7:]
+                norm_expected = f"plugins.{clean_plugin_id}".lower()
+                if not norm_caller.startswith(norm_expected):
+                    raise PermissionError(f"Cross-namespace data access forbidden. Caller '{caller_name}' cannot access StateKVS for '{plugin_id}'.")
         finally:
             del frame
         self.plugin_id = plugin_id
