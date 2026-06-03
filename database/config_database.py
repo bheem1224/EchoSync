@@ -100,6 +100,11 @@ class ConfigDatabase:
 
                 # 0. Self-healing: Repair any tables whose foreign keys were rewritten to _old or _temp tables
                 heal_table_schemas(cursor)
+                
+                # Cleanup orphaned triggers/views from DB Browser migrations
+                cursor.execute("SELECT type, name FROM sqlite_master WHERE sql LIKE '%accounts_temp_migration_swap%' AND type IN ('trigger', 'view')")
+                for t_row in cursor.fetchall():
+                    cursor.execute(f"DROP {t_row[0].upper()} IF EXISTS {t_row[1]}")
 
                 # Check if services table exists and has UNIQUE name constraint
                 cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='services'")
