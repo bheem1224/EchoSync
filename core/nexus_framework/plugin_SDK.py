@@ -547,6 +547,20 @@ class WasmPluginWrapper:
 
 def _verify_caller(expected_plugin_id: str):
     import inspect
+    
+    # 1. Core Exemption via Physical Path
+    for frame_info in inspect.stack():
+        filename = frame_info.filename.replace('\\', '/')
+        
+        # If the execution frame originates from the trusted system directories, grant absolute authority
+        if '/app/core/' in filename or '/app/web/' in filename:
+            return  # The Core is omnipotent; allow bypass
+            
+        # Once we hit a plugin boundary in the stack, we stop looking for a core bypass
+        # and proceed to the standard plugin-to-plugin isolation checks below.
+        if '/plugins/' in filename and ('/data/plugins/' in filename or '/app/plugins/' in filename):
+            break
+
     frame = inspect.currentframe()
     caller_mod = ''
     while frame:
