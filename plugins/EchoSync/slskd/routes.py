@@ -123,8 +123,9 @@ def test_connection():
     """Test connection to slskd server."""
     from core.nexus_framework.plugin_SDK import sdk
     try:
-        slskd_url = sdk.config.get('slskd_url', '')
-        api_key = sdk.secrets.get('api_key') or ''
+        payload = request.get_json(silent=True) or {}
+        slskd_url = payload.get('slskd_url') or sdk.config.get('slskd_url', '')
+        api_key = payload.get('api_key') or sdk.secrets.get('api_key') or ''
 
         if not slskd_url:
             return jsonify({"success": False, "error": "slskd URL not configured"}), 400

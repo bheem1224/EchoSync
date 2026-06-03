@@ -28,7 +28,6 @@ def get_settings():
         server_name = plex_config.get('server_name') or PluginStorageBox().config.get('plex.server_name', '')
         
         # Retrieve token from Singleton Account
-        from core.nexus_framework.plugin_SDK import PluginStorageBox
         sdk = PluginStorageBox()
         from core.security import decrypt_string
         
@@ -103,7 +102,6 @@ def save_settings():
         if 'token' in data:
             # We don't save tokens to config_manager anymore. We save them to account_tokens
             token = data['token'].strip()
-            from core.nexus_framework.plugin_SDK import PluginStorageBox
             sdk = PluginStorageBox()
             from core.security import encrypt_string
             from .client import PlexClient
@@ -167,7 +165,6 @@ def test_connection():
             or PluginStorageBox().config.get('plex.base_url', '')
         ).strip()
 
-        from core.nexus_framework.plugin_SDK import PluginStorageBox
         sdk = PluginStorageBox()
         from core.security import decrypt_string
 
@@ -313,7 +310,6 @@ def poll_oauth(session_id: str):
             logger.debug(f"Plex poll API check failed: {e}")
 
         if is_logged_in and auth_token:
-            from core.nexus_framework.plugin_SDK import PluginStorageBox
             sdk = PluginStorageBox()
             from core.security import encrypt_string
             from .client import PlexClient
@@ -395,7 +391,6 @@ def sync_plex_users():
     """Sync Plex admin and managed users into settings database and return the updated list."""
     try:
         from .client import PlexClient
-        from core.nexus_framework.plugin_SDK import PluginStorageBox
         sdk = PluginStorageBox()
 
         client = PlexClient()
