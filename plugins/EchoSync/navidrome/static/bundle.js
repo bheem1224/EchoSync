@@ -782,34 +782,34 @@ var kt = class {
 //#region node_modules/svelte/src/internal/client/reactivity/async.js
 function At(e, t, n, r) {
 	let i = qe() ? Pt : Lt;
-	var a = e.filter((e) => !e.settled);
+	var a = e.filter((e) => !e.settled), o = t.map(i);
 	if (n.length === 0 && a.length === 0) {
-		r(t.map(i));
+		r(o);
 		return;
 	}
-	var o = G, s = jt(), c = a.length === 1 ? a[0].promise : a.length > 1 ? Promise.all(a.map((e) => e.promise)) : null;
-	function l(e) {
-		if (!(o.f & 16384)) {
-			s();
+	var s = G, c = jt(), l = a.length === 1 ? a[0].promise : a.length > 1 ? Promise.all(a.map((e) => e.promise)) : null;
+	function u(e) {
+		if (!(s.f & 16384)) {
+			c();
 			try {
-				r(e);
+				r([...o, ...e]);
 			} catch (e) {
-				$e(e, o);
+				$e(e, s);
 			}
 			Mt();
 		}
 	}
-	var u = Nt();
+	var d = Nt();
 	if (n.length === 0) {
-		c.then(() => l(t.map(i))).finally(u);
+		l.then(() => u([])).finally(d);
 		return;
 	}
-	function d() {
-		Promise.all(n.map((e) => /* @__PURE__ */ It(e))).then((e) => l([...t.map(i), ...e])).catch((e) => $e(e, o)).finally(u);
+	function f() {
+		Promise.all(n.map((e) => /* @__PURE__ */ It(e))).then(u).catch((e) => $e(e, s)).finally(d);
 	}
-	c ? c.then(() => {
-		s(), d(), Mt();
-	}) : d();
+	l ? l.then(() => {
+		c(), f(), Mt();
+	}) : f();
 }
 function jt() {
 	var e = G, t = H, n = k, r = j;
@@ -826,7 +826,7 @@ function Nt() {
 		t?.update_pending_count(-1, n), n.decrement(r, e);
 	};
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function Pt(e) {
 	var t = 2 | b;
 	return G !== null && (G.f |= C), {
@@ -845,7 +845,7 @@ function Pt(e) {
 	};
 }
 var Ft = Symbol("obsolete");
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function It(e, t, n) {
 	let r = G;
 	r === null && Se();
@@ -883,7 +883,7 @@ function It(e, t, n) {
 		t(a);
 	});
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function Lt(e) {
 	let t = /* @__PURE__ */ Pt(e);
 	return t.equals = Ue, t;
@@ -933,12 +933,12 @@ function Kt(e, t) {
 		wv: 0
 	};
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function qt(e, t) {
 	let n = Kt(e, t);
 	return Un(n), n;
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function P(e, n = !1, r = !0) {
 	let i = Kt(e);
 	return n || (i.equals = Ue), t && r && k !== null && k.l !== null && (k.l.s ??= []).push(i), i;
@@ -1110,11 +1110,11 @@ function rn() {
 function an(e = "") {
 	return document.createTextNode(e);
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*@__NO_SIDE_EFFECTS__*/
 function on(e) {
 	return tn.call(e);
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*@__NO_SIDE_EFFECTS__*/
 function sn(e) {
 	return nn.call(e);
 }
@@ -1276,7 +1276,9 @@ function Dn(e, t = 0) {
 }
 function On(e, t = [], n = [], r = []) {
 	At(r, t, n, (t) => {
-		R(8, () => e(...t.map(Z)));
+		R(8, () => {
+			e(...t.map(Z));
+		});
 	});
 }
 function kn(e, t = 0) {
@@ -1316,7 +1318,7 @@ function Mn(e) {
 }
 function B(e, t = !0) {
 	var n = !1;
-	(t || e.f & 262144) && e.nodes !== null && e.nodes.end !== null && (Nn(e.nodes.start, e.nodes.end), n = !0), A(e, S), jn(e, t && !n), er(e, 0);
+	(t || e.f & 262144) && e.nodes !== null && e.nodes.end !== null && (Nn(e.nodes.start, e.nodes.end), n = !0), e.f |= S, jn(e, t && !n), er(e, 0);
 	var r = e.nodes && e.nodes.t;
 	if (r !== null) for (let e of r) e.stop();
 	An(e), e.f ^= S, e.f |= ie;
@@ -1651,7 +1653,7 @@ function vr(e, t) {
 		t: null
 	});
 }
-/* @__NO_SIDE_EFFECTS__ */
+/*#__NO_SIDE_EFFECTS__*/
 function Q(e, t) {
 	var n = (t & 1) != 0, r = (t & 2) != 0, i, a = !e.startsWith("<!>");
 	return () => {
@@ -2213,7 +2215,7 @@ function li(e, t) {
 	});
 	async function g() {
 		try {
-			F(h, !0), await fetch(`${n()}/navidrome/activate`, { method: "POST" }), await _();
+			F(h, !0), await fetch(`${n()}/activate`, { method: "POST" }), await _();
 		} catch (e) {
 			console.error("Failed to activate server:", e);
 		} finally {
@@ -2222,7 +2224,7 @@ function li(e, t) {
 	}
 	async function _() {
 		try {
-			let e = await (await fetch(`${n()}/navidrome/settings`)).json();
+			let e = await (await fetch(`${n()}/settings`)).json();
 			e?.settings && (F(r, e.settings.base_url || ""), F(i, e.settings.username || ""), F(o, e.settings.path_mappings || []), F(s, e.settings.has_password || !1), F(c, e.settings.connected || !1), F(m, e.settings.is_active || !1), F(a, ""));
 		} catch (e) {
 			console.error("Failed to load Navidrome settings:", e);
@@ -2238,7 +2240,7 @@ function li(e, t) {
 			return;
 		}
 		try {
-			F(u, !0), await fetch(`${n()}/navidrome/settings`, {
+			F(u, !0), await fetch(`${n()}/settings`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -2256,7 +2258,7 @@ function li(e, t) {
 	}
 	async function te() {
 		try {
-			F(d, !0), (await (await fetch(`${n()}/navidrome/test-connection`, { method: "POST" })).json())?.connected && await _();
+			F(d, !0), (await (await fetch(`${n()}/test-connection`, { method: "POST" })).json())?.connected && await _();
 		} catch (e) {
 			console.error("Connection test failed:", e);
 		} finally {
