@@ -423,41 +423,41 @@ sdk = _SDK()
 class PluginStorageBox:
     def __init__(self):
         import inspect
-        import os
         import zlib
         from database.working_database import PluginStorageBox as InternalStorageBox
         from database.working_database import get_working_database, WorkingBase
 
-        try:
-            caller_path = inspect.stack()[1].filename
-        except IndexError:
-            raise SecurityError("PluginStorageBox must be instantiated from within a valid plugin module.")
+        self.plugin_id = None
 
-        # Extract Namespace from path like /data/plugins/EchoSync/Jellyfin/beta/routes.py
-        # or /home/user/echosync/plugins/EchoSync/spotify/routes.py
-        namespace = ""
-        path_parts = os.path.normpath(caller_path).split(os.sep)
-        if "plugins" in path_parts:
-            idx = path_parts.index("plugins")
-            if len(path_parts) > idx + 2:
-                author = path_parts[idx + 1]
-                plugin = path_parts[idx + 2]
-                namespace = f"{author}.{plugin}"
+        # Walk the stack to bypass decorators and find the true plugin origin
+        for frame_info in inspect.stack():
+            filename = frame_info.filename.replace('\\', '/')
 
-        if not namespace:
-            # Fallback for core providers
-            if "providers" in path_parts:
-                idx = path_parts.index("providers")
-                if len(path_parts) > idx + 1:
-                    namespace = path_parts[idx + 1]
+            # Check if the execution frame originates from a plugin directory
+            if '/plugins/' in filename and ('/data/plugins/' in filename or '/app/plugins/' in filename):
+                try:
+                    # Extract namespace: /plugins/Author/PluginName/...
+                    sub_path = filename.split('/plugins/')[-1]
+                    parts = sub_path.split('/')
+                    if len(parts) >= 2:
+                        author = parts[0]
+                        plugin_name = parts[1]
+                        namespace = f"{author}.{plugin_name}"
 
-        if not namespace:
-            raise RuntimeError(f"Could not determine plugin namespace from path: {caller_path}")
+                        # Compute the exact database integer hash
+                        self.plugin_id = zlib.crc32(namespace.lower().encode('utf-8')) & 0xFFFFFFFF
+                        break
+                except Exception:
+                    continue
 
-        plugin_id = zlib.crc32(namespace.lower().encode('utf-8')) & 0xFFFFFFFF
+        if not self.plugin_id:
+            raise RuntimeError(
+                f"Zero-Trust Violation: Could not derive plugin identity from call stack. "
+                f"Are you instantiating PluginStorageBox outside a plugin directory?"
+            )
 
         db = get_working_database()
-        self._internal_storage = InternalStorageBox(provider_name=str(plugin_id), engine=db.engine, metadata=WorkingBase.metadata)
+        self._internal_storage = InternalStorageBox(provider_name=str(self.plugin_id), engine=db.engine, metadata=WorkingBase.metadata)
 
         # In order to act as a unified facade for sdk.config, sdk.secrets, etc.
         # we will hold a reference to the global SDK and proxy to it if internal_storage doesn't have it
