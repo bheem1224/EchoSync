@@ -151,10 +151,8 @@ def test_connection():
     try:
         payload = request.get_json(silent=True) or {}
 
-        plex_config = PluginStorageBox().config.get('plex', {})
         base_url = str(
             payload.get('base_url')
-            or plex_config.get('base_url')
             or PluginStorageBox().config.get('plex.base_url', '')
         ).strip()
 

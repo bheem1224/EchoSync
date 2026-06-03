@@ -404,6 +404,17 @@ class ConfigDatabase:
         except Exception as e:
             logger.error(f"Failed to resolve plugin details for {name}: {e}")
 
+        if not is_matched and name.lower().startswith('echosync.'):
+            plugin_name = name.split('.')[-1]
+            from core.settings import config_manager
+            from pathlib import Path
+            bundle_path = Path(config_manager.get_plugins_dir()) / 'EchoSync' / plugin_name
+            if bundle_path.exists():
+                resolved_plugin_id_str = name
+                resolved_version = '1.0.0'
+                resolved_path = str(bundle_path.resolve())
+                is_matched = True
+
         if name.lower() == 'system' or is_matched:
             plugin_id_int = binascii.crc32(resolved_plugin_id_str.lower().encode('utf-8')) & 0xFFFFFFFF
             self.register_service(resolved_plugin_id_str, 'streaming', f"{resolved_plugin_id_str.capitalize()} service", 
