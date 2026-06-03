@@ -96,7 +96,50 @@ class ConfigDatabase:
         try:
             def _schema(cursor):
                 def heal_table_schemas(cursor):
-                    pass
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE '%accounts_temp_migration_swap%'")
+                    broken_tables = [r[0] for r in cursor.fetchall()]
+                    
+                    if 'account_tokens' in broken_tables:
+                        logger.warning("Healing corrupted account_tokens schema...")
+                        cursor.execute("CREATE TABLE account_tokens_backup AS SELECT * FROM account_tokens")
+                        cursor.execute("DROP TABLE account_tokens")
+                        cursor.execute('''
+                            CREATE TABLE account_tokens (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                account_id INTEGER NOT NULL UNIQUE,
+                                access_token TEXT NOT NULL,
+                                refresh_token TEXT,
+                                token_type TEXT DEFAULT 'Bearer',
+                                expires_at INTEGER,
+                                scope TEXT,
+                                created_at INTEGER DEFAULT (strftime('%s','now')),
+                                updated_at INTEGER DEFAULT (strftime('%s','now')),
+                                FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+                            )
+                        ''')
+                        cursor.execute("INSERT INTO account_tokens SELECT * FROM account_tokens_backup")
+                        cursor.execute("DROP TABLE account_tokens_backup")
+                        logger.info("Successfully healed account_tokens schema.")
+
+                    if 'account_mappings' in broken_tables:
+                        logger.warning("Healing corrupted account_mappings schema...")
+                        cursor.execute("CREATE TABLE account_mappings_backup AS SELECT * FROM account_mappings")
+                        cursor.execute("DROP TABLE account_mappings")
+                        cursor.execute('''
+                            CREATE TABLE account_mappings (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                source_account_id INTEGER NOT NULL,
+                                mapped_account_id INTEGER NOT NULL,
+                                created_at INTEGER DEFAULT (strftime('%s','now')),
+                                updated_at INTEGER DEFAULT (strftime('%s','now')),
+                                UNIQUE(source_account_id, mapped_account_id),
+                                FOREIGN KEY(source_account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+                                FOREIGN KEY(mapped_account_id) REFERENCES accounts(id) ON DELETE CASCADE
+                            )
+                        ''')
+                        cursor.execute("INSERT INTO account_mappings SELECT * FROM account_mappings_backup")
+                        cursor.execute("DROP TABLE account_mappings_backup")
+                        logger.info("Successfully healed account_mappings schema.")
 
                 # 0. Self-healing: Repair any tables whose foreign keys were rewritten to _old or _temp tables
                 heal_table_schemas(cursor)
