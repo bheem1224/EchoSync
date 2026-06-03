@@ -81,9 +81,9 @@ class _AccountsSDKFacade:
         redacted['refresh_token'] = 'REDACTED'
         return redacted
 
-    def save_token(self, account_id: int, access_token: str, refresh_token: str, expires_at: int):
+    def save_token(self, account_id: int, access_token: str, refresh_token: str, expires_at: int, token_type: str = 'Bearer', scope: str = None):
         from database.config_database import get_config_database
-        get_config_database().save_account_token(account_id, access_token, refresh_token, 'Bearer', expires_at)
+        get_config_database().save_account_token(account_id, access_token, refresh_token, token_type, expires_at, scope)
 
     def get_all(self):
         """Return all accounts associated with the calling plugin."""
@@ -145,6 +145,9 @@ class _AccountsSDKFacade:
     def mark_account_authenticated(self, account_id: int):
         from database.config_database import get_config_database
         get_config_database().mark_account_authenticated(account_id)
+
+    def mark_authenticated(self, account_id: int):
+        self.mark_account_authenticated(account_id)
 
     def toggle_account_active(self, account_id: int, is_active: bool):
         from database.config_database import get_config_database
