@@ -84,9 +84,16 @@ class _AccountsSDKFacade:
         from database.config_database import get_config_database
         db = get_config_database()
         
-        # Get plugin_id from stack inspection (similar to _get_plugin_id)
-        frame = inspect.currentframe().f_back
-        caller_mod = frame.f_globals.get('__name__', '')
+        # Get plugin_id from stack inspection
+        import inspect
+        frame = inspect.currentframe()
+        caller_mod = ''
+        while frame:
+            mod = frame.f_globals.get('__name__', '')
+            if mod and not mod.startswith('core.nexus_framework'):
+                caller_mod = mod
+                break
+            frame = frame.f_back
         
         plugin_id_str = ""
         if caller_mod.startswith('plugins.'):
@@ -107,8 +114,15 @@ class _AccountsSDKFacade:
         from database.config_database import get_config_database
         db = get_config_database()
         
-        frame = inspect.currentframe().f_back
-        caller_mod = frame.f_globals.get('__name__', '')
+        import inspect
+        frame = inspect.currentframe()
+        caller_mod = ''
+        while frame:
+            mod = frame.f_globals.get('__name__', '')
+            if mod and not mod.startswith('core.nexus_framework'):
+                caller_mod = mod
+                break
+            frame = frame.f_back
         
         plugin_id_str = ""
         if caller_mod.startswith('plugins.'):
@@ -385,7 +399,16 @@ class _SDK:
         return _QualitySDKFacade(self._get_plugin_id())
 
     def _get_plugin_id(self):
-        caller_mod = inspect.currentframe().f_back.f_back.f_globals.get('__name__', '')
+        import inspect
+        frame = inspect.currentframe()
+        caller_mod = ''
+        while frame:
+            mod = frame.f_globals.get('__name__', '')
+            if mod and not mod.startswith('core.nexus_framework'):
+                caller_mod = mod
+                break
+            frame = frame.f_back
+
         # Handle plugins.{author}.{plugin_name}
         if caller_mod.startswith('plugins.'):
             parts = caller_mod.split('.')
@@ -517,9 +540,17 @@ class WasmPluginWrapper:
 
 
 def _verify_caller(expected_plugin_id: str):
-    caller = inspect.currentframe().f_back.f_back
-    if not caller: return
-    caller_mod = caller.f_globals.get('__name__', '')
+    import inspect
+    frame = inspect.currentframe()
+    caller_mod = ''
+    while frame:
+        mod = frame.f_globals.get('__name__', '')
+        if mod and not mod.startswith('core.nexus_framework'):
+            caller_mod = mod
+            break
+        frame = frame.f_back
+    
+    if not caller_mod: return
     # Bypass for core
     if caller_mod.startswith('core.') or caller_mod.startswith('providers.'): return
     # Validate community plugin format
