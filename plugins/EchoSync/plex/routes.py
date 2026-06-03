@@ -22,19 +22,8 @@ def get_settings():
     if PluginRegistry.is_plugin_disabled('plex'):
         return jsonify({'settings': {}}), 200
     try:
-        # Load Hybrid Configuration
-        plex_config_raw = PluginStorageBox().config.get('plex', '{}')
-        if isinstance(plex_config_raw, str):
-            try:
-                import json
-                plex_config = json.loads(plex_config_raw)
-            except:
-                plex_config = {}
-        else:
-            plex_config = plex_config_raw if isinstance(plex_config_raw, dict) else {}
-
-        base_url = plex_config.get('base_url') or PluginStorageBox().config.get('plex.base_url', '')
-        server_name = plex_config.get('server_name') or PluginStorageBox().config.get('plex.server_name', '')
+        base_url = PluginStorageBox().config.get('plex.base_url', '')
+        server_name = PluginStorageBox().config.get('plex.server_name', '')
         
         # Retrieve token from Singleton Account
         sdk = PluginStorageBox()
@@ -67,7 +56,7 @@ def get_settings():
         
         # Get path mappings
         import json
-        path_mappings_raw = plex_config.get('path_mappings') or PluginStorageBox().config.get('plex.path_mappings', '[]')
+        path_mappings_raw = PluginStorageBox().config.get('plex.path_mappings', '[]')
         try:
             path_mappings = json.loads(path_mappings_raw) if isinstance(path_mappings_raw, str) else path_mappings_raw
         except:
@@ -95,26 +84,14 @@ def save_settings():
         from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         data = request.get_json(force=True) or {}
         
-        plex_config_raw = PluginStorageBox().config.get('plex', '{}')
-        if isinstance(plex_config_raw, str):
-            try:
-                import json
-                plex_config = json.loads(plex_config_raw)
-            except:
-                plex_config = {}
-        else:
-            plex_config = plex_config_raw if isinstance(plex_config_raw, dict) else {}
-        
         if 'base_url' in data:
             base_url = data['base_url'].strip()
-            plex_config['base_url'] = base_url
-            PluginStorageBox().config.set('plex.base_url', base_url) # Legacy fallback
+            PluginStorageBox().config.set('plex.base_url', base_url)
             logger.info(f"Plex base_url saved: {base_url}")
         
         if 'server_name' in data:
             server_name = data['server_name'].strip()
-            plex_config['server_name'] = server_name
-            PluginStorageBox().config.set('plex.server_name', server_name) # Legacy fallback
+            PluginStorageBox().config.set('plex.server_name', server_name)
             logger.info(f"Plex server_name saved: {server_name}")
         
         if 'token' in data:
@@ -144,12 +121,9 @@ def save_settings():
         if 'path_mappings' in data:
             import json
             path_mappings = data['path_mappings']
-            plex_config['path_mappings'] = path_mappings
-            PluginStorageBox().config.set('plex.path_mappings', json.dumps(path_mappings)) # Legacy fallback
+            PluginStorageBox().config.set('plex.path_mappings', json.dumps(path_mappings))
             logger.info(f"Plex path_mappings saved: {len(path_mappings)} mappings")
 
-        import json
-        PluginStorageBox().config.set('plex', json.dumps(plex_config))
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error saving Plex settings: {e}", exc_info=True)

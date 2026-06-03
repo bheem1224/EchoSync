@@ -125,6 +125,7 @@ def test_connection():
     try:
         payload = request.get_json(silent=True) or {}
         slskd_url = payload.get('slskd_url') or sdk.config.get('slskd_url', '')
+        slskd_url = slskd_url.rstrip('/') if slskd_url else ''
         api_key = payload.get('api_key') or sdk.secrets.get('api_key') or ''
 
         if not slskd_url:
