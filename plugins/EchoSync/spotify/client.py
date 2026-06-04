@@ -38,12 +38,9 @@ class ConfigCacheHandler(CacheHandler):
             
             # Access the plugin instance via registry or pass it in
             # For simplicity, we use the registry here as this is often called by Spotipy
-            from core.nexus_framework.plugin_loader import get_plugin
-            plugin = get_plugin('EchoSync/spotify')
-            if not plugin:
-                return None
+            from core.nexus_framework.plugin_SDK import sdk
                 
-            token_data = plugin.accounts.get_token(self.account_id)
+            token_data = sdk.accounts.get_token(self.account_id)
             
             if not token_data:
                 logger.debug(f"No token data found in storage for account {self.account_id}")
@@ -87,10 +84,7 @@ class ConfigCacheHandler(CacheHandler):
                 logger.warning(f"No token_info provided to save for account {self.account_id}")
                 return
             
-            from core.nexus_framework.plugin_loader import get_plugin
-            plugin = get_plugin('EchoSync/spotify')
-            if not plugin:
-                return
+            from core.nexus_framework.plugin_SDK import sdk
             
             access_token = token_info.get('access_token')
             refresh_token = token_info.get('refresh_token')
@@ -103,14 +97,11 @@ class ConfigCacheHandler(CacheHandler):
             
             # If no refresh token provided, try to preserve existing one
             if not refresh_token:
-                existing_token = plugin.accounts.get_token(self.account_id)
+                existing_token = sdk.accounts.get_token(self.account_id)
                 if existing_token and existing_token.get('refresh_token'):
                     refresh_token = existing_token.get('refresh_token')
-                    logger.debug(f"Preserving existing refresh_token for account {self.account_id}")
-
-            logger.debug(f"Saving token for account {self.account_id}: access={bool(access_token)}, refresh={bool(refresh_token)}, expires={expires_at}")
             
-            success = plugin.accounts.save_token(
+            sdk.accounts.save_token(
                 account_id=self.account_id,
                 access_token=access_token,
                 refresh_token=refresh_token if refresh_token else None,

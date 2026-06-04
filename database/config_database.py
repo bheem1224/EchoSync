@@ -903,12 +903,18 @@ class ConfigDatabase:
             import contextlib
             with self._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT access_token, refresh_token, token_type, expires_at, scope FROM account_tokens WHERE account_id = ?", (account_id,))
+                c.execute("""
+                    SELECT t.access_token, t.refresh_token, t.token_type, t.expires_at, t.scope, s.name as provider
+                    FROM account_tokens t
+                    LEFT JOIN accounts a ON t.account_id = a.id
+                    LEFT JOIN services s ON a.service_id = s.id
+                    WHERE t.account_id = ?
+                """, (account_id,))
                 row = c.fetchone()
                 if not row:
                     return None
 
-                access_token, refresh_token, token_type, expires_at, scope = row
+                access_token, refresh_token, token_type, expires_at, scope, provider = row
                 from core.security import decrypt_string
 
                 if access_token:
@@ -917,7 +923,12 @@ class ConfigDatabase:
                     refresh_token = decrypt_string(refresh_token)
 
                 return {
-                    'access_token': access_token, 'refresh_token': refresh_token, 'token_type': token_type, 'expires_at': expires_at, 'scope': scope
+                    'access_token': access_token, 
+                    'refresh_token': refresh_token, 
+                    'token_type': token_type, 
+                    'expires_at': expires_at, 
+                    'scope': scope,
+                    'provider': provider or ''
                 }
         except Exception as e:
             logger.error(f"Error getting account token: {e}")
