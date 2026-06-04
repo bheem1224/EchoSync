@@ -657,7 +657,7 @@ class PluginLoader:
 
         return clean
 
-    def _update_db_version(self, provider_id: str, version: str, clean_name: str):
+    def _update_db_version(self, provider_id: str, version: str, clean_name: str, capabilities_json: str = '{}'):
         try:
             from database.config_database import get_config_database
             db = get_config_database()
@@ -667,9 +667,9 @@ class PluginLoader:
                 # Use a flexible match for clean_name/provider_id to catch mismatches in plugin. vs core. prefixes
                 c.execute("""
                     UPDATE services 
-                    SET version=? 
+                    SET version=?, capabilities=? 
                     WHERE LOWER(name)=LOWER(?) OR LOWER(name)=LOWER(?)
-                """, (version, clean_name, provider_id))
+                """, (version, capabilities_json, clean_name, provider_id))
                 updated = c.rowcount
                 conn.commit()
                 logger.info(f"Stamped version {version} for {provider_id}")
@@ -783,7 +783,7 @@ class PluginLoader:
                     DisabledPlugin.category = category
                     
                     PluginRegistry.register(DisabledPlugin, name=provider_id, source_type='community')
-                    self._update_db_version(provider_id, version, clean_ns)
+                    self._update_db_version(provider_id, version, clean_ns, capabilities_json='{}')
                     logger.info(f"Registered disabled plugin: {provider_id} (v{version})")
                     return True
 
@@ -807,7 +807,7 @@ class PluginLoader:
                         def __init__(self): pass
 
                     PluginRegistry.register(WasmClass, name=provider_id, source_type='community')
-                    self._update_db_version(provider_id, version, clean_ns)
+                    self._update_db_version(provider_id, version, clean_ns, capabilities_json='{}')
                     return True
 
                 plugins_root = Path("/data/plugins")
@@ -861,13 +861,52 @@ class PluginLoader:
                 if hasattr(module, 'ProviderClass'):
                     provider_cls = getattr(module, 'ProviderClass')
                     PluginRegistry.register(provider_cls, name=provider_id, source_type='community')
-                    self._update_db_version(provider_id, version, clean_ns)
+                    caps_json = '{}'
+                    caps = getattr(provider_cls, 'capabilities', None)
+                    if caps:
+                        caps_json = json.dumps({
+                            'name': getattr(caps, 'name', provider_id),
+                            'supports_playlists': getattr(getattr(caps, 'supports_playlists', None), 'name', 'NONE'),
+                            'search': getattr(caps, 'search', {}).__dict__ if hasattr(getattr(caps, 'search', None), '__dict__') else {},
+                            'metadata': getattr(getattr(caps, 'metadata', None), 'name', 'MEDIUM'),
+                            'supports_cover_art': getattr(caps, 'supports_cover_art', False),
+                            'supports_lyrics': getattr(caps, 'supports_lyrics', False),
+                            'supports_user_auth': getattr(caps, 'supports_user_auth', False),
+                            'supports_library_scan': getattr(caps, 'supports_library_scan', False),
+                            'supports_streaming': getattr(caps, 'supports_streaming', False),
+                            'supports_downloads': getattr(caps, 'supports_downloads', False),
+                            'supports_pre_filtering': getattr(caps, 'supports_pre_filtering', False),
+                            'playlist_algorithms': getattr(caps, 'playlist_algorithms', None),
+                            'supports_fingerprinting': getattr(caps, 'supports_fingerprinting', False),
+                            'supports_metadata_fetch': getattr(caps, 'supports_metadata_fetch', False)
+                        })
+                    self._update_db_version(provider_id, version, clean_ns, capabilities_json=caps_json)
                 else:
                     found = False
                     for attr_name in dir(module):
                         attr = getattr(module, attr_name)
                         if isinstance(attr, type) and issubclass(attr, PluginBase) and attr is not PluginBase:
                             PluginRegistry.register(attr, name=provider_id, source_type='community')
+                            caps_json = '{}'
+                            caps = getattr(attr, 'capabilities', None)
+                            if caps:
+                                caps_json = json.dumps({
+                                    'name': getattr(caps, 'name', provider_id),
+                                    'supports_playlists': getattr(getattr(caps, 'supports_playlists', None), 'name', 'NONE'),
+                                    'search': getattr(caps, 'search', {}).__dict__ if hasattr(getattr(caps, 'search', None), '__dict__') else {},
+                                    'metadata': getattr(getattr(caps, 'metadata', None), 'name', 'MEDIUM'),
+                                    'supports_cover_art': getattr(caps, 'supports_cover_art', False),
+                                    'supports_lyrics': getattr(caps, 'supports_lyrics', False),
+                                    'supports_user_auth': getattr(caps, 'supports_user_auth', False),
+                                    'supports_library_scan': getattr(caps, 'supports_library_scan', False),
+                                    'supports_streaming': getattr(caps, 'supports_streaming', False),
+                                    'supports_downloads': getattr(caps, 'supports_downloads', False),
+                                    'supports_pre_filtering': getattr(caps, 'supports_pre_filtering', False),
+                                    'playlist_algorithms': getattr(caps, 'playlist_algorithms', None),
+                                    'supports_fingerprinting': getattr(caps, 'supports_fingerprinting', False),
+                                    'supports_metadata_fetch': getattr(caps, 'supports_metadata_fetch', False)
+                                })
+                            self._update_db_version(provider_id, version, clean_ns, capabilities_json=caps_json)
                             found = True
                             break
                     if not found:
@@ -1372,17 +1411,53 @@ class ServiceRegistry:
 
 def get_plugin_capabilities(plugin_name: str):
     """
-    Return capabilities for a plugin by looking up the plugin class dynamically.
-    Gracefully handles plugins that don't declare explicit capabilities.
+    Return capabilities for a plugin by looking up its registered capabilities in the database.
     """
+    import json
     from core.nexus_framework.plugin_SDK import ProviderCapabilities, SearchCapabilities, MetadataRichness, PlaylistSupport
-    provider_cls = PluginRegistry.get_plugin_class(plugin_name)
-    if not provider_cls:
-        import logging
-        logging.getLogger(__name__).warning(f"Plugin '{plugin_name}' not found in registry, defaulting to empty capabilities.")
-        return ProviderCapabilities(name=plugin_name, supports_playlists=PlaylistSupport.NONE, search=SearchCapabilities(), metadata=MetadataRichness.MEDIUM)
+    from database.config_database import get_config_database
+    
+    db = get_config_database()
+    caps_json = '{}'
+    try:
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT capabilities FROM services WHERE LOWER(name)=LOWER(?)", (plugin_name,))
+            row = c.fetchone()
+            if row and row['capabilities']:
+                caps_json = row['capabilities']
+    except Exception:
+        pass
+        
+    try:
+        caps_dict = json.loads(caps_json)
+    except Exception:
+        caps_dict = {}
 
-    caps = getattr(provider_cls, 'capabilities', None)
-    if caps is None:
-        return ProviderCapabilities(name=plugin_name, supports_playlists=PlaylistSupport.NONE, search=SearchCapabilities(), metadata=MetadataRichness.MEDIUM)
-    return caps
+    search_caps = caps_dict.get('search', {})
+    search_obj = SearchCapabilities(
+        tracks=search_caps.get('tracks', False),
+        artists=search_caps.get('artists', False),
+        albums=search_caps.get('albums', False),
+        playlists=search_caps.get('playlists', False)
+    )
+
+    playlist_enum = getattr(PlaylistSupport, caps_dict.get('supports_playlists', 'NONE'), PlaylistSupport.NONE)
+    metadata_enum = getattr(MetadataRichness, caps_dict.get('metadata', 'MEDIUM'), MetadataRichness.MEDIUM)
+
+    return ProviderCapabilities(
+        name=caps_dict.get('name', plugin_name),
+        supports_playlists=playlist_enum,
+        search=search_obj,
+        metadata=metadata_enum,
+        supports_cover_art=caps_dict.get('supports_cover_art', False),
+        supports_lyrics=caps_dict.get('supports_lyrics', False),
+        supports_user_auth=caps_dict.get('supports_user_auth', False),
+        supports_library_scan=caps_dict.get('supports_library_scan', False),
+        supports_streaming=caps_dict.get('supports_streaming', False),
+        supports_downloads=caps_dict.get('supports_downloads', False),
+        supports_pre_filtering=caps_dict.get('supports_pre_filtering', False),
+        playlist_algorithms=caps_dict.get('playlist_algorithms', None),
+        supports_fingerprinting=caps_dict.get('supports_fingerprinting', False),
+        supports_metadata_fetch=caps_dict.get('supports_metadata_fetch', False)
+    )

@@ -180,6 +180,7 @@ class ConfigDatabase:
                                 verified_source INTEGER DEFAULT 0,
                                 privileged_mode INTEGER DEFAULT 0,
                                 permissions TEXT DEFAULT '[]',
+                                capabilities TEXT DEFAULT '{}',
                                 created_at INTEGER DEFAULT (strftime('%s','now')),
                                 updated_at INTEGER DEFAULT (strftime('%s','now'))
                             )
@@ -189,13 +190,13 @@ class ConfigDatabase:
                                 id, name, plugin_id, absolute_install_path, loaded_modules, 
                                 version, service_type, description, is_active, beta_opt_in, 
                                 previous_version_path, verified_source, privileged_mode, permissions, 
-                                created_at, updated_at
+                                capabilities, created_at, updated_at
                             )
                             SELECT 
                                 id, name, plugin_id, absolute_install_path, loaded_modules, 
                                 version, service_type, description, is_active, beta_opt_in, 
                                 previous_version_path, verified_source, privileged_mode, permissions, 
-                                created_at, updated_at
+                                '{}', created_at, updated_at
                             FROM services_old
                         """)
                         cursor.execute("DROP TABLE services_old")
@@ -234,6 +235,7 @@ class ConfigDatabase:
                         verified_source INTEGER DEFAULT 0,
                         privileged_mode INTEGER DEFAULT 0,
                         permissions TEXT DEFAULT '[]',
+                        capabilities TEXT DEFAULT '{}',
                         created_at INTEGER DEFAULT (strftime('%s','now')),
                         updated_at INTEGER DEFAULT (strftime('%s','now'))
                     )
@@ -358,6 +360,8 @@ class ConfigDatabase:
                     cursor.execute("ALTER TABLE services ADD COLUMN plugin_id INTEGER")
                 if 'version' not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN version TEXT")
+                if 'capabilities' not in columns:
+                    cursor.execute("ALTER TABLE services ADD COLUMN capabilities TEXT DEFAULT '{}'")
                 
                 # Cleanup: Drop deprecated tables
                 cursor.execute("DROP TABLE IF EXISTS accounts_metadata")
@@ -477,7 +481,7 @@ class ConfigDatabase:
 
         return 0
 
-    def register_service(self, name: str, service_type: str, description: str, absolute_install_path: Optional[str] = None, plugin_id: Optional[int] = None, version: Optional[str] = None, loaded_modules: Optional[str] = None, beta_opt_in: Optional[int] = None, verified_source: Optional[int] = None, privileged_mode: Optional[int] = None, permissions: Optional[str] = None) -> int:
+    def register_service(self, name: str, service_type: str, description: str, absolute_install_path: Optional[str] = None, plugin_id: Optional[int] = None, version: Optional[str] = None, loaded_modules: Optional[str] = None, beta_opt_in: Optional[int] = None, verified_source: Optional[int] = None, privileged_mode: Optional[int] = None, permissions: Optional[str] = None, capabilities: Optional[str] = None) -> int:
         import binascii
         if plugin_id is None:
             # Fallback CRC32 generation if not provided (ALWAYS use full lowercase namespace for consistency)
@@ -495,8 +499,8 @@ class ConfigDatabase:
             execute_write_sql(
                 str(self.database_path), 
                 """
-                INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active, beta_opt_in, verified_source, privileged_mode, permissions)
-                VALUES(?,?,?,?,?,?,?,1,COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, '[]'))
+                INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active, beta_opt_in, verified_source, privileged_mode, permissions, capabilities)
+                VALUES(?,?,?,?,?,?,?,1,COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, '[]'),COALESCE(?, '{}'))
                 ON CONFLICT(plugin_id) DO UPDATE SET 
                     name=excluded.name,
                     absolute_install_path=excluded.absolute_install_path,
@@ -507,9 +511,10 @@ class ConfigDatabase:
                     verified_source=COALESCE(excluded.verified_source, services.verified_source, 0),
                     privileged_mode=COALESCE(excluded.privileged_mode, services.privileged_mode, 0),
                     permissions=COALESCE(excluded.permissions, services.permissions, '[]'),
+                    capabilities=COALESCE(excluded.capabilities, services.capabilities, '{}'),
                     updated_at=strftime('%s','now')
                 """, 
-                (name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, beta_opt_in, verified_source, privileged_mode, permissions)
+                (name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, beta_opt_in, verified_source, privileged_mode, permissions, capabilities)
             )
         except Exception as e:
             logger.error(f"Error registering service '{name}': {e}")

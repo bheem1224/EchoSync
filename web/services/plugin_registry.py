@@ -34,109 +34,86 @@ def _normalize_name(name_str: str) -> str:
     return name_str.lower().replace('plugin.', '').replace('echosync.', '').replace('core.', '').strip()
 
 def list_plugins() -> List[Dict]:
-    """List all registered plugins with enriched capability metadata."""
+    """List all registered plugins with enriched capability metadata from the database."""
+    import json
     from database.config_database import get_config_database
     db = get_config_database()
-    db_services = {}
+    plugins = []
+
     try:
         with db._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT name, service_type FROM services")
+            c.execute("SELECT id, plugin_id, name, version, service_type, capabilities FROM services")
             for row in c.fetchall():
-                db_name = _normalize_name(row['name'])
-                db_services[db_name] = row['service_type']
-    except Exception:
-        pass
+                db_name = row['name']
+                plugin_id = row['plugin_id']
+                if not plugin_id:
+                    continue
 
-    plugins = []
-    for name in CorePluginRegistry.list_plugins():
-        cls = CorePluginRegistry.get_plugin_class(name)
-        if cls:
-            is_disabled = CorePluginRegistry.is_plugin_disabled(name)
-            display_name = name.replace('plugin.', '').title()
-            source_type = CorePluginRegistry.get_plugin_source(name) or 'core'
-            
-            # service_type resolution from class or fallback to DB
-            service_type = getattr(cls, 'service_type', None)
-            if not service_type:
-                norm_name = _normalize_name(name)
-                service_type = db_services.get(norm_name)
-
-            plugin_dict = {
-                'id': name,  # Unique ID (e.g. plugin.plex)
-                'name': name,
-                'display_name': display_name,  # Friendly name (e.g. Plex)
-                'source_type': source_type,    # 'core' or 'community'
-                'category': getattr(cls, 'category', 'plugin'),
-                'service_type': service_type,
-                'disabled': is_disabled,
-                'version': getattr(cls, 'version', 'Unknown'),
-                'author': getattr(cls, 'author', 'Official' if source_type == 'core' else 'Unknown'),
-                'supports_downloads': getattr(cls, 'supports_downloads', False)
-            }
-            
-            # Only instantiate if the plugin is not disabled; this avoids
-            # configuration warnings and unnecessary health checks for
-            # disabled plugins.
-            if not is_disabled:
-                try:
-                    instance = CorePluginRegistry.create_instance(name)
-                    if instance and hasattr(instance, 'is_configured'):
-                        plugin_dict['is_configured'] = instance.is_configured()
-                    else:
-                        plugin_dict['is_configured'] = True  # Assume configured if method not available
-                except Exception:
-                    plugin_dict['is_configured'] = False
-            else:
-                plugin_dict['is_configured'] = False
-            
-            try:
-                caps = get_plugin_capabilities(name)
-                if not caps:
-                    raise AttributeError("Capabilities is None")
-                search_caps = {
-                    'tracks': caps.search.tracks if (caps.search and hasattr(caps.search, 'tracks')) else False,
-                    'artists': caps.search.artists if (caps.search and hasattr(caps.search, 'artists')) else False,
-                    'albums': caps.search.albums if (caps.search and hasattr(caps.search, 'albums')) else False,
-                    'playlists': caps.search.playlists if (caps.search and hasattr(caps.search, 'playlists')) else False,
-                }
-                plugin_dict['capabilities'] = {
-                    'metadata_richness': caps.metadata.name if (caps.metadata and hasattr(caps.metadata, 'name')) else 'MEDIUM',
-                    'supports_streaming': getattr(caps, 'supports_streaming', False),
-                    'supports_downloads': getattr(caps, 'supports_downloads', False),
-                    'supports_cover_art': getattr(caps, 'supports_cover_art', False),
-                    'supports_library_scan': getattr(caps, 'supports_library_scan', False),
-                    'supports_playlists': caps.supports_playlists.name if (caps.supports_playlists and hasattr(caps.supports_playlists, 'name')) else 'NONE',
-                    'search': search_caps,
-                    'search_capabilities': search_caps,  # Alias for compatibility
-                    # Add metadata-specific capabilities
-                    'fetch_metadata': getattr(caps, 'supports_metadata_fetch', False),
-                    'resolve_fingerprint': getattr(caps, 'supports_fingerprinting', False),
-                    'supports_lyrics': getattr(caps, 'supports_lyrics', False),
-                }
-            except (KeyError, AttributeError, ValueError):
-                # Plugin not in capability registry, check class-level capabilities
-                from core.enums import Capability
-                class_caps = getattr(cls, 'capabilities', [])
-                if class_caps is None:
-                    class_caps = []
+                is_disabled = CorePluginRegistry.is_plugin_disabled(db_name)
+                source_type = CorePluginRegistry.get_plugin_source(db_name) or 'core'
                 
-                default_search = {'tracks': False, 'artists': False, 'albums': False, 'playlists': False}
-                plugin_dict['capabilities'] = {
-                    'metadata_richness': 'MEDIUM',
-                    'supports_streaming': False,
-                    'supports_downloads': False,
-                    'supports_cover_art': False,
-                    'supports_library_scan': False,
-                    'supports_playlists': 'NONE',
-                    'search': default_search,
-                    'search_capabilities': default_search,
-                    'fetch_metadata': Capability.FETCH_METADATA in class_caps if isinstance(class_caps, list) else False,
-                    'resolve_fingerprint': Capability.RESOLVE_FINGERPRINT in class_caps if isinstance(class_caps, list) else False,
-                    'supports_lyrics': getattr(cls, 'supports_lyrics', False),
+                caps_json_str = row['capabilities'] or '{}'
+                try:
+                    caps_dict = json.loads(caps_json_str)
+                except Exception:
+                    caps_dict = {}
+
+                # Create default structure matching frontend expectations
+                search_caps = caps_dict.get('search', {})
+                capabilities = {
+                    'metadata_richness': caps_dict.get('metadata', 'MEDIUM'),
+                    'supports_streaming': caps_dict.get('supports_streaming', False),
+                    'supports_downloads': caps_dict.get('supports_downloads', False),
+                    'supports_cover_art': caps_dict.get('supports_cover_art', False),
+                    'supports_library_scan': caps_dict.get('supports_library_scan', False),
+                    'supports_playlists': caps_dict.get('supports_playlists', 'NONE'),
+                    'search': {
+                        'tracks': search_caps.get('tracks', False),
+                        'artists': search_caps.get('artists', False),
+                        'albums': search_caps.get('albums', False),
+                        'playlists': search_caps.get('playlists', False),
+                    },
+                    'fetch_metadata': caps_dict.get('supports_metadata_fetch', False),
+                    'resolve_fingerprint': caps_dict.get('supports_fingerprinting', False),
+                    'supports_lyrics': caps_dict.get('supports_lyrics', False),
                 }
-            plugins.append(plugin_dict)
+                capabilities['search_capabilities'] = capabilities['search']
+
+                plugin_dict = {
+                    'id': plugin_id,  # Changed from name to integer ID!
+                    'plugin_id': plugin_id,
+                    'name': db_name,
+                    'display_name': db_name.replace('plugin.', '').replace('echosync.', '').title(),
+                    'source_type': source_type,
+                    'service_type': row['service_type'],
+                    'disabled': is_disabled,
+                    'version': row['version'] or 'Unknown',
+                    'author': 'Official' if source_type == 'core' else 'Unknown',
+                    'capabilities': capabilities,
+                    'supports_downloads': capabilities['supports_downloads']
+                }
+
+                # Instance-based configuration check
+                if not is_disabled:
+                    try:
+                        instance = CorePluginRegistry.create_instance(plugin_id)
+                        if instance and hasattr(instance, 'is_configured'):
+                            plugin_dict['is_configured'] = instance.is_configured()
+                        else:
+                            plugin_dict['is_configured'] = True
+                    except Exception:
+                        plugin_dict['is_configured'] = False
+                else:
+                    plugin_dict['is_configured'] = False
+
+                plugins.append(plugin_dict)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to list plugins from DB: {e}", exc_info=True)
+
     return _clean_mocks(plugins)
+
 
 def get_plugins_for_capability(capability: str) -> List[Dict]:
     """Get plugins that support a specific capability."""
@@ -165,44 +142,20 @@ def get_plugin(plugin_name: str) -> Optional[Dict]:
     return None
 
 def _get_plugin_capabilities() -> List[Dict]:
-    """Expose capability flags for each plugin."""
+    """Expose capability flags for each plugin (for testing/backward compatibility)."""
     capabilities = []
-    for name in CorePluginRegistry.list_plugins():
-        cls = CorePluginRegistry.get_plugin_class(name)
-        if cls:
-            try:
-                caps = get_plugin_capabilities(name)
-                if not caps:
-                    raise AttributeError("Capabilities is None")
-                capabilities.append({
-                    'name': name,
-                    'metadata_richness': caps.metadata.name if (caps.metadata and hasattr(caps.metadata, 'name')) else 'MEDIUM',
-                    'supports_streaming': getattr(caps, 'supports_streaming', False),
-                    'supports_downloads': getattr(caps, 'supports_downloads', False),
-                    'supports_cover_art': getattr(caps, 'supports_cover_art', False),
-                    'supports_library_scan': getattr(caps, 'supports_library_scan', False),
-                    'playlist_support': caps.supports_playlists.name if (caps.supports_playlists and hasattr(caps.supports_playlists, 'name')) else 'NONE',
-                    'search_capabilities': {
-                        'tracks': caps.search.tracks if (caps.search and hasattr(caps.search, 'tracks')) else False,
-                        'artists': caps.search.artists if (caps.search and hasattr(caps.search, 'artists')) else False,
-                        'albums': caps.search.albums if (caps.search and hasattr(caps.search, 'albums')) else False,
-                        'playlists': caps.search.playlists if (caps.search and hasattr(caps.search, 'playlists')) else False,
-                    }
-                })
-            except (KeyError, AttributeError, ValueError):
-                capabilities.append({
-                    'name': name,
-                    'metadata_richness': 'MEDIUM',
-                    'supports_streaming': False,
-                    'supports_downloads': False,
-                    'supports_cover_art': False,
-                    'supports_library_scan': False,
-                    'playlist_support': 'NONE',
-                    'search_capabilities': {
-                        'tracks': False,
-                        'artists': False,
-                        'albums': False,
-                        'playlists': False,
-                    }
-                })
+    for plugin in list_plugins():
+        caps = plugin.get('capabilities', {})
+        capabilities.append({
+            'name': plugin['name'],
+            'metadata_richness': caps.get('metadata_richness', 'MEDIUM'),
+            'supports_streaming': caps.get('supports_streaming', False),
+            'supports_downloads': caps.get('supports_downloads', False),
+            'supports_cover_art': caps.get('supports_cover_art', False),
+            'supports_library_scan': caps.get('supports_library_scan', False),
+            'playlist_support': caps.get('supports_playlists', 'NONE'),
+            'search_capabilities': caps.get('search_capabilities', {
+                'tracks': False, 'artists': False, 'albums': False, 'playlists': False
+            })
+        })
     return capabilities

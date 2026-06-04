@@ -103,11 +103,27 @@ def list_all_plugins():
     """List all available plugins with their metadata and capabilities.
 
     Returns a plain array so the Svelte web UI (baseURL=/api) can map it
-    directly.
+    directly. Supports ETag caching to prevent stale info.
     """
+    import hashlib
+    import json
+    from flask import request, Response
     try:
         plugins_list = list_plugins()
-        return jsonify(plugins_list), 200
+        
+        # Calculate ETag based on the content
+        content_json = json.dumps(plugins_list, sort_keys=True).encode('utf-8')
+        etag = hashlib.md5(content_json).hexdigest()
+        
+        # Check if the client has the same ETag
+        if request.headers.get('If-None-Match') == etag:
+            return Response(status=304)
+            
+        response = jsonify(plugins_list)
+        response.set_etag(etag)
+        # Ensure it can be cached but requires revalidation (to avoid stale info)
+        response.headers['Cache-Control'] = 'public, max-age=0, must-revalidate'
+        return response, 200
     except Exception as e:
         logger.error(f"Error listing plugins: {e}")
         return jsonify({'error': str(e)}), 500
