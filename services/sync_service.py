@@ -24,7 +24,7 @@ class TrackMatchResult:
         return self.provider_track_id is not None
 
 @dataclass
-class SpotifyPlaylist:
+class SourcePlaylist:
     id: str
     name: str
     tracks: List[EchosyncTrack] = field(default_factory=list)
@@ -241,7 +241,7 @@ class PlaylistSyncService:
                 failed_tracks=failed_tracks
             ))
     
-    async def sync_playlist(self, playlist: SpotifyPlaylist, download_missing: bool = False) -> SyncResult:
+    async def sync_playlist(self, playlist: SourcePlaylist, download_missing: bool = False) -> SyncResult:
         # Check if THIS specific playlist is already syncing
         if playlist.name in self.syncing_playlists:
             logger.warning(f"Sync already in progress for playlist: {playlist.name}")
@@ -303,11 +303,11 @@ class PlaylistSyncService:
                                     failed_tracks=len([r for r in match_results if not r.is_match]))
                 
                 # Use the robust search approach
-                plex_match, confidence = await self._find_track_in_media_server(track)
+                target_match, confidence = await self._find_track_in_media_server(track)
                 
                 match_result = TrackMatchResult(
-                    spotify_track=track,
-                    provider_track_id=plex_match,
+                    source_track=track,
+                    provider_track_id=target_match,
                     confidence=confidence
                 )
                 match_results.append(match_result)
@@ -354,7 +354,7 @@ class PlaylistSyncService:
                     provider_track_ids.append(str(r.provider_track_id))
                     logger.debug(f"✔️ Resolved track to provider ID: {r.provider_track_id}")
                 else:
-                    logger.warning(f"❌ Track has no valid provider ID: {r.spotify_track.title}")
+                    logger.warning(f"❌ Track has no valid provider ID: {r.source_track.title}")
             
             logger.info(f"Extracted {len(provider_track_ids)} provider-specific IDs for {len(matched_tracks)} matched tracks")
             
@@ -386,26 +386,26 @@ class PlaylistSyncService:
                     logger.info(f"Auto-adding {len(unmatched_tracks)} unmatched tracks to wishlist")
 
                     for match_result in unmatched_tracks:
-                        spotify_track = match_result.spotify_track
+                        source_track = match_result.source_track
 
                         # Check if we have original track data with full album objects
                         original_track_data = None
                         if hasattr(self, '_original_tracks_map') and self._original_tracks_map:
-                            original_track_data = self._original_tracks_map.get(spotify_track.id)
+                            original_track_data = self._original_tracks_map.get(source_track.id)
 
                         # Use original data if available (preserves album images), otherwise convert
                         if original_track_data:
                             spotify_track_data = original_track_data
                         else:
                             spotify_track_data = {
-                                'id': spotify_track.identifiers.get('spotify') or spotify_track.identifiers.get('provider_id'),
-                                'name': spotify_track.title,
-                                'artists': [{'name': spotify_track.artist_name}],
-                                'album': {'name': spotify_track.album_title},
-                                'duration_ms': spotify_track.duration,
-                                'popularity': getattr(spotify_track, 'popularity', 0),
-                                'preview_url': getattr(spotify_track, 'preview_url', None),
-                                'external_urls': getattr(spotify_track, 'external_urls', {})
+                                'id': source_track.identifiers.get('spotify') or source_track.identifiers.get('provider_id'),
+                                'name': source_track.title,
+                                'artists': [{'name': source_track.artist_name}],
+                                'album': {'name': source_track.album_title},
+                                'duration_ms': source_track.duration,
+                                'popularity': getattr(source_track, 'popularity', 0),
+                                'preview_url': getattr(source_track, 'preview_url', None),
+                                'external_urls': getattr(source_track, 'external_urls', {})
                             }
 
                         # Add to wishlist with source context
@@ -456,7 +456,7 @@ class PlaylistSyncService:
             self.clear_progress_callback(playlist.name)
             self._cancelled = False
     
-    async def _find_track_in_media_server(self, spotify_track: EchosyncTrack) -> Tuple[Optional[str], float]:
+    async def _find_track_in_media_server(self, source_track: EchosyncTrack) -> Tuple[Optional[str], float]:
         """Find a track in the media server using database matching.
         
         Returns:
@@ -472,8 +472,8 @@ class PlaylistSyncService:
             # Use the SAME improved database matching as PlaylistTrackAnalysisWorker
             from database.music_database import MusicDatabase
             
-            original_title = spotify_track.title
-            artist_name = spotify_track.artist_name
+            original_title = source_track.title
+            artist_name = source_track.artist_name
             
             if self._cancelled:
                 return None, 0.0
@@ -523,7 +523,7 @@ class PlaylistSyncService:
             return None, 0.0
             
         except Exception as e:
-            logger.error(f"Error searching for track '{spotify_track.title}': {e}")
+            logger.error(f"Error searching for track '{source_track.title}': {e}")
             return None, 0.0
     
     async def sync_multiple_playlists(self, playlist_names: List[str], download_missing: bool = False) -> List[SyncResult]:
@@ -539,7 +539,7 @@ class PlaylistSyncService:
         
         return results
     
-    def _get_spotify_playlist(self, playlist_name: str, account_id: Optional[int] = None) -> Optional[SpotifyPlaylist]:
+    def _get_source_playlist(self, playlist_name: str, account_id: Optional[int] = None) -> Optional[SourcePlaylist]:
         """Locate a Spotify playlist by name across one or all configured accounts.
 
         If `account_id` is provided, only that client's playlists will be searched.
@@ -598,9 +598,9 @@ class PlaylistSyncService:
         intent_count = 0
         for match_result in unmatched_tracks:
             try:
-                spotify_track = match_result.spotify_track
-                logger.info(f"Publishing DOWNLOAD_INTENT for: {spotify_track.title} - {spotify_track.artist_name}")
-                full_track = spotify_track.to_dict()
+                source_track = match_result.source_track
+                logger.info(f"Publishing DOWNLOAD_INTENT for: {source_track.title} - {source_track.artist_name}")
+                full_track = source_track.to_dict()
                 identifiers = full_track.get("identifiers") if isinstance(full_track, dict) else {}
                 spotify_id = None
                 if isinstance(identifiers, dict):
@@ -609,7 +609,7 @@ class PlaylistSyncService:
                 # Publish event via event bus for asynchronous processing
                 event_bus.publish({
                     "event": "DOWNLOAD_INTENT",
-                    "sync_id": spotify_id or spotify_track.identifiers.get('provider_id'),
+                    "sync_id": spotify_id or source_track.identifiers.get('provider_id'),
                     "track": full_track,
                     # Legacy compatibility for existing consumers.
                     "fallback_metadata": full_track,
@@ -620,7 +620,7 @@ class PlaylistSyncService:
                 })
                 
                 intent_count += 1
-                logger.debug(f"DOWNLOAD_INTENT published for track {spotify_track.identifiers.get('spotify')}")
+                logger.debug(f"DOWNLOAD_INTENT published for track {source_track.identifiers.get('spotify')}")
                 
             except Exception as e:
                 logger.error(f"Error publishing DOWNLOAD_INTENT: {e}")
@@ -643,8 +643,8 @@ class PlaylistSyncService:
     
     def get_sync_preview(self, playlist_name: str, account_id: Optional[int] = None) -> Dict[str, Any]:
         try:
-            spotify_playlist = self._get_spotify_playlist(playlist_name, account_id=account_id)
-            if not spotify_playlist:
+            source_playlist = self._get_source_playlist(playlist_name, account_id=account_id)
+            if not source_playlist:
                 return {"error": f"Playlist '{playlist_name}' not found"}
 
             media_client, server_type = self._get_active_media_client()
@@ -654,7 +654,7 @@ class PlaylistSyncService:
             media_tracks = media_client.search_tracks("", limit=1000)
 
             match_results = self.matching_engine.match_playlist_tracks(
-                spotify_playlist.tracks,
+                source_playlist.tracks,
                 media_tracks
             )
 
@@ -662,7 +662,7 @@ class PlaylistSyncService:
 
             preview = {
                 "playlist_name": playlist_name,
-                "total_tracks": len(spotify_playlist.tracks),
+                "total_tracks": len(source_playlist.tracks),
                 f"available_in_{server_type}": stats["matched_tracks"],
                 "needs_download": stats["total_tracks"] - stats["matched_tracks"],
                 "match_percentage": stats["match_percentage"],
@@ -672,7 +672,7 @@ class PlaylistSyncService:
 
             for result in match_results[:10]:
                 track_info = {
-                    "spotify_track": f"{result.spotify_track.title} - {result.spotify_track.artist_name}",
+                    "source_track": f"{result.source_track.title} - {result.source_track.artist_name}",
                     f"{server_type}_match": f"ID: {result.provider_track_id}" if result.is_match else None,
                     "confidence": result.confidence,
                     "status": "available" if result.is_match else "needs_download"
@@ -685,7 +685,7 @@ class PlaylistSyncService:
             logger.error(f"Error generating sync preview: {e}")
             return {"error": str(e)}
     
-    async def _get_all_spotify_playlists(self) -> List[SpotifyPlaylist]:
+    async def _get_all_source_playlists(self) -> List[SourcePlaylist]:
         """
         Fetch playlists from ALL configured and active Spotify accounts.
         Append ' ({Account Name})' to playlist names to distinguish them.
@@ -728,7 +728,7 @@ class PlaylistSyncService:
                         # Instead, just pass the clean name. We can keep track of the account in the SpotifyPlaylist
                         # object if we extend it, or just use the name as is.
                         # For now, just use the raw name.
-                        sp_playlist = SpotifyPlaylist(id=p['id'], name=p['name'], tracks=[])
+                        sp_playlist = SourcePlaylist(id=p['id'], name=p['name'], tracks=[])
                         # Attach account ID/name to the object to be able to identify source account later
                         sp_playlist.account_id = account_id
                         sp_playlist.account_name = account_name

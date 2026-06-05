@@ -76,37 +76,33 @@ def _get_provider_for_account(provider_id, acc_id=None):
             provider_id = int(provider_id)
         else:
             # Check for legacy names
-            if provider_id in ['spotify', 'tidal']:
-                provider_id = generate_plugin_id(f"echosync.{provider_id}")
-            else:
-                provider_id = generate_plugin_id(provider_id.lower())
-
-    spotify_id = generate_plugin_id("echosync.spotify")
-    tidal_id = generate_plugin_id("echosync.tidal")
-
-    if provider_id in [spotify_id, tidal_id]:
-        if acc_id is None:
-            from core.file_handling.storage import get_storage_service
-
-            storage = get_storage_service()
-            provider_str = 'spotify' if provider_id == spotify_id else 'tidal'
-            accounts = storage.list_accounts(provider_str)
-            if not accounts:
-                return None, None
-            acc_id_local = accounts[0]['id']
-        else:
-            acc_id_local = acc_id
-
-        if provider_id == spotify_id:
-            from plugins.EchoSync.spotify.client import SpotifyClient
-            return SpotifyClient(account_id=acc_id_local), acc_id_local
-        if provider_id == tidal_id:
-            from plugins.EchoSync.tidal.client import TidalClient
-            return TidalClient(account_id=str(acc_id_local)), acc_id_local
-
     try:
+        plugin_class = PluginRegistry.get_plugin_class(provider_id)
+        if not plugin_class:
+            return None, None
+            
+        caps = get_plugin_capabilities(provider_id)
+        
+        if getattr(caps, 'supports_user_auth', False):
+            if acc_id is None:
+                from core.file_handling.storage import get_storage_service
+                storage = get_storage_service()
+                
+                # We need to find an account for this plugin. Extract shortname from plugin.name
+                provider_str = plugin_class.name.split('.')[-1].lower()
+                accounts = storage.list_accounts(provider_str)
+                if not accounts:
+                    return None, None
+                acc_id_local = accounts[0]['id']
+            else:
+                acc_id_local = acc_id
+                
+            return plugin_class(account_id=acc_id_local), acc_id_local
+            
         return PluginRegistry.create_instance(provider_id), None
-    except ValueError:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return None, None
 
 
@@ -423,7 +419,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
         playlist_name = playlist_info.get("name", "Unknown Playlist")
 
         acc_id = playlist_info.get('account_id')
-        if acc_id and source in ['spotify', 'tidal']:
+        if acc_id and getattr(caps, 'supports_user_auth', False):
             provider_instance, _ = _get_provider_for_account(source, acc_id)
             if provider_instance:
                 source_provider = provider_instance
@@ -1388,14 +1384,11 @@ def trigger_sync():
     except KeyError:
         return jsonify({"accepted": False, "error": f"Target provider {target} not found"}), 400
 
-    # Detect sync mode: tier-to-tier (streaming↔streaming) vs local-server (streaming→plex)
-    tier_to_tier_providers = {"spotify", "tidal", "apple_music"}
-    local_server_providers = {"plex", "jellyfin", "navidrome"}
-    
-    is_source_tier = source in tier_to_tier_providers
-    is_target_tier = target in tier_to_tier_providers
-    is_source_server = source in local_server_providers
-    is_target_server = target in local_server_providers
+    # Detect sync mode: tier-to-tier (streaming↔streaming) vs local-server (streaming→server)
+    is_source_tier = getattr(source_caps, 'supports_streaming', False)
+    is_target_tier = getattr(target_caps, 'supports_streaming', False)
+    is_source_server = getattr(source_caps, 'supports_library_scan', False)
+    is_target_server = getattr(target_caps, 'supports_library_scan', False)
     
     sync_mode = None
     if is_source_tier and is_target_tier:

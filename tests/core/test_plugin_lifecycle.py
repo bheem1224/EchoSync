@@ -48,6 +48,8 @@ def temp_plugins_env(tmp_path, monkeypatch):
         return original_get(key, default)
         
     monkeypatch.setattr(config_manager, "get", mock_get)
+    monkeypatch.setattr(config_manager, "get_plugins_dir", lambda: str(plugins_dir))
+    monkeypatch.setattr(config_manager, "plugins_path", plugins_dir)
 
     # 4. Initialize Databases through singleton providers
     db_config = get_config_database()

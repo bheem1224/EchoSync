@@ -77,14 +77,17 @@ def get_system_health() -> Dict[str, Any]:
             continue
 
         try:
-            from core.nexus_framework.plugin_loader import generate_plugin_id
+            from core.nexus_framework.plugin_loader import generate_plugin_id, get_plugin_capabilities
             p_id = generate_plugin_id(svc_name.lower())
-            instance = PluginRegistry.create_instance(p_id)
-            if instance:
-                if instance.is_configured():
+            caps = get_plugin_capabilities(p_id)
+            
+            if caps and getattr(caps, 'requires_user_auth', False):
+                from core.file_handling.storage import get_storage_service
+                storage = get_storage_service()
+                if storage.list_accounts(clean_name):
                     enabled_providers_count += 1
-                elif clean_name == 'lrclib':
-                    enabled_providers_count += 1
+            else:
+                enabled_providers_count += 1
         except Exception as e:
             pass
 

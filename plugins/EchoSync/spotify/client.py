@@ -153,6 +153,8 @@ class SpotifyClient(SyncServiceProvider):
         supports_streaming=True,
         supports_downloads=False,
         playlist_algorithms=['spotify_mood', 'spotify_energy', 'spotify_newness'],
+        fingerprint_algorithms=[],
+        pre_filters=[]
     )
 
     def __init__(self, account_id: Optional[int] = None):

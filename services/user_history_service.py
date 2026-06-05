@@ -107,13 +107,11 @@ class UserHistoryService:
 
                         # Handle provider-specific account ID casting/validation
                         try:
-                            # For Plex, we need an int ID. For others, keep as is.
-                            from core.nexus_framework.plugin_loader import generate_plugin_id
-                            plex_id = generate_plugin_id("echosync.plex")
-                            if server_id == plex_id:
+                            # Assume account_id can be cast to int if it's numeric
+                            if str(account_id_raw).isdigit():
                                 account_id = int(account_id_raw)
                             else:
-                                account_id = account_id_raw
+                                account_id = str(account_id_raw)
                         except (TypeError, ValueError):
                             self.logger.error(
                                 f"Skipping account '{account_name}' on provider ID {server_id}: "
@@ -450,8 +448,11 @@ class UserHistoryService:
 
         identifiers = getattr(interaction, 'identifiers', None)
         if isinstance(identifiers, dict):
-            # Iterate all known provider keys; 'plex' is kept for legacy dict shapes
-            for key in (getattr(interaction, 'provider', None), 'plex', 'jellyfin', 'navidrome'):
+            # Iterate known provider key from interaction or fallback to all identifier keys
+            provider_key = getattr(interaction, 'provider', None)
+            keys_to_check = [provider_key] if provider_key else []
+            keys_to_check.extend(identifiers.keys())
+            for key in keys_to_check:
                 if key:
                     provider_id = str(identifiers.get(key, '') or '').strip()
                     if provider_id:

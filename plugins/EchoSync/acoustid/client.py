@@ -25,6 +25,8 @@ class AcoustIDProvider(PluginBase):
         supports_streaming=False,
         supports_downloads=False,
         supports_fingerprinting=True,  # Special capability for fingerprinting
+        fingerprint_algorithms=['chromaprint'],
+        pre_filters=[]
     )
 
     def __init__(self):
@@ -221,6 +223,26 @@ class AcoustIDProvider(PluginBase):
         except Exception as e:
             logger.warning(f"AcoustID submit failed: {e}")
             return False
+
+    def queue_fingerprint_submission(self, fingerprint: str, duration: int, mbid: str):
+        """Queue a background job to submit an AcoustID fingerprint."""
+        from core.job_queue import job_queue
+        import time
+        
+        job_name = f"acoustid_submit_{mbid}_{int(time.time()*1000)}"
+        
+        def submit_job():
+            self.submit_fingerprint(fingerprint, duration, mbid)
+            
+        job_queue.register_job(
+            name=job_name,
+            func=submit_job,
+            enabled=True,
+            max_retries=3,
+            backoff_base=10.0,
+            plugin=self.name
+        )
+        job_queue.dispatch_job(job_name)
 
     # Implement abstract methods
     def authenticate(self, **kwargs) -> bool:
