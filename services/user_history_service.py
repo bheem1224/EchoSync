@@ -74,9 +74,9 @@ class UserHistoryService:
                 self.logger.info("No active media servers found for history sync")
                 return stats
 
-            for server_name in active_servers:
+            for server_id in active_servers:
                 try:
-                    plugin_id = self.config_db.get_or_create_service_id(server_name)
+                    plugin_id = self.config_db.get_or_create_service_id(server_id)
                     accounts = self.config_db.get_accounts(service_id=plugin_id, is_active=True)
                     
                     if not accounts:
@@ -84,20 +84,20 @@ class UserHistoryService:
                         continue
 
                     # Ensure all active managed users exist before history sync.
-                    stats['users_synced'] += self.sync_active_media_server_users(server_name, accounts)
+                    stats['users_synced'] += self.sync_active_media_server_users(server_id, accounts)
                     
                     # Create provider instance
                     try:
-                        provider = PluginRegistry.create_instance(server_name)
+                        provider = PluginRegistry.create_instance(server_id)
                     except Exception as e:
-                        error_msg = f"Failed to create provider instance for {server_name}: {e}"
+                        error_msg = f"Failed to create provider instance for ID {server_id}: {e}"
                         self.logger.error(error_msg)
                         stats['errors'].append(error_msg)
                         continue
                     
                     # Check if provider supports history fetching
                     if not hasattr(provider, 'fetch_user_history'):
-                        self.logger.debug(f"Provider {server_name} does not support fetch_user_history()")
+                        self.logger.debug(f"Provider ID {server_id} does not support fetch_user_history()")
                         continue
                     
                     # Sync history for each account
@@ -108,20 +108,22 @@ class UserHistoryService:
                         # Handle provider-specific account ID casting/validation
                         try:
                             # For Plex, we need an int ID. For others, keep as is.
-                            if server_name.lower() == 'plex':
+                            from core.nexus_framework.plugin_loader import generate_plugin_id
+                            plex_id = generate_plugin_id("echosync.plex")
+                            if server_id == plex_id:
                                 account_id = int(account_id_raw)
                             else:
                                 account_id = account_id_raw
                         except (TypeError, ValueError):
                             self.logger.error(
-                                f"Skipping account '{account_name}' on {server_name}: "
+                                f"Skipping account '{account_name}' on provider ID {server_id}: "
                                 f"account_id {account_id_raw!r} invalid"
                             )
-                            stats['errors'].append(f"Bad account_id for {account_name} on {server_name}")
+                            stats['errors'].append(f"Bad account_id for {account_name} on {server_id}")
                             continue
 
                         try:
-                            self.logger.info(f"Syncing history from {server_name} for account {account_name}")
+                            self.logger.info(f"Syncing history from ID {server_id} for account {account_name}")
                             
                             # Fetch history from provider
                             interactions = provider.fetch_user_history(account_id)
@@ -137,7 +139,7 @@ class UserHistoryService:
                                 account_id=account_id,
                                 account_name=account_name,
                                 provider_user_id=account.get('user_id'),
-                                provider=server_name
+                                provider=str(server_id)
                             )
                             
                             if not working_user:
@@ -151,7 +153,7 @@ class UserHistoryService:
                                 account_id=working_user.id,
                                 interactions=interactions,
                                 stats=stats,
-                                plugin_source=server_name
+                                plugin_source=str(server_id)
                             )
                             
                             self.logger.info(
@@ -162,11 +164,11 @@ class UserHistoryService:
                             stats['matches_found'] += matched_count
                             
                         except Exception as e:
-                            error_msg = f"Error syncing history for account {account_name} on {server_name}: {e}"
+                            error_msg = f"Error syncing history for account {account_name} on ID {server_id}: {e}"
                             self.logger.error(error_msg, exc_info=True)
                             stats['errors'].append(error_msg)
                 except Exception as e:
-                    self.logger.error(f"Failed to process history sync for {server_name}: {e}", exc_info=True)
+                    self.logger.error(f"Failed to process history sync for ID {server_id}: {e}", exc_info=True)
         
         except Exception as e:
             error_msg = f"Fatal error in sync_baseline_history: {e}"

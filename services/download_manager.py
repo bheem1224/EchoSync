@@ -139,11 +139,14 @@ class DownloadManager:
                 return None
 
             # Check if provider is enabled and registered
-            if PluginRegistry.is_provider_disabled(active_client):
+            from core.nexus_framework.plugin_loader import generate_plugin_id
+            p_id = generate_plugin_id(active_client.lower())
+            
+            if PluginRegistry.is_plugin_disabled(p_id):
                 logger.warning(f"Active download provider '{active_client}' is disabled")
                 return None
 
-            self._provider = PluginRegistry.create_instance(active_client)
+            self._provider = PluginRegistry.create_instance(p_id)
             return self._provider
         except Exception as e:
             logger.error(f"Failed to load download provider: {e}")
@@ -319,30 +322,33 @@ class DownloadManager:
             sorted_names = []
             
             if user_priority:
+                from core.nexus_framework.plugin_loader import generate_plugin_id
                 # Add providers in user priority order (only if available)
                 for provider_name in user_priority:
-                    if provider_name.lower() in [p.lower() for p in available_providers]:
-                        sorted_names.append(provider_name.lower())
+                    # Convert string from config into int ID
+                    p_id = generate_plugin_id(provider_name.lower())
+                    if p_id in available_providers:
+                        sorted_names.append(p_id)
                 
                 # Add remaining providers not in user list
-                for provider_name in available_providers:
-                    if provider_name.lower() not in sorted_names:
-                        sorted_names.append(provider_name.lower())
+                for provider_id in available_providers:
+                    if provider_id not in sorted_names:
+                        sorted_names.append(provider_id)
             else:
                 # No user priority defined, use registry order
-                sorted_names = [p.lower() for p in available_providers]
+                sorted_names = available_providers
             
             logger.info(f"Download provider search order: {sorted_names}")
             
             # Instantiate providers in sorted order
             instances = []
-            for provider_name in sorted_names:
+            for provider_id in sorted_names:
                 try:
-                    if provider_name not in self._active_providers:
-                        self._active_providers[provider_name] = PluginRegistry.create_instance(provider_name)
-                    instances.append(self._active_providers[provider_name])
+                    if provider_id not in self._active_providers:
+                        self._active_providers[provider_id] = PluginRegistry.create_instance(provider_id)
+                    instances.append(self._active_providers[provider_id])
                 except Exception as e:
-                    logger.warning(f"Failed to instantiate provider '{provider_name}': {e}")
+                    logger.warning(f"Failed to instantiate provider '{provider_id}': {e}")
             
             if not instances:
                 logger.error("No download providers could be instantiated")
@@ -719,17 +725,29 @@ class DownloadManager:
                     if not tier_candidates:
                         continue
 
-                    if getattr(provider, 'supports_pre_filtering', False):
-                        provider_best_candidate = self._select_prefiltered_candidate(
-                            tier_candidates,
-                            prefer_larger_files,
-                        )
-                        if provider_best_candidate:
-                            provider_best_score = float(perfect_match_threshold)
-                            logger.info(
-                                f"    Prefilter bypass on {provider.name}: selected candidate from priority {priority_num} without deep matching"
+                    # Check granular capabilities instead of legacy boolean
+                    caps = getattr(provider, 'capabilities', None)
+                    pre_filters = getattr(caps, 'pre_filters', []) if caps else []
+                    has_pre_filter = getattr(provider, 'supports_pre_filtering', False) or len(pre_filters) > 0
+
+                    if has_pre_filter:
+                        # Verify the provider actually supports the filters needed for quality profile
+                        missing_filters = [
+                            f for f in ['format', 'bitrate'] 
+                            if quality_profile and quality_profile.get(f"preferred_{f}") and f not in pre_filters
+                        ] if pre_filters else []
+                        
+                        if not missing_filters:
+                            provider_best_candidate = self._select_prefiltered_candidate(
+                                tier_candidates,
+                                prefer_larger_files,
                             )
-                            break
+                            if provider_best_candidate:
+                                provider_best_score = float(perfect_match_threshold)
+                                logger.info(
+                                    f"    Prefilter bypass on {provider.name}: selected candidate from priority {priority_num} without deep matching"
+                                )
+                                break
                     
                     # Get matching engine and score candidates
                     matcher = self._get_matching_engine(quality_profile)

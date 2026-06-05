@@ -77,7 +77,9 @@ def get_system_health() -> Dict[str, Any]:
             continue
 
         try:
-            instance = PluginRegistry.create_instance(svc_name)
+            from core.nexus_framework.plugin_loader import generate_plugin_id
+            p_id = generate_plugin_id(svc_name.lower())
+            instance = PluginRegistry.create_instance(p_id)
             if instance:
                 if instance.is_configured():
                     enabled_providers_count += 1

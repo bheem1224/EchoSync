@@ -1162,8 +1162,10 @@ class ProviderCapabilities:
     supports_streaming: bool = False
     supports_downloads: bool = False
     supports_pre_filtering: bool = False
+    pre_filters: list = None
     playlist_algorithms: list = None  # List of algorithm IDs (e.g., ['spotify_mood'])
     supports_fingerprinting: bool = False  # Audio fingerprinting (AcoustID)
+    fingerprint_algorithms: list = None
     supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
 
     def to_enum_list(self) -> List['Capability']:

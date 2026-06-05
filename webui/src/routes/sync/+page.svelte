@@ -101,13 +101,7 @@
   $: selectedPlaylistItems = playlists.filter((_, index) => selectedPlaylists.includes(index));
   $: selectedTargetLabel = formatTargetWithContext(targetProvider, selectedPlaylistItems);
 
-  function formatPluginName(name) {
-    if (!name) return '';
-    const parts = name.split('.');
-    const displayName = parts[parts.length - 1];
-    // capitalize first letter and replace underscores with spaces
-    return displayName.charAt(0).toUpperCase() + displayName.slice(1).replace(/_/g, ' ');
-  }
+
 
   async function loadPlaylists() {
     if (!sourceProvider) {
@@ -546,7 +540,7 @@
             }}>
             <option value="">-- Select Source --</option>
             {#each playlistProviders as p}
-              <option value={p.id}>{formatPluginName(p.name)}</option>
+              <option value={p.id}>{p.display_name}</option>
             {/each}
           </select>
         </div>
@@ -564,7 +558,7 @@
             <option value="">-- Select Target --</option>
             {#each syncTargets as p}
               {#if p.id !== sourceProvider}
-                <option value={p.id}>{formatPluginName(p.name)}</option>
+                <option value={p.id}>{p.display_name}</option>
               {/if}
             {/each}
           </select>

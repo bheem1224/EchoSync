@@ -32,31 +32,6 @@ def _normalize_sensitive_value_for_save(key, value):
     return value
 
 
-def _resolve_plugin_name(plugin_id: str) -> str:
-    """Normalize plugin identifiers from route paths to canonical plugin IDs."""
-    plugin_name = str(plugin_id or '').strip()
-    if not plugin_name:
-        return plugin_name
-
-    try:
-        from core.nexus_framework.plugin_loader import get_all_plugins
-        normalized = plugin_name.lower()
-        for p in get_all_plugins():
-            p_id = str(p.get('id', '')).strip()
-            p_name = str(p.get('name', '')).strip()
-            if not p_id and not p_name:
-                continue
-            if (normalized == p_id.lower() or
-                normalized == p_name.lower() or
-                p_id.lower().endswith(f".{normalized}") or
-                p_name.lower().endswith(f".{normalized}")):
-                return p_id
-    except Exception as e:
-        logger.debug(f"Unable to resolve plugin provider '{plugin_name}' to canonical plugin ID: {e}")
-
-    return plugin_name
-
-
 def _build_active_plex_user_map():
     """Build a display-name to Plex user_id map from active config.db accounts."""
     try:
@@ -214,7 +189,7 @@ def set_active_download_client():
         logger.error(f"Error setting active download client: {e}")
         return jsonify({'error': str(e)}), 500
 
-@bp.post("/<plugin_id>/toggle")
+@bp.post("/<int:plugin_id>/toggle")
 @require_auth
 def toggle_plugin(plugin_id):
     """Toggle a plugin's enabled/disabled status.
@@ -263,7 +238,7 @@ def toggle_plugin(plugin_id):
         return jsonify({'error': str(e)}), 500
 
 
-@bp.post("/<plugin_id>/rollback")
+@bp.post("/<int:plugin_id>/rollback")
 @require_auth
 def rollback_plugin(plugin_id):
     """Roll back a plugin to its previous stable version and state."""
@@ -283,7 +258,7 @@ def rollback_plugin(plugin_id):
         return jsonify({'error': str(e)}), 500
 
 
-@bp.get("/<plugin_id>/playlists")
+@bp.get("/<int:plugin_id>/playlists")
 def get_plugin_playlists(plugin_id):
     """Fetch playlists from a specific plugin."""
     try:
@@ -424,7 +399,7 @@ def get_plugin_playlists(plugin_id):
         logger.error(f"Error fetching playlists for {plugin_id}: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
-@bp.get("/<plugin_id>/settings")
+@bp.get("/<int:plugin_id>/settings")
 def get_plugin_settings(plugin_id):
     """Get settings and schema for a specific plugin.
     
@@ -436,7 +411,7 @@ def get_plugin_settings(plugin_id):
         config_db = get_config_database()
         
         # Ensure service exists in config.db
-        normalized_plugin_id = _resolve_plugin_name(plugin_id)
+        normalized_plugin_id = str(plugin_id)
         try:
             service_id = config_db.get_or_create_service_id(normalized_plugin_id)
             if not service_id:
@@ -470,7 +445,7 @@ def get_plugin_settings(plugin_id):
         logger.error(f"Error getting settings for {plugin_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
-@bp.post("/<plugin_id>/settings")
+@bp.post("/<int:plugin_id>/settings")
 @require_auth
 def update_plugin_settings(plugin_id):
     """Update settings for a specific plugin.
@@ -490,7 +465,7 @@ def update_plugin_settings(plugin_id):
         from database.config_database import get_config_database
         config_db = get_config_database()
 
-        normalized_plugin_id = _resolve_plugin_name(plugin_id)
+        normalized_plugin_id = str(plugin_id)
         try:
             # Ensure service exists in config.db
             service_id = config_db.get_or_create_service_id(normalized_plugin_id)
@@ -629,7 +604,7 @@ def get_plugins_by_capability(capability):
         logger.error(f"Error getting plugins for capability {capability}: {e}")
         return jsonify({'error': str(e)}), 500
 
-@bp.get("/<plugin_id>")
+@bp.get("/<int:plugin_id>")
 def get_plugin_details(plugin_id):
     """Get full details for a specific plugin."""
     try:
@@ -645,13 +620,13 @@ def get_plugin_details(plugin_id):
         logger.error(f"Error getting plugin details for {plugin_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
-@bp.get("/<plugin_id>/credentials")
+@bp.get("/<int:plugin_id>/credentials")
 def get_plugin_credentials(plugin_id):
     """Get credentials/configuration for a specific plugin."""
     try:
         from database.config_database import get_config_database
         config_db = get_config_database()
-        normalized_plugin_id = _resolve_plugin_name(plugin_id)
+        normalized_plugin_id = str(plugin_id)
         service_id = config_db.get_or_create_service_id(normalized_plugin_id)
         if not service_id:
             return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
@@ -679,7 +654,7 @@ def get_plugin_credentials(plugin_id):
         logger.error(f"Error getting credentials for {plugin_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
-@bp.post("/<plugin_id>/credentials")
+@bp.post("/<int:plugin_id>/credentials")
 @require_auth
 def set_plugin_credentials(plugin_id):
     """Set credentials/configuration for a specific plugin."""
@@ -694,7 +669,7 @@ def set_plugin_credentials(plugin_id):
         
         # Get or create service in config database
         config_db = get_config_database()
-        normalized_plugin_id = _resolve_plugin_name(plugin_id)
+        normalized_plugin_id = str(plugin_id)
         service_id = config_db.get_or_create_service_id(normalized_plugin_id)
         if not service_id:
             return jsonify({'error': f'Plugin {plugin_id} not found'}), 404

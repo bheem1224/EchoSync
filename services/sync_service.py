@@ -141,13 +141,13 @@ class PlaylistSyncService:
 
             if not clients:
                 try:
-                    client = PluginRegistry.create_instance('spotify')
+                    client = PluginRegistry.create_instance(spotify_id)
                     clients = [client]
                 except Exception as e:
                     logger.error(f"Failed to create default spotify client: {e}")
         except Exception as e:
             try:
-                client = PluginRegistry.create_instance('spotify')
+                client = PluginRegistry.create_instance(spotify_id)
                 clients = [client]
             except Exception as create_err:
                 logger.error(f"Critical failure creating spotify client: {create_err}")
@@ -691,6 +691,7 @@ class PlaylistSyncService:
         Append ' ({Account Name})' to playlist names to distinguish them.
         """
         all_playlists = []
+        spotify_id = zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF
         try:
             # 1. Get all accounts from ConfigDatabase (Nexus framework)
             from database.config_database import get_config_database
@@ -714,7 +715,7 @@ class PlaylistSyncService:
                     account_name = account.get('name', f"Account {account_id}")
 
                     # Instantiate client for this account
-                    client = PluginRegistry.create_instance('spotify', account_id=account_id)
+                    client = PluginRegistry.create_instance(spotify_id, account_id=account_id)
 
                     if not client.is_configured():
                         continue
@@ -783,13 +784,14 @@ class PlaylistSyncService:
             logger.error(f"refresh_playlist_cache_throttled: failed to load accounts: {e}")
             return summary
 
+        spotify_id = zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF
         for account in accounts:
             # Accounts already filtered by is_active=True at DB level
             account_id = account.get('id')
             account_name = account.get('name', f"Account {account_id}")
 
             try:
-                client = PluginRegistry.create_instance('spotify', account_id=account_id)
+                client = PluginRegistry.create_instance(spotify_id, account_id=account_id)
                 if not client.is_configured():
                     continue
 
@@ -874,6 +876,7 @@ class PlaylistSyncService:
             accounts = config_db.get_accounts(service_id=spotify_service_id, is_active=True)
 
             spotify_playlists = []
+            spotify_id = zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF
 
             if not accounts:
                  # Fallback to default client if configured
@@ -888,7 +891,7 @@ class PlaylistSyncService:
                 for account in accounts:
                     try:
                         # Accounts already filtered by is_active=True at DB level
-                        client = PluginRegistry.create_instance('spotify', account_id=account.get('id'))
+                        client = PluginRegistry.create_instance(spotify_id, account_id=account.get('id'))
                         if client.is_configured():
                              # Consume generator
                              for p in client.get_user_playlists() or []:
@@ -1007,8 +1010,18 @@ class PlaylistSyncService:
         client = getattr(self, "provider", None) or getattr(self, "provider_client", None) or getattr(self, "active_provider", None) or getattr(self, "source_provider", None)
 
         if not client:
-            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-            client = PluginRegistry.create_instance(provider_name, account_id=account_id)
+            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry, generate_plugin_id
+            
+            p_id = provider_name
+            if isinstance(provider_name, str):
+                if provider_name.isdigit():
+                    p_id = int(provider_name)
+                elif provider_name in ['spotify', 'tidal']:
+                    p_id = generate_plugin_id(f"echosync.{provider_name}")
+                else:
+                    p_id = generate_plugin_id(provider_name.lower())
+                    
+            client = PluginRegistry.create_instance(p_id, account_id=account_id)
 
         if not client:
             logger.error(f"Cannot fetch missing tracks: Provider {provider_name} not configured.")

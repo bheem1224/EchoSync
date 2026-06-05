@@ -67,32 +67,45 @@ _PINYIN_ARTIST_PASS      = 90    # token_sort_ratio needed to accept the match
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _get_provider_for_account(provider_name, acc_id=None):
-    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
+def _get_provider_for_account(provider_id, acc_id=None):
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry, generate_plugin_id
 
-    if provider_name in ['spotify', 'tidal']:
+    # Handle if a string was passed for backward compatibility, though it should be an int
+    if isinstance(provider_id, str):
+        if provider_id.isdigit():
+            provider_id = int(provider_id)
+        else:
+            # Check for legacy names
+            if provider_id in ['spotify', 'tidal']:
+                provider_id = generate_plugin_id(f"echosync.{provider_id}")
+            else:
+                provider_id = generate_plugin_id(provider_id.lower())
+
+    spotify_id = generate_plugin_id("echosync.spotify")
+    tidal_id = generate_plugin_id("echosync.tidal")
+
+    if provider_id in [spotify_id, tidal_id]:
         if acc_id is None:
             from core.file_handling.storage import get_storage_service
 
             storage = get_storage_service()
-            accounts = storage.list_accounts(provider_name)
+            provider_str = 'spotify' if provider_id == spotify_id else 'tidal'
+            accounts = storage.list_accounts(provider_str)
             if not accounts:
                 return None, None
             acc_id_local = accounts[0]['id']
         else:
             acc_id_local = acc_id
 
-        if provider_name == 'spotify':
+        if provider_id == spotify_id:
             from plugins.EchoSync.spotify.client import SpotifyClient
-
             return SpotifyClient(account_id=acc_id_local), acc_id_local
-        if provider_name == 'tidal':
+        if provider_id == tidal_id:
             from plugins.EchoSync.tidal.client import TidalClient
-
             return TidalClient(account_id=str(acc_id_local)), acc_id_local
 
     try:
-        return PluginRegistry.create_instance(provider_name), None
+        return PluginRegistry.create_instance(provider_id), None
     except ValueError:
         return None, None
 

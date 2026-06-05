@@ -875,9 +875,9 @@ class PluginLoader:
                             'supports_library_scan': getattr(caps, 'supports_library_scan', False),
                             'supports_streaming': getattr(caps, 'supports_streaming', False),
                             'supports_downloads': getattr(caps, 'supports_downloads', False),
-                            'supports_pre_filtering': getattr(caps, 'supports_pre_filtering', False),
+                            'pre_filters': getattr(caps, 'pre_filters', []) if hasattr(caps, 'pre_filters') else (['bitrate', 'format'] if getattr(caps, 'supports_pre_filtering', False) else []),
                             'playlist_algorithms': getattr(caps, 'playlist_algorithms', None),
-                            'supports_fingerprinting': getattr(caps, 'supports_fingerprinting', False),
+                            'fingerprint_algorithms': getattr(caps, 'fingerprint_algorithms', []) if hasattr(caps, 'fingerprint_algorithms') else (['chromaprint'] if getattr(caps, 'supports_fingerprinting', False) else []),
                             'supports_metadata_fetch': getattr(caps, 'supports_metadata_fetch', False)
                         })
                     self._update_db_version(provider_id, version, clean_ns, capabilities_json=caps_json)
@@ -901,9 +901,9 @@ class PluginLoader:
                                     'supports_library_scan': getattr(caps, 'supports_library_scan', False),
                                     'supports_streaming': getattr(caps, 'supports_streaming', False),
                                     'supports_downloads': getattr(caps, 'supports_downloads', False),
-                                    'supports_pre_filtering': getattr(caps, 'supports_pre_filtering', False),
+                                    'pre_filters': getattr(caps, 'pre_filters', []) if hasattr(caps, 'pre_filters') else (['bitrate', 'format'] if getattr(caps, 'supports_pre_filtering', False) else []),
                                     'playlist_algorithms': getattr(caps, 'playlist_algorithms', None),
-                                    'supports_fingerprinting': getattr(caps, 'supports_fingerprinting', False),
+                                    'fingerprint_algorithms': getattr(caps, 'fingerprint_algorithms', []) if hasattr(caps, 'fingerprint_algorithms') else (['chromaprint'] if getattr(caps, 'supports_fingerprinting', False) else []),
                                     'supports_metadata_fetch': getattr(caps, 'supports_metadata_fetch', False)
                                 })
                             self._update_db_version(provider_id, version, clean_ns, capabilities_json=caps_json)
@@ -1057,19 +1057,19 @@ class PluginRegistry:
     Central registry for all plugin classes. Allows registration, lookup, and listing.
     Supports both bundled (core) and community plugins with enable/disable functionality.
     """
-    _plugins: Dict[str, Type[PluginBase]] = {}
-    _plugin_sources: Dict[str, str] = {}  # metadata: plugin_name -> source_type
+    _plugins: Dict[int, Type[PluginBase]] = {}
+    _plugin_sources: Dict[int, str] = {}  # metadata: plugin_id -> source_type
     _disabled_plugins: set = set()
-    _quality_options: Dict[str, List[Dict[str, Any]]] = {}
+    _quality_options: Dict[int, List[Dict[str, Any]]] = {}
 
     @classmethod
-    def get_all(cls) -> Dict[str, Dict[str, Any]]:
+    def get_all(cls) -> Dict[int, Dict[str, Any]]:
         """Return all registered plugins and their metadata."""
         all_plugins = {}
-        for name, plugin_cls in cls._plugins.items():
-            all_plugins[name] = {
+        for p_id, plugin_cls in cls._plugins.items():
+            all_plugins[p_id] = {
                 'class': plugin_cls,
-                'source_type': cls._plugin_sources.get(name, 'core')
+                'source_type': cls._plugin_sources.get(p_id, 'core')
             }
         return all_plugins
 
@@ -1079,8 +1079,8 @@ class PluginRegistry:
         Return a list of instantiated plugins that support the given capability.
         """
         plugins = []
-        for name, plugin_cls in cls._plugins.items():
-            if exclude_disabled and name.lower() in cls._disabled_plugins:
+        for p_id, plugin_cls in cls._plugins.items():
+            if exclude_disabled and p_id in cls._disabled_plugins:
                 continue
 
             # Check if class has capabilities attribute and if it contains the capability
@@ -1101,7 +1101,7 @@ class PluginRegistry:
 
             if contains:
                 try:
-                    plugins.append(cls.create_instance(name))
+                    plugins.append(cls.create_instance(p_id))
                 except Exception as e:
                     logger.error("An error occurred during framework execution.")
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
@@ -1109,9 +1109,9 @@ class PluginRegistry:
         return plugins
 
     @classmethod
-    def get_plugins_by_type(cls, plugin_type: str, exclude_disabled: bool = True) -> List[str]:
+    def get_plugins_by_type(cls, plugin_type: str, exclude_disabled: bool = True) -> List[int]:
         """
-        Return a list of plugin names matching the given type.
+        Return a list of plugin IDs matching the given type.
         plugin_type: 'downloader', 'mediaserver', 'syncservice'
         """
         type_map = {
@@ -1123,13 +1123,13 @@ class PluginRegistry:
         if not base_type:
             raise ValueError(f"Unknown plugin type: {plugin_type}")
 
-        plugins = [name for name, cls_ in cls._plugins.items() if issubclass(cls_, base_type)]
+        plugins = [p_id for p_id, cls_ in cls._plugins.items() if issubclass(cls_, base_type)]
         if exclude_disabled:
-            plugins = [name for name in plugins if name.lower() not in cls._disabled_plugins]
+            plugins = [p_id for p_id in plugins if p_id not in cls._disabled_plugins]
         return plugins
 
     @classmethod
-    def get_active_services_by_type(cls, service_type: str) -> List[str]:
+    def get_active_services_by_type(cls, service_type: str) -> List[int]:
         """
         Return a list of active (enabled and configured) plugin IDs for a given service role.
         Normalized service_type aliases: 'media_server', 'download', 'sync', 'metadata'
@@ -1149,28 +1149,32 @@ class PluginRegistry:
             from core.enums import Capability
             active = []
             for p in cls.get_plugins_with_capability(Capability.FETCH_METADATA):
-                reg_name = getattr(p, '_registered_name', p.name)
-                if reg_name.lower() not in cls._disabled_plugins and p.name.lower() not in cls._disabled_plugins:
+                # reg_name is now plugin_id string
+                reg_name = getattr(p, '_registered_name', str(p.plugin_id_int) if hasattr(p, 'plugin_id_int') else None)
+                if not reg_name: continue
+                p_id = int(reg_name)
+                
+                if p_id not in cls._disabled_plugins:
                     # Verify configuration if possible
                     if hasattr(p, 'is_configured'):
                         if p.is_configured():
-                            active.append(reg_name)
+                            active.append(p_id)
                     else:
-                        active.append(reg_name)
+                        active.append(p_id)
             return active
 
         # Standard plugin-type lookup
         try:
-            potential_names = cls.get_plugins_by_type(mapped_type, exclude_disabled=True)
+            potential_ids = cls.get_plugins_by_type(mapped_type, exclude_disabled=True)
             active = []
-            for name in potential_names:
+            for p_id in potential_ids:
                 try:
-                    instance = cls.create_instance(name)
+                    instance = cls.create_instance(p_id)
                     if hasattr(instance, 'is_configured'):
                         if instance.is_configured():
-                            active.append(name)
+                            active.append(p_id)
                     else:
-                        active.append(name)
+                        active.append(p_id)
                 except Exception as e:
                     logger.error("An error occurred during framework execution.")
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
@@ -1187,11 +1191,11 @@ class PluginRegistry:
         """
         Instantiate all plugins of a given type (excluding disabled ones).
         """
-        names = cls.get_plugins_by_type(plugin_type, exclude_disabled=True)
+        p_ids = cls.get_plugins_by_type(plugin_type, exclude_disabled=True)
         instances = []
-        for name in names:
+        for p_id in p_ids:
             try:
-                instances.append(cls.create_instance(name, *args, **kwargs))
+                instances.append(cls.create_instance(p_id, *args, **kwargs))
             except Exception as e:
                 logger.error("An error occurred during framework execution.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
@@ -1214,130 +1218,133 @@ class PluginRegistry:
         if not name:
             raise ValueError("Plugin class must have a 'name' attribute or explicit name provided")
 
-        cls._plugins[name.lower()] = plugin_cls
-        cls._plugin_sources[name.lower()] = source_type
+        plugin_id = generate_plugin_id(name.lower())
+        cls._plugins[plugin_id] = plugin_cls
+        cls._plugin_sources[plugin_id] = source_type
         logger.debug(f"Registered plugin '{name}' (source: {source_type})")
 
     @classmethod
-    def get_plugin_class(cls, name: str) -> Optional[Type[PluginBase]]:
-        key = name.lower()
-        if key in cls._plugins:
-            return cls._plugins[key]
-
-        # Normalization fallback for prefixes (e.g. EchoSync.local_metadata vs core.local_metadata)
-        def normalize(n: str) -> str:
-            return n.lower().replace('plugin.', '').replace('echosync.', '').replace('core.', '').strip()
-
-        norm_key = normalize(name)
-        for reg_name, p_cls in cls._plugins.items():
-            if normalize(reg_name) == norm_key:
-                return p_cls
-        return None
+    def get_plugin_class(cls, plugin_id: int) -> Optional[Type[PluginBase]]:
+        if isinstance(plugin_id, str):
+            if plugin_id.isdigit():
+                plugin_id = int(plugin_id)
+            else:
+                plugin_id = generate_plugin_id(plugin_id.lower())
+        return cls._plugins.get(plugin_id)
 
     @classmethod
     def list_plugins(cls):
         return list(cls._plugins.keys())
 
     @classmethod
-    def get_plugin_source(cls, name: str) -> Optional[str]:
-        return cls._plugin_sources.get(name.lower())
+    def get_plugin_source(cls, plugin_id: int) -> Optional[str]:
+        if isinstance(plugin_id, str):
+            if plugin_id.isdigit():
+                plugin_id = int(plugin_id)
+            else:
+                plugin_id = generate_plugin_id(plugin_id.lower())
+        return cls._plugin_sources.get(plugin_id)
 
     @classmethod
-    def create_instance(cls, name, *args, **kwargs) -> PluginBase:
-        # Phase 2: Translation Bridge
-        # If the incoming identifier is an integer (plugin_id), resolve it to its name
-        original_name = name
-        try:
-            # Check if name is an int or a string representation of an int
-            if isinstance(name, int) or (isinstance(name, str) and name.isdigit()):
-                plugin_id = int(name)
-                from database.config_database import get_config_database
-                db = get_config_database()
-                resolved_name = db.get_service_name(plugin_id)
-                if not resolved_name:
-                    raise ValueError(f"Plugin with plugin_id '{plugin_id}' not found in database")
-                name = resolved_name
-        except Exception as e:
-            if isinstance(e, ValueError) and "not found in database" in str(e):
-                raise
-            import logging
-            logging.getLogger("plugin_loader").warning("Database query failed: Unable to fetch plugin registry state.")
-            logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
-            logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
+    def create_instance(cls, plugin_id: int, *args, **kwargs) -> PluginBase:
+        # Phase 2: Integer strictness (allow string temporarily during migration)
+        if isinstance(plugin_id, str):
+            if plugin_id.isdigit():
+                plugin_id = int(plugin_id)
+            else:
+                plugin_id = generate_plugin_id(plugin_id.lower())
 
         # Double check against config manager to ensure latest state
         from core.settings import config_manager
 
-        # Check global disabled list
+        # Check global disabled list (which might still store string names)
         disabled = config_manager.get_disabled_plugins()
         if disabled is None:
             disabled = []
 
-        def normalize(n: str) -> str:
-            return n.lower().replace('plugin.', '').replace('echosync.', '').replace('core.', '').strip()
+        disabled_ids = [generate_plugin_id(d.lower()) for d in disabled]
+        if plugin_id in disabled_ids:
+             raise ValueError(f"Plugin ID '{plugin_id}' is disabled via config")
 
-        norm_name = normalize(name)
-        disabled_lower = [d.lower() for d in disabled]
-        norm_disabled = [normalize(d) for d in disabled]
-        if name.lower() in disabled_lower or norm_name in norm_disabled:
-             raise ValueError(f"Plugin '{name}' is disabled via config")
+        if plugin_id in cls._disabled_plugins:
+            raise ValueError(f"Plugin ID '{plugin_id}' is disabled")
 
-        norm_disabled_plugins = [normalize(d) for d in cls._disabled_plugins]
-        if name.lower() in cls._disabled_plugins or norm_name in norm_disabled_plugins:
-            raise ValueError(f"Plugin '{name}' is disabled")
-
-        plugin_cls = cls.get_plugin_class(name)
+        plugin_cls = cls.get_plugin_class(plugin_id)
         if not plugin_cls:
-            raise ValueError(f"Plugin '{name}' not registered")
+            raise ValueError(f"Plugin ID '{plugin_id}' not registered")
 
         instance = plugin_cls(*args, **kwargs)
         
-        # Store the canonical registered name on the instance for backend services to refer back to
-        for reg_name, p_cls in cls._plugins.items():
-            if p_cls == plugin_cls:
-                instance._registered_name = reg_name
-                break
-        else:
-            instance._registered_name = name
+        # Store the canonical registered ID on the instance for backend services
+        instance._registered_name = str(plugin_id)
+        instance.plugin_id_int = plugin_id
             
         return instance
 
     @classmethod
-    def get_plugin(cls, name: str) -> Optional[PluginBase]:
+    def get_plugin(cls, plugin_id: int) -> Optional[PluginBase]:
         try:
-            return cls.create_instance(name)
+            return cls.create_instance(plugin_id)
         except Exception:
             return None
 
     @classmethod
-    def get_download_clients(cls) -> List[str]:
+    def get_download_clients(cls) -> List[int]:
         """
-        Return a list of plugin names that support downloads (excluding disabled ones).
+        Return a list of plugin IDs that support downloads (excluding disabled ones).
         """
-        clients = [name for name, cls_ in cls._plugins.items() if getattr(cls_, 'supports_downloads', False)]
-        return [name for name in clients if name.lower() not in cls._disabled_plugins]
+        clients = [p_id for p_id, cls_ in cls._plugins.items() if getattr(cls_, 'supports_downloads', False)]
+        return [p_id for p_id in clients if p_id not in cls._disabled_plugins]
 
     @classmethod
-    def disable_plugin(cls, name: str) -> bool:
-        if name.lower() in cls._plugins:
-            cls._disabled_plugins.add(name.lower())
-            logger.info(f"Plugin '{name}' disabled. Restart required to unload.")
+    def disable_plugin(cls, plugin_id: int) -> bool:
+        if isinstance(plugin_id, str):
+            if plugin_id.isdigit():
+                plugin_id = int(plugin_id)
+            else:
+                plugin_id = generate_plugin_id(plugin_id.lower())
+        
+        if plugin_id in cls._plugins:
+            cls._disabled_plugins.add(plugin_id)
+            logger.info(f"Plugin ID '{plugin_id}' disabled. Restart required to unload.")
             return True
         return False
 
     @classmethod
-    def enable_plugin(cls, name: str) -> bool:
-        if name.lower() in cls._plugins:
-            cls._disabled_plugins.discard(name.lower())
-            logger.info(f"Plugin '{name}' enabled. Restart required to load.")
+    def enable_plugin(cls, plugin_id: int) -> bool:
+        if isinstance(plugin_id, str):
+            if plugin_id.isdigit():
+                plugin_id = int(plugin_id)
+            else:
+                plugin_id = generate_plugin_id(plugin_id.lower())
+                
+        if plugin_id in cls._disabled_plugins:
+            cls._disabled_plugins.remove(plugin_id)
+            logger.info(f"Plugin ID '{plugin_id}' enabled. Refresh the page to load it.")
             return True
         return False
 
     @classmethod
-    def is_plugin_disabled(cls, name: str) -> bool:
-        if getattr(cls, '_disabled_plugins', None) is None:
-            cls._disabled_plugins = set()
-        return name.lower() in cls._disabled_plugins
+    def is_plugin_disabled(cls, plugin_id: int) -> bool:
+        if isinstance(plugin_id, str):
+            if plugin_id.isdigit():
+                plugin_id = int(plugin_id)
+            else:
+                plugin_id = generate_plugin_id(plugin_id.lower())
+                
+        # Check in memory runtime disabled
+        if plugin_id in cls._disabled_plugins:
+            return True
+            
+        # Also check persistent config
+        from core.settings import config_manager
+        disabled = config_manager.get_disabled_plugins()
+        if disabled:
+            disabled_ids = [generate_plugin_id(d.lower()) for d in disabled]
+            if plugin_id in disabled_ids:
+                return True
+                
+        return False
 
     @classmethod
     def set_disabled_plugins(cls, disabled_list: List[str]) -> None:

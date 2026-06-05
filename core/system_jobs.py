@@ -680,8 +680,14 @@ def register_acoustid_submission_job(fingerprint: str, duration: int, mbid: str)
     """
     def submit_fingerprint():
         try:
-            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-            client = PluginRegistry.get_provider("acoustid")
+            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry, generate_plugin_id
+            acoustid_id = generate_plugin_id("echosync.acoustid")
+            
+            try:
+                client = PluginRegistry.create_instance(acoustid_id)
+            except Exception:
+                client = None
+                
             if client and hasattr(client, "submit_fingerprint"):
                 logger.info(f"Submitting AcoustID fingerprint for MBID: {mbid}")
                 client.submit_fingerprint(fingerprint, duration, mbid)

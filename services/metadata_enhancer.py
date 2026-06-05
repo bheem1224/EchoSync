@@ -129,9 +129,24 @@ def _match_from_album_cache(
 class RetroactiveEnhancer:
     """Background service for library-wide batch metadata enhancement."""
 
-    def _get_plugin(self, capability: Capability):
-        from core.nexus_framework.plugin_loader import get_plugin_by_capability
-        return get_plugin_by_capability(capability)
+    def _get_plugin(self, capability: Capability, required_algorithm: str = None):
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        
+        plugins = PluginRegistry.get_plugins_with_capability(capability)
+        for p in plugins:
+            if not required_algorithm:
+                return p
+            
+            # Check algorithm support if required
+            caps = getattr(p, 'capabilities', None)
+            if caps and capability == Capability.RESOLVE_FINGERPRINT:
+                algorithms = getattr(caps, 'fingerprint_algorithms', []) or []
+                if not algorithms and getattr(caps, 'supports_fingerprinting', False):
+                    algorithms = ['chromaprint']  # Default legacy
+                if required_algorithm in algorithms:
+                    return p
+                    
+        return None
 
     def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
         """
@@ -140,7 +155,7 @@ class RetroactiveEnhancer:
 
         On failure: Returns (None, 0.0) - file will be marked for manual review.
         """
-        fingerprint_provider = self._get_plugin(Capability.RESOLVE_FINGERPRINT)
+        fingerprint_provider = self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm='chromaprint')
         metadata_provider = self._get_plugin(Capability.FETCH_METADATA)
 
         metadata = None
@@ -469,9 +484,24 @@ def register_metadata_enhancer_service():
 class RetroactiveEnhancer:
     """Background service for library-wide batch metadata enhancement."""
 
-    def _get_plugin(self, capability: Capability):
-        from core.nexus_framework.plugin_loader import get_plugin_by_capability
-        return get_plugin_by_capability(capability)
+    def _get_plugin(self, capability: Capability, required_algorithm: str = None):
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        
+        plugins = PluginRegistry.get_plugins_with_capability(capability)
+        for p in plugins:
+            if not required_algorithm:
+                return p
+            
+            # Check algorithm support if required
+            caps = getattr(p, 'capabilities', None)
+            if caps and capability == Capability.RESOLVE_FINGERPRINT:
+                algorithms = getattr(caps, 'fingerprint_algorithms', []) or []
+                if not algorithms and getattr(caps, 'supports_fingerprinting', False):
+                    algorithms = ['chromaprint']  # Default legacy
+                if required_algorithm in algorithms:
+                    return p
+                    
+        return None
 
     def enhance_library_metadata(self, batch_size=50) -> None:
         """Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
@@ -493,7 +523,7 @@ class RetroactiveEnhancer:
 
         db = get_database()
 
-        fingerprint_provider = self._get_plugin(Capability.RESOLVE_FINGERPRINT)
+        fingerprint_provider = self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm='chromaprint')
         metadata_provider = self._get_plugin(Capability.FETCH_METADATA)
 
         total_processed = 0
