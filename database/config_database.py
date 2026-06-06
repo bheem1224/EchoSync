@@ -524,6 +524,11 @@ class ConfigDatabase:
     def set_service_config(self, service_id: int, key: str, value: Any, is_sensitive: bool = False) -> bool:
         try:
             from core.security import encrypt_string
+            import json
+            
+            if isinstance(value, (list, dict)):
+                value = json.dumps(value)
+                
             if is_sensitive and value is not None:
                 value = encrypt_string(str(value))
 
@@ -542,9 +547,10 @@ class ConfigDatabase:
             logger.error(f"Error setting service config: {e}")
             return False
 
-    def get_service_config(self, service_id: int, key: str) -> Optional[str]:
+    def get_service_config(self, service_id: int, key: str) -> Optional[Any]:
         try:
             import contextlib
+            import json
             with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT config_value, is_sensitive FROM service_config WHERE service_id=? AND config_key=?", (service_id, key))
@@ -557,15 +563,22 @@ class ConfigDatabase:
                 if is_sensitive and value is not None:
                     from core.security import decrypt_string
                     value = decrypt_string(value)
-
+                    
+                if isinstance(value, str) and (value.startswith('[') or value.startswith('{')):
+                    try:
+                        value = json.loads(value)
+                    except json.JSONDecodeError:
+                        pass
+                        
                 return value
         except Exception as e:
-            logger.error(f"Error reading service config: {e}")
+            logger.error(f"Error getting service config: {e}")
             return None
 
     def get_all_service_config(self, service_id: int) -> Dict[str, Any]:
         try:
             import contextlib
+            import json
             with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT config_key, config_value, is_sensitive FROM service_config WHERE service_id=?", (service_id,))
@@ -579,6 +592,13 @@ class ConfigDatabase:
                             value = decrypt_string(value)
                         except Exception:
                             pass
+                            
+                    if isinstance(value, str) and (value.startswith('[') or value.startswith('{')):
+                        try:
+                            value = json.loads(value)
+                        except json.JSONDecodeError:
+                            pass
+                            
                     config[key] = value
 
                 return config
