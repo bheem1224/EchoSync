@@ -12,10 +12,18 @@ bp = Blueprint("sync", __name__, url_prefix="/api/sync")
 def _serialize_provider(provider_name):
     """Serialize a provider with capabilities for sync planning."""
     try:
+        from core.nexus_framework.plugin_loader import PluginRegistry
         caps = get_plugin_capabilities(provider_name)
+        
+        display_name = str(caps.name).title()
+        if isinstance(provider_name, int):
+            plugin_class = PluginRegistry.get_plugin_class(provider_name)
+            if plugin_class:
+                display_name = plugin_class.name.split('.')[-1].title()
+                
         return {
             "name": provider_name,
-            "display_name": caps.name.title(),
+            "display_name": display_name,
             "playlist_support": caps.supports_playlists.name,
             "metadata_richness": caps.metadata.name,
             "supports_streaming": caps.supports_streaming,

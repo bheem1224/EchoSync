@@ -657,22 +657,21 @@ class PluginLoader:
 
         return clean
 
-    def _update_db_version(self, provider_id: str, version: str, clean_name: str, capabilities_json: str = '{}'):
+    def _update_db_version(self, plugin_id: int, version: str, capabilities_json: str = '{}'):
         try:
             from database.config_database import get_config_database
             db = get_config_database()
             conn = db._open_connection()
             try:
                 c = conn.cursor()
-                # Use a flexible match for clean_name/provider_id to catch mismatches in plugin. vs core. prefixes
                 c.execute("""
                     UPDATE services 
                     SET version=?, capabilities=? 
-                    WHERE LOWER(name)=LOWER(?) OR LOWER(name)=LOWER(?)
-                """, (version, capabilities_json, clean_name, provider_id))
+                    WHERE plugin_id=?
+                """, (version, capabilities_json, plugin_id))
                 updated = c.rowcount
                 conn.commit()
-                logger.info(f"Stamped version {version} for {provider_id}")
+                logger.info(f"Stamped version {version} and capabilities for plugin_id {plugin_id}")
             finally:
                 conn.close()
         except Exception as e:
@@ -783,7 +782,7 @@ class PluginLoader:
                     DisabledPlugin.category = category
                     
                     PluginRegistry.register(DisabledPlugin, name=provider_id, source_type='community')
-                    self._update_db_version(provider_id, version, clean_ns, capabilities_json='{}')
+                    self._update_db_version(plugin_id, version, capabilities_json='{}')
                     logger.info(f"Registered disabled plugin: {provider_id} (v{version})")
                     return True
 
@@ -807,7 +806,7 @@ class PluginLoader:
                         def __init__(self): pass
 
                     PluginRegistry.register(WasmClass, name=provider_id, source_type='community')
-                    self._update_db_version(provider_id, version, clean_ns, capabilities_json='{}')
+                    self._update_db_version(plugin_id, version, capabilities_json='{}')
                     return True
 
                 plugins_root = Path("/data/plugins")
@@ -880,7 +879,7 @@ class PluginLoader:
                             'fingerprint_algorithms': getattr(caps, 'fingerprint_algorithms', []) if hasattr(caps, 'fingerprint_algorithms') else (['chromaprint'] if getattr(caps, 'supports_fingerprinting', False) else []),
                             'supports_metadata_fetch': getattr(caps, 'supports_metadata_fetch', False)
                         })
-                    self._update_db_version(provider_id, version, clean_ns, capabilities_json=caps_json)
+                    self._update_db_version(plugin_id, version, capabilities_json=caps_json)
                 else:
                     found = False
                     for attr_name in dir(module):
@@ -906,7 +905,7 @@ class PluginLoader:
                                     'fingerprint_algorithms': getattr(caps, 'fingerprint_algorithms', []) if hasattr(caps, 'fingerprint_algorithms') else (['chromaprint'] if getattr(caps, 'supports_fingerprinting', False) else []),
                                     'supports_metadata_fetch': getattr(caps, 'supports_metadata_fetch', False)
                                 })
-                            self._update_db_version(provider_id, version, clean_ns, capabilities_json=caps_json)
+                            self._update_db_version(plugin_id, version, capabilities_json=caps_json)
                             found = True
                             break
                     if not found:
@@ -1416,7 +1415,7 @@ class ServiceRegistry:
                 return cls._services[active_override]
             return cls._services.get(service_name, cls._defaults.get(service_name))
 
-def get_plugin_capabilities(plugin_name: str):
+def get_plugin_capabilities(plugin_id_or_name: str | int):
     """
     Return capabilities for a plugin by looking up its registered capabilities in the database.
     """
@@ -1429,7 +1428,10 @@ def get_plugin_capabilities(plugin_name: str):
     try:
         with db._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT capabilities FROM services WHERE LOWER(name)=LOWER(?)", (plugin_name,))
+            if isinstance(plugin_id_or_name, int):
+                c.execute("SELECT capabilities FROM services WHERE plugin_id=?", (plugin_id_or_name,))
+            else:
+                c.execute("SELECT capabilities FROM services WHERE LOWER(name)=LOWER(?)", (plugin_id_or_name,))
             row = c.fetchone()
             if row and row['capabilities']:
                 caps_json = row['capabilities']
@@ -1453,7 +1455,7 @@ def get_plugin_capabilities(plugin_name: str):
     metadata_enum = getattr(MetadataRichness, caps_dict.get('metadata', 'MEDIUM'), MetadataRichness.MEDIUM)
 
     return ProviderCapabilities(
-        name=caps_dict.get('name', plugin_name),
+        name=caps_dict.get('name', plugin_id_or_name),
         supports_playlists=playlist_enum,
         search=search_obj,
         metadata=metadata_enum,

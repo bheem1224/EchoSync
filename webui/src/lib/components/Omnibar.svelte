@@ -127,7 +127,7 @@
       }
       else if (prefix === '#') {
         if (term.trim()) {
-            const res = await apiClient.get(`/library/search?q=${encodeURIComponent(term)}`);
+            const res = await apiClient.get(`/search?q=${encodeURIComponent(term)}`);
             results.library.tracks = res.data?.tracks || [];
             results.library.albums = res.data?.albums || [];
             results.library.artists = res.data?.artists || [];
@@ -140,7 +140,7 @@
       }
       else if (prefix === '@') {
         if (term.trim()) {
-            const res = await apiClient.get(`/library/search?q=${encodeURIComponent(term)}&types=artists`);
+            const res = await apiClient.get(`/search?q=${encodeURIComponent(term)}&types=artists`);
             results.library.artists = res.data?.artists || [];
             results.library.albums = [];
             results.library.tracks = [];
@@ -167,7 +167,7 @@
                     }];
                 }
             } else {
-                const res = await apiClient.get(`/library/search?q=${encodeURIComponent(value)}&field=${encodeURIComponent(key)}`);
+                const res = await apiClient.get(`/search?q=${encodeURIComponent(value)}&field=${encodeURIComponent(key)}`);
                 results.library.tracks = res.data?.tracks || [];
                 results.library.albums = res.data?.albums || [];
                 results.library.artists = res.data?.artists || [];
@@ -178,7 +178,7 @@
       }
       else {
         if (term.trim()) {
-            const res = await apiClient.get(`/library/search?q=${encodeURIComponent(term)}`);
+            const res = await apiClient.get(`/search?q=${encodeURIComponent(term)}`);
             results.library.tracks = res.data?.tracks || [];
             results.library.albums = res.data?.albums || [];
             results.library.artists = res.data?.artists || [];
