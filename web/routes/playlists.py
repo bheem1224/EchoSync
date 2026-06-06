@@ -75,7 +75,8 @@ def _get_provider_for_account(provider_id, acc_id=None):
         if provider_id.isdigit():
             provider_id = int(provider_id)
         else:
-            # Check for legacy names
+            provider_id = generate_plugin_id(provider_id.lower())
+            
     try:
         plugin_class = PluginRegistry.get_plugin_class(provider_id)
         if not plugin_class:
