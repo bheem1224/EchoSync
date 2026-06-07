@@ -122,18 +122,23 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             if not PluginRegistry.is_plugin_disabled(local_server_id):
                 try:
                     local_provider = PluginRegistry.create_instance(local_server_id)
-                    if local_provider and local_provider.ensure_connection():
-                        logger.info(f"Step 1: Running primary database update for local_server")
-                        worker = DatabaseUpdateWorker(
-                            media_client=local_provider,
-                            database_path=None,
-                            full_refresh=False,
-                            server_type="EchoSync.Local Server",
-                            force_sequential=True
-                        )
-                        worker.run()
-                        total_successful_operations += worker.successful_operations
-                        local_success = True
+                    if local_provider:
+                        can_connect = True
+                        if hasattr(local_provider, 'ensure_connection'):
+                            can_connect = local_provider.ensure_connection()
+                            
+                        if can_connect:
+                            logger.info(f"Step 1: Running primary database update for local_server")
+                            worker = DatabaseUpdateWorker(
+                                media_client=local_provider,
+                                database_path=None,
+                                full_refresh=False,
+                                server_type="EchoSync.Local Server",
+                                force_sequential=True
+                            )
+                            worker.run()
+                            total_successful_operations += worker.successful_operations
+                            local_success = True
                 except Exception as e:
                     logger.error(f"Failed to run primary local media server update: {e}", exc_info=True)
             
@@ -162,7 +167,11 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                 
                 # Ensure connection
                 try:
-                    if not provider.ensure_connection():
+                    can_connect = True
+                    if hasattr(provider, 'ensure_connection'):
+                        can_connect = provider.ensure_connection()
+                        
+                    if not can_connect:
                         logger.error(f"Could not connect to {active_server}")
                         continue
                 except Exception as e:
