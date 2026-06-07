@@ -146,7 +146,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             # Step 2: Run active media servers
             try:
                 active_servers = []
-                for p_id in PluginRegistry.get_active_services_by_type('pluginbase'):
+                for p_id in PluginRegistry.get_active_services_by_type('media_server'):
                     instance = PluginRegistry.create_instance(p_id)
                     if instance and hasattr(instance, 'capabilities') and instance.capabilities.supports_library_scan:
                         active_servers.append(p_id)
