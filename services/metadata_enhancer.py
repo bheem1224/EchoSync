@@ -790,12 +790,17 @@ class RetroactiveEnhancer:
                         track.artist.name = res['artist_name']
 
                     if res['new_chromaprint_generated']:
-                        track_fp = AudioFingerprint(
-                            track_id=track.id,
-                            chromaprint=res['chromaprint'],
-                            acoustid_id=res['acoustid_id'],
-                        )
-                        session.add(track_fp)
+                        # Avoid IntegrityError by checking if it exists
+                        existing_fp = session.query(AudioFingerprint).filter_by(chromaprint=res['chromaprint']).first()
+                        if not existing_fp:
+                            track_fp = AudioFingerprint(
+                                track_id=track.id,
+                                chromaprint=res['chromaprint'],
+                                acoustid_id=res['acoustid_id'],
+                            )
+                            session.add(track_fp)
+                        else:
+                            logger.debug(f"Skipping audio fingerprint insert for {track.id}: duplicate chromaprint.")
                     elif res['has_fp_record'] and res['acoustid_id']:
                         # Update existing FP record
                         track_fp = session.query(AudioFingerprint).filter_by(track_id=track.id).first()
