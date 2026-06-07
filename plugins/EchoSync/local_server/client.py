@@ -48,92 +48,68 @@ class LocalServerProvider(PluginBase):
 
         supported_exts = {'.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape', '.wav', '.dsd', '.dsf', '.dff'}
         file_handler = LocalFileHandler.get_instance()
+        
+        def process_file(path: Path) -> Optional[EchosyncTrack]:
+            try:
+                tags = file_handler.read_tags(path)
+                title = tags.get('title')
+                if not title:
+                    title = path.stem
 
-        for path in library_dir.rglob('*'):
-            if path.is_file() and path.suffix.lower() in supported_exts:
+                _VA_TERMS = {'various artists', 'various', 'va'}
+                _tag_artist   = (tags.get('artist')       or '').strip()
+                _album_artist = (tags.get('album_artist') or '').strip()
 
-                try:
-                    tags = file_handler.read_tags(path)
+                if _tag_artist and _tag_artist.lower() not in _VA_TERMS:
+                    artist = _tag_artist
+                elif _album_artist and _album_artist.lower() not in _VA_TERMS:
+                    artist = _album_artist
+                    logger.debug("Singer-First: '%s' — using album_artist '%s' (TPE1 was %r)", path.name, artist, _tag_artist or '<empty>')
+                elif _tag_artist:
+                    artist = _tag_artist
+                else:
+                    artist = "Unknown Artist"
 
-                    # Fallback to basic filename parsing if tags are missing or empty
-                    title = tags.get('title')
-                    if not title:
-                        title = path.stem
+                duration_ms = tags.get('duration_ms')
+                if duration_ms is None and tags.get('duration') is not None:
+                     try:
+                         duration_ms = int(float(tags.get('duration')) * 1000)
+                     except (ValueError, TypeError):
+                         pass
 
-                    # ── Singer-First prioritization rule ─────────────────────
-                    # tagging_io reads:
-                    #   tags['artist']       ← TPE1 / ARTIST   (individual track performer)
-                    #   tags['album_artist'] ← TPE2 / ALBUMARTIST (album-level, often 'Various Artists')
-                    #
-                    # Rule: prefer the individual track artist (TPE1).  Only
-                    # fall back to the album artist when TPE1 is completely
-                    # absent.  Critically, if TPE1 itself reads 'Various
-                    # Artists' (mis-tagged compilation), treat it as absent so
-                    # Track.artist_id is never linked to that placeholder when
-                    # a real per-track performer is stored elsewhere.
-                    _VA_TERMS = {'various artists', 'various', 'va'}
+                isrc = tags.get('isrc')
 
-                    _tag_artist   = (tags.get('artist')       or '').strip()
-                    _album_artist = (tags.get('album_artist') or '').strip()
+                return self.create_echo_sync_track(
+                    title=title,
+                    artist=artist,
+                    duration_ms=duration_ms,
+                    isrc=isrc,
+                    file_path=str(path),
+                    source=self.name,
+                    provider_id=str(path)
+                )
+            except Exception as e:
+                logger.debug(f"Failed to extract tags for {path}, falling back to filename: {e}")
+                return self.create_echo_sync_track(
+                    title=path.stem,
+                    artist="Unknown Artist",
+                    file_path=str(path),
+                    source=self.name,
+                    provider_id=str(path)
+                )
 
-                    if _tag_artist and _tag_artist.lower() not in _VA_TERMS:
-                        # TPE1 has a real performer — always use it.
-                        artist = _tag_artist
-                    elif _album_artist and _album_artist.lower() not in _VA_TERMS:
-                        # TPE1 is absent or is a VA placeholder, but TPE2
-                        # carries a specific band/artist name (uncommon but
-                        # valid for certain compilation formats).
-                        artist = _album_artist
-                        logger.debug(
-                            "Singer-First: '%s' — using album_artist '%s' "
-                            "(TPE1 was %r)",
-                            path.name, artist, _tag_artist or '<empty>',
-                        )
-                    elif _tag_artist:
-                        # TPE1 exists but is 'Various Artists'; keep it so the
-                        # metadata_enhancer's Step 0.5 can back-fill the real
-                        # artist from online sources or the file structure.
-                        artist = _tag_artist
-                    else:
-                        artist = "Unknown Artist"
-
-                    duration_ms = tags.get('duration_ms')
-                    # Local tags might return duration in seconds, check key 'duration' if 'duration_ms' is missing
-                    if duration_ms is None and tags.get('duration') is not None:
-                         # Attempt to convert to ms
-                         try:
-                             duration_ms = int(float(tags.get('duration')) * 1000)
-                         except (ValueError, TypeError):
-                             pass
-
-                    isrc = tags.get('isrc')
-
-                    track = self.create_echo_sync_track(
-                        title=title,
-                        artist=artist,
-                        duration_ms=duration_ms,
-                        isrc=isrc,
-                        file_path=str(path),
-                        source=self.name,
-                        provider_id=str(path) # Use path as the unique provider item ID
-                    )
-
-                    if track:
-                        yield track
-
-                except Exception as e:
-                    logger.debug(f"Failed to extract tags for {path}, falling back to filename: {e}")
-
-                    track = self.create_echo_sync_track(
-                        title=path.stem,
-                        artist="Unknown Artist",
-                        file_path=str(path),
-                        source=self.name,
-                        provider_id=str(path)
-                    )
-
-                    if track:
-                        yield track
+        import concurrent.futures
+        
+        # Collect all valid files first (rglob is generally fast)
+        files = [p for p in library_dir.rglob('*') if p.is_file() and p.suffix.lower() in supported_exts]
+        
+        # Process concurrently
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            future_to_path = {executor.submit(process_file, path): path for path in files}
+            for future in concurrent.futures.as_completed(future_to_path):
+                track = future.result()
+                if track:
+                    yield track
 
     def get_stream_url(self, track_id_or_path: str) -> str:
         """
