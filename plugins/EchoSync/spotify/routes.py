@@ -309,7 +309,13 @@ def oauth_callback():
 
         # Persist tokens and mark authenticated
         try:
-            sdk.accounts.save_token(account_id, access_token, refresh_token, expires_at)
+            sdk.accounts.save_token(
+                account_id=account_id, 
+                access_token=access_token, 
+                refresh_token=refresh_token, 
+                expires_at=expires_at, 
+                scope=scope
+            )
             sdk.accounts.mark_account_authenticated(account_id)
         except Exception as e:
             logger.error(f"Failed to persist tokens to settings database: {e}")

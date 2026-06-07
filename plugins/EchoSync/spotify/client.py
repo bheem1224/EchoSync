@@ -50,7 +50,7 @@ class ConfigCacheHandler(CacheHandler):
             access_token = token_data.get('access_token')
             refresh_token = token_data.get('refresh_token')
             expires_at = token_data.get('expires_at')
-            scope = token_data.get('scope', "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private")
+            scope = token_data.get('scope') or "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
             
             logger.debug(
                 f"Loaded token data for account {self.account_id}: access={bool(access_token)}, "
@@ -89,7 +89,7 @@ class ConfigCacheHandler(CacheHandler):
             access_token = token_info.get('access_token')
             refresh_token = token_info.get('refresh_token')
             expires_at = token_info.get('expires_at')
-            scope = token_info.get('scope', "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private")
+            scope = token_info.get('scope') or "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
             
             if not access_token:
                 logger.warning(f"No access_token in token_info for account {self.account_id}")
@@ -110,14 +110,11 @@ class ConfigCacheHandler(CacheHandler):
                 scope=scope
             )
             
-            if success:
-                logger.info(f"Successfully persisted Spotify tokens for account {self.account_id}")
-                try:
-                    plugin.accounts.mark_authenticated(self.account_id)
-                except Exception as e:
-                    logger.debug(f"Failed to mark account as authenticated: {e}")
-            else:
-                logger.error(f"Failed to save Spotify tokens for account {self.account_id}")
+            logger.info(f"Successfully persisted Spotify tokens for account {self.account_id}")
+            try:
+                plugin.accounts.mark_authenticated(self.account_id)
+            except Exception as e:
+                logger.debug(f"Failed to mark account as authenticated: {e}")
         except Exception as e:
             logger.error(f"Error saving Spotify token to cache for account {self.account_id}: {e}")
 
