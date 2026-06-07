@@ -165,7 +165,7 @@ def test_connection():
         token = ''
         if accounts:
             account_id = accounts[0].get('id')
-            token_data = storage.get_account_token(account_id)
+            token_data = sdk.accounts.get_token(account_id)
             if token_data and token_data.get('access_token'):
                 token = decrypt_string(token_data.get('access_token'))
         

@@ -1318,7 +1318,8 @@ def start_analyze_job():
             ANALYSIS_JOBS[job_id]['finished_at'] = time.time()
 
     # Register a one-off job and execute it immediately
-    from core.nexus_framework.plugin_SDK import PlaylistSupport, get_plugin_capabilities
+    from core.nexus_framework.plugin_SDK import PlaylistSupport
+    from core.nexus_framework.plugin_loader import get_plugin_capabilities
 
     source_caps = get_plugin_capabilities(source)
     if not source_caps:

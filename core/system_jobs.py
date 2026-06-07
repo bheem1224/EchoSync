@@ -107,85 +107,100 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
         enabled: Whether the job should be enabled by default.
     """
     def run_database_update():
-        """Execute a database update from the active media server"""
+        """Execute a database update, prioritizing Local Server first."""
         try:
             logger.info("Starting scheduled database update job")
+            from core.nexus_framework.plugin_loader import PluginRegistry
+            from core.database_update_worker import DatabaseUpdateWorker
             
-            # Get active media server
+            total_successful_operations = 0
+            
+            # Step 1: Run Local Server first if available
+            local_server_name = "EchoSync.local_server"
+            local_success = False
+            
+            if not PluginRegistry.is_plugin_disabled(local_server_name):
+                try:
+                    local_provider = PluginRegistry.create_instance(local_server_name)
+                    if local_provider and local_provider.ensure_connection():
+                        logger.info(f"Step 1: Running primary database update for {local_server_name}")
+                        worker = DatabaseUpdateWorker(
+                            media_client=local_provider,
+                            database_path=None,
+                            full_refresh=False,
+                            server_type=local_server_name,
+                            force_sequential=True
+                        )
+                        worker.run()
+                        total_successful_operations += worker.successful_operations
+                        local_success = True
+                except Exception as e:
+                    logger.error(f"Failed to run primary local media server update: {e}", exc_info=True)
+            
+            # Step 2: Run active media servers
             try:
-                from core.nexus_framework.plugin_loader import PluginRegistry
                 active_servers = PluginRegistry.get_active_services_by_type('media_server')
-                active_server = active_servers[0] if active_servers else None
             except Exception as e:
-                logger.error(f"Failed to get active media server: {e}")
-                return
-            
-            if not active_server:
-                logger.warning("No active media server configured, skipping database update")
-                return
-            
-            # Get provider instance
-            provider = None
-            try:
-                from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-                provider = PluginRegistry.create_instance(active_server)
-            except Exception as e:
-                logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
-                return
-            
-            if not provider:
-                logger.error(f"Media server '{active_server}' not available")
-                return
-            
-            # Ensure connection
-            try:
-                if not provider.ensure_connection():
-                    logger.error(f"Could not connect to {active_server}")
-                    return
-            except Exception as e:
-                logger.error(f"Connection failed for {active_server}: {e}")
-                return
-            
-            # Import DatabaseUpdateWorker
-            try:
-                from core.database_update_worker import DatabaseUpdateWorker
-            except ImportError as e:
-                logger.error(f"Failed to import DatabaseUpdateWorker: {e}")
-                return
-            
-            # Create and run worker — run() is a blocking synchronous call executed
-            # directly on the JobQueue worker thread; no additional thread needed.
-            try:
-                worker = DatabaseUpdateWorker(
-                    media_client=provider,
-                    database_path=None,  # Use default path
-                    full_refresh=False,  # Incremental by default for scheduled updates
-                    server_type=active_server,
-                    force_sequential=True
-                )
-
-                worker.run()
-
-                logger.info(
-                    f"Database update completed: {worker.processed_tracks} tracks, "
-                    f"{worker.successful_operations} successful, {worker.failed_operations} failed"
-                )
-
-                # After syncing the library, kick off a metadata enhancement pass so
-                # newly-imported tracks don't wait up to 24 h for the daily job.
-                if worker.successful_operations > 0:
-                    try:
-                        from services.metadata_enhancer import get_metadata_enhancer, RetroactiveEnhancer
-                        logger.info("Database update: triggering post-import metadata enhancement pass")
-                        RetroactiveEnhancer().enhance_library_metadata(batch_size=50)
-                    except Exception as _enhance_err:
-                        logger.warning(f"Post-import metadata enhancement failed: {_enhance_err}")
-
-            except Exception as e:
-                logger.error(f"Failed to run database update worker: {e}", exc_info=True)
+                logger.error(f"Failed to get active media servers: {e}")
+                active_servers = []
                 
+            for active_server in active_servers:
+                if active_server == local_server_name:
+                    continue
+                    
+                # Get provider instance
+                provider = None
+                try:
+                    provider = PluginRegistry.create_instance(active_server)
+                except Exception as e:
+                    logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
+                    continue
+                
+                if not provider:
+                    logger.error(f"Media server '{active_server}' not available")
+                    continue
+                
+                # Ensure connection
+                try:
+                    if not provider.ensure_connection():
+                        logger.error(f"Could not connect to {active_server}")
+                        continue
+                except Exception as e:
+                    logger.error(f"Connection failed for {active_server}: {e}")
+                    continue
+                
+                # If local_success is True, ONLY grab external identifiers from this provider
+                # (identifiers_only=True prevents them from creating tracks or overwriting metadata)
+                identifiers_only = local_success
+                
+                logger.info(f"Step 2: Running database update for {active_server} (identifiers_only={identifiers_only})")
+                try:
+                    worker = DatabaseUpdateWorker(
+                        media_client=provider,
+                        database_path=None,
+                        full_refresh=False,
+                        server_type=active_server,
+                        force_sequential=True,
+                        identifiers_only=identifiers_only
+                    )
+                    worker.run()
+                    if not identifiers_only:
+                        total_successful_operations += worker.successful_operations
+                except Exception as e:
+                    logger.error(f"Database update worker failed for {active_server}: {e}", exc_info=True)
+
+            # After syncing the library, kick off a metadata enhancement pass so
+            # newly-imported tracks don't wait up to 24 h for the daily job.
+            if total_successful_operations > 0:
+                try:
+                    from services.metadata_enhancer import get_metadata_enhancer, RetroactiveEnhancer
+                    logger.info("Database update: triggering post-import metadata enhancement pass")
+                    RetroactiveEnhancer().enhance_library_metadata(batch_size=50)
+                except Exception as _enhance_err:
+                    logger.warning(f"Post-import metadata enhancement failed: {_enhance_err}")
+
         except Exception as e:
-            logger.error(f"Database update job error: {e}", exc_info=True)
+            logger.error(f"Error in scheduled database update job: {e}", exc_info=True)
     
     # Register with job_queue
     job_queue.register_job(

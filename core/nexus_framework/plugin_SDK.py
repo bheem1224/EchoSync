@@ -42,6 +42,32 @@ class _SecretsFacade:
         svc_id = db.get_or_create_service_id(self.plugin_id)
         db.set_service_config(svc_id, key, value, is_sensitive=True)
 
+class _JobsSDKFacade:
+    def __init__(self, plugin_id: str):
+        _verify_caller(plugin_id)
+        self.plugin_id = plugin_id
+
+    def register_job(self, name: str, func, interval_seconds=None, start_after=0.0, enabled=True, max_retries=0, backoff_base=5.0, backoff_factor=2.0, tags=None):
+        from core.job_queue import job_queue
+        prefixed_name = f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
+        job_queue.register_job(
+            name=prefixed_name,
+            func=func,
+            interval_seconds=interval_seconds,
+            start_after=start_after,
+            enabled=enabled,
+            max_retries=max_retries,
+            backoff_base=backoff_base,
+            backoff_factor=backoff_factor,
+            tags=tags,
+            plugin=self.plugin_id
+        )
+
+    def dispatch_job(self, name: str) -> bool:
+        from core.job_queue import job_queue
+        prefixed_name = f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
+        return job_queue.execute_job_now(prefixed_name)
+
 class _AccountsSDKFacade:
     def get_token(self, account_id: int):
         from database.config_database import get_config_database
@@ -449,6 +475,10 @@ class _SDK:
     def dry_run(self) -> bool:
         from core.settings import config_manager
         return config_manager.get('system.dry_run', False)
+
+    @property
+    def jobs(self):
+        return _JobsSDKFacade(self._get_plugin_id())
 
     def schedule(self, interval_minutes: int):
         def decorator(func):

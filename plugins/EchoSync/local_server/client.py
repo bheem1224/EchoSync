@@ -27,7 +27,7 @@ class LocalServerProvider(PluginBase):
         supports_streaming=True,
     )
 
-    def get_library_tracks(self) -> Generator[EchosyncTrack, None, None]:
+    def get_all_tracks(self) -> Generator[EchosyncTrack, None, None]:
         """
         Yields EchosyncTrack objects by crawling the local library.
         Extracts duration, isrc, title, and artist via local tags.

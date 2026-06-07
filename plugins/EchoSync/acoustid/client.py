@@ -226,23 +226,21 @@ class AcoustIDProvider(PluginBase):
 
     def queue_fingerprint_submission(self, fingerprint: str, duration: int, mbid: str):
         """Queue a background job to submit an AcoustID fingerprint."""
-        from core.job_queue import job_queue
         import time
         
-        job_name = f"acoustid_submit_{mbid}_{int(time.time()*1000)}"
+        job_name = f"submit_{mbid}_{int(time.time()*1000)}"
         
         def submit_job():
             self.submit_fingerprint(fingerprint, duration, mbid)
             
-        job_queue.register_job(
+        self.sdk.jobs.register_job(
             name=job_name,
             func=submit_job,
             enabled=True,
             max_retries=3,
-            backoff_base=10.0,
-            plugin=self.name
+            backoff_base=10.0
         )
-        job_queue.dispatch_job(job_name)
+        self.sdk.jobs.dispatch_job(job_name)
 
     # Implement abstract methods
     def authenticate(self, **kwargs) -> bool:

@@ -266,8 +266,8 @@ class LibraryManager:
         return session.execute(stmt).scalars().first()
 
     def _upsert_track(
-        self, session: Session, track_data: EchosyncTrack, artist: Artist, album: Optional[Album]
-    ) -> tuple[Track, bool]:
+        self, session: Session, track_data: EchosyncTrack, artist: Artist, album: Optional[Album], identifiers_only: bool = False
+    ) -> tuple[Optional[Track], bool]:
         """
         Insert or update a single track.
         """
@@ -310,6 +310,9 @@ class LibraryManager:
                     track = None
 
         if track is None:
+            if identifiers_only:
+                return None, False
+
             track = Track(
                 title=track_data.title,
                 sort_title=track_data.sort_title,
@@ -334,8 +337,9 @@ class LibraryManager:
             logger.debug(f"Created new track: {track.title} by {artist.name}")
             is_new = True
         else:
-            old_title = track.title
-            track.title = track_data.title
+            if not identifiers_only:
+                old_title = track.title
+                track.title = track_data.title
             if album and track.album_id != album.id:
                 track.album = album
             if track.artist_id != artist.id:
@@ -463,7 +467,8 @@ class LibraryManager:
         self,
         tracks: Iterable[EchosyncTrack],
         progress_callback: Optional[Callable[[Dict[str, int]], None]] = None,
-        total_count: Optional[int] = None
+        total_count: Optional[int] = None,
+        identifiers_only: bool = False
     ) -> int:
         """
         Bulk import EchosyncTrack objects into database.
@@ -583,7 +588,11 @@ class LibraryManager:
                     if album and album.id:
                         seen_album_ids.add(album.id)
 
-                    track, is_new = self._upsert_track(session, track_data, artist, album)
+                    track, is_new = self._upsert_track(session, track_data, artist, album, identifiers_only=identifiers_only)
+                    
+                    if track is None:
+                        # Skip if identifiers_only=True and no matching track is found
+                        continue
 
                     for source, item_id in (track_data.identifiers or {}).items():
                         if not source or item_id is None:

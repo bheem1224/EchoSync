@@ -26,13 +26,15 @@ class DatabaseUpdateWorker:
         database_path: Optional[str] = None,
         full_refresh: bool = False,
         server_type: str = "generic",
-        force_sequential: bool = False
+        force_sequential: bool = False,
+        identifiers_only: bool = False
     ):
         self.media_client = media_client
         self.server_type = server_type
         self.database_path = database_path
         self.full_refresh = full_refresh
         self.force_sequential = force_sequential
+        self.identifiers_only = identifiers_only
         self.should_stop = False
 
         # Statistics tracking
@@ -78,7 +80,7 @@ class DatabaseUpdateWorker:
                 except Exception:
                     pass
 
-            imported_count = library_manager.bulk_import(all_tracks_generator, progress_callback=_on_progress)
+            imported_count = library_manager.bulk_import(all_tracks_generator, progress_callback=_on_progress, identifiers_only=self.identifiers_only)
             
             logger.info(f"Successfully imported {imported_count} tracks from {self.server_type}")
             logger.debug(
@@ -91,7 +93,7 @@ class DatabaseUpdateWorker:
 
             # --- Backfill missing provider identifiers ---
             try:
-                backfill_count = library_manager.backfill_provider_identifiers(self.server_type)
+                backfill_count = library_manager.backfill_plugin_identifiers(self.server_type)
                 if backfill_count:
                     logger.info(
                         "Backfill: linked %d missing '%s' identifier(s) to existing tracks.",
