@@ -116,19 +116,19 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             total_successful_operations = 0
             
             # Step 1: Run Local Server first if available
-            local_server_name = "EchoSync.local_server"
+            local_server_id = 4815811998 # Hash of "echosync.local server"
             local_success = False
             
-            if not PluginRegistry.is_plugin_disabled(local_server_name):
+            if not PluginRegistry.is_plugin_disabled(local_server_id):
                 try:
-                    local_provider = PluginRegistry.create_instance(local_server_name)
+                    local_provider = PluginRegistry.create_instance(local_server_id)
                     if local_provider and local_provider.ensure_connection():
-                        logger.info(f"Step 1: Running primary database update for {local_server_name}")
+                        logger.info(f"Step 1: Running primary database update for local_server")
                         worker = DatabaseUpdateWorker(
                             media_client=local_provider,
                             database_path=None,
                             full_refresh=False,
-                            server_type=local_server_name,
+                            server_type="EchoSync.Local Server",
                             force_sequential=True
                         )
                         worker.run()
@@ -145,7 +145,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                 active_servers = []
                 
             for active_server in active_servers:
-                if active_server == local_server_name:
+                if active_server == local_server_id:
                     continue
                     
                 # Get provider instance
