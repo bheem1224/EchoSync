@@ -72,7 +72,13 @@ class _AccountsSDKFacade:
         except Exception:
             pass
 
-        if caller_plugin_id.lower() == account_owner_plugin_id.lower() or privileged:
+        owner_lower = account_owner_plugin_id.lower()
+        caller_lower = caller_plugin_id.lower()
+        
+        if (caller_lower == owner_lower or 
+            caller_lower.endswith(f".{owner_lower}") or 
+            owner_lower.endswith(f".{caller_lower}") or 
+            privileged):
             return token
             
         # Redact lateral tokens

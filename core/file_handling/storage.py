@@ -180,7 +180,14 @@ class StorageService:
 
             # If the caller does not match the service name (unless it's a core module), redact
             if service_name and not caller_name.startswith("core."):
-                if not caller_name.startswith(f"plugins.{service_name}"):
+                caller_plugin_part = caller_name[8:] if caller_name.startswith("plugins.") else caller_name
+                owner_lower = service_name.lower()
+                caller_lower = caller_plugin_part.lower()
+                
+                # Check for match (e.g. "echosync.spotify" matches "spotify")
+                if not (caller_lower.startswith(owner_lower) or 
+                        caller_lower.endswith(f".{owner_lower}") or 
+                        owner_lower.endswith(f".{caller_lower}")):
                     token['access_token'] = 'REDACTED'
                     if 'refresh_token' in token and token['refresh_token']:
                         token['refresh_token'] = 'REDACTED'
