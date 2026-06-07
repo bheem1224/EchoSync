@@ -50,7 +50,9 @@ class ConfigCacheHandler(CacheHandler):
             access_token = token_data.get('access_token')
             refresh_token = token_data.get('refresh_token')
             expires_at = token_data.get('expires_at')
-            scope = token_data.get('scope') or "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
+            scope = token_data.get('scope')
+            if scope == "None" or not scope:
+                scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
             
             logger.debug(
                 f"Loaded token data for account {self.account_id}: access={bool(access_token)}, "
@@ -89,7 +91,9 @@ class ConfigCacheHandler(CacheHandler):
             access_token = token_info.get('access_token')
             refresh_token = token_info.get('refresh_token')
             expires_at = token_info.get('expires_at')
-            scope = token_info.get('scope') or "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
+            scope = token_info.get('scope')
+            if scope == "None" or not scope:
+                scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
             
             if not access_token:
                 logger.warning(f"No access_token in token_info for account {self.account_id}")
