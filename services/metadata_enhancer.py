@@ -612,7 +612,7 @@ class RetroactiveEnhancer:
             results_to_commit = []
 
 
-            # ── Chunked Concurrency for Text Fallback (Step 5) ──
+            # ── Chunked Processing with Absolute Trust Waterfall ──
             import asyncio
             from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
@@ -622,186 +622,146 @@ class RetroactiveEnhancer:
             for chunk_start in range(0, len(track_data_list), CHUNK_SIZE):
                 chunk = track_data_list[chunk_start:chunk_start + CHUNK_SIZE]
 
-                async def fetch_chunk(chunk_list):
-                    if not mb_client:
-                        return [[] for _ in chunk_list]
+                # Buckets
+                bucket_trust = []   # MBID found locally, all required tags present
+                bucket_target = []  # MBID found locally, missing some tags
+                bucket_heavy = []   # No MBID found locally
 
-                    tasks = []
-                    for t_data in chunk_list:
-                        # Only search if we haven't found MBID
-                        if not t_data.get('musicbrainz_id') or t_data['musicbrainz_id'] == "NOT_FOUND":
-                            if t_data.get('artist_name') and t_data.get('title'):
-                                tasks.append(mb_client.search_recording_strict(
-                                    artist=t_data['artist_name'],
-                                    title=t_data['title'],
-                                    immediate=False
-                                ))
-                            else:
-                                tasks.append(asyncio.sleep(0, result=[]))
-                        else:
-                            tasks.append(asyncio.sleep(0, result=[]))
-
-                    return await asyncio.gather(*tasks, return_exceptions=True)
-
-                mb_results_batch = asyncio.run(fetch_chunk(chunk)) if mb_client else [[] for _ in chunk]
-
-                for t_data, results in zip(chunk, mb_results_batch):
+                for t_data in chunk:
                     local_path_str = PathMapper.to_local(t_data['file_path'])
                     local_path = Path(local_path_str)
-
+                    
                     if not local_path.exists():
                         logger.warning("Enhancer skipping missing file: %s", local_path)
                         continue
 
-                    new_musicbrainz_id = t_data['musicbrainz_id'] if t_data['musicbrainz_id'] != "NOT_FOUND" else None
-                    found_new_data = False
-                    tag_mbid = None
-                    tag_isrc = None
-
-                    # Step 2: Read physical file tags locally
+                    # Step 1: Read Local Tags
                     try:
                         file_tags = _tagging_read(local_path)
-                        tag_mbid = file_tags.get("musicbrainz_id") or file_tags.get("recording_id")
-                        tag_isrc = file_tags.get("isrc")
-
-                        if not t_data['metadata_status'].get('artist_fixed_from_tags'):
-                            tag_artist = file_tags.get("artist")
-                            if tag_artist and t_data['artist_name'] and t_data['artist_name'].lower().startswith("various artist"):
-                                logger.info("Fixing VA per-track artist from tags: %s", local_path.name)
-                                t_data['artist_name'] = tag_artist
-                                t_data['metadata_status']['artist_fixed_from_tags'] = True
-                                found_new_data = True
-                                t_data['metadata_changed'] = True
-
                     except Exception as e:
                         logger.warning("Failed to read tags from %s: %s", local_path.name, e)
+                        file_tags = {}
+
+                    tag_mbid = file_tags.get("musicbrainz_id") or file_tags.get("recording_id")
+                    
+                    # Also fix VA artist from tags if needed
+                    if not t_data['metadata_status'].get('artist_fixed_from_tags'):
+                        tag_artist = file_tags.get("artist")
+                        if tag_artist and t_data['artist_name'] and t_data['artist_name'].lower().startswith("various artist"):
+                            t_data['artist_name'] = tag_artist
+                            t_data['metadata_status']['artist_fixed_from_tags'] = True
+                            t_data['metadata_changed'] = True
+
+                    # Determine missing fields
+                    missing_fields = []
+                    for key in required_keys:
+                        if not t_data['metadata_status'].get(key):
+                            missing_fields.append(key)
 
                     if tag_mbid:
-                        new_musicbrainz_id = tag_mbid
-                        if tag_isrc and not t_data['isrc']:
-                            t_data['isrc'] = tag_isrc
+                        t_data['musicbrainz_id'] = tag_mbid
+                        if not missing_fields:
+                            bucket_trust.append((t_data, local_path, file_tags))
+                        else:
+                            bucket_target.append((t_data, local_path, file_tags))
+                    else:
+                        bucket_heavy.append((t_data, local_path, file_tags))
 
-                    if tag_isrc and not t_data['isrc']:
-                        t_data['isrc'] = tag_isrc
+                # Step 2: Absolute Trust Gate
+                for t_data, local_path, file_tags in bucket_trust:
+                    logger.info("Absolute Trust Gate Passed: %s", local_path.name)
+                    t_data['metadata_status']['enhanced'] = True
+                    results_to_commit.append(t_data)
 
-                    # DIAGNOSTIC SHORT-CIRCUIT
-                    if _NETWORK_DISABLED:
-                        if new_musicbrainz_id:
-                            t_data['musicbrainz_id'] = new_musicbrainz_id
-                            found_new_data = True
-                            t_data['metadata_changed'] = True
-                        t_data['metadata_status']['enhanced'] = True
-                        for _diag_key in required_keys:
-                            if _diag_key not in t_data['metadata_status']:
-                                t_data['metadata_status'][_diag_key] = True
-
-                        t_data['metadata_changed'] = found_new_data
-                    if found_new_data:
-                        _tagging_write(local_path, {
-                            'musicbrainz_id': t_data['musicbrainz_id'],
-                            'recording_id':   t_data['musicbrainz_id'],
-                        })
-
-                        results_to_commit.append(t_data)
-                        total_processed += 1
-                        continue
-
-                    # Step 2.5 (ISRC Fast-Path)
-                    if not new_musicbrainz_id and t_data['isrc'] and metadata_provider and getattr(metadata_provider, 'supports_isrc_lookup', False):
-                        try:
-                            isrc_result = metadata_provider.search_by_isrc(t_data['isrc'])
-                            if isrc_result and isrc_result.musicbrainz_id:
-                                new_musicbrainz_id = isrc_result.musicbrainz_id
-                        except Exception as e:
-                            logger.warning("ISRC lookup failed for %s: %s", t_data['isrc'], e)
-
-                    duration = t_data['duration'] or _tagging_read(local_path).get("duration")
-
-                    # Step 3 (Stored Chromaprint Fast-Path)
-                    if not new_musicbrainz_id and t_data['has_fp_record'] and t_data['chromaprint'] and fingerprint_provider and duration:
-                        try:
-                            duration_secs = int(duration / 1000) if duration > 10000 else duration
-                            details = fingerprint_provider.resolve_fingerprint_details(t_data['chromaprint'], duration_secs)
-                            if details.get('mbids'):
-                                new_musicbrainz_id = details['mbids'][0]
-                            if details.get('acoustid_id') and not t_data['acoustid_id']:
-                                t_data['acoustid_id'] = details['acoustid_id']
-                        except Exception:
-                            pass
-
-                    # Step 4 (Generate Chromaprint)
-                    t_data['new_chromaprint_generated'] = False
-                    if not new_musicbrainz_id and not t_data['chromaprint'] and fingerprint_provider and duration:
-                        try:
-                            chromaprint = FingerprintGenerator.generate(str(local_path))
-                            if chromaprint:
-                                t_data['chromaprint'] = chromaprint
-                                t_data['new_chromaprint_generated'] = True
-                                duration_secs = int(duration / 1000) if duration > 10000 else duration
-                                details = fingerprint_provider.resolve_fingerprint_details(chromaprint, duration_secs)
-                                if details.get('mbids'):
-                                    new_musicbrainz_id = details['mbids'][0]
-                                if details.get('acoustid_id'):
-                                    t_data['acoustid_id'] = details['acoustid_id']
-                        except Exception:
-                            pass
-
-                    # Step 5 (Text Fallback from Chunked Batch)
-                    if not new_musicbrainz_id and t_data['artist_name'] and t_data['title']:
-                        if isinstance(results, Exception):
-                            logger.warning("Text fallback search failed: %s", results)
-                        elif results:
-                            file_track = EchosyncTrack(
-                                raw_title=t_data['title'],
-                                artist_name=t_data['artist_name'],
-                                album_title=t_data['album_title'],
-                                duration=duration
-                            )
-                            engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
-                            matcher = engine_cls(ExactSyncProfile())
-                            best_score = 0.0
-
-                            for candidate in results:
-                                if candidate:
-                                    match_result = matcher.calculate_match(file_track, candidate)
-                                    if match_result.confidence_score > best_score:
-                                        best_score = match_result.confidence_score
-                                        if best_score >= 85.0:
-                                            new_musicbrainz_id = candidate.musicbrainz_id
-                                            t_data['isrc'] = candidate.isrc
-
-                    if new_musicbrainz_id:
-                        t_data['musicbrainz_id'] = new_musicbrainz_id
-                        found_new_data = True
-                        t_data['metadata_changed'] = True
-                        t_data['metadata_status']['enhanced'] = True
-
-                        if metadata_provider:
+                # Step 3: Targeted Fetch
+                if bucket_target and mb_client:
+                    mbids_to_fetch = [t[0]['musicbrainz_id'] for t in bucket_target]
+                    logger.info("Targeted Fetch for %d tracks", len(bucket_target))
+                    batch_metadata = mb_client.get_metadata_batch(mbids_to_fetch) if getattr(mb_client.capabilities, 'supports_batching', False) else {}
+                    
+                    for t_data, local_path, file_tags in bucket_target:
+                        mbid = t_data['musicbrainz_id']
+                        # Fallback to 1-by-1 if batching not supported or failed
+                        meta = batch_metadata.get(mbid)
+                        if not meta and not batch_metadata:
                             try:
-                                meta = metadata_provider.get_metadata(new_musicbrainz_id)
-                                if meta and not t_data['isrc'] and meta.get('isrc'):
-                                    t_data['isrc'] = meta.get('isrc')
+                                meta = mb_client.get_metadata(mbid)
                             except Exception:
                                 pass
-                    else:
-                        attempts = t_data['metadata_status'].get('enhancement_attempts', 0) + 1
-                        t_data['metadata_status']['enhancement_attempts'] = attempts
-                        t_data['musicbrainz_id'] = "NOT_FOUND"
 
-                    t_data['metadata_changed'] = found_new_data
-                    if found_new_data:
-                        update_tags = {}
-                        if t_data['musicbrainz_id'] and t_data['musicbrainz_id'] != "NOT_FOUND":
-                            update_tags['musicbrainz_id'] = t_data['musicbrainz_id']
-                            update_tags['recording_id'] = t_data['musicbrainz_id']
-                        if t_data['isrc']:
-                            update_tags['isrc'] = t_data['isrc']
-
-                        if update_tags:
+                        if meta:
+                            if not t_data['isrc'] and meta.get('isrc'):
+                                t_data['isrc'] = meta.get('isrc')
+                            
+                            update_tags = {'musicbrainz_id': mbid, 'recording_id': mbid}
+                            if t_data['isrc']:
+                                update_tags['isrc'] = t_data['isrc']
                             try:
                                 _tagging_write(local_path, update_tags)
                             except Exception:
                                 pass
+                                
+                            t_data['metadata_status']['enhanced'] = True
+                            for key in required_keys:
+                                t_data['metadata_status'][key] = True
+                            t_data['metadata_changed'] = True
+                        else:
+                            t_data['metadata_status']['enhancement_attempts'] = t_data['metadata_status'].get('enhancement_attempts', 0) + 1
+                        results_to_commit.append(t_data)
+
+                # Step 4: Heavyweight Fingerprint Discovery
+                for t_data, local_path, file_tags in bucket_heavy:
+                    new_musicbrainz_id = None
+                    duration = t_data['duration'] or file_tags.get("duration")
+                    t_data['new_chromaprint_generated'] = False
+
+                    if fingerprint_provider and duration:
+                        if not t_data['chromaprint']:
+                            try:
+                                chromaprint = FingerprintGenerator.generate(str(local_path))
+                                if chromaprint:
+                                    t_data['chromaprint'] = chromaprint
+                                    t_data['new_chromaprint_generated'] = True
+                            except Exception:
+                                pass
+
+                        if t_data['chromaprint']:
+                            try:
+                                duration_secs = int(duration / 1000) if duration > 10000 else duration
+                                details = fingerprint_provider.resolve_fingerprint_details(t_data['chromaprint'], duration_secs)
+                                if details.get('mbids'):
+                                    new_musicbrainz_id = details['mbids'][0]
+                                if details.get('acoustid_id'):
+                                    t_data['acoustid_id'] = details['acoustid_id']
+                            except Exception:
+                                pass
+
+                    if new_musicbrainz_id:
+                        t_data['musicbrainz_id'] = new_musicbrainz_id
+                        logger.info("Heavyweight Fingerprint Success: %s -> %s", local_path.name, new_musicbrainz_id)
+                        if mb_client:
+                            try:
+                                meta = mb_client.get_metadata(new_musicbrainz_id)
+                                if meta and not t_data['isrc'] and meta.get('isrc'):
+                                    t_data['isrc'] = meta.get('isrc')
+                            except Exception:
+                                pass
+                                
+                        update_tags = {'musicbrainz_id': new_musicbrainz_id, 'recording_id': new_musicbrainz_id}
+                        if t_data['isrc']:
+                            update_tags['isrc'] = t_data['isrc']
+                        try:
+                            _tagging_write(local_path, update_tags)
+                        except Exception:
+                            pass
+                            
+                        t_data['metadata_status']['enhanced'] = True
+                        for key in required_keys:
+                            t_data['metadata_status'][key] = True
+                        t_data['metadata_changed'] = True
+                    else:
+                        t_data['musicbrainz_id'] = "NOT_FOUND"
+                        t_data['metadata_status']['enhancement_attempts'] = t_data['metadata_status'].get('enhancement_attempts', 0) + 1
 
                     results_to_commit.append(t_data)
 

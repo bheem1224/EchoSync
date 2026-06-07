@@ -910,6 +910,14 @@ class PluginBase(ABC):
         """Fetch a single track by ID. Must return EchosyncTrack object."""
         pass
 
+    def get_metadata(self, mbid: str) -> Optional[Dict[str, Any]]:
+        """Fetch full metadata for a recording/track."""
+        return None
+
+    def get_metadata_batch(self, mbids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch metadata for multiple recordings/tracks at once."""
+        return {}
+
     @abstractmethod
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a single album by ID."""
@@ -1212,6 +1220,7 @@ class ProviderCapabilities:
     supports_fingerprinting: bool = False  # Audio fingerprinting (AcoustID)
     fingerprint_algorithms: list = None
     supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
+    supports_batching: bool = False        # Batch requests support
 
     def to_enum_list(self) -> List['Capability']:
         """Adapter pattern to translate ProviderCapabilities dataclass back to legacy Enums."""

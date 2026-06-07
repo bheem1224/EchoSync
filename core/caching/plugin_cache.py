@@ -111,6 +111,15 @@ class PluginCache:
         Returns:
             True immediately without waiting for DB commit
         """
+        # --- NEW GUARD CLAUSE ---
+        # Abort cache write if the value explicitly represents an error or unconfigured state
+        if isinstance(value, dict):
+            error_msg = str(value.get("error", "")).lower()
+            if error_msg or "not configured" in error_msg:
+                logger.debug(f"Skipping cache write for error state: {value}")
+                return False
+        # ------------------------
+
         # OPTIMIZATION: Defer cache persistence to background to prevent blocking main thread
         def _persist_cache():
             try:

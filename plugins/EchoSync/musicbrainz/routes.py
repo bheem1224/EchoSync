@@ -22,6 +22,7 @@ from flask import Blueprint, jsonify, request
 
 from core.nexus_framework.plugin_SDK import sdk
 from core.tiered_logger import get_logger
+from database.config_database import config_db as storage
 
 logger = get_logger("musicbrainz_routes")
 
@@ -52,8 +53,6 @@ def save_config():
     """Persist MusicBrainz settings-card values (user token + auto-contribute flag)."""
     try:
         payload = request.get_json(force=True) or {}
-        
-        storage.ensure_service("musicbrainz", service_type="metadata")
 
         if "user_token" in payload and payload["user_token"].strip():
             from core.security import encrypt_string
@@ -90,13 +89,6 @@ def list_accounts():
         from core.nexus_framework.plugin_loader import PluginRegistry
         if PluginRegistry.is_plugin_disabled("musicbrainz"):
             return jsonify({"accounts": [], "redirect_uri": ""}), 200
-
-        
-        storage.ensure_service(
-            "musicbrainz",
-            service_type="metadata",
-            description="Open music encyclopedia providing comprehensive metadata",
-        )
 
         db_accounts = sdk.accounts.get_all()
         accounts = [
@@ -142,11 +134,7 @@ def create_account():
         if not account_name:
             return jsonify({"error": "account_name is required"}), 400
 
-        
-        storage.ensure_service("musicbrainz", service_type="metadata")
-
-        account_id = storage.ensure_account(
-            "musicbrainz",
+        account_id = sdk.accounts.ensure_account(
             account_name=account_name,
             display_name=account_name,
         )
@@ -389,12 +377,8 @@ def oauth_callback():
             profile = profile_resp.json()
             username = profile.get("sub") or profile.get("name") or ""
             if username:
-                storage.upsert_account(
-                    service_name="musicbrainz",
-                    account_id=account_id,
-                    display_name=username,
-                    user_id=username,
-                )
+                sdk.accounts.update_account_name(account_id, username)
+                storage.set_account_user_id(account_id, username)
     except Exception as e:
         logger.warning(f"Failed to fetch MusicBrainz user profile after auth: {e}")
 

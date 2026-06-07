@@ -49,6 +49,7 @@ class MusicBrainzClient(PluginBase):
         supports_streaming=False,
         supports_downloads=False,
         supports_metadata_fetch=True,
+        supports_batching=True,
     )
 
     def __init__(self):
@@ -638,6 +639,81 @@ class MusicBrainzClient(PluginBase):
         except Exception as exc:
             logger.error(f"Failed to fetch metadata for {mbid}: {exc}")
             return None
+
+    def get_metadata_batch(self, mbids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch full metadata for multiple recording MBIDs in batches up to 50."""
+        mbids = [str(m).strip() for m in mbids if str(m).strip()]
+        if not mbids:
+            return {}
+            
+        results = {}
+        # Max limit for search API is 100, we'll chunk by 50 to be safe
+        chunk_size = 50
+        for i in range(0, len(mbids), chunk_size):
+            chunk = mbids[i:i+chunk_size]
+            query_parts = [f"reid:{mbid}" for mbid in chunk]
+            full_query = " OR ".join(query_parts)
+            
+            try:
+                response = self.http.get(
+                    f"{self.api_base}/recording",
+                    params={
+                        "fmt": "json",
+                        "query": full_query,
+                        "inc": "artists+releases+isrcs+media",
+                        "limit": len(chunk)
+                    }
+                )
+                if response.status_code != 200:
+                    logger.warning(f"Batch metadata fetch failed: {response.status_code}")
+                    continue
+                    
+                data = response.json() or {}
+                for recording in data.get("recordings", []) or []:
+                    rec_id = str(recording.get("id") or "").strip()
+                    if not rec_id or rec_id not in chunk:
+                        continue
+                        
+                    result = {
+                        "title": recording.get("title"),
+                        "recording_id": rec_id,
+                        "artist": "",
+                        "artist_id": "",
+                        "album": "",
+                        "release_id": "",
+                        "date": "",
+                        "track_number": None,
+                        "disc_number": None,
+                        "cover_art_url": None,
+                        "isrc": None,
+                    }
+
+                    credits = recording.get("artist-credit") or []
+                    if credits:
+                        name_parts = []
+                        for credit in credits:
+                            if isinstance(credit, dict):
+                                name_parts.append(str(credit.get("name") or ""))
+                                name_parts.append(str(credit.get("joinphrase") or ""))
+                        result["artist"] = "".join(name_parts).strip()
+                        if isinstance(credits[0], dict) and isinstance(credits[0].get("artist"), dict):
+                            result["artist_id"] = credits[0]["artist"].get("id") or ""
+
+                    releases = recording.get("releases") or []
+                    if releases:
+                        release = releases[0] or {}
+                        result["album"] = release.get("title") or ""
+                        result["release_id"] = release.get("id") or ""
+                        result["date"] = release.get("date") or ""
+                    isrcs = recording.get("isrcs") or []
+                    if isrcs:
+                        result["isrc"] = isrcs[0]
+
+                    results[rec_id] = result
+            except Exception as exc:
+                logger.error(f"Failed to fetch batch metadata: {exc}")
+                
+        return results
 
     @plugin_cache(ttl_seconds=2592000)
     def get_release(self, release_id: str) -> Optional[Dict[str, Any]]:
