@@ -799,7 +799,7 @@ class DownloadManager:
 
             # Extract download parameters
             username = best_candidate.identifiers.get('username')
-            filename = best_candidate.identifiers.get('plugin_item_id')
+            filename = best_candidate.identifiers.get('provider_item_id') or best_candidate.identifiers.get('plugin_item_id')
             size = best_candidate.identifiers.get('size')
             
             if not username:

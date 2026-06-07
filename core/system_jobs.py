@@ -116,7 +116,8 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             total_successful_operations = 0
             
             # Step 1: Run Local Server first if available
-            local_server_id = 1133147422 # Correct integer ID from DB
+            from core.nexus_framework.plugin_loader import generate_plugin_id
+            local_server_id = generate_plugin_id('EchoSync.local_server')
             local_success = False
             
             if not PluginRegistry.is_plugin_disabled(local_server_id):
@@ -124,8 +125,8 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                     local_provider = PluginRegistry.create_instance(local_server_id)
                     if local_provider:
                         can_connect = True
-                        if hasattr(local_provider, 'ensure_connection'):
-                            can_connect = local_provider.ensure_connection()
+                        if hasattr(local_provider, 'authenticate'):
+                            can_connect = local_provider.authenticate()
                             
                         if can_connect:
                             logger.info(f"Step 1: Running primary database update for local_server")
@@ -133,7 +134,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                                 media_client=local_provider,
                                 database_path=None,
                                 full_refresh=False,
-                                server_type="EchoSync.Local Server",
+                                server_type="EchoSync.local_server",
                                 force_sequential=True
                             )
                             worker.run()
@@ -172,8 +173,8 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                 # Ensure connection
                 try:
                     can_connect = True
-                    if hasattr(provider, 'ensure_connection'):
-                        can_connect = provider.ensure_connection()
+                    if hasattr(provider, 'authenticate'):
+                        can_connect = provider.authenticate()
                         
                     if not can_connect:
                         logger.error(f"Could not connect to {active_server}")
@@ -201,16 +202,6 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                         total_successful_operations += worker.successful_operations
                 except Exception as e:
                     logger.error(f"Database update worker failed for {active_server}: {e}", exc_info=True)
-
-            # After syncing the library, kick off a metadata enhancement pass so
-            # newly-imported tracks don't wait up to 24 h for the daily job.
-            if total_successful_operations > 0:
-                try:
-                    from services.metadata_enhancer import get_metadata_enhancer, RetroactiveEnhancer
-                    logger.info("Database update: triggering post-import metadata enhancement pass")
-                    RetroactiveEnhancer().enhance_library_metadata(batch_size=50)
-                except Exception as _enhance_err:
-                    logger.warning(f"Post-import metadata enhancement failed: {_enhance_err}")
 
         except Exception as e:
             logger.error(f"Error in scheduled database update job: {e}", exc_info=True)

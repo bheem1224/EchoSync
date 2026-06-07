@@ -283,28 +283,29 @@ def _map_simple_tags(tags: Any) -> Dict[str, Any]:
         return {}
     lowered = {str(k).lower(): v for k, v in tags.items()}
     result: Dict[str, Any] = {
-        "title":        _first(lowered, "title",       "inam"),
+        "title":        _first(lowered, "title",       "inam", "\xa9nam"),
         # Track artist (ARTIST vorbis / TPE1 in ID3 via easy) — the specific performer
-        "artist":       _first(lowered, "artist",      "iart"),
+        "artist":       _first(lowered, "artist",      "iart", "\xa9art"),
         # Album artist (ALBUMARTIST vorbis / TPE2 in ID3 via easy) — often 'Various Artists'
-        "album_artist": _first(lowered, "albumartist", "album artist"),
-        "album":        _first(lowered, "album",       "iprd"),
-        "date":         _first(lowered, "date",        "year",  "icrd"),
-        "track_number": _first(lowered, "tracknumber", "track_number", "trck", "itrk"),
-        "disc_number":  _first(lowered, "discnumber",  "disc_number",  "tpos"),
+        "album_artist": _first(lowered, "albumartist", "album artist", "aART"),
+        "album":        _first(lowered, "album",       "iprd", "\xa9alb"),
+        "date":         _first(lowered, "date",        "year",  "icrd", "\xa9day"),
+        "track_number": _first(lowered, "tracknumber", "track_number", "trck", "itrk", "trkn"),
+        "disc_number":  _first(lowered, "discnumber",  "disc_number",  "tpos", "disk"),
         "isrc":         _first(lowered, "isrc",        "tsrc"),
-        "comments":     _first(lowered, "comment",     "comments",     "comm", "icmt"),
+        "comments":     _first(lowered, "comment",     "comments",     "comm", "icmt", "\xa9cmt"),
         "acoustid_id":  _first(lowered, "acoustid id", "acoustid_id"),
     }
     recording_id = _first(
         lowered,
         "musicbrainz_trackid", "musicbrainz track id",
         "recording_id",        "musicbrainz_id",
+        "----:com.apple.itunes:musicbrainz track id"
     )
     result["recording_id"]  = recording_id
     result["musicbrainz_id"] = recording_id
     result["artist_id"]  = _first(lowered, "musicbrainz_artistid",  "musicbrainz artist id", "artist_id")
-    result["release_id"] = _first(lowered, "musicbrainz_albumid",   "musicbrainz release id", "release_id")
+    result["release_id"] = _first(lowered, "musicbrainz_albumid",   "musicbrainz release id", "release_id", "----:com.apple.itunes:musicbrainz album id")
     return {k: v for k, v in result.items() if v not in (None, "", [], {})}
 
 

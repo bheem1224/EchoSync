@@ -16,6 +16,13 @@ class TrackSchema:
     source_plugin: Optional[str] = None
     metadata_richness: Optional[str] = None
     metadata_completeness: Optional[str] = None
+    bitrate: Optional[int] = None
+    sample_rate: Optional[int] = None
+    file_size_bytes: Optional[int] = None
+    added_at: Optional[str] = None
+    file_format: Optional[str] = None
+    musicbrainz_id: Optional[str] = None
+    acoustid_id: Optional[str] = None
 
     def to_dict(self) -> Dict:
         return {
@@ -32,4 +39,11 @@ class TrackSchema:
             "source_plugin": self.source_plugin,
             "metadata_richness": self.metadata_richness,
             "metadata_completeness": self.metadata_completeness,
+            "bitrate": self.bitrate,
+            "sample_rate": self.sample_rate,
+            "file_size_bytes": self.file_size_bytes,
+            "added_at": self.added_at,
+            "file_format": self.file_format,
+            "musicbrainz_id": self.musicbrainz_id,
+            "acoustid_id": self.acoustid_id,
         }

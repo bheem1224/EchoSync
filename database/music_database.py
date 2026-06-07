@@ -117,6 +117,7 @@ class Track(Base):
 
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     isrc: Mapped[Optional[str]] = mapped_column(String)
+    sync_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
     metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
 

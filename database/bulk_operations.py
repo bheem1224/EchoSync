@@ -331,6 +331,7 @@ class LibraryManager:
                 added_at=track_data.added_at,
                 musicbrainz_id=track_data.musicbrainz_id,
                 isrc=track_data.isrc,
+                sync_id=track_data.sync_id,
             )
             session.add(track)
             session.flush()
@@ -389,6 +390,8 @@ class LibraryManager:
                 track.musicbrainz_id = track_data.musicbrainz_id
             if track_data.isrc is not None:
                 track.isrc = track_data.isrc
+            if track_data.sync_id is not None:
+                track.sync_id = track_data.sync_id
 
             logger.debug(f"Updated existing track: {track.title} by {artist.name}")
             is_new = False
@@ -465,12 +468,47 @@ class LibraryManager:
         session.execute(delete(Track).where(Track.id.in_(list(deleted_track_ids))))
         return len(deleted_track_ids)
 
+    def _delete_missing_local_tracks(self, session: Session, observed_file_paths: set[str]) -> int:
+        """Remove tracks that have a local file path but were not observed during scan."""
+        from core.settings import config_manager
+        from pathlib import Path
+
+        library_dir_str = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+        if not library_dir_str:
+            return 0
+        
+        try:
+            library_dir = str(Path(library_dir_str).resolve())
+        except Exception:
+            return 0
+        
+        stmt = select(Track.id, Track.file_path).where(
+            Track.file_path.isnot(None),
+            Track.file_path != ''
+        )
+        
+        stale_ids = []
+        for track_id, fpath in session.execute(stmt):
+            try:
+                if str(Path(fpath).resolve()).startswith(library_dir):
+                    if fpath not in observed_file_paths:
+                        stale_ids.append(track_id)
+            except Exception:
+                pass
+                
+        if not stale_ids:
+            return 0
+            
+        session.execute(delete(Track).where(Track.id.in_(stale_ids)))
+        return len(stale_ids)
+
     def bulk_import(
         self,
         tracks: Iterable[EchosyncTrack],
         progress_callback: Optional[Callable[[Dict[str, int]], None]] = None,
         total_count: Optional[int] = None,
-        identifiers_only: bool = False
+        identifiers_only: bool = False,
+        source_name: Optional[str] = None
     ) -> int:
         """
         Bulk import EchosyncTrack objects into database.
@@ -488,10 +526,21 @@ class LibraryManager:
         logger.info(f"Starting bulk import of {total_count if total_count > 0 else 'unknown number of'} tracks")
 
         session = self.session_factory()
+        
+        if source_name == "EchoSync.local_server":
+            try:
+                session.execute(delete(ExternalIdentifier).where(ExternalIdentifier.plugin_source == "EchoSync.local_server"))
+                session.commit()
+                logger.info("Purged legacy EchoSync.local_server external identifiers")
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Failed to purge legacy local identifiers: {e}")
+
         imported_count = 0
         updated_count = 0
         failed_count = 0
         observed_identifiers: Dict[str, set[str]] = defaultdict(set)
+        observed_file_paths: set[str] = set()
         seen_artist_ids: set[int] = set()
         seen_album_ids: set[int] = set()
 
@@ -596,6 +645,9 @@ class LibraryManager:
                         # Skip if identifiers_only=True and no matching track is found
                         continue
 
+                    if track_data.file_path:
+                        observed_file_paths.add(track_data.file_path)
+
                     for source, item_id in (track_data.identifiers or {}).items():
                         if not source or item_id is None:
                             continue
@@ -634,6 +686,11 @@ class LibraryManager:
             session.commit()
 
             deleted_count = self._delete_missing_tracks(session, observed_identifiers)
+            if source_name == "EchoSync.local_server" and not identifiers_only:
+                local_deleted = self._delete_missing_local_tracks(session, observed_file_paths)
+                if local_deleted > 0:
+                    deleted_count += local_deleted
+                    
             if deleted_count:
                 session.commit()
 

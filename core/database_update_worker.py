@@ -80,7 +80,7 @@ class DatabaseUpdateWorker:
                 except Exception:
                     pass
 
-            imported_count = library_manager.bulk_import(all_tracks_generator, progress_callback=_on_progress, identifiers_only=self.identifiers_only)
+            imported_count = library_manager.bulk_import(all_tracks_generator, progress_callback=_on_progress, identifiers_only=self.identifiers_only, source_name=self.server_type)
             
             logger.info(f"Successfully imported {imported_count} tracks from {self.server_type}")
             logger.debug(
