@@ -32,9 +32,18 @@ class LocalServerProvider(PluginBase):
         Yields EchosyncTrack objects by crawling the local library.
         Extracts duration, isrc, title, and artist via local tags.
         """
-        library_dir = self.sdk.config.get("library_dir")
-        if not library_dir or not library_dir.exists():
-            logger.warning(f"Library directory not configured or does not exist: {library_dir}")
+        library_dir_str = self.sdk.config.get("library_dir")
+        if not library_dir_str:
+            from core.settings import config_manager
+            library_dir_str = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+
+        if not library_dir_str:
+            logger.warning("Library directory not configured globally or locally.")
+            return
+
+        library_dir = Path(library_dir_str)
+        if not library_dir.exists():
+            logger.warning(f"Library directory does not exist: {library_dir}")
             return
 
         supported_exts = {'.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape', '.wav', '.dsd', '.dsf', '.dff'}
