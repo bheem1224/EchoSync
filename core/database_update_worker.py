@@ -93,12 +93,13 @@ class DatabaseUpdateWorker:
 
             # --- Backfill missing provider identifiers ---
             try:
-                backfill_count = library_manager.backfill_plugin_identifiers(self.server_type)
-                if backfill_count:
-                    logger.info(
-                        "Backfill: linked %d missing '%s' identifier(s) to existing tracks.",
-                        backfill_count, self.server_type,
-                    )
+                if self.server_type != "EchoSync.Local Server":
+                    backfill_count = library_manager.backfill_plugin_identifiers(self.server_type)
+                    if backfill_count:
+                        logger.info(
+                            "Backfill: linked %d missing '%s' identifier(s) to existing tracks.",
+                            backfill_count, self.server_type,
+                        )
             except Exception as bf_err:
                 logger.warning(
                     "Backfill of provider identifiers failed (non-fatal): %s", bf_err, exc_info=True

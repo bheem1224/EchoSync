@@ -730,13 +730,13 @@ class RetroactiveEnhancer:
                             pass
 
                     # Step 4 (Generate Chromaprint)
-                    new_chromaprint_generated = False
+                    t_data['new_chromaprint_generated'] = False
                     if not new_musicbrainz_id and not t_data['chromaprint'] and fingerprint_provider and duration:
                         try:
                             chromaprint = FingerprintGenerator.generate(str(local_path))
                             if chromaprint:
                                 t_data['chromaprint'] = chromaprint
-                                new_chromaprint_generated = True
+                                t_data['new_chromaprint_generated'] = True
                                 duration_secs = int(duration / 1000) if duration > 10000 else duration
                                 details = fingerprint_provider.resolve_fingerprint_details(chromaprint, duration_secs)
                                 if details.get('mbids'):

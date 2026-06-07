@@ -1121,7 +1121,7 @@ class PluginBase(ABC):
             })
         
         # Create EchosyncTrack
-        return EchosyncTrack(
+        track_kwargs = dict(
             raw_title=title_str,
             artist_name=artist_str,
             album_title=album_str,
@@ -1134,11 +1134,20 @@ class PluginBase(ABC):
             file_path=file_path,
             release_year=year,
             musicbrainz_id=musicbrainz_id,
-                        isrc=isrc,
-                        fingerprint=fingerprint,
-                        quality_tags=quality_tags,
+            isrc=isrc,
+            fingerprint=fingerprint,
+            quality_tags=quality_tags,
             identifiers=identifiers
         )
+        
+        # Add any valid EchosyncTrack fields from extra_fields
+        import dataclasses
+        valid_fields = {f.name for f in dataclasses.fields(EchosyncTrack)}
+        for k, v in extra_fields.items():
+            if k in valid_fields:
+                track_kwargs[k] = v
+
+        return EchosyncTrack(**track_kwargs)
     
     @staticmethod
     def extract_guid_identifier(guid_id: str, identifier_type: str) -> Optional[str]:

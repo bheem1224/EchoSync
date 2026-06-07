@@ -1,6 +1,7 @@
 import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Generator
+from datetime import datetime
 
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
@@ -78,24 +79,56 @@ class LocalServerProvider(PluginBase):
                          pass
 
                 isrc = tags.get('isrc')
+                
+                # Fetch additional technical metadata
+                try:
+                    file_stat = path.stat()
+                    file_size_bytes = file_stat.st_size
+                    added_at = int(file_stat.st_ctime)
+                except Exception:
+                    file_size_bytes = None
+                    added_at = None
 
                 return self.create_echo_sync_track(
                     title=title,
                     artist=artist,
+                    album=tags.get('album'),
                     duration_ms=duration_ms,
                     isrc=isrc,
+                    musicbrainz_id=tags.get('musicbrainz_id') or tags.get('recording_id'),
+                    mb_release_id=tags.get('release_id') or tags.get('musicbrainz_albumid'),
+                    acoustid_id=tags.get('acoustid_id') or tags.get('acoustid id'),
+                    year=tags.get('year') or tags.get('date'),
+                    track_number=tags.get('track_number') or tags.get('tracknumber'),
+                    disc_number=tags.get('disc_number') or tags.get('discnumber'),
+                    bitrate=tags.get('bitrate_kbps') or tags.get('bitrate'),
+                    sample_rate=tags.get('sample_rate_hz') or tags.get('sample_rate'),
+                    file_format=tags.get('file_format'),
+                    file_size_bytes=file_size_bytes,
+                    added_at=datetime.fromtimestamp(added_at) if added_at else None,
                     file_path=str(path),
                     source=self.name,
-                    provider_id=str(path)
+                    # No provider_id to prevent writing an external identifier
                 )
             except Exception as e:
                 logger.debug(f"Failed to extract tags for {path}, falling back to filename: {e}")
+                
+                try:
+                    file_stat = path.stat()
+                    file_size_bytes = file_stat.st_size
+                    added_at = int(file_stat.st_ctime)
+                except Exception:
+                    file_size_bytes = None
+                    added_at = None
+                    
                 return self.create_echo_sync_track(
                     title=path.stem,
                     artist="Unknown Artist",
                     file_path=str(path),
                     source=self.name,
-                    provider_id=str(path)
+                    file_size_bytes=file_size_bytes,
+                    added_at=datetime.fromtimestamp(added_at) if added_at else None,
+                    # No provider_id
                 )
 
         import concurrent.futures

@@ -383,6 +383,8 @@ class LibraryManager:
                 track.bit_depth = track_data.bit_depth
             if track_data.file_size_bytes is not None:
                 track.file_size_bytes = track_data.file_size_bytes
+            if track_data.added_at is not None:
+                track.added_at = track_data.added_at
             if track_data.musicbrainz_id is not None:
                 track.musicbrainz_id = track_data.musicbrainz_id
             if track_data.isrc is not None:

@@ -144,7 +144,11 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             
             # Step 2: Run active media servers
             try:
-                active_servers = PluginRegistry.get_active_services_by_type('media_server')
+                active_servers = []
+                for p_id in PluginRegistry.get_active_services_by_type('pluginbase'):
+                    instance = PluginRegistry.create_instance(p_id)
+                    if instance and hasattr(instance, 'capabilities') and instance.capabilities.supports_library_scan:
+                        active_servers.append(p_id)
             except Exception as e:
                 logger.error(f"Failed to get active media servers: {e}")
                 active_servers = []
@@ -242,41 +246,41 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
             from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
             active_servers = PluginRegistry.get_active_services_by_type('media_server')
-            active_server = active_servers[0] if active_servers else None
-            if not active_server:
+            if not active_servers:
                 logger.warning("No active media server configured, skipping media scan")
                 return
 
-            provider = PluginRegistry.create_instance(active_server)
-            if not provider:
-                logger.error(f"Could not create provider instance for active server '{active_server}'")
-                return
+            for active_server in active_servers:
+                provider = PluginRegistry.create_instance(active_server)
+                if not provider:
+                    logger.error(f"Could not create provider instance for active server '{active_server}'")
+                    continue
 
-            if hasattr(provider, "ensure_connection") and not provider.ensure_connection():
-                logger.error(f"Could not connect to active media server '{active_server}'")
-                return
+                if hasattr(provider, "ensure_connection") and not provider.ensure_connection():
+                    logger.error(f"Could not connect to active media server '{active_server}'")
+                    continue
 
-            triggered = False
+                triggered = False
 
-            # Preferred path for MediaServerProvider implementations.
-            if hasattr(provider, "trigger_library_scan"):
-                try:
-                    triggered = bool(provider.trigger_library_scan("Music"))
-                except TypeError:
-                    # Some providers accept no args.
-                    triggered = bool(provider.trigger_library_scan())
+                # Preferred path for MediaServerProvider implementations.
+                if hasattr(provider, "trigger_library_scan"):
+                    try:
+                        triggered = bool(provider.trigger_library_scan("Music"))
+                    except TypeError:
+                        # Some providers accept no args.
+                        triggered = bool(provider.trigger_library_scan())
 
-            # Fallback for Plex client implementation.
-            if not triggered and getattr(provider, "music_library", None) is not None:
-                section = getattr(provider, "music_library", None)
-                if section is not None and hasattr(section, "update"):
-                    section.update()
-                    triggered = True
+                # Fallback for Plex client implementation.
+                if not triggered and getattr(provider, "music_library", None) is not None:
+                    section = getattr(provider, "music_library", None)
+                    if section is not None and hasattr(section, "update"):
+                        section.update()
+                        triggered = True
 
-            if triggered:
-                logger.info(f"Media server scan triggered successfully for '{active_server}'")
-            else:
-                logger.warning(f"Media server scan trigger not supported or failed for '{active_server}'")
+                if triggered:
+                    logger.info(f"Successfully triggered library scan on {active_server}")
+                else:
+                    logger.warning(f"Could not trigger library scan on {active_server} (no supported method found)")
         except Exception as e:
             logger.error(f"Media server scan job failed: {e}", exc_info=True)
 
