@@ -27,15 +27,19 @@ def oauth_callback(provider_name: str):
     query_string = request.query_string.decode('utf-8')
     if request.path.startswith('/api/oauth/callback/plugins/'):
         try:
-            from core.nexus_framework.plugin_loader import PluginRegistry
-            from core.nexus_framework.plugin_loader import generate_plugin_id
-            plugin_cls = PluginRegistry.get_plugin_class(provider_name)
-            if plugin_cls is not None:
-                canonical_name = getattr(plugin_cls, 'name', provider_name)
-                crc32_hash = generate_plugin_id(canonical_name.lower())
-                provider_name = str(crc32_hash)
+            from database.config_database import get_config_database
+            db = get_config_database()
+            conn = db._open_connection()
+            try:
+                c = conn.cursor()
+                c.execute("SELECT plugin_id FROM services WHERE LOWER(name) LIKE ?", ('%' + provider_name.lower(),))
+                row = c.fetchone()
+                if row and row[0]:
+                    provider_name = str(row[0])
+            finally:
+                conn.close()
         except Exception:
-            logger.debug(f"Unable to resolve plugin provider '{provider_name}' to canonical plugin ID", exc_info=True)
+            logger.debug(f"Unable to resolve plugin provider '{provider_name}' to canonical plugin ID from DB", exc_info=True)
 
         redirect_url = f"http://{lan_ip}:{main_port}/api/plugins/{provider_name}/callback"
     else:
