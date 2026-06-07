@@ -116,7 +116,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             total_successful_operations = 0
             
             # Step 1: Run Local Server first if available
-            local_server_id = 4815811998 # Hash of "echosync.local server"
+            local_server_id = 1133147422 # Correct integer ID from DB
             local_success = False
             
             if not PluginRegistry.is_plugin_disabled(local_server_id):
