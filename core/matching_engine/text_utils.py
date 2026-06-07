@@ -358,7 +358,7 @@ def normalize_album(album: Optional[str]) -> str:
     
     # Remove OST/Soundtrack metadata (same patterns as normalize_title)
     for pattern in _OST_PATTERNS:
-        normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
+        normalized = pattern.sub('', normalized)
     
     # Remove edition markers like "Deluxe Edition", "(Remastered)", etc.
     normalized = _EDITION_MARKER_CLEAN_RE.sub('', normalized)
