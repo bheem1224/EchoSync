@@ -117,7 +117,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             
             # Step 1: Run Local Server first if available
             from core.nexus_framework.plugin_loader import generate_plugin_id
-            local_server_id = generate_plugin_id('EchoSync.local_server')
+            local_server_id = generate_plugin_id('EchoSync.Local Server')
             local_success = False
             
             if not PluginRegistry.is_plugin_disabled(local_server_id):
