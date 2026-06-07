@@ -44,6 +44,9 @@ class AcoustIDProvider(PluginBase):
         
         if api_key:
             api_key = str(api_key).strip()
+            if api_key.startswith('enc:'):
+                from core.security import decrypt_string
+                api_key = decrypt_string(api_key)
             logger.debug(f"AcoustID API key loaded from namespaced storage (length={len(api_key)})")
             return api_key or None
 
@@ -51,6 +54,9 @@ class AcoustIDProvider(PluginBase):
         api_key = self.sdk.config.get('acoustid.api_key')
         if api_key:
             api_key = str(api_key).strip()
+            if api_key.startswith('enc:'):
+                from core.security import decrypt_string
+                api_key = decrypt_string(api_key)
             logger.debug(f"AcoustID API key loaded from global config (length={len(api_key)})")
         return api_key or None
 
@@ -58,6 +64,12 @@ class AcoustIDProvider(PluginBase):
         """Get AcoustID client and user API keys for submission endpoints."""
         client_key = self.secrets.get('api_key') or self.config.get('api_key')
         user_key = self.secrets.get('user_api_key') or self.config.get('user_api_key')
+        
+        from core.security import decrypt_string
+        if client_key and str(client_key).startswith('enc:'):
+            client_key = decrypt_string(str(client_key))
+        if user_key and str(user_key).startswith('enc:'):
+            user_key = decrypt_string(str(user_key))
 
         client_key = str(client_key).strip() if client_key else None
         user_key = str(user_key).strip() if user_key else None
