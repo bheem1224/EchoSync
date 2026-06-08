@@ -1137,6 +1137,9 @@ class PlexClient(PluginBase):
         from core.security import decrypt_string
         
 
+        from core.file_handling.storage import get_storage_service
+        storage = get_storage_service()
+
         # Load tokens from account_tokens securely
         token_data = storage.get_account_token(self.account_id)
         if not token_data or not token_data.get('access_token'):
@@ -1190,6 +1193,8 @@ class PlexClient(PluginBase):
             return []
 
         from core.nexus_framework.plugin_SDK import sdk
+        from core.file_handling.storage import get_storage_service
+        storage = get_storage_service()
         token_data = storage.get_account_token(self.account_id) if self.account_id else None
 
         try:
@@ -1244,15 +1249,18 @@ class PlexClient(PluginBase):
             display_name = _safe_getattr(user, 'title', None) or _safe_getattr(user, 'username', None) or username
             email = _safe_getattr(user, 'email', None)
 
-            managed_account_id = sdk.accounts.ensure_account(
+            managed_account_id = storage.upsert_account(
+                'plex',
                 account_name=username or display_name,
                 display_name=display_name,
-                user_id=str(user_id) if user_id is not None else None
+                user_id=str(user_id) if user_id is not None else None,
+                is_active=False,
+                is_authenticated=False,
             )
             if managed_account_id:
                 imported_ids.append(int(managed_account_id))
 
-        accounts = sdk.accounts.get_all() or []
+        accounts = storage.list_accounts('plex') or []
         imported = [account for account in accounts if account.get('id') in set(imported_ids)]
         logger.info(f"Imported {len(imported)} Plex account rows (admin + managed users)")
         return imported
@@ -1303,8 +1311,9 @@ class PlexClient(PluginBase):
         if account_id is None:
             return None, None, None
 
-        from core.nexus_framework.plugin_SDK import sdk
-        accounts = sdk.accounts.get_all() or []
+        from core.file_handling.storage import get_storage_service
+        storage = get_storage_service()
+        accounts = storage.list_accounts('plex') or []
         account = next((item for item in accounts if item.get('id') == account_id), None)
         if not account:
             logger.warning(f"No Plex account found for history sync account_id={account_id}")

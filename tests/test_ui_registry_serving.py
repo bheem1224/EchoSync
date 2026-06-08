@@ -207,10 +207,25 @@ def test_list_plugins_with_none_capabilities():
     mock_class.author = "Test Author"
     mock_class.capabilities = None
     
+    db = get_config_database()
+    db.register_service(
+        name="test_plugin",
+        service_type="provider",
+        description="test plugin",
+        absolute_install_path="/tmp/test_plugin",
+        version="1.0.0",
+        plugin_id=12345,
+        beta_opt_in=0,
+        verified_source=1,
+        privileged_mode=0,
+        permissions="[]"
+    )
+
     with patch.object(PluginRegistry, "list_plugins", return_value=["test_plugin"]), \
          patch.object(PluginRegistry, "get_plugin_class", return_value=mock_class), \
          patch.object(PluginRegistry, "is_plugin_disabled", return_value=False), \
-         patch.object(PluginRegistry, "create_instance", return_value=None):
+         patch.object(PluginRegistry, "create_instance", return_value=None), \
+         patch("core.nexus_framework.plugin_loader.generate_plugin_id", return_value=12345):
         
         # Calling get_plugin_capabilities should return the default capabilities structure
         caps = get_plugin_capabilities("test_plugin")

@@ -57,18 +57,18 @@ def test_multiple_spotify_clients_created():
     assert service.spotify_client.account_id == 1
 
 
-def test_get_spotify_playlist_respects_account_id(monkeypatch):
+def test_get_source_playlist_respects_account_id(monkeypatch):
     service = PlaylistSyncService()
     # ask for playlist from account 2 explicitly
-    pl = service._get_spotify_playlist('P2', account_id=2)
+    pl = service._get_source_playlist('P2', account_id=2)
     assert pl is not None
     assert '(P2' not in pl.name  # name should not be suffixed here
     # ask without account_id should return first match across clients
-    pl_all = service._get_spotify_playlist('P1')
+    pl_all = service._get_source_playlist('P1')
     assert pl_all and pl_all.id == 'pl1'
 
 
-def test_get_all_spotify_playlists_filters_active(monkeypatch):
+def test_get_all_source_playlists_filters_active(monkeypatch):
     # monkeypatch config manager to return account configs including active flag
     with patch("database.config_database.ConfigDatabase.get_accounts") as mock_get_accounts:
         def side_effect(service_id=None, is_active=None):
@@ -94,7 +94,7 @@ def test_get_all_spotify_playlists_filters_active(monkeypatch):
             return MockClient()
         monkeypatch.setattr('core.nexus_framework.plugin_loader.PluginRegistry.create_instance', mock_create_instance)
 
-        playlists = asyncio.run(service._get_all_spotify_playlists())
+        playlists = asyncio.run(service._get_all_source_playlists())
         # The name no longer contains the account name, so we check account_name instead
         assert any(p.account_name == 'First' for p in playlists)
         assert not any(p.account_name == 'Second' for p in playlists)

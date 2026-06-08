@@ -70,12 +70,8 @@ def test_existing_token_scope_does_not_invalidate(monkeypatch):
     # patch the reference used inside spotify.client module
     monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyOAuth', FakeSpotifyOAuth)
 
-    # patch storage service to provide dummy credentials
-    with patch('core.file_handling.storage.get_storage_service') as mock_storage:
-        ms = MagicMock()
-        ms.get_service_config.return_value = 'fake'
-        mock_storage.return_value = ms
-
+    # patch account manager to provide dummy credentials
+    with patch('core.account_manager.AccountManager.get_account', return_value={'client_id': 'fake', 'client_secret': 'fake'}):
         client = SpotifyClient(account_id=5)
         # initialization should have used the existing token's scope
         assert created.get('scope') == limited_scope
@@ -121,23 +117,14 @@ def test_cached_scope_used_even_if_oauth_invalidates(monkeypatch):
 
     monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyOAuth', FakeSpotifyOAuth2)
 
-    with patch('core.account_manager.AccountManager.get_service_config') as mock_config:
-        mock_config.return_value = 'fake'
-
-        with patch('core.account_manager.AccountManager.get_account_token') as mock_get_token:
-            mock_get_token.return_value = limited_token
-
-            with patch('core.file_handling.storage.get_storage_service') as mock_get_storage:
-                mock_storage = MagicMock()
-                mock_storage.get_service_config.side_effect = lambda s, k: 'fake'
-                mock_get_storage.return_value = mock_storage
-
-                client = SpotifyClient(account_id=6)
-                # we should still have initialized with the limited scope value
-                assert created.get('scope') == limited_scope
-                # authentication check should be True because we verify cached token in is_authenticated()
-                # even if OAuth object failed to initialize fully
-                assert client.is_authenticated() is True
+    with patch('core.account_manager.AccountManager.get_account', return_value={'client_id': 'fake', 'client_secret': 'fake'}):
+        with patch('core.account_manager.AccountManager.get_account_token', return_value=limited_token):
+            client = SpotifyClient(account_id=6)
+            # we should still have initialized with the limited scope value
+            assert created.get('scope') == limited_scope
+            # authentication check should be True because we verify cached token in is_authenticated()
+            # even if OAuth object failed to initialize fully
+            assert client.is_authenticated() is True
 
 
 def test_setup_client_prefers_account_creds(monkeypatch):

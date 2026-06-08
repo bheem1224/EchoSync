@@ -285,19 +285,20 @@ def get_plugin_playlists(plugin_id):
         
         # For multi-account plugins (Spotify, Tidal), loop through all accounts
         multi_account_plugins = ['spotify', 'tidal']
-        if plugin_id in multi_account_plugins:
+        short_name = plugin_cls.name.split('.')[-1].lower() if hasattr(plugin_cls, 'name') and plugin_cls.name else ''
+        if short_name in multi_account_plugins:
             try:
                 from core.file_handling.storage import get_storage_service
                 storage = get_storage_service()
                 plex_user_map = _build_active_plex_user_map()
 
-                accounts = storage.list_accounts(plugin_id)
+                accounts = storage.list_accounts(short_name)
 
                 if not accounts:
                     # No accounts configured
-                    logger.info(f"No accounts found for {plugin_id}")
+                    logger.info(f"No accounts found for {short_name}")
                     return jsonify({
-                        'plugin': plugin_id,
+                        'plugin': short_name,
                         'items': [],
                         'total': 0,
                         'status': 'not_configured'
@@ -310,10 +311,10 @@ def get_plugin_playlists(plugin_id):
                         account_id = account['id']
                         account_name = account.get('display_name') or account.get('account_name') or f"Account {account_id}"
 
-                        if plugin_id == 'spotify':
+                        if short_name == 'spotify':
                             from plugins.EchoSync.spotify.client import SpotifyClient
                             client = SpotifyClient(account_id=account_id)
-                        elif plugin_id == 'tidal':
+                        elif short_name == 'tidal':
                             from plugins.EchoSync.tidal.client import TidalClient
                             client = TidalClient(account_id=str(account_id))
                         else:
@@ -350,13 +351,13 @@ def get_plugin_playlists(plugin_id):
                         continue
 
                 return jsonify({
-                    'plugin': plugin_id,
+                    'plugin': short_name,
                     'items': all_playlists,
                     'total': len(all_playlists)
                 }), 200
 
             except Exception as e:
-                logger.error(f"Error handling multi-account logic for {plugin_id}: {e}")
+                logger.error(f"Error handling multi-account logic for {short_name}: {e}")
                 return jsonify({'error': str(e)}), 500
 
         # Standard single-instance plugin logic
@@ -410,8 +411,13 @@ def get_plugin_settings(plugin_id):
         from database.config_database import get_config_database
         config_db = get_config_database()
         
-        # Ensure service exists in config.db
-        normalized_plugin_id = str(plugin_id)
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
+        if plugin_cls and hasattr(plugin_cls, 'name') and plugin_cls.name:
+            normalized_plugin_id = plugin_cls.name
+        else:
+            normalized_plugin_id = str(plugin_id)
+
         try:
             service_id = config_db.get_or_create_service_id(normalized_plugin_id)
             if not service_id:
@@ -435,7 +441,7 @@ def get_plugin_settings(plugin_id):
         config['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/plugins/{callback_id}"
         
         # Mock schema for dynamic UI generation (should eventually come from plugin class)
-        schema = _get_mock_schema(plugin_id)
+        schema = _get_mock_schema(callback_id)
         return jsonify({
             'plugin': plugin_id,
             'settings': config,
@@ -465,7 +471,12 @@ def update_plugin_settings(plugin_id):
         from database.config_database import get_config_database
         config_db = get_config_database()
 
-        normalized_plugin_id = str(plugin_id)
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
+        if plugin_cls and hasattr(plugin_cls, 'name') and plugin_cls.name:
+            normalized_plugin_id = plugin_cls.name
+        else:
+            normalized_plugin_id = str(plugin_id)
         try:
             # Ensure service exists in config.db
             service_id = config_db.get_or_create_service_id(normalized_plugin_id)
@@ -626,7 +637,12 @@ def get_plugin_credentials(plugin_id):
     try:
         from database.config_database import get_config_database
         config_db = get_config_database()
-        normalized_plugin_id = str(plugin_id)
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
+        if plugin_cls and hasattr(plugin_cls, 'name') and plugin_cls.name:
+            normalized_plugin_id = plugin_cls.name
+        else:
+            normalized_plugin_id = str(plugin_id)
         service_id = config_db.get_or_create_service_id(normalized_plugin_id)
         if not service_id:
             return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
@@ -669,7 +685,12 @@ def set_plugin_credentials(plugin_id):
         
         # Get or create service in config database
         config_db = get_config_database()
-        normalized_plugin_id = str(plugin_id)
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
+        if plugin_cls and hasattr(plugin_cls, 'name') and plugin_cls.name:
+            normalized_plugin_id = plugin_cls.name
+        else:
+            normalized_plugin_id = str(plugin_id)
         service_id = config_db.get_or_create_service_id(normalized_plugin_id)
         if not service_id:
             return jsonify({'error': f'Plugin {plugin_id} not found'}), 404

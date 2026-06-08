@@ -1,9 +1,12 @@
 import pytest
+import zlib
 from unittest.mock import MagicMock, patch
 from flask import Flask
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
 # reuse client fixture from other tests
+
+spotify_id = zlib.crc32(b'EchoSync.spotify') & 0xFFFFFFFF
 
 def create_test_app():
     app = Flask(__name__)
@@ -28,6 +31,11 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
     ``ConfigDatabase`` such that the "database" value differs from the
     legacy config and ensure the route prefers the former.
     """
+    class FakeSpotifyPluginClass:
+        name = 'EchoSync.spotify'
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    monkeypatch.setattr(PluginRegistry, 'get_plugin_class', lambda name: FakeSpotifyPluginClass if name in ('spotify', spotify_id, str(spotify_id)) else None)
+
     class FakeConfigDB:
         def get_or_create_service_id(self, name):
             return 1
@@ -38,7 +46,7 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
             return None
 
     with patch('database.config_database.get_config_database', return_value=FakeConfigDB()):
-        resp = client.get('/api/plugins/spotify/settings')
+        resp = client.get(f'/api/plugins/{spotify_id}/settings')
         assert resp.status_code == 200
         data = resp.get_json()
         settings = data.get('settings', {})
@@ -50,6 +58,11 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
 
 def test_provider_credentials_route_uses_plugins_callback_path(client, monkeypatch):
     """GET /api/plugins/<provider>/credentials should surface the plugin callback URI."""
+    class FakeSpotifyPluginClass:
+        name = 'EchoSync.spotify'
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    monkeypatch.setattr(PluginRegistry, 'get_plugin_class', lambda name: FakeSpotifyPluginClass if name in ('spotify', spotify_id, str(spotify_id)) else None)
+
     class FakeConfigDB:
         def get_or_create_service_id(self, name):
             return 1
@@ -59,7 +72,7 @@ def test_provider_credentials_route_uses_plugins_callback_path(client, monkeypat
             return None
 
     with patch('database.config_database.get_config_database', return_value=FakeConfigDB()):
-        resp = client.get('/api/plugins/spotify/credentials')
+        resp = client.get(f'/api/plugins/{spotify_id}/credentials')
         assert resp.status_code == 200
         data = resp.get_json()
         credentials = data.get('credentials', {})
@@ -69,6 +82,11 @@ def test_provider_credentials_route_uses_plugins_callback_path(client, monkeypat
 
 
 def test_provider_settings_route_normalizes_plugin_ids_for_service_storage(client, monkeypatch):
+    class FakeSpotifyPluginClass:
+        name = 'EchoSync.spotify'
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    monkeypatch.setattr(PluginRegistry, 'get_plugin_class', lambda name: FakeSpotifyPluginClass if name in ('spotify', spotify_id, str(spotify_id)) else None)
+
     class FakeConfigDB:
         def __init__(self):
             self.requested_name = None
@@ -84,7 +102,7 @@ def test_provider_settings_route_normalizes_plugin_ids_for_service_storage(clien
     monkeypatch.setattr('database.config_database.get_config_database', lambda: fake_db)
     monkeypatch.setattr('core.nexus_framework.plugin_loader.get_all_plugins', lambda: [{'id': 'EchoSync.spotify', 'name': 'spotify'}])
 
-    resp = client.post('/api/plugins/Spotify/settings', json={'client_id': 'db1', 'client_secret': 'db2'})
+    resp = client.post(f'/api/plugins/{spotify_id}/settings', json={'client_id': 'db1', 'client_secret': 'db2'})
     assert resp.status_code == 200
     assert fake_db.requested_name == 'EchoSync.spotify'
 
@@ -126,13 +144,13 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
 
     monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyClient', FakeSpotifyClient)
     from core.nexus_framework.plugin_loader import PluginRegistry
-    monkeypatch.setattr(PluginRegistry, 'get_plugin_class', lambda name: FakeSpotifyClient if name == 'spotify' else None)
-    monkeypatch.setattr(PluginRegistry, 'get_provider_class', lambda name: FakeSpotifyClient if name == 'spotify' else None, raising=False)
-    monkeypatch.setattr(PluginRegistry, 'create_instance', lambda name, *args, **kwargs: FakeSpotifyClient() if name == 'spotify' else None)
+    monkeypatch.setattr(PluginRegistry, 'get_plugin_class', lambda name: FakeSpotifyClient if name in ('spotify', spotify_id) else None)
+    monkeypatch.setattr(PluginRegistry, 'get_provider_class', lambda name: FakeSpotifyClient if name in ('spotify', spotify_id) else None, raising=False)
+    monkeypatch.setattr(PluginRegistry, 'create_instance', lambda name, *args, **kwargs: FakeSpotifyClient(account_id=kwargs.get('account_id')) if name in ('spotify', spotify_id) else None)
     monkeypatch.setattr(PluginRegistry, 'is_plugin_disabled', lambda name: False)
     monkeypatch.setattr(PluginRegistry, 'is_provider_disabled', lambda name: False, raising=False)
 
-    resp = client.get('/api/plugins/spotify/playlists')
+    resp = client.get(f'/api/plugins/{spotify_id}/playlists')
     assert resp.status_code == 200
     data = resp.get_json()
     assert data['plugin'] == 'spotify'
@@ -157,13 +175,15 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
     called = []
 
     class FakeSpotifyClient:
+        name = 'EchoSync.spotify'
         # Add capabilities to bypass strict capability check in analyze route
         from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
         capabilities = ProviderCapabilities(
             name='spotify',
             supports_playlists=PlaylistSupport.READ_WRITE,
             search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
-            metadata=MetadataRichness.HIGH
+            metadata=MetadataRichness.HIGH,
+            supports_user_auth=True
         )
 
         def __init__(self, account_id=None):
@@ -177,13 +197,18 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
             class Track:
                 def __init__(self, title, artist_name, album_title, duration):
                     self.title = title
+                    self.raw_title = title
                     self.artist_name = artist_name
                     self.album_title = album_title
                     self.duration = duration
                     self.identifiers = {}
+                    self.plugin_context = {}
             return [Track(f"t_{playlist_id}", "A", "B", 1234)]
 
     monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyClient', FakeSpotifyClient)
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    monkeypatch.setattr(PluginRegistry, 'get_plugin_class', lambda name: FakeSpotifyClient)
+    monkeypatch.setattr('core.nexus_framework.plugin_loader.get_plugin_capabilities', lambda name: FakeSpotifyClient.capabilities)
 
     payload = {
         'source': 'spotify',

@@ -391,7 +391,11 @@ def test_dynamic_module_tracking(temp_plugins_env):
     
     # Force sys.modules to simulate that a module was loaded
     import sys
-    sys.modules["plugins.EchoSync.custom_plugin"] = MagicMock()
+    mock_plugin = MagicMock()
+    mock_plugin.ProviderClass = MagicMock()
+    mock_plugin.ProviderClass.capabilities = None
+    mock_plugin.__dir__ = lambda s: []
+    sys.modules["plugins.EchoSync.custom_plugin"] = mock_plugin
     sys.modules["plugins.EchoSync.custom_plugin.submodule"] = MagicMock()
 
     success = loader._load_plugin_package(123456789, absolute_install_path=str(plugin_path.resolve()))

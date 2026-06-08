@@ -68,14 +68,22 @@ _PINYIN_ARTIST_PASS      = 90    # token_sort_ratio needed to accept the match
 
 
 def _get_provider_for_account(provider_id, acc_id=None):
-    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry, generate_plugin_id
+    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry, generate_plugin_id, get_plugin_capabilities
 
     # Handle if a string was passed for backward compatibility, though it should be an int
     if isinstance(provider_id, str):
         if provider_id.isdigit():
             provider_id = int(provider_id)
         else:
-            provider_id = generate_plugin_id(provider_id.lower())
+            # Try to match a registered plugin name ending with the string
+            found = False
+            for p_id, p_cls in PluginRegistry._plugins.items():
+                if hasattr(p_cls, 'name') and p_cls.name and p_cls.name.lower().endswith(provider_id.lower()):
+                    provider_id = p_id
+                    found = True
+                    break
+            if not found:
+                provider_id = generate_plugin_id(provider_id.lower())
             
     try:
         plugin_class = PluginRegistry.get_plugin_class(provider_id)
