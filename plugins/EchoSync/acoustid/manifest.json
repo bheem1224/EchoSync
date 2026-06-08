@@ -9,7 +9,7 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "ui_manifest": "ui_manifest.json",
-  "beta_version": "2.4.3-beta.36",
+  "beta_version": "2.4.3-beta.37",
   "capabilities": {
     "metadata": {
       "fingerprinting_algorithms": [
