@@ -28,7 +28,7 @@ function te() {
 		reject: t
 	};
 }
-var b = 1024, x = 2048, S = 4096, C = 8192, ne = 16384, re = 32768, ie = 1 << 25, ae = 65536, w = 1 << 19, oe = 1 << 20, se = 65536, ce = 1 << 21, le = 1 << 22, ue = 1 << 23, de = Symbol("$state"), fe = Symbol("legacy props"), pe = Symbol(""), me = Symbol("attributes"), he = Symbol("class"), ge = Symbol("style"), _e = Symbol("text"), ve = Symbol("form reset"), ye = new class extends Error {
+var b = 1024, x = 2048, ne = 4096, re = 8192, ie = 16384, ae = 32768, oe = 1 << 25, se = 65536, S = 1 << 19, ce = 1 << 20, C = 65536, le = 1 << 21, ue = 1 << 22, de = 1 << 23, w = Symbol("$state"), fe = Symbol("legacy props"), pe = Symbol(""), me = Symbol("attributes"), he = Symbol("class"), ge = Symbol("style"), _e = Symbol("text"), ve = Symbol("form reset"), ye = new class extends Error {
 	name = "StaleReactionError";
 	message = "The reaction that called `getAbortSignal()` was re-run or destroyed";
 }(), be = !!globalThis.document?.contentType && /* @__PURE__ */ globalThis.document.contentType.includes("xml");
@@ -187,38 +187,40 @@ function Ze() {
 }
 function Qe(e) {
 	var t = G;
-	if (t === null) return H.f |= ue, e;
+	if (t === null) return H.f |= de, e;
 	if (!(t.f & 32768) && !(t.f & 4)) throw e;
 	$e(e, t);
 }
 function $e(e, t) {
-	for (; t !== null;) {
-		if (t.f & 128) {
-			if (!(t.f & 32768)) throw e;
-			try {
-				t.b.error(e);
-				return;
-			} catch (t) {
-				e = t;
+	if (!(t !== null && t.f & 16384)) {
+		for (; t !== null;) {
+			if (t.f & 128) {
+				if (!(t.f & 32768)) throw e;
+				try {
+					t.b.error(e);
+					return;
+				} catch (t) {
+					e = t;
+				}
 			}
+			t = t.parent;
 		}
-		t = t.parent;
+		throw e;
 	}
-	throw e;
 }
 //#endregion
 //#region node_modules/svelte/src/internal/client/reactivity/status.js
-var et = ~(x | S | b);
+var et = ~(x | ne | b);
 function A(e, t) {
 	e.f = e.f & et | t;
 }
 function tt(e) {
-	e.f & 512 || e.deps === null ? A(e, b) : A(e, S);
+	e.f & 512 || e.deps === null ? A(e, b) : A(e, ne);
 }
 //#endregion
 //#region node_modules/svelte/src/internal/client/reactivity/utils.js
 function nt(e) {
-	if (e !== null) for (let t of e) !(t.f & 2) || !(t.f & 65536) || (t.f ^= se, nt(t.deps));
+	if (e !== null) for (let t of e) !(t.f & 2) || !(t.f & 65536) || (t.f ^= C, nt(t.deps));
 }
 function rt(e, t, n) {
 	e.f & 2048 ? t.add(e) : e.f & 4096 && n.add(e), nt(e.deps), A(e, b);
@@ -248,7 +250,7 @@ function st(e) {
 }
 //#endregion
 //#region node_modules/svelte/src/internal/client/dom/blocks/boundary.js
-var ct = ae | w;
+var ct = se | S;
 function lt(e, t, n, r) {
 	new ut(e, t, n, r);
 }
@@ -467,7 +469,7 @@ function mt() {
 /*#__NO_SIDE_EFFECTS__*/
 function ht(e) {
 	var t = 2 | x;
-	return G !== null && (G.f |= w), {
+	return G !== null && (G.f |= S), {
 		ctx: k,
 		deps: null,
 		effects: null,
@@ -506,7 +508,7 @@ function _t(e, t, n) {
 			c.add(n), i.async_deriveds.set(t, n);
 		}
 		let u = (e, t = void 0) => {
-			l?.(), c.delete(n), t !== gt && (i.activate(), t ? (o.f |= ue, Jt(o, t)) : (o.f & 8388608 && (o.f ^= ue), Jt(o, e)), i.deactivate());
+			l?.(), c.delete(n), t !== gt && (i.activate(), t ? (o.f |= de, Jt(o, t)) : (o.f & 8388608 && (o.f ^= de), Jt(o, e)), i.deactivate());
 		};
 		n.promise.then(u, (e) => u(null, e || "unknown"));
 	}), yn(() => {
@@ -538,7 +540,7 @@ function bt(e) {
 	if (!V && r !== null && e.v !== i && r.f & 24576) return Ne(), e.v;
 	K(r);
 	try {
-		e.f &= ~se, yt(e), t = Qn(e);
+		e.f &= ~C, yt(e), t = Qn(e);
 	} finally {
 		K(n);
 	}
@@ -610,14 +612,14 @@ var wt = null, Tt = null, j = null, Et = null, M = null, Dt = null, Ot = !1, kt 
 		if (n) {
 			this.#f.delete(e);
 			for (var r of n.d) A(r, x), t(r);
-			for (r of n.m) A(r, S), t(r);
+			for (r of n.m) A(r, ne), t(r);
 		}
 		this.#p.add(e);
 	}
 	#g() {
 		this.#e = !0, Mt++ > 1e3 && (this.#S(), It());
 		for (let e of this.#u) this.#d.delete(e), A(e, x), this.schedule(e);
-		for (let e of this.#d) A(e, S), this.schedule(e);
+		for (let e of this.#d) A(e, ne), this.schedule(e);
 		let n = this.#c;
 		this.#c = [], this.apply();
 		var r = At = [], i = [], a = jt = [];
@@ -964,7 +966,7 @@ function Jt(e, t, n = null) {
 function Yt() {
 	Gt = !1;
 	for (let e of Ut) {
-		e.f & 1024 && A(e, S);
+		e.f & 1024 && A(e, ne);
 		let t;
 		try {
 			t = Xn(e);
@@ -987,7 +989,7 @@ function Zt(e, t, n) {
 			if (l && A(s, t), c & 131072) Ut.add(s);
 			else if (c & 2) {
 				var u = s;
-				M?.delete(u), c & 65536 || (c & 512 && (G === null || !(G.f & 2097152)) && (s.f |= se), Zt(u, S, n));
+				M?.delete(u), c & 65536 || (c & 512 && (G === null || !(G.f & 2097152)) && (s.f |= C), Zt(u, ne, n));
 			} else if (l) {
 				var d = s;
 				c & 16 && N !== null && N.add(d), n === null ? Bt(d) : n.push(d);
@@ -996,7 +998,7 @@ function Zt(e, t, n) {
 	}
 }
 function Qt(e) {
-	if (typeof e != "object" || !e || de in e) return e;
+	if (typeof e != "object" || !e || w in e) return e;
 	let t = g(e);
 	if (t !== m && t !== h) return e;
 	var n = /* @__PURE__ */ new Map(), r = o(e), a = /* @__PURE__ */ qt(0), s = null, c = qn, l = (e) => {
@@ -1026,7 +1028,7 @@ function Qt(e) {
 			return !0;
 		},
 		get(t, r, a) {
-			if (r === de) return e;
+			if (r === w) return e;
 			var o = n.get(r), c = r in t;
 			if (o === void 0 && (!c || f(t, r)?.writable) && (o = l(() => /* @__PURE__ */ qt(Qt(c ? t[r] : i), s)), n.set(r, o)), o !== void 0) {
 				var u = Z(o);
@@ -1051,7 +1053,7 @@ function Qt(e) {
 			return r;
 		},
 		has(e, t) {
-			if (t === de) return !0;
+			if (t === w) return !0;
 			var r = n.get(t), a = r !== void 0 && r.v !== i || Reflect.has(e, t);
 			return (r !== void 0 || G !== null && (!a || f(e, t)?.writable)) && (r === void 0 && (r = l(() => /* @__PURE__ */ qt(a ? Qt(e[t]) : i, s)), n.set(t, r)), Z(r) === i) ? !1 : a;
 		},
@@ -1148,7 +1150,7 @@ function cn(e) {
 	e.textContent = "";
 }
 function ln() {
-	return !e || N !== null ? !1 : (G.f & re) !== 0;
+	return !e || N !== null ? !1 : (G.f & ae) !== 0;
 }
 function un(e, t, n) {
 	return t == null || t === "http://www.w3.org/1999/xhtml" ? n ? document.createElement(e, { is: n }) : document.createElement(e) : n ? document.createElementNS(t, e, { is: n }) : document.createElementNS(t, e);
@@ -1197,7 +1199,7 @@ function _n(e, t) {
 }
 function R(e, t) {
 	var n = G;
-	n !== null && n.f & 8192 && (e |= C);
+	n !== null && n.f & 8192 && (e |= re);
 	var r = {
 		ctx: k,
 		deps: null,
@@ -1223,7 +1225,7 @@ function R(e, t) {
 		} catch (e) {
 			throw B(r), e;
 		}
-		i.deps === null && i.teardown === null && i.nodes === null && i.first === i.last && !(i.f & 524288) && (i = i.first, e & 16 && e & 65536 && i !== null && (i.f |= ae));
+		i.deps === null && i.teardown === null && i.nodes === null && i.first === i.last && !(i.f & 524288) && (i = i.first, e & 16 && e & 65536 && i !== null && (i.f |= se));
 	}
 	if (i !== null && (i.parent = n, n !== null && _n(i, n), H !== null && H.f & 2 && !(e & 64))) {
 		var a = H;
@@ -1247,21 +1249,21 @@ function bn(e) {
 	} else return xn(e);
 }
 function xn(e) {
-	return R(4 | oe, e);
+	return R(4 | ce, e);
 }
 function Sn(e) {
-	return gn("$effect.pre"), R(8 | oe, e);
+	return gn("$effect.pre"), R(8 | ce, e);
 }
 function Cn(e) {
 	Pt.ensure();
-	let t = R(64 | w, e);
+	let t = R(64 | S, e);
 	return () => {
 		B(t);
 	};
 }
 function wn(e) {
 	Pt.ensure();
-	let t = R(64 | w, e);
+	let t = R(64 | S, e);
 	return (e = {}) => new Promise((n) => {
 		e.outro ? Fn(t, () => {
 			B(t), n(void 0);
@@ -1272,7 +1274,7 @@ function Tn(e) {
 	return R(4, e);
 }
 function En(e) {
-	return R(le | w, e);
+	return R(ue | S, e);
 }
 function Dn(e, t = 0) {
 	return R(8 | t, e);
@@ -1288,7 +1290,7 @@ function kn(e, t = 0) {
 	return R(16 | t, e);
 }
 function z(e) {
-	return R(32 | w, e);
+	return R(32 | S, e);
 }
 function An(e) {
 	var t = e.teardown;
@@ -1321,10 +1323,10 @@ function Mn(e) {
 }
 function B(e, t = !0) {
 	var n = !1;
-	(t || e.f & 262144) && e.nodes !== null && e.nodes.end !== null && (Nn(e.nodes.start, e.nodes.end), n = !0), e.f |= ie, jn(e, t && !n), er(e, 0);
+	(t || e.f & 262144) && e.nodes !== null && e.nodes.end !== null && (Nn(e.nodes.start, e.nodes.end), n = !0), e.f |= oe, jn(e, t && !n), er(e, 0);
 	var r = e.nodes && e.nodes.t;
 	if (r !== null) for (let e of r) e.stop();
-	An(e), e.f ^= ie, e.f |= ne;
+	An(e), e.f ^= oe, e.f |= ie;
 	var i = e.parent;
 	i !== null && i.first !== null && Pn(e), e.next = e.prev = e.teardown = e.ctx = e.deps = e.fn = e.nodes = e.ac = e.b = null;
 }
@@ -1351,7 +1353,7 @@ function Fn(e, t, n = !0) {
 }
 function In(e, t, n) {
 	if (!(e.f & 8192)) {
-		e.f ^= C;
+		e.f ^= re;
 		var r = e.nodes && e.nodes.t;
 		if (r !== null) for (let e of r) (e.is_global || n) && t.push(e);
 		for (var i = e.first; i !== null;) {
@@ -1369,7 +1371,7 @@ function Ln(e) {
 }
 function Rn(e, t) {
 	if (e.f & 8192) {
-		e.f ^= C, e.f & 1024 || (A(e, x), Pt.ensure().schedule(e));
+		e.f ^= re, e.f & 1024 || (A(e, x), Pt.ensure().schedule(e));
 		for (var n = e.first; n !== null;) {
 			var r = n.next, i = (n.f & 65536) != 0 || (n.f & 32) != 0;
 			Rn(n, i ? t : !1), n = r;
@@ -1416,7 +1418,7 @@ function Yn() {
 function Xn(e) {
 	var t = e.f;
 	if (t & 2048) return !0;
-	if (t & 2 && (e.f &= ~se), t & 4096) {
+	if (t & 2 && (e.f &= ~C), t & 4096) {
 		for (var n = e.deps, r = n.length, i = 0; i < r; i++) {
 			var a = n[i];
 			if (Xn(a) && xt(a), a.wv > e.wv) return !0;
@@ -1429,7 +1431,7 @@ function Zn(t, n, r = !0) {
 	var i = t.reactions;
 	if (i !== null && !(!e && q !== null && q.has(t))) for (var a = 0; a < i.length; a++) {
 		var o = i[a];
-		o.f & 2 ? Zn(o, n, !1) : n === o && (r ? A(o, x) : o.f & 1024 && A(o, S), Bt(o));
+		o.f & 2 ? Zn(o, n, !1) : n === o && (r ? A(o, x) : o.f & 1024 && A(o, ne), Bt(o));
 	}
 }
 function Qn(e) {
@@ -1438,9 +1440,9 @@ function Qn(e) {
 		e.ac.abort(ye);
 	}), e.ac = null);
 	try {
-		e.f |= ce;
+		e.f |= le;
 		var u = e.fn, d = u();
-		e.f |= re;
+		e.f |= ae;
 		var f = e.deps, p = j?.is_fork;
 		if (J !== null) {
 			var m;
@@ -1454,11 +1456,11 @@ function Qn(e) {
 			if (t !== null) for (let e of t) e.rv = Kn;
 			X !== null && (r === null ? r = X : r.push(...X));
 		}
-		return e.f & 8388608 && (e.f ^= ue), d;
+		return e.f & 8388608 && (e.f ^= de), d;
 	} catch (e) {
 		return Qe(e);
 	} finally {
-		e.f ^= ce, J = t, Y = n, X = r, H = i, q = a, We(o), U = s, qn = c;
+		e.f ^= le, J = t, Y = n, X = r, H = i, q = a, We(o), U = s, qn = c;
 	}
 }
 function $n(e, t) {
@@ -1472,7 +1474,7 @@ function $n(e, t) {
 	}
 	if (n === null && t.f & 2 && (J === null || !c.call(J, t))) {
 		var o = t;
-		o.f & 512 && (o.f ^= 512, o.f &= ~se), o.v !== i && tt(o), St(o), er(o, 0);
+		o.f & 512 && (o.f ^= 512, o.f &= ~C), o.v !== i && tt(o), St(o), er(o, 0);
 	}
 }
 function er(e, t) {
@@ -1518,7 +1520,7 @@ function Z(e) {
 			var a = i.v;
 			return (!(i.f & 1024) && i.reactions !== null || ir(i)) && (a = bt(i)), Wt.set(i, a), a;
 		}
-		var o = (i.f & 512) == 0 && !U && H !== null && (Vn || (H.f & 512) != 0), s = (i.f & re) === 0;
+		var o = (i.f & 512) == 0 && !U && H !== null && (Vn || (H.f & 512) != 0), s = (i.f & ae) === 0;
 		Xn(i) && (o && (i.f |= 512), xt(i)), o && !s && (Ct(i), rr(i));
 	}
 	if (M?.has(e)) return M.get(e);
@@ -1544,10 +1546,10 @@ function ar(e) {
 }
 function or(e) {
 	if (!(typeof e != "object" || !e || e instanceof EventTarget)) {
-		if (de in e) sr(e);
+		if (w in e) sr(e);
 		else if (!Array.isArray(e)) for (let t in e) {
 			let n = e[t];
-			typeof n == "object" && n && de in n && sr(n);
+			typeof n == "object" && n && w in n && sr(n);
 		}
 	}
 }
@@ -1831,7 +1833,7 @@ function Ar(e) {
 function jr(e, t, n = !1) {
 	var r;
 	T && (r = E, Le());
-	var i = new Or(e), a = n ? ae : 0;
+	var i = new Or(e), a = n ? se : 0;
 	function o(e, t) {
 		if (T) {
 			var n = Be(r);
@@ -1976,7 +1978,7 @@ function qr(e, n, r, i) {
 	var a = !t || (r & 2) != 0, o = (r & 8) != 0, s = (r & 16) != 0, c = i, l = !0, u = void 0, d = () => s && a ? (u ??= /* @__PURE__ */ ht(i), Z(u)) : (l && (l = !1, c = s ? ar(i) : i), c);
 	let p;
 	if (o) {
-		var m = de in e || fe in e;
+		var m = w in e || fe in e;
 		p = f(e, n)?.set ?? (m && n in e ? (t) => e[n] = t : void 0);
 	}
 	var h, g = !1;
@@ -2206,7 +2208,7 @@ function $r(e, t, n, r, i, a) {
 }
 //#endregion
 //#region PlexCard.svelte
-var ei = /* @__PURE__ */ Q("<span class=\"status-badge active svelte-lueg2f\">Active</span>"), ti = /* @__PURE__ */ Q("<span class=\"status-badge success svelte-lueg2f\">Authenticated</span>"), ni = /* @__PURE__ */ Q("<span class=\"status-badge success svelte-lueg2f\">Connected</span>"), ri = /* @__PURE__ */ Q("<span class=\"status-badge warning svelte-lueg2f\">Disconnected</span>"), ii = /* @__PURE__ */ Q("<div class=\"loading-state svelte-lueg2f\"><div class=\"spinner svelte-lueg2f\"></div> <span>Linking with Plex Nexus...</span></div>"), ai = /* @__PURE__ */ Q("<button class=\"btn-ghost svelte-lueg2f\"> </button>"), oi = /* @__PURE__ */ Q("<button class=\"btn-ghost accent svelte-lueg2f\"> </button>"), si = /* @__PURE__ */ Q("<button class=\"btn-danger-ghost svelte-lueg2f\">Cancel Authorization</button>"), ci = /* @__PURE__ */ Q("<button class=\"btn-ghost svelte-lueg2f\">Switch Account</button>"), li = /* @__PURE__ */ Q("<button class=\"btn-primary plex-btn svelte-lueg2f\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"currentColor\"><path d=\"M12 0L9.33 6.67L2 9.33L7.33 14.67L6 22L12 18.67L18 22L16.67 14.67L22 9.33L14.67 6.67L12 0Z\"></path></svg> Sign in with Plex</button>"), ui = /* @__PURE__ */ Q("<div class=\"settings-section svelte-lueg2f\"><div class=\"form-grid svelte-lueg2f\"><div class=\"form-field svelte-lueg2f\"><span class=\"field-label svelte-lueg2f\">Server Access URL</span> <input type=\"text\" placeholder=\"http://192.168.1.100:32400\" class=\"input-field svelte-lueg2f\"/> <span class=\"helper-text svelte-lueg2f\">Typically http://[IP]:32400. Use localhost if running natively.</span></div> <div class=\"form-field svelte-lueg2f\"><span class=\"field-label svelte-lueg2f\">Friendly Name</span> <input type=\"text\" placeholder=\"e.g. Home Media\" class=\"input-field svelte-lueg2f\"/></div> <div class=\"path-mappings svelte-lueg2f\"><div class=\"mapping-header svelte-lueg2f\"><span class=\"field-label svelte-lueg2f\">Path Mappings</span></div> <div class=\"editor-wrapper\"><echosync-path-mapping-editor></echosync-path-mapping-editor></div></div> <div class=\"actions-row svelte-lueg2f\"><button class=\"btn-primary svelte-lueg2f\"> </button> <!> <!> <div class=\"auth-box svelte-lueg2f\"><!></div></div></div></div>", 2), di = /* @__PURE__ */ Q("<section class=\"plugin-card svelte-lueg2f\"><div class=\"card-header svelte-lueg2f\"><div class=\"header-left svelte-lueg2f\"><h2 class=\"card-title svelte-lueg2f\">Plex Media Server</h2> <div class=\"badges svelte-lueg2f\"><!> <!> <!></div></div> <button class=\"btn-ghost-small svelte-lueg2f\"> </button></div> <!></section>"), fi = {
+var ei = /* @__PURE__ */ Q("<span class=\"status-badge active svelte-lueg2f\">Active</span>"), ti = /* @__PURE__ */ Q("<span class=\"status-badge success svelte-lueg2f\">Authenticated</span>"), ni = /* @__PURE__ */ Q("<span class=\"status-badge success svelte-lueg2f\">Connected</span>"), ri = /* @__PURE__ */ Q("<span class=\"status-badge warning svelte-lueg2f\">Disconnected</span>"), ii = /* @__PURE__ */ Q("<div class=\"loading-state svelte-lueg2f\"><div class=\"spinner svelte-lueg2f\"></div> <span>Linking with Plex Nexus...</span></div>"), ai = /* @__PURE__ */ Q("<button class=\"btn-ghost svelte-lueg2f\"> </button>"), oi = /* @__PURE__ */ Q("<button class=\"btn-ghost accent svelte-lueg2f\"> </button>"), si = /* @__PURE__ */ Q("<button class=\"btn-danger-ghost svelte-lueg2f\">Cancel Authorization</button>"), ci = /* @__PURE__ */ Q("<button class=\"btn-ghost svelte-lueg2f\">Switch Account</button>"), li = /* @__PURE__ */ Q("<button class=\"btn-primary plex-btn svelte-lueg2f\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"currentColor\"><path d=\"M12 0L9.33 6.67L2 9.33L7.33 14.67L6 22L12 18.67L18 22L16.67 14.67L22 9.33L14.67 6.67L12 0Z\"></path></svg> Sign in with Plex</button>"), ui = /* @__PURE__ */ Q("<div class=\"settings-section svelte-lueg2f\"><div class=\"form-grid svelte-lueg2f\"><div class=\"form-field svelte-lueg2f\"><span class=\"field-label svelte-lueg2f\">Server Access URL</span> <input type=\"text\" placeholder=\"http://192.168.1.100:32400\" class=\"input-field svelte-lueg2f\"/> <span class=\"helper-text svelte-lueg2f\">Typically http://[IP]:32400. Use localhost if running natively.</span></div> <div class=\"form-field svelte-lueg2f\"><span class=\"field-label svelte-lueg2f\">Friendly Name</span> <input type=\"text\" placeholder=\"e.g. Home Media\" class=\"input-field svelte-lueg2f\"/></div> <div class=\"path-mappings svelte-lueg2f\"><div class=\"mapping-header svelte-lueg2f\" style=\"display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;\"><span class=\"field-label svelte-lueg2f\" style=\"margin: 0;\">Path Mappings</span> <button class=\"btn-ghost-small svelte-lueg2f\"> </button></div> <div class=\"editor-wrapper\"><echosync-path-mapping-editor></echosync-path-mapping-editor></div></div> <div class=\"actions-row svelte-lueg2f\"><button class=\"btn-primary svelte-lueg2f\"> </button> <!> <!> <div class=\"auth-box svelte-lueg2f\"><!></div></div></div></div>", 2), di = /* @__PURE__ */ Q("<section class=\"plugin-card svelte-lueg2f\"><div class=\"card-header svelte-lueg2f\"><div class=\"header-left svelte-lueg2f\"><h2 class=\"card-title svelte-lueg2f\">Plex Media Server</h2> <div class=\"badges svelte-lueg2f\"><!> <!> <!></div></div> <button class=\"btn-ghost-small svelte-lueg2f\"> </button></div> <!></section>"), fi = {
 	hash: "svelte-lueg2f",
 	code: "\n  /* SHADOW DOM STYLING */.plugin-card.svelte-lueg2f {background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius, 12px);padding:24px;color:var(--text-primary);font-family:inherit;}.card-header.svelte-lueg2f {display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid var(--border-subtle);}.header-left.svelte-lueg2f {display:flex;align-items:center;gap:16px;}.card-title.svelte-lueg2f {margin:0;font-size:18px;font-weight:700;letter-spacing:-0.01em;}.badges.svelte-lueg2f {display:flex;gap:8px;}.status-badge.svelte-lueg2f {font-size:9px;padding:2px 8px;border-radius:5px;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;}.status-badge.active.svelte-lueg2f {background:rgba(20, 184, 166, 0.1);color:var(--color-primary);border:1px solid rgba(20, 184, 166, 0.2);}.status-badge.success.svelte-lueg2f {background:rgba(16, 185, 129, 0.1);color:#10b981;border:1px solid rgba(16, 185, 129, 0.2);}.status-badge.warning.svelte-lueg2f {background:rgba(245, 158, 11, 0.1);color:#f59e0b;border:1px solid rgba(245, 158, 11, 0.2);}.btn-ghost.svelte-lueg2f, .btn-ghost-small.svelte-lueg2f, .btn-danger-ghost.svelte-lueg2f {padding:10px 18px;background:rgba(255, 255, 255, 0.04);border:1px solid var(--border-subtle);color:var(--text-primary);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;}.btn-ghost-small.svelte-lueg2f {padding:6px 12px;font-size:11px;border-radius:6px;}.btn-ghost.svelte-lueg2f:hover, .btn-ghost-small.svelte-lueg2f:hover {background:rgba(255, 255, 255, 0.08);border-color:rgba(255, 255, 255, 0.2);}.btn-ghost.accent.svelte-lueg2f {color:var(--color-primary);border-color:rgba(20, 184, 166, 0.3);}.btn-danger-ghost.svelte-lueg2f {color:#ef4444;border-color:rgba(239, 68, 68, 0.2);}.btn-primary.svelte-lueg2f {padding:10px 24px;background:var(--color-primary);color:#000;border:none;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;transition:all 0.2s;}.btn-primary.svelte-lueg2f:hover:not(:disabled) {filter:brightness(1.1);transform:translateY(-1px);}.plex-btn.svelte-lueg2f {display:flex;align-items:center;gap:8px;background:#e5a00d; /* Plex Gold */color:#000;}.loading-state.svelte-lueg2f {display:flex;flex-direction:column;align-items:center;gap:16px;padding:40px;color:var(--text-muted);}.spinner.svelte-lueg2f {width:28px;height:28px;border:3px solid rgba(255, 255, 255, 0.05);border-top-color:var(--color-primary);border-radius:50%;\n    animation: svelte-lueg2f-spin 1s linear infinite;}\n\n  @keyframes svelte-lueg2f-spin { to { transform: rotate(360deg); } }.settings-section.svelte-lueg2f {margin-top:8px;}.form-grid.svelte-lueg2f {display:flex;flex-direction:column;gap:20px;}.form-field.svelte-lueg2f {display:flex;flex-direction:column;gap:8px;}.field-label.svelte-lueg2f {font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;}.input-field.svelte-lueg2f {width:100%;padding:12px 16px;background:var(--bg-input, #0b0f1a);border:1px solid var(--border-subtle);border-radius:10px;color:var(--text-primary);font-size:14px;transition:all 0.2s;}.input-field.svelte-lueg2f:focus {outline:none;border-color:var(--color-primary);box-shadow:0 0 0 3px rgba(20, 184, 166, 0.1);}.helper-text.svelte-lueg2f {font-size:11px;color:var(--text-muted);font-style:italic;}.path-mappings.svelte-lueg2f {padding:20px 0;border-top:1px solid rgba(255,255,255,0.05);}.mapping-header.svelte-lueg2f {margin-bottom:12px;}.actions-row.svelte-lueg2f {display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:8px;}.auth-box.svelte-lueg2f {margin-left:auto;}\n\n  @media (max-width: 600px) {.auth-box.svelte-lueg2f {margin-left:0;width:100%;}.auth-box.svelte-lueg2f button:where(.svelte-lueg2f) {width:100%;}\n  }"
 };
@@ -2295,7 +2297,22 @@ function pi(e, t) {
 			F(u, !1);
 		}
 	}
-	var x = {
+	let x = /* @__PURE__ */ P(!1);
+	async function ne() {
+		try {
+			F(x, !0);
+			let e = await (await fetch(`${n()}/auto-map-paths`, { method: "POST" })).json();
+			if (e?.success && e.mappings) {
+				let t = e.mappings.filter((e) => !Z(a).some((t) => t.remote === e.remote && t.local === e.local));
+				t.length > 0 ? (F(a, [...Z(a), ...t]), await ee(), alert("Auto-mapping successful!")) : alert("Derived mapping is already configured.");
+			} else alert("Auto-mapping failed: " + (e?.error || "Unknown error"));
+		} catch (e) {
+			console.error("Auto-mapping failed:", e), alert("Auto-mapping failed with error.");
+		} finally {
+			F(x, !1);
+		}
+	}
+	var re = {
 		get apiBase() {
 			return n();
 		},
@@ -2304,76 +2321,78 @@ function pi(e, t) {
 		}
 	};
 	Gr();
-	var S = di(), C = I(S), ne = I(C), re = L(I(ne), 2), ie = I(re), ae = (e) => {
+	var ie = di(), ae = I(ie), oe = I(ae), se = L(I(oe), 2), S = I(se), ce = (e) => {
 		$(e, ei());
 	};
-	jr(ie, (e) => {
-		Z(h) && e(ae);
+	jr(S, (e) => {
+		Z(h) && e(ce);
 	});
-	var w = L(ie, 2), oe = (e) => {
+	var C = L(S, 2), le = (e) => {
 		$(e, ti());
 	};
-	jr(w, (e) => {
-		Z(o) && e(oe);
+	jr(C, (e) => {
+		Z(o) && e(le);
 	});
-	var se = L(w, 2), ce = (e) => {
+	var ue = L(C, 2), de = (e) => {
 		$(e, ni());
-	}, le = (e) => {
+	}, w = (e) => {
 		$(e, ri());
 	};
-	jr(se, (e) => {
-		Z(s) ? e(ce) : Z(o) && e(le, 1);
-	}), O(re), O(ne);
-	var ue = L(ne, 2), de = I(ue, !0);
-	O(ue), O(C);
-	var fe = L(C, 2), pe = (e) => {
+	jr(ue, (e) => {
+		Z(s) ? e(de) : Z(o) && e(w, 1);
+	}), O(se), O(oe);
+	var fe = L(oe, 2), pe = I(fe, !0);
+	O(fe), O(ae);
+	var me = L(ae, 2), he = (e) => {
 		$(e, ii());
-	}, me = (e) => {
+	}, ge = (e) => {
 		var t = ui(), n = I(t), s = I(n), c = L(I(s), 2);
 		Ir(c), Re(2), O(s);
 		var f = L(s, 2), p = L(I(f), 2);
 		Ir(p), O(f);
-		var m = L(f, 2), v = L(I(m), 2), x = I(v);
-		On(() => Rr(x, "mappings", (Z(a), ar(() => JSON.stringify(Z(a)))))), O(v), O(m);
-		var S = L(m, 2), C = I(S), ne = I(C, !0);
-		O(C);
-		var re = L(C, 2), ie = (e) => {
+		var m = L(f, 2), v = I(m), re = L(I(v), 2), ie = I(re, !0);
+		O(re), O(v);
+		var ae = L(v, 2), oe = I(ae);
+		On(() => Rr(oe, "mappings", (Z(a), ar(() => JSON.stringify(Z(a)))))), O(ae), O(m);
+		var se = L(m, 2), S = I(se), ce = I(S, !0);
+		O(S);
+		var C = L(S, 2), le = (e) => {
 			var t = ai(), n = I(t, !0);
 			O(t), On((e) => {
 				t.disabled = e, xr(n, Z(u) ? "Testing..." : "Test Connection");
 			}, [() => (Z(u), Z(r), ar(() => Z(u) || !Z(r).trim()))]), fr("click", t, b), $(e, t);
 		};
-		jr(re, (e) => {
-			Z(o) && e(ie);
+		jr(C, (e) => {
+			Z(o) && e(le);
 		});
-		var ae = L(re, 2), w = (e) => {
+		var ue = L(C, 2), de = (e) => {
 			var t = oi(), n = I(t, !0);
 			O(t), On(() => {
 				t.disabled = Z(g), xr(n, Z(g) ? "Activating..." : "Activate for Sync");
 			}), fr("click", t, _), $(e, t);
 		};
-		jr(ae, (e) => {
-			!Z(h) && Z(o) && e(w);
+		jr(ue, (e) => {
+			!Z(h) && Z(o) && e(de);
 		});
-		var oe = L(ae, 2), se = I(oe), ce = (e) => {
+		var w = L(ue, 2), fe = I(w), pe = (e) => {
 			var t = si();
 			fr("click", t, te), $(e, t);
-		}, le = (e) => {
+		}, me = (e) => {
 			var t = ci();
 			fr("click", t, y), $(e, t);
-		}, ue = (e) => {
+		}, he = (e) => {
 			var t = li();
 			fr("click", t, y), $(e, t);
 		};
-		jr(se, (e) => {
-			Z(d) ? e(ce) : Z(o) ? e(le, 1) : e(ue, -1);
-		}), O(oe), O(S), O(n), O(t), On(() => {
-			C.disabled = Z(l), xr(ne, Z(l) ? "Saving..." : "Save Configuration");
-		}), Hr(c, () => Z(r), (e) => F(r, e)), Hr(p, () => Z(i), (e) => F(i, e)), fr("es-path-update", x, (e) => F(a, e.detail)), fr("click", C, ee), $(e, t);
+		jr(fe, (e) => {
+			Z(d) ? e(pe) : Z(o) ? e(me, 1) : e(he, -1);
+		}), O(w), O(se), O(n), O(t), On(() => {
+			re.disabled = Z(x) || !Z(o), xr(ie, Z(x) ? "Analyzing..." : "Auto-Generate Mappings"), S.disabled = Z(l), xr(ce, Z(l) ? "Saving..." : "Save Configuration");
+		}), Hr(c, () => Z(r), (e) => F(r, e)), Hr(p, () => Z(i), (e) => F(i, e)), fr("click", re, ne), fr("es-path-update", oe, (e) => F(a, e.detail)), fr("click", S, ee), $(e, t);
 	};
-	return jr(fe, (e) => {
-		Z(c) ? e(pe) : Z(m) || e(me, 1);
-	}), O(S), On(() => xr(de, Z(m) ? "Expand" : "Collapse")), fr("click", ue, () => F(m, !Z(m))), $(e, S), Ke(x);
+	return jr(me, (e) => {
+		Z(c) ? e(he) : Z(m) || e(ge, 1);
+	}), O(ie), On(() => xr(pe, Z(m) ? "Expand" : "Collapse")), fr("click", fe, () => F(m, !Z(m))), $(e, ie), Ke(re);
 }
 customElements.define("plex-dashboard-card", $r(pi, { apiBase: {} }, [], [], { mode: "open" }));
 //#endregion
