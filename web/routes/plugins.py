@@ -477,14 +477,29 @@ def toggle_plugin(plugin_id):
         db = get_config_database()
         
         # Resolve to integer ID
-        int_id = db.get_service_id(plugin_id)
-        if int_id:
+        plugin_id_int = db.get_service_id(plugin_id)
+        if not plugin_id_int:
+            try:
+                plugin_id_int = int(plugin_id)
+            except (ValueError, TypeError):
+                pass
+                
+        db_plugin_id = None
+        if plugin_id_int is not None:
+            with config_db_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
+                row = c.fetchone()
+                if row:
+                    db_plugin_id = row['plugin_id']
+                    
+        if db_plugin_id:
             app_root = Path(__file__).parent.parent.parent
             loader = PluginLoader(app_root)
-            loader.reload_plugin(int_id)
-            logger.info(f"Hot-reloaded plugin {plugin_id} (int: {int_id}) after toggle")
+            loader.reload_plugin(db_plugin_id)
+            logger.info(f"Hot-reloaded plugin {plugin_id} (id: {db_plugin_id}) after toggle")
         else:
-            logger.warning(f"Could not resolve {plugin_id} to an integer ID for hot-reload")
+            logger.warning(f"Could not resolve {plugin_id} to an actual plugin_id for hot-reload")
     except Exception as e:
         logger.warning(f"Hot-reload failed for {plugin_id}, marking restart pending: {e}")
         from core.state import system_state
