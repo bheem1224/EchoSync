@@ -195,19 +195,21 @@ function et(e) {
 	tt(e, t);
 }
 function tt(e, t) {
-	for (; t !== null;) {
-		if (t.f & 128) {
-			if (!(t.f & 32768)) throw e;
-			try {
-				t.b.error(e);
-				return;
-			} catch (t) {
-				e = t;
+	if (!(t !== null && t.f & 16384)) {
+		for (; t !== null;) {
+			if (t.f & 128) {
+				if (!(t.f & 32768)) throw e;
+				try {
+					t.b.error(e);
+					return;
+				} catch (t) {
+					e = t;
+				}
 			}
+			t = t.parent;
 		}
-		t = t.parent;
+		throw e;
 	}
-	throw e;
 }
 //#endregion
 //#region node_modules/svelte/src/internal/client/reactivity/status.js
