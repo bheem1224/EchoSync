@@ -22,7 +22,6 @@ from flask import Blueprint, jsonify, request
 
 from core.nexus_framework.plugin_SDK import sdk
 from core.tiered_logger import get_logger
-from database.config_database import config_db as storage
 
 logger = get_logger("musicbrainz_routes")
 

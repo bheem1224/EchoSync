@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch, call
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from database.bulk_operations import LibraryManager
 from plugins.EchoSync.spotify.client import SpotifyClient
-from services.sync_service import PlaylistSyncService, SpotifyPlaylist
+from services.sync_service import PlaylistSyncService, SourcePlaylist
 
 class TestBulkImportGenerator:
     def test_bulk_import_accepts_generator(self):
@@ -94,7 +94,7 @@ class TestSyncServiceConsumption:
             with patch('database.config_database.get_config_database', return_value=mock_config_db):
                 # The service uses PluginRegistry.create_instance inside _get_all_spotify_playlists too
                 mock_registry.create_instance.return_value = mock_client
-                playlists = asyncio_run(service._get_all_spotify_playlists())
+                playlists = asyncio_run(service._get_all_source_playlists())
 
             assert len(playlists) == 3
             assert playlists[0].name == "P1"

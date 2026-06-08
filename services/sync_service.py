@@ -1,4 +1,5 @@
 import asyncio
+import zlib
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -564,7 +565,7 @@ class PlaylistSyncService:
                 for p in playlists:
                     if p.get('name', '').lower() == playlist_name.lower():
                         tracks = client.get_playlist_tracks(p['id'])
-                        return SpotifyPlaylist(id=p['id'], name=p['name'], tracks=tracks)
+                        return SourcePlaylist(id=p['id'], name=p['name'], tracks=tracks)
             return None
         except Exception as e:
             logger.error(f"Error fetching Spotify playlist: {e}")
@@ -705,7 +706,7 @@ class PlaylistSyncService:
                 if self.spotify_client:
                      # Iterate generator directly
                      for p in self.spotify_client.get_user_playlists() or []:
-                         all_playlists.append(SpotifyPlaylist(id=p['id'], name=p['name'], tracks=[], account_name="Primary"))
+                         all_playlists.append(SourcePlaylist(id=p['id'], name=p['name'], tracks=[], account_name="Primary"))
                 return all_playlists
 
             # 2. Iterate through each account (already filtered by is_active=True at DB level)
