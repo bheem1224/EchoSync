@@ -22,8 +22,10 @@ from flask import Blueprint, jsonify, request
 
 from core.nexus_framework.plugin_SDK import sdk
 from core.tiered_logger import get_logger
+from core.file_handling.storage import get_storage_service
 
 logger = get_logger("musicbrainz_routes")
+storage = get_storage_service()
 
 bp = Blueprint("musicbrainz_routes", __name__, url_prefix="/api/musicbrainz")
 
