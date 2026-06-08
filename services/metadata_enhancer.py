@@ -633,6 +633,9 @@ class RetroactiveEnhancer:
                     
                     if not local_path.exists():
                         logger.warning("Enhancer skipping missing file: %s", local_path)
+                        t_data['musicbrainz_id'] = "NOT_FOUND"
+                        t_data['metadata_status']['enhancement_attempts'] = t_data['metadata_status'].get('enhancement_attempts', 0) + 1
+                        results_to_commit.append(t_data)
                         continue
 
                     # Step 1: Read Local Tags
@@ -674,40 +677,45 @@ class RetroactiveEnhancer:
                     results_to_commit.append(t_data)
 
                 # Step 3: Targeted Fetch
-                if bucket_target and mb_client:
-                    mbids_to_fetch = [t[0]['musicbrainz_id'] for t in bucket_target]
-                    logger.info("Targeted Fetch for %d tracks", len(bucket_target))
-                    batch_metadata = mb_client.get_metadata_batch(mbids_to_fetch) if getattr(mb_client.capabilities, 'supports_batching', False) else {}
-                    
-                    for t_data, local_path, file_tags in bucket_target:
-                        mbid = t_data['musicbrainz_id']
-                        # Fallback to 1-by-1 if batching not supported or failed
-                        meta = batch_metadata.get(mbid)
-                        if not meta and not batch_metadata:
-                            try:
-                                meta = mb_client.get_metadata(mbid)
-                            except Exception:
-                                pass
+                if bucket_target:
+                    if mb_client:
+                        mbids_to_fetch = [t[0]['musicbrainz_id'] for t in bucket_target]
+                        logger.info("Targeted Fetch for %d tracks", len(bucket_target))
+                        batch_metadata = mb_client.get_metadata_batch(mbids_to_fetch) if getattr(mb_client.capabilities, 'supports_batching', False) else {}
+                        
+                        for t_data, local_path, file_tags in bucket_target:
+                            mbid = t_data['musicbrainz_id']
+                            # Fallback to 1-by-1 if batching not supported or failed
+                            meta = batch_metadata.get(mbid)
+                            if not meta and not batch_metadata:
+                                try:
+                                    meta = mb_client.get_metadata(mbid)
+                                except Exception:
+                                    pass
 
-                        if meta:
-                            if not t_data['isrc'] and meta.get('isrc'):
-                                t_data['isrc'] = meta.get('isrc')
-                            
-                            update_tags = {'musicbrainz_id': mbid, 'recording_id': mbid}
-                            if t_data['isrc']:
-                                update_tags['isrc'] = t_data['isrc']
-                            try:
-                                _tagging_write(local_path, update_tags)
-                            except Exception:
-                                pass
+                            if meta:
+                                if not t_data['isrc'] and meta.get('isrc'):
+                                    t_data['isrc'] = meta.get('isrc')
                                 
-                            t_data['metadata_status']['enhanced'] = True
-                            for key in required_keys:
-                                t_data['metadata_status'][key] = True
-                            t_data['metadata_changed'] = True
-                        else:
+                                update_tags = {'musicbrainz_id': mbid, 'recording_id': mbid}
+                                if t_data['isrc']:
+                                    update_tags['isrc'] = t_data['isrc']
+                                try:
+                                    _tagging_write(local_path, update_tags)
+                                except Exception:
+                                    pass
+                                    
+                                t_data['metadata_status']['enhanced'] = True
+                                for key in required_keys:
+                                    t_data['metadata_status'][key] = True
+                                t_data['metadata_changed'] = True
+                            else:
+                                t_data['metadata_status']['enhancement_attempts'] = t_data['metadata_status'].get('enhancement_attempts', 0) + 1
+                            results_to_commit.append(t_data)
+                    else:
+                        for t_data, local_path, file_tags in bucket_target:
                             t_data['metadata_status']['enhancement_attempts'] = t_data['metadata_status'].get('enhancement_attempts', 0) + 1
-                        results_to_commit.append(t_data)
+                            results_to_commit.append(t_data)
 
                 # Step 4: Heavyweight Fingerprint Discovery
                 for t_data, local_path, file_tags in bucket_heavy:
