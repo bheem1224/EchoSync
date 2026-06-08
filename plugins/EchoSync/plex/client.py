@@ -1150,7 +1150,7 @@ class PlexClient(PluginBase):
 
 
         # Fetch Settings from JSON (Hybrid Config approach)
-        plex_config = {}
+        plex_config = self.config or {}
 
         base_url = plex_config.get('base_url') or plex_config.get('server_url')
         if not base_url:

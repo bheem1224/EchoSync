@@ -161,6 +161,32 @@
       testing = false;
     }
   }
+  let autoMapping = false;
+  async function autoMapPaths() {
+    try {
+      autoMapping = true;
+      const response = await fetch(`${apiBase}/auto-map-paths`, { method: 'POST' });
+      const data = await response.json();
+      if (data?.success && data.mappings) {
+        // Only append unique mappings
+        const newMappings = data.mappings.filter(m => !pathMappings.some(pm => pm.remote === m.remote && pm.local === m.local));
+        if (newMappings.length > 0) {
+          pathMappings = [...pathMappings, ...newMappings];
+          await saveSettings();
+          alert("Auto-mapping successful!");
+        } else {
+          alert("Derived mapping is already configured.");
+        }
+      } else {
+        alert("Auto-mapping failed: " + (data?.error || "Unknown error"));
+      }
+    } catch (error) {
+      console.error('Auto-mapping failed:', error);
+      alert("Auto-mapping failed with error.");
+    } finally {
+      autoMapping = false;
+    }
+  }
 </script>
 
 <section class="plugin-card">
@@ -216,8 +242,11 @@
         </div>
 
         <div class="path-mappings">
-           <div class="mapping-header">
-              <span class="field-label">Path Mappings</span>
+           <div class="mapping-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <span class="field-label" style="margin: 0;">Path Mappings</span>
+              <button class="btn-ghost-small" on:click={autoMapPaths} disabled={autoMapping || !hasToken}>
+                {autoMapping ? 'Analyzing...' : 'Auto-Generate Mappings'}
+              </button>
            </div>
            <!-- The editor handles its own styling, but we wrap it for layout -->
            <div class="editor-wrapper">

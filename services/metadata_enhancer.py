@@ -808,9 +808,9 @@ class RetroactiveEnhancer:
                         if track_fp and not track_fp.acoustid_id:
                             track_fp.acoustid_id = res['acoustid_id']
 
-                    if res.get('metadata_changed'):
-                        if res.get('metadata_changed'):
-                            track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    # Always apply post-metadata enrichment hooks so that the cjk_restored stamp is set and aliases are persisted
+                    track = hook_manager.apply_filters('post_metadata_enrichment', track)
+                    flag_modified(track, "metadata_status")
                     total_processed += 1
 
 

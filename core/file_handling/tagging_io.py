@@ -157,6 +157,16 @@ def _read_tags_impl(file_path: Path) -> Dict[str, Any]:
     if metadata.get("recording_id") and not metadata.get("musicbrainz_id"):
         metadata["musicbrainz_id"] = metadata["recording_id"]
 
+    # Validate and normalize ISRC if present
+    isrc = metadata.get("isrc")
+    if isrc:
+        import re
+        isrc_clean = str(isrc).strip().upper().replace("-", "")
+        if re.match(r"^[A-Z]{2}[A-Z0-9]{3}\d{2}\d{5}$", isrc_clean):
+            metadata["isrc"] = isrc_clean
+        else:
+            metadata.pop("isrc", None)
+
     return {k: v for k, v in metadata.items() if v not in (None, "", [], {})}
 
 
@@ -215,6 +225,8 @@ def _extract_audio_info(audio: Any) -> Dict[str, Any]:
         result["sample_rate_hz"] = int(info.sample_rate)
     if getattr(info, "channels", None) is not None:
         result["channels"] = int(info.channels)
+    if getattr(info, "bits_per_sample", None) is not None:
+        result["bit_depth"] = int(info.bits_per_sample)
     return result
 
 

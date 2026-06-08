@@ -103,6 +103,7 @@ class LocalServerProvider(PluginBase):
                     disc_number=tags.get('disc_number') or tags.get('discnumber'),
                     bitrate=tags.get('bitrate_kbps') or tags.get('bitrate'),
                     sample_rate=tags.get('sample_rate_hz') or tags.get('sample_rate'),
+                    bit_depth=tags.get('bit_depth'),
                     file_format=tags.get('file_format'),
                     file_size_bytes=file_size_bytes,
                     added_at=datetime.fromtimestamp(added_at) if added_at else None,

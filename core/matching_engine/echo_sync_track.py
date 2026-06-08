@@ -219,6 +219,14 @@ class EchosyncTrack:
             except ValueError:
                 pass
 
+        # Validate ISRC format if present
+        if self.isrc:
+            isrc_clean = str(self.isrc).strip().upper().replace("-", "")
+            if re.match(r"^[A-Z]{2}[A-Z0-9]{3}\d{2}\d{5}$", isrc_clean):
+                self.isrc = isrc_clean
+            else:
+                self.isrc = None
+
         # 1.6 Sync top-level fields with identifiers
 
         # 1. mb_release_id

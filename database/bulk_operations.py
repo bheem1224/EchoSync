@@ -394,6 +394,14 @@ class LibraryManager:
                 track.musicbrainz_id = track_data.musicbrainz_id
             if track_data.isrc is not None:
                 track.isrc = track_data.isrc
+
+            # Validate and clear invalid ISRCs in DB
+            if track.isrc:
+                import re
+                isrc_clean = str(track.isrc).strip().upper().replace("-", "")
+                if not re.match(r"^[A-Z]{2}[A-Z0-9]{3}\d{2}\d{5}$", isrc_clean):
+                    track.isrc = None
+
             if track_data.sync_id is not None:
                 track.sync_id = track_data.sync_id
 
@@ -402,7 +410,7 @@ class LibraryManager:
 
         # Link identifiers
         for source, item_id in track_data.identifiers.items():
-            if not source or not item_id:
+            if not source or not item_id or source == 'acoustid_id':
                 continue
 
             if not isinstance(item_id, str):
@@ -534,11 +542,12 @@ class LibraryManager:
         if source_name == "EchoSync.local_server":
             try:
                 session.execute(delete(ExternalIdentifier).where(ExternalIdentifier.plugin_source == "EchoSync.local_server"))
+                session.execute(delete(ExternalIdentifier).where(ExternalIdentifier.plugin_source == "acoustid_id"))
                 session.commit()
-                logger.info("Purged legacy EchoSync.local_server external identifiers")
+                logger.info("Purged legacy EchoSync.local_server and duplicate acoustid_id external identifiers")
             except Exception as e:
                 session.rollback()
-                logger.error(f"Failed to purge legacy local identifiers: {e}")
+                logger.error(f"Failed to purge legacy local/acoustid identifiers: {e}")
 
         imported_count = 0
         updated_count = 0

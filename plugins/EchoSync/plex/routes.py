@@ -196,6 +196,112 @@ def test_connection():
         logger.error(f"Plex connection test failed: {e}", exc_info=True)
         return jsonify({"connected": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Connection test failed"}), 400
 
+@bp.post('/auto-map-paths')
+def auto_map_paths():
+    """Auto-generate remote to local path mappings by comparing synced tracks."""
+    try:
+        from core.nexus_framework.plugin_loader import PluginStorageBox
+        sdk = PluginStorageBox()
+        from core.security import decrypt_string
+        
+        base_url = str(sdk.config.get('plex.base_url', '')).strip()
+        accounts = sdk.accounts.get_all()
+        token = ''
+        if accounts:
+            account_id = accounts[0].get('id')
+            token_data = sdk.accounts.get_token(account_id)
+            if token_data and token_data.get('access_token'):
+                token = decrypt_string(token_data.get('access_token'))
+                
+        if not base_url or not token:
+            return jsonify({'error': 'Plex is not configured or authenticated.'}), 400
+            
+        from plexapi.server import PlexServer
+        server = PlexServer(base_url, token, timeout=10)
+        
+        from database.music_database import ExternalIdentifier, Track
+        mappings_derived = []
+        
+        with sdk.db.session_scope() as session:
+            # Query up to 15 distinct tracks that have a plex external identifier
+            ext_ids = session.query(ExternalIdentifier).filter(
+                ExternalIdentifier.plugin_source == 'plex'
+            ).limit(15).all()
+            
+            if not ext_ids:
+                return jsonify({'error': 'No tracks synced with Plex found in the local database. Try importing a playlist or library first.'}), 400
+                
+            for ext in ext_ids:
+                local_track = session.query(Track).filter_by(id=ext.track_id).first()
+                if not local_track or not local_track.file_path:
+                    continue
+                    
+                # Get remote track
+                try:
+                    plex_track = server.fetchItem(int(ext.plugin_item_id))
+                    if not hasattr(plex_track, 'media') or not plex_track.media or not hasattr(plex_track.media[0], 'parts') or not plex_track.media[0].parts:
+                        continue
+                    remote_file = getattr(plex_track.media[0].parts[0], 'file', None)
+                    if not remote_file:
+                        continue
+                        
+                    # Derive mapping
+                    remote = remote_file.replace('\\', '/')
+                    local = local_track.file_path.replace('\\', '/')
+                    
+                    remote_parts = remote.split('/')
+                    local_parts = local.split('/')
+                    
+                    common_len = 0
+                    while common_len < len(remote_parts) and common_len < len(local_parts):
+                        if remote_parts[-(common_len + 1)] == local_parts[-(common_len + 1)]:
+                            common_len += 1
+                        else:
+                            break
+                            
+                    if common_len == 0:
+                        continue
+                        
+                    remote_prefix = '/'.join(remote_parts[:-common_len])
+                    local_prefix = '/'.join(local_parts[:-common_len])
+                    
+                    if remote.startswith('/') and not remote_prefix.startswith('/'):
+                        remote_prefix = '/' + remote_prefix
+                    if local.startswith('/') and not local_prefix.startswith('/'):
+                        local_prefix = '/' + local_prefix
+                    if not remote_prefix and remote.startswith('/'): remote_prefix = '/'
+                    if not local_prefix and local.startswith('/'): local_prefix = '/'
+                    
+                    mapping = {"remote": remote_prefix, "local": local_prefix}
+                    if mapping not in mappings_derived:
+                        mappings_derived.append(mapping)
+                        
+                    if len(mappings_derived) >= 1:
+                        # We just want one identical mapping. If we find more than 1 distinct, we'll error out.
+                        pass
+                except Exception as e:
+                    logger.debug(f"Failed to fetch plex track {ext.plugin_item_id} during auto-map: {e}")
+                    
+        if not mappings_derived:
+            return jsonify({'error': 'Could not derive path mapping. No matching file structures found between Plex and local DB.'}), 400
+            
+        if len(mappings_derived) > 1:
+            return jsonify({'error': 'Found conflicting path mappings among tracks. Manual configuration required.'}), 400
+            
+        import json
+        sdk.config.set('plex.path_mappings', json.dumps(mappings_derived))
+        logger.info(f"Auto-generated Plex path mapping: {mappings_derived}")
+        
+        return jsonify({
+            'success': True,
+            'mappings': mappings_derived
+        })
+        
+    except Exception as e:
+        logger.error(f"Error auto-mapping paths: {e}", exc_info=True)
+        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+
+
 # --- OAuth Logic (from providers/plex/oauth_routes.py) ---
 
 plex_oauth_sessions = {}
