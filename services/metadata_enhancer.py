@@ -760,6 +760,7 @@ class RetroactiveEnhancer:
                             t_data['metadata_status'][key] = True
                         t_data['metadata_changed'] = True
                     else:
+                        logger.info("Heavyweight Fingerprint returned no matches for: %s", local_path.name)
                         t_data['musicbrainz_id'] = "NOT_FOUND"
                         t_data['metadata_status']['enhancement_attempts'] = t_data['metadata_status'].get('enhancement_attempts', 0) + 1
 

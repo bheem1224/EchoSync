@@ -132,6 +132,8 @@ class AcoustIDProvider(PluginBase):
                 return {"acoustid_id": None, "mbids": [], "score": None}
 
             results = data.get('results') or []
+            if not results:
+                logger.debug("AcoustID lookup succeeded but found 0 matches for fingerprint.")
             mbids: List[str] = []
             seen_mbid = set()
             best_result: Optional[Dict[str, Any]] = None

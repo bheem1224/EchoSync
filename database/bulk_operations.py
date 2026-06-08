@@ -166,7 +166,11 @@ class LibraryManager:
                         album = alb
                         break
 
-        release_date = date(release_year, 1, 1) if release_year else None
+        try:
+            year_int = int(release_year) if release_year else None
+            release_date = date(year_int, 1, 1) if year_int else None
+        except (ValueError, TypeError):
+            release_date = None
 
         if album is None:
             album = Album(
