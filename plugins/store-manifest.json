@@ -118,7 +118,7 @@
           "description": "Base URL for the MusicBrainz API"
         }
       },
-      "beta_version": "2.4.3-beta.39",
+      "beta_version": "2.4.3-beta.40",
       "plugin_id": "musicbrainz",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/musicbrainz",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/musicbrainz/releases/v2.4.2.zip",
