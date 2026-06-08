@@ -106,6 +106,9 @@ class AcoustIDProvider(PluginBase):
             return {"acoustid_id": None, "mbids": [], "score": None}
 
         duration = int(duration)
+        if duration > 10000:
+            logger.debug(f"AcoustID duration abnormally high ({duration}), assuming milliseconds and converting to seconds.")
+            duration = int(duration / 1000)
         payload = {
             'client': api_key,
             'meta': 'recordingids',
@@ -209,6 +212,8 @@ class AcoustIDProvider(PluginBase):
 
         try:
             duration_int = int(duration)
+            if duration_int > 10000:
+                duration_int = int(duration_int / 1000)
         except Exception:
             logger.debug("Skipping AcoustID submit: invalid duration")
             return False
