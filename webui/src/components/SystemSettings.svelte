@@ -35,7 +35,7 @@
       const response = await apiClient.get('/system/plugins');
       if (response.data && Array.isArray(response.data.plugins)) {
         providerStates = response.data.plugins.map(provider => ({
-          id: provider.id,
+          id: provider.plugin_id || provider.id,
           name: provider.name,
           display_name: provider.display_name || provider.name || provider.id,
           configured: provider.is_configured || false,

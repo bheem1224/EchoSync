@@ -1033,6 +1033,7 @@ def get_all_plugins() -> list:
                 
             plugin_info = {
                 "id": name,
+                "plugin_id": row['plugin_id'],
                 "name": name,
                 "description": row['description'] or "Community plugin",
                 "type": "community",
