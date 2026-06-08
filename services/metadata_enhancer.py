@@ -798,7 +798,7 @@ class RetroactiveEnhancer:
                     if res['metadata_status'].get('artist_fixed_from_tags') and track.artist:
                         track.artist.name = res['artist_name']
 
-                    if res['new_chromaprint_generated']:
+                    if res.get('new_chromaprint_generated', False):
                         # Avoid IntegrityError by checking if it exists
                         existing_fp = session.query(AudioFingerprint).filter_by(chromaprint=res['chromaprint']).first()
                         if not existing_fp:
