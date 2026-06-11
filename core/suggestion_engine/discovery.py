@@ -444,10 +444,11 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
         Number of new suggestion rows inserted.
     """
     import logging
+    from sqlalchemy import or_, and_
     from sqlalchemy.exc import IntegrityError
     from plugins.spotify.cache_manager import SpotifyCacheManager
     from database.working_database import get_working_database, SuggestionStagingQueue, Download
-    from database.music_database import get_database as get_music_database, Track
+    from database.music_database import get_database as get_music_database, Track, Artist
 
     logger = logging.getLogger("suggestion_engine.discovery")
 
@@ -474,90 +475,143 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
         if not tracks:
             continue
 
-        for track in tracks:
+        # Process tracks in chunks of 500 to avoid SQLite expression tree limits
+        chunk_size = 500
+        for i in range(0, len(tracks), chunk_size):
             if inserted >= limit:
                 break
 
-            title = getattr(track, "title", None) or getattr(track, "raw_title", None)
-            artist_name = getattr(track, "artist_name", None)
-            isrc = getattr(track, "isrc", None)
+            chunk = tracks[i:i + chunk_size]
 
-            if not title or not artist_name:
-                continue
+            # 1. Gather data for the batch
+            batch_data = []
+            isrcs = set()
+            title_artist_pairs = set()
+            sync_ids = set()
 
-            # --- Gate 1: already in MusicDatabase? ---
-            with music_db.session_scope() as m_session:
-                in_library = False
-                if isrc:
-                    in_library = bool(
-                        m_session.query(Track.id).filter(Track.isrc == isrc).first()
-                    )
-                if not in_library:
-                    in_library = bool(
-                        m_session.query(Track.id).join(Artist).filter(
-                            Track.title == title,
-                            Artist.name == artist_name,
-                        ).first()
-                    )
+            for track in chunk:
+                title = getattr(track, "title", None) or getattr(track, "raw_title", None)
+                artist_name = getattr(track, "artist_name", None)
+                isrc = getattr(track, "isrc", None)
 
-            if in_library:
-                continue
-
-            # --- Gate 2: active Download job exists? ---
-            sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
-            with working_db.session_scope() as w_session:
-                active_job = w_session.query(Download.id).filter(
-                    Download.sync_id == sync_id,
-                    Download.status.in_(ACTIVE_STATUSES),
-                ).first()
-
-            if active_job:
-                logger.debug(
-                    "mine_cached_playlists: '%s' by '%s' skipped -- active download job (sync_id=%s).",
-                    title, artist_name, sync_id,
-                )
-                continue
-
-            # --- Both gates passed: queue the suggestion ---
-            with working_db.session_scope() as w_session:
-                # Explicit pre-check so we get a clean skip log rather than relying
-                # purely on IntegrityError (sync_id UNIQUE handles non-NULL dedup).
-                already_queued = w_session.query(SuggestionStagingQueue.id).filter(
-                    SuggestionStagingQueue.user_id == str(user_id),
-                    SuggestionStagingQueue.sync_id == sync_id,
-                    SuggestionStagingQueue.reason == "playlist_gap",
-                ).first()
-                if already_queued:
+                if not title or not artist_name:
                     continue
 
-                try:
-                    row = SuggestionStagingQueue(
-                        user_id=str(user_id),
-                        music_db_track_id=None,
-                        sync_id=sync_id,
-                        reason="playlist_gap",
-                        ui_label="Missing from Library",
-                        context_data={
-                            "title": title,
-                            "artist_name": artist_name,
-                            "isrc": isrc,
-                            "playlist_id": playlist_id,
-                            "playlist_name": playlist_name,
-                        },
-                        status="pending",
-                    )
-                    w_session.add(row)
-                    w_session.flush()
-                    inserted += 1
-                    logger.info(
-                        "mine_cached_playlists: suggestion queued '%s' by '%s' (sync_id=%s).",
-                        title, artist_name, sync_id,
-                    )
-                except IntegrityError:
-                    logger.debug(
-                        "mine_cached_playlists: duplicate skipped '%s' by '%s'.",
-                        title, artist_name,
-                    )
+                sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
+
+                batch_data.append({
+                    "title": title,
+                    "artist_name": artist_name,
+                    "isrc": isrc,
+                    "sync_id": sync_id,
+                    "track_obj": track
+                })
+
+                if isrc:
+                    isrcs.add(isrc)
+                title_artist_pairs.add((title, artist_name))
+                sync_ids.add(sync_id)
+
+            if not batch_data:
+                continue
+
+            # 2. Batch Queries
+            found_isrcs = set()
+            found_title_artists = set()
+            active_sync_ids = set()
+            queued_sync_ids = set()
+
+            # --- Gate 1: Batch MusicDatabase checks ---
+            with music_db.session_scope() as m_session:
+                if isrcs:
+                    # Look up by ISRCs
+                    isrc_matches = m_session.query(Track.isrc).filter(Track.isrc.in_(isrcs)).all()
+                    found_isrcs = {m[0] for m in isrc_matches if m[0]}
+
+                if title_artist_pairs:
+                    # Look up by Title + Artist pairs using or_(*[and_(...)])
+                    conditions = [and_(Track.title == t, Artist.name == a) for t, a in title_artist_pairs]
+                    ta_matches = m_session.query(Track.title, Artist.name).join(Artist).filter(or_(*conditions)).all()
+                    found_title_artists = {(m[0], m[1]) for m in ta_matches}
+
+            # --- Gate 2: Batch Download queue & Staging queue checks ---
+            with working_db.session_scope() as w_session:
+                if sync_ids:
+                    # Look for active jobs
+                    active_matches = w_session.query(Download.sync_id).filter(
+                        Download.sync_id.in_(sync_ids),
+                        Download.status.in_(ACTIVE_STATUSES)
+                    ).all()
+                    active_sync_ids = {m[0] for m in active_matches}
+
+                    # Look for already queued suggestions
+                    queued_matches = w_session.query(SuggestionStagingQueue.sync_id).filter(
+                        SuggestionStagingQueue.user_id == str(user_id),
+                        SuggestionStagingQueue.sync_id.in_(sync_ids),
+                        SuggestionStagingQueue.reason == "playlist_gap"
+                    ).all()
+                    queued_sync_ids = {m[0] for m in queued_matches}
+
+                # 3. Process the batch
+                for data in batch_data:
+                    if inserted >= limit:
+                        break
+
+                    title = data["title"]
+                    artist_name = data["artist_name"]
+                    isrc = data["isrc"]
+                    sync_id = data["sync_id"]
+
+                    # Check Gate 1
+                    if isrc and isrc in found_isrcs:
+                        continue
+                    if (title, artist_name) in found_title_artists:
+                        continue
+
+                    # Check Gate 2
+                    if sync_id in active_sync_ids:
+                        logger.debug(
+                            "mine_cached_playlists: '%s' by '%s' skipped -- active download job (sync_id=%s).",
+                            title, artist_name, sync_id,
+                        )
+                        continue
+
+                    # Check already queued
+                    if sync_id in queued_sync_ids:
+                        continue
+
+                    # Both gates passed: queue the suggestion
+                    try:
+                        row = SuggestionStagingQueue(
+                            user_id=str(user_id),
+                            music_db_track_id=None,
+                            sync_id=sync_id,
+                            reason="playlist_gap",
+                            ui_label="Missing from Library",
+                            context_data={
+                                "title": title,
+                                "artist_name": artist_name,
+                                "isrc": isrc,
+                                "playlist_id": playlist_id,
+                                "playlist_name": playlist_name,
+                            },
+                            status="pending",
+                        )
+                        w_session.add(row)
+                        w_session.flush()
+                        inserted += 1
+                        # Add to queued_sync_ids locally to prevent duplicates within the same chunk
+                        queued_sync_ids.add(sync_id)
+
+                        logger.info(
+                            "mine_cached_playlists: suggestion queued '%s' by '%s' (sync_id=%s).",
+                            title, artist_name, sync_id,
+                        )
+                    except IntegrityError:
+                        logger.debug(
+                            "mine_cached_playlists: duplicate skipped '%s' by '%s'.",
+                            title, artist_name,
+                        )
 
     logger.info(
         "mine_cached_playlists: complete for user=%s -- %d new suggestion(s) inserted.",
