@@ -270,7 +270,7 @@ class LibraryManager:
         return session.execute(stmt).scalars().first()
 
     def _upsert_track(
-        self, session: Session, track_data: EchosyncTrack, artist: Artist, album: Optional[Album], identifiers_only: bool = False
+        self, session: Session, track_data: EchosyncTrack, artist: Artist, album: Optional[Album], identifiers_only: bool = False, identifier_cache: Optional[Dict[Tuple[str, str], int]] = None
     ) -> tuple[Optional[Track], bool]:
         """
         Insert or update a single track.
@@ -279,14 +279,21 @@ class LibraryManager:
         if track_data.identifiers:
             for source, plugin_item_id in track_data.identifiers.items():
                 if source and plugin_item_id:
-                    stmt = select(ExternalIdentifier).where(
-                        ExternalIdentifier.plugin_source == source,
-                        ExternalIdentifier.plugin_item_id == str(plugin_item_id)
-                    )
-                    ext_id = session.execute(stmt).scalar_one_or_none()
-                    if ext_id and ext_id.track:
-                        track = ext_id.track
-                        break
+                    if identifier_cache is not None:
+                        t_id = identifier_cache.get((source, str(plugin_item_id)))
+                        if t_id:
+                            track = session.get(Track, t_id)
+                            if track:
+                                break
+                    else:
+                        stmt = select(ExternalIdentifier).where(
+                            ExternalIdentifier.plugin_source == source,
+                            ExternalIdentifier.plugin_item_id == str(plugin_item_id)
+                        )
+                        ext_id = session.execute(stmt).scalar_one_or_none()
+                        if ext_id and ext_id.track:
+                            track = ext_id.track
+                            break
 
         if track is None:
             track = self._find_track_by_identifiers(session, track_data.identifiers)
@@ -558,6 +565,14 @@ class LibraryManager:
         seen_album_ids: set[int] = set()
 
         # prepopulate caches
+        identifier_cache = {}
+        try:
+            stmt = select(ExternalIdentifier.plugin_source, ExternalIdentifier.plugin_item_id, ExternalIdentifier.track_id)
+            for src, item_id, t_id in session.execute(stmt).all():
+                identifier_cache[(src, str(item_id))] = t_id
+        except Exception as e:
+            logger.warning(f"Failed to prepopulate identifier cache: {e}")
+
         if not self.artist_cache:
             try:
                 stmt = select(Artist)
@@ -609,69 +624,80 @@ class LibraryManager:
                     time.sleep(0)
 
                 try:
-                    if not track_data.title or not track_data.title.strip():
-                        failed_count += 1
-                        logger.warning(
-                            "Skipping track %s due to missing title: artist='%s' album='%s'",
-                            idx + 1, track_data.artist_name, track_data.album_title,
-                        )
-                        continue
-                    
-                    if not track_data.artist_name or not track_data.artist_name.strip():
-                        failed_count += 1
-                        logger.warning(
-                            "Skipping track %s due to missing artist: title='%s'",
-                            idx + 1, track_data.title,
-                        )
-                        continue
-                    
-                    if (idx + 1) % 100 == 0 or idx == 0:
-                        logger.debug(
-                            "Processing track %s: title='%s' artist='%s' album='%s'",
-                            idx + 1, track_data.title, track_data.artist_name, track_data.album_title,
-                        )
-
-                    artist = self._get_or_create_artist(
-                        session,
-                        track_data.artist_name,
-                        sort_name=track_data.artist_sort_name
-                    )
-                    if artist and artist.id:
-                        seen_artist_ids.add(artist.id)
-
-                    album = self._get_or_create_album(
-                        session,
-                        track_data.album_title,
-                        artist,
-                        track_data.release_year,
-                        album_type=track_data.album_type,
-                        release_group_id=track_data.album_release_group_id,
-                        mb_release_id=track_data.mb_release_id,
-                        original_release_date=track_data.original_release_date
-                    )
-                    if album and album.id:
-                        seen_album_ids.add(album.id)
-
-                    track, is_new = self._upsert_track(session, track_data, artist, album, identifiers_only=identifiers_only)
-                    
-                    if track is None:
-                        # Skip if identifiers_only=True and no matching track is found
-                        continue
-
-                    if track_data.file_path:
-                        observed_file_paths.add(track_data.file_path)
-
-                    for source, item_id in (track_data.identifiers or {}).items():
-                        if not source or item_id is None:
+                    with session.begin_nested():
+                        if not track_data.title or not track_data.title.strip():
+                            failed_count += 1
+                            logger.warning(
+                                "Skipping track %s due to missing title: artist='%s' album='%s'",
+                                idx + 1, track_data.artist_name, track_data.album_title,
+                            )
                             continue
-                        if not isinstance(item_id, str):
-                            item_id = str(item_id)
-                        observed_identifiers[source].add(item_id)
 
-                    if is_new:
-                        imported_count += 1
-                    else:
-                        updated_count += 1
+                        if not track_data.artist_name or not track_data.artist_name.strip():
+                            failed_count += 1
+                            logger.warning(
+                                "Skipping track %s due to missing artist: title='%s'",
+                                idx + 1, track_data.title,
+                            )
+                            continue
+
+                        if (idx + 1) % 100 == 0 or idx == 0:
+                            logger.debug(
+                                "Processing track %s: title='%s' artist='%s' album='%s'",
+                                idx + 1, track_data.title, track_data.artist_name, track_data.album_title,
+                            )
+
+                        artist = self._get_or_create_artist(
+                            session,
+                            track_data.artist_name,
+                            sort_name=track_data.artist_sort_name
+                        )
+                        if artist and artist.id:
+                            seen_artist_ids.add(artist.id)
+
+                        album = self._get_or_create_album(
+                            session,
+                            track_data.album_title,
+                            artist,
+                            track_data.release_year,
+                            album_type=track_data.album_type,
+                            release_group_id=track_data.album_release_group_id,
+                            mb_release_id=track_data.mb_release_id,
+                            original_release_date=track_data.original_release_date
+                        )
+                        if album and album.id:
+                            seen_album_ids.add(album.id)
+
+                        track, is_new = self._upsert_track(session, track_data, artist, album, identifiers_only=identifiers_only, identifier_cache=identifier_cache)
+
+                        if track is None:
+                            # Skip if identifiers_only=True and no matching track is found
+                            continue
+
+                        if track_data.file_path:
+                            observed_file_paths.add(track_data.file_path)
+
+                        for source, item_id in (track_data.identifiers or {}).items():
+                            if not source or item_id is None:
+                                continue
+                            if not isinstance(item_id, str):
+                                item_id = str(item_id)
+                            observed_identifiers[source].add(item_id)
+
+                            # Persist the external identifier if not present
+                            if (source, item_id) not in identifier_cache or identifier_cache[(source, item_id)] != track.id:
+                                ext_id = ExternalIdentifier(
+                                    track_id=track.id,
+                                    plugin_source=source,
+                                    plugin_item_id=item_id
+                                )
+                                session.add(ext_id)
+                                identifier_cache[(source, item_id)] = track.id
+
+                        if is_new:
+                            imported_count += 1
+                        else:
+                            updated_count += 1
 
                 except Exception as e:
                     failed_count += 1

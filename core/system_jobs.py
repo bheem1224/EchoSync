@@ -544,9 +544,30 @@ def register_plugin_update_check_job(interval_seconds: int = 43200, enabled: boo
             plugins = plugin_store.get_all_store_plugins()
             updates_found = []
 
-            for p in plugins:
-                if p.get("_installed") and p.get("update_available"):
-                    updates_found.append(p.get("name", "Unknown Plugin"))
+            from database.config_database import get_config_database
+            db = get_config_database()
+            conn = db._open_connection()
+            try:
+                c = conn.cursor()
+                for p in plugins:
+                    if p.get("_installed") and p.get("update_available"):
+                        updates_found.append(p.get("name", "Unknown Plugin"))
+                        # Ensure background job is strictly read-only on the filesystem.
+                        # Do NOT call download_plugin() here. Just update the DB for the UI.
+                        
+                        plugin_id = p.get("id", p.get("name"))
+                        target_version = p.get("version", "Unknown")
+                        if p.get("installed_channel") == "beta" and p.get("beta_version"):
+                            target_version = p.get("beta_version")
+
+                        # We just update available_version in DB
+                        c.execute("SELECT id FROM services WHERE plugin_id=? OR name=?", (plugin_id, plugin_id))
+                        row = c.fetchone()
+                        if row:
+                            c.execute("UPDATE services SET available_version = ? WHERE id = ?", (target_version, row[0]))
+                conn.commit()
+            finally:
+                conn.close()
 
             if updates_found:
                 event_bus.publish("NOTIFICATION", {
