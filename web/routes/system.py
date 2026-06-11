@@ -4,6 +4,7 @@ from web.auth import require_auth
 from flask import Blueprint, jsonify, request, Response, send_file
 import json
 import os
+import time
 import platform
 import psutil
 from core.tiered_logger import get_logger
@@ -36,7 +37,7 @@ def system_status():
             "status": "online",
             "platform": platform.system(),
             "python_version": platform.python_version(),
-            "uptime": None,  # TODO: track app start time
+            "uptime": int(time.time() - system_state.start_time),
             "restart_pending": system_state.restart_pending
         }), 200
     except Exception as e:
