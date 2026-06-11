@@ -255,8 +255,15 @@ def discover_new_tracks(user_id: str) -> List[dict]:
         mb_results_batch = asyncio.run(fetch_mbids(chunk)) if mb_plugin else [[] for _ in chunk]
 
         with music_db.session_scope() as session:
+            from database.music_database import Track, Artist
+            from sqlalchemy import and_, or_
+
+            # 1. Pre-process the chunk to gather all potential MBIDs and Title/Artist pairs
+            pending_tracks = []
+            mbids_to_check = set()
+            pairs_to_check = set()
+
             for track, mb_results in zip(chunk, mb_results_batch):
-                # Update MBID if found via cross-reference
                 mbid = track.get("musicbrainz_id") if isinstance(track, dict) else getattr(track, "musicbrainz_id", None)
 
                 if not mbid and not isinstance(mb_results, Exception) and mb_results:
@@ -267,33 +274,66 @@ def discover_new_tracks(user_id: str) -> List[dict]:
                     else:
                         setattr(track, "musicbrainz_id", mbid)
 
-                if mbid:
-                    from database.music_database import Track, Artist
-                    exists = session.query(Track).filter_by(musicbrainz_id=mbid).first()
-                    if exists:
-                        continue
-
                 title = track.get("title") if isinstance(track, dict) else getattr(track, "title", None)
                 artist_name = track.get("artist_name") if isinstance(track, dict) else getattr(track, "artist_name", None)
 
+                if mbid:
+                    mbids_to_check.add(mbid)
                 if title and artist_name:
-                    from database.music_database import Track, Artist
-                    exists = session.query(Track).join(Artist).filter(
-                        Track.title == title,
-                        Artist.name == artist_name
-                    ).first()
-                    if exists:
-                        continue
+                    pairs_to_check.add((title, artist_name))
 
-                if not isinstance(track, dict):
+                pending_tracks.append({
+                    "original_track": track,
+                    "mbid": mbid,
+                    "title": title,
+                    "artist_name": artist_name
+                })
+
+            # 2. Batch Query existing matches
+            existing_mbids = set()
+            if mbids_to_check:
+                # Chunk the IN clause to be safe (SQLite limit, though chunk size is 50 here anyway)
+                mbids_list = list(mbids_to_check)
+                for i in range(0, len(mbids_list), 500):
+                    batch = mbids_list[i:i + 500]
+                    found = session.query(Track.musicbrainz_id).filter(
+                        Track.musicbrainz_id.in_(batch)
+                    ).all()
+                    existing_mbids.update([row[0] for row in found])
+
+            existing_pairs = set()
+            if pairs_to_check:
+                pairs_list = list(pairs_to_check)
+                for i in range(0, len(pairs_list), 250):  # 250 pairs = 500 expressions
+                    batch = pairs_list[i:i + 250]
+                    or_conditions = [and_(Track.title == t, Artist.name == a) for t, a in batch]
+                    found = session.query(Track.title, Artist.name).join(Artist).filter(
+                        or_(*or_conditions)
+                    ).all()
+                    existing_pairs.update([(row[0], row[1]) for row in found])
+
+            # 3. Filter tracks using the pre-populated sets (O(1) lookup)
+            for p_track in pending_tracks:
+                mbid = p_track["mbid"]
+                title = p_track["title"]
+                artist_name = p_track["artist_name"]
+                original_track = p_track["original_track"]
+
+                if mbid and mbid in existing_mbids:
+                    continue
+
+                if title and artist_name and (title, artist_name) in existing_pairs:
+                    continue
+
+                if not isinstance(original_track, dict):
                     track_dict = {
-                        "title": getattr(track, "title", None),
-                        "artist_name": getattr(track, "artist_name", None),
-                        "musicbrainz_id": getattr(track, "musicbrainz_id", None)
+                        "title": getattr(original_track, "title", None),
+                        "artist_name": getattr(original_track, "artist_name", None),
+                        "musicbrainz_id": getattr(original_track, "musicbrainz_id", None)
                     }
                     new_tracks.append(track_dict)
                 else:
-                    new_tracks.append(track)
+                    new_tracks.append(original_track)
 
         # Yield to let tasks clear out
         asyncio.run(asyncio.sleep(0))
