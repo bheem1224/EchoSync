@@ -353,15 +353,26 @@ class PluginLoader:
             logger.debug(f"Raw exception data: {e}", exc_info=True)
             logger.debug(f"Raw exception data: {e}", exc_info=True)
 
-        # 3. Purge Memory (Recursive)
-        module_name = f"plugins.{clean_ns}"
-        
-        if module_name in sys.modules:
-            logger.debug(f"Purging {module_name} and submodules from sys.modules")
-            submodules = [m for m in list(sys.modules.keys()) if m.startswith(module_name + ".")]
-            for m in submodules:
-                del sys.modules[m]
-            del sys.modules[module_name]
+        # 3. Purge Memory (Strict DB-Driven Unload)
+        try:
+            conn = db._open_connection()
+            try:
+                c = conn.cursor()
+                c.execute("SELECT loaded_modules FROM services WHERE plugin_id=?", (plugin_id,))
+                row = c.fetchone()
+                if row and row[0]:
+                    import json
+                    loaded_modules = json.loads(row[0])
+                    logger.debug(f"Purging {len(loaded_modules)} tracked modules for {plugin_id} from sys.modules")
+                    for mod_ns in loaded_modules:
+                        if mod_ns in sys.modules:
+                            del sys.modules[mod_ns]
+                else:
+                    logger.warning(f"No loaded_modules array found for plugin_id {plugin_id}, skipping strict purge.")
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.error(f"Failed to fetch or parse loaded_modules during reload: {e}")
 
         # 4. Reload Package
         try:
@@ -817,23 +828,32 @@ class PluginLoader:
 
                 sys.path.insert(0, str(package_dir))
                 try:
-                    before_modules = set(sys.modules.keys())
                     importlib.invalidate_caches()
                     module = importlib.import_module(module_path)
-                    after_modules = set(sys.modules.keys())
-                    newly_loaded = after_modules - before_modules
-                    newly_loaded.add(module_path)
 
                     plugin_modules = set()
                     plugin_path_str = str(package_dir.resolve())
-                    for mod_name in newly_loaded:
-                        if mod_name.startswith(f"plugins.{clean_ns}"):
-                            plugin_modules.add(mod_name)
-                        else:
-                            mod = sys.modules.get(mod_name)
-                            mod_file = getattr(mod, '__file__', None)
-                            if mod_file and str(Path(mod_file).resolve()).startswith(plugin_path_str):
-                                plugin_modules.add(mod_name)
+                    # Deterministic Module Tracking: Crawl directory
+                    for py_file in package_dir.rglob("*.py"):
+                        # Calculate relative path from package_dir
+                        try:
+                            rel_path = py_file.relative_to(package_dir)
+                            # Convert path to namespace parts
+                            parts = list(rel_path.parts)
+                            if parts[-1] == "__init__.py":
+                                parts.pop()
+                            else:
+                                parts[-1] = parts[-1][:-3] # remove .py
+                            
+                            # Construct namespace
+                            if parts:
+                                ns = f"plugins.{clean_ns}." + ".".join(parts)
+                            else:
+                                ns = f"plugins.{clean_ns}"
+                            
+                            plugin_modules.add(ns)
+                        except Exception as path_e:
+                            logger.warning(f"Failed to parse path for {py_file}: {path_e}")
 
                     try:
                         from database.config_database import get_config_database
