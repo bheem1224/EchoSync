@@ -774,8 +774,7 @@ class RetroactiveEnhancer:
 
                     results_to_commit.append(t_data)
 
-                # Yield event loop
-                asyncio.run(asyncio.sleep(0))
+
 
             # Step 6: Commit the batch updates in a new short session
             with db.session_scope() as session:
