@@ -1,10 +1,18 @@
 import threading
+import time
 
 class SystemState:
     """Thread-safe global application state manager."""
     def __init__(self):
+        self._start_time = time.time()
         self._restart_pending = False
         self._lock = threading.Lock()
+
+    @property
+    def start_time(self) -> float:
+        """Returns the application start time as a Unix timestamp."""
+        with self._lock:
+            return self._start_time
 
     @property
     def restart_pending(self) -> bool:
