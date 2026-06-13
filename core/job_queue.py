@@ -297,7 +297,7 @@ class JobQueue:
         if is_heavy:
             p = multiprocessing.Process(
                 target=_multiprocess_worker_target,
-                args=(job.name, job.plugin, job.plugin_id),
+                args=(job.name, job.plugin, None),
                 daemon=True
             )
             with self._lock:

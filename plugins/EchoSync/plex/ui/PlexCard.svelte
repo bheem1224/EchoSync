@@ -37,7 +37,7 @@
       await loadSettings();
     } catch (error) {
       console.error('Failed to activate server:', error);
-      alert("Activation failed. Check logs.");
+      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Activation failed. Check logs.", type: "error" } }));
     } finally {
       activating = false;
     }
@@ -62,7 +62,7 @@
 
   async function saveSettings() {
     if (!baseUrl.trim()) {
-      alert('Server URL is required');
+      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Server URL is required", type: "error" } }));
       return;
     }
 
@@ -79,9 +79,10 @@
       });
       if (!resp.ok) throw new Error("Save failed");
       await loadSettings();
+      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Settings saved successfully", type: "success" } }));
     } catch (error) {
       console.error('Failed to save Plex settings:', error);
-      alert("Failed to save settings.");
+      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Failed to save settings.", type: "error" } }));
     } finally {
       saving = false;
     }
@@ -149,14 +150,14 @@
       });
       const data = await response.json();
       if (data?.connected) {
-        alert("Connection successful!");
+        window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Connection successful!", type: "success" } }));
         await loadSettings();
       } else {
-        alert("Connection failed. Check URL and ensure Plex is running.");
+        window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Connection failed. Check URL and ensure Plex is running.", type: "error" } }));
       }
     } catch (error) {
       console.error('Connection test failed:', error);
-      alert("Test failed with error.");
+      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Test failed with error.", type: "error" } }));
     } finally {
       testing = false;
     }
@@ -173,16 +174,16 @@
         if (newMappings.length > 0) {
           pathMappings = [...pathMappings, ...newMappings];
           await saveSettings();
-          alert("Auto-mapping successful!");
+          window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Auto-mapping successful!", type: "success" } }));
         } else {
-          alert("Derived mapping is already configured.");
+          window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Derived mapping is already configured.", type: "info" } }));
         }
       } else {
-        alert("Auto-mapping failed: " + (data?.error || "Unknown error"));
+        window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Auto-mapping failed: " + (data?.error || "Unknown error"), type: "error" } }));
       }
     } catch (error) {
       console.error('Auto-mapping failed:', error);
-      alert("Auto-mapping failed with error.");
+      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Auto-mapping failed with error.", type: "error" } }));
     } finally {
       autoMapping = false;
     }

@@ -219,10 +219,11 @@ def auto_map_paths():
         from plexapi.server import PlexServer
         server = PlexServer(base_url, token, timeout=10)
         
-        from database.music_database import ExternalIdentifier, Track
+        from database.music_database import ExternalIdentifier, Track, get_database
         mappings_derived = []
         
-        with sdk.db.session_scope() as session:
+        db = get_database()
+        with db.session_scope() as session:
             # Query up to 15 distinct tracks that have a plex external identifier
             ext_ids = session.query(ExternalIdentifier).filter(
                 ExternalIdentifier.plugin_source == 'plex'
