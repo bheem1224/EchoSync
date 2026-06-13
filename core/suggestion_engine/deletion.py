@@ -1,3 +1,4 @@
+from typing import Dict, Any, List, Optional
 """Lifecycle gate for suggestion engine deletion/upgrade actions."""
 
 from datetime import timedelta
@@ -185,93 +186,168 @@ def process_lifecycle_actions() -> Dict[str, Any]:
     return summary
 
 
-def apply_lifecycle_action(sync_id: str, consensus_result: Dict[str, Any]) -> Dict[str, Any]:
-    """Stage lifecycle actions for timed execution with admin override awareness."""
+
+def apply_lifecycle_actions_batch(consensus_map: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Stage lifecycle actions for timed execution with admin override awareness in bulk."""
     from core.suggestion_engine.analytics import PlaybackAnalytics
     from core.tiered_logger import get_logger
+    from database.music_database import get_database as get_music_database, ExternalIdentifier, Track, Artist
+    from database.working_database import UserTrackState
+    from sqlalchemy import func, or_, and_
+    import base64
+
     logger = get_logger("deletion")
-    base_sync_id = _normalize_sync_id(sync_id)
-
     db = get_working_database()
-    with db.session_scope() as session:
-        states = _get_or_create_states_for_sync_id(session, base_sync_id)
+    now = utc_now()
+    results = {}
 
-        admin_exempt_deletion = any(state.admin_exempt_deletion for state in states)
-        admin_force_upgrade = any(state.admin_force_upgrade for state in states)
+    # 1. Normalize and identify tracks needing veto check
+    normalized_map = {}
+    veto_checks = []
+    parsed_tracks = []
 
-        action = (consensus_result or {}).get("action", "KEEP")
-        now = utc_now()
+    for raw_sync_id, consensus in consensus_map.items():
+        base_sync_id = _normalize_sync_id(raw_sync_id)
+        normalized_map[base_sync_id] = consensus
 
-        # Analytics Veto Logic
-        if action == DELETE_MONTH_END and not admin_exempt_deletion:
-            from database.music_database import get_database, ExternalIdentifier, Track
-            music_db = get_database()
-            with music_db.session_scope() as music_session:
-                # Find the provider_item_id using base_sync_id to lookup tracks
-                # Since base_sync_id is ss:track:meta:..., we'll look up by deterministic hash
-                # Wait, DuplicateHygieneService has `_resolve_track_by_sync_id`, we can duplicate the lookup logic
-                # or just look it up. Let's use a simple lookup:
-                track_id = None
-                if base_sync_id.startswith("ss:track:meta:"):
-                    import base64
-                    try:
-                        encoded = base_sync_id.split("ss:track:meta:", 1)[1]
-                        decoded = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
-                        artist_name, title = decoded.split("|", 1)
-                        from database.music_database import Artist
-                        from sqlalchemy import func
-                        track = music_session.query(Track).join(Artist, Track.artist_id == Artist.id).filter(
-                            func.lower(Artist.name) == artist_name.lower(),
-                            func.lower(Track.title) == title.lower()
-                        ).first()
-                        if track:
-                            track_id = track.id
-                    except Exception:
-                        pass
-
-                if track_id:
-                    ext_ident = music_session.query(ExternalIdentifier).filter(ExternalIdentifier.track_id == track_id).first()
-                    if ext_ident and ext_ident.provider_item_id:
-                        recent_listens = PlaybackAnalytics.get_listen_count(str(ext_ident.provider_item_id), days=30)
-                        if recent_listens >= 5: # Threshold of 5 listens in last 30 days
-                            admin_exempt_deletion = True
-                            for state in states:
-                                state.admin_exempt_deletion = True
-                            logger.info(f"Vetoed Deletion: Track '{ext_ident.provider_item_id}' is actively trending ({recent_listens} listens/30d).")
-
-        # Force-upgrade override wins.
-        if admin_force_upgrade:
-            for state in states:
-                state.lifecycle_action = UPGRADE_WEEK_END
-                state.lifecycle_queued_at = now
-                state.updated_at = now
-            return {"status": "UPGRADE_FORCED", "action": UPGRADE_WEEK_END, "sync_id": base_sync_id}
-
+        action = (consensus or {}).get("action", "KEEP")
         if action == DELETE_MONTH_END:
-            if admin_exempt_deletion:
-                return {"status": "KEEP_EXEMPT", "action": "KEEP", "sync_id": base_sync_id}
+            veto_checks.append(base_sync_id)
+            if base_sync_id.startswith("ss:track:meta:"):
+                try:
+                    encoded = base_sync_id.split("ss:track:meta:", 1)[1]
+                    decoded = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
+                    artist_name, title = decoded.split("|", 1)
+                    parsed_tracks.append((artist_name.lower(), title.lower(), base_sync_id))
+                except Exception:
+                    pass
 
-            for state in states:
-                state.lifecycle_action = DELETE_MONTH_END
-                state.lifecycle_queued_at = now
-                state.updated_at = now
-            return {"status": "DELETE_STAGED", "action": DELETE_MONTH_END, "sync_id": base_sync_id}
+    # 2. Bulk veto resolution using MusicDB
+    vetoed_sync_ids = set()
+    if parsed_tracks:
+        music_db = get_music_database()
+        with music_db.session_scope() as music_session:
+            chunk_size = 400
+            track_mapping = {} # (artist, title) -> track_id
 
-        if action == UPGRADE_WEEK_END:
-            for state in states:
-                state.lifecycle_action = UPGRADE_WEEK_END
-                state.lifecycle_queued_at = now
-                state.updated_at = now
-            return {"status": "UPGRADE_STAGED", "action": UPGRADE_WEEK_END, "sync_id": base_sync_id}
+            for i in range(0, len(parsed_tracks), chunk_size):
+                chunk = parsed_tracks[i:i + chunk_size]
+                conditions = [
+                    and_(func.lower(Artist.name) == a, func.lower(Track.title) == t)
+                    for a, t, _ in chunk
+                ]
 
-        _clear_lifecycle_state(session, base_sync_id)
+                tracks = music_session.query(Track.id, Track.title, Artist.name).join(
+                    Artist, Track.artist_id == Artist.id
+                ).filter(or_(*conditions)).all()
 
-        event_bus.publish(
-            {
-                "event": "PREFERENCE_MODEL_FEEDBACK",
-                "sync_id": sync_id,
-                "score_10": (consensus_result or {}).get("score_10"),
-                "user_ids": (consensus_result or {}).get("user_ids", []),
-            }
-        )
-        return {"status": "KEEP", "action": "KEEP_AND_FEED_PREFERENCE_MODEL", "sync_id": base_sync_id}
+                for t_id, t_title, a_name in tracks:
+                    track_mapping[(a_name.lower(), t_title.lower())] = t_id
+
+            if track_mapping:
+                track_ids = list(track_mapping.values())
+                ext_idents = music_session.query(ExternalIdentifier.track_id, ExternalIdentifier.provider_item_id).filter(
+                    ExternalIdentifier.track_id.in_(track_ids),
+                    ExternalIdentifier.provider_item_id.isnot(None)
+                ).all()
+
+                ext_mapping = {row[0]: row[1] for row in ext_idents}
+
+                # Fetch playback history for the resolved provider_item_ids
+                provider_item_ids = set(ext_mapping.values())
+                if provider_item_ids:
+                    from database.working_database import PlaybackHistory
+                    from datetime import timedelta
+                    cutoff_date = now - timedelta(days=30)
+                    with db.session_scope() as w_session:
+                        # Chunk the playback history query too
+                        listen_counts = {}
+                        provider_list = list(provider_item_ids)
+                        for i in range(0, len(provider_list), chunk_size):
+                            chunk = provider_list[i:i + chunk_size]
+                            counts = w_session.query(
+                                PlaybackHistory.provider_item_id,
+                                func.count(PlaybackHistory.id)
+                            ).filter(
+                                PlaybackHistory.provider_item_id.in_(chunk),
+                                PlaybackHistory.listened_at >= cutoff_date
+                            ).group_by(PlaybackHistory.provider_item_id).all()
+
+                            for p_id, count in counts:
+                                listen_counts[p_id] = count
+
+                    # Resolve which sync_ids are vetoed
+                    for artist_name, title, base_sync_id in parsed_tracks:
+                        t_id = track_mapping.get((artist_name, title))
+                        if t_id:
+                            p_id = ext_mapping.get(t_id)
+                            if p_id and listen_counts.get(p_id, 0) >= 5:
+                                vetoed_sync_ids.add(base_sync_id)
+                                logger.info(f"Vetoed Deletion: Track '{p_id}' is actively trending ({listen_counts[p_id]} listens/30d).")
+
+    # 3. Apply state updates to WorkingDB in a single transaction with nested savepoints
+    with db.session_scope() as session:
+        for raw_sync_id, consensus in consensus_map.items():
+            try:
+                with session.begin_nested():
+                    base_sync_id = _normalize_sync_id(raw_sync_id)
+                    states = _get_or_create_states_for_sync_id(session, base_sync_id)
+
+                    admin_exempt_deletion = any(state.admin_exempt_deletion for state in states)
+                    admin_force_upgrade = any(state.admin_force_upgrade for state in states)
+                    action = (consensus or {}).get("action", "KEEP")
+
+                    if base_sync_id in vetoed_sync_ids:
+                        admin_exempt_deletion = True
+                        for state in states:
+                            state.admin_exempt_deletion = True
+
+                    # Force-upgrade override wins.
+                    if admin_force_upgrade:
+                        for state in states:
+                            state.lifecycle_action = UPGRADE_WEEK_END
+                            state.lifecycle_queued_at = now
+                            state.updated_at = now
+                        results[raw_sync_id] = {"status": "UPGRADE_FORCED", "action": UPGRADE_WEEK_END, "sync_id": base_sync_id}
+                        continue
+
+                    if action == DELETE_MONTH_END:
+                        if admin_exempt_deletion:
+                            results[raw_sync_id] = {"status": "KEEP_EXEMPT", "action": "KEEP", "sync_id": base_sync_id}
+                            continue
+                        for state in states:
+                            state.lifecycle_action = DELETE_MONTH_END
+                            state.lifecycle_queued_at = now
+                            state.updated_at = now
+                        results[raw_sync_id] = {"status": "DELETE_STAGED", "action": DELETE_MONTH_END, "sync_id": base_sync_id}
+                        continue
+
+                    if action == UPGRADE_WEEK_END:
+                        for state in states:
+                            state.lifecycle_action = UPGRADE_WEEK_END
+                            state.lifecycle_queued_at = now
+                            state.updated_at = now
+                        results[raw_sync_id] = {"status": "UPGRADE_STAGED", "action": UPGRADE_WEEK_END, "sync_id": base_sync_id}
+                        continue
+
+                    _clear_lifecycle_state(session, base_sync_id)
+                    from core.event_bus import event_bus
+                    event_bus.publish({
+                        "event": "PREFERENCE_MODEL_FEEDBACK",
+                        "sync_id": raw_sync_id,
+                        "score_10": (consensus or {}).get("score_10"),
+                        "user_ids": (consensus or {}).get("user_ids", []),
+                    })
+                    results[raw_sync_id] = {"status": "KEEP", "action": "KEEP_AND_FEED_PREFERENCE_MODEL", "sync_id": base_sync_id}
+
+            except Exception as e:
+                logger.error(f"Error applying lifecycle action for {raw_sync_id}: {e}", exc_info=True)
+                results[raw_sync_id] = {"status": "ERROR", "reason": str(e)}
+
+    return results
+
+
+def apply_lifecycle_action(sync_id: str, consensus_result: Dict[str, Any]) -> Dict[str, Any]:
+    """Stage lifecycle actions for timed execution with admin override awareness."""
+    results = apply_lifecycle_actions_batch({sync_id: consensus_result})
+    return results.get(sync_id, {})

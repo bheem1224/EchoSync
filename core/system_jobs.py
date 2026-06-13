@@ -377,16 +377,22 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
                 with work_db.session_scope() as session:
                     rated_sync_ids = [row[0] for row in session.query(UserRating.sync_id).distinct().all()]
 
+                consensus_map = {}
                 for sync_id in rated_sync_ids:
                     consensus = calculate_consensus(sync_id)
                     action = consensus.get("action", "KEEP")
                     if action in ("DELETE_MONTH_END", "UPGRADE_WEEK_END"):
-                        # apply_lifecycle_action is intentionally imported in manager routes; call through process_lifecycle_actions wrapper
-                        from core.suggestion_engine.deletion import apply_lifecycle_action
-                        apply_lifecycle_action(sync_id, consensus)
-                        if action == "DELETE_MONTH_END":
+                        consensus_map[sync_id] = consensus
+
+                if consensus_map:
+                    from core.suggestion_engine.deletion import apply_lifecycle_actions_batch
+                    results = apply_lifecycle_actions_batch(consensus_map)
+
+                    for raw_sync_id, res in results.items():
+                        res_action = res.get("action")
+                        if res_action == "DELETE_MONTH_END":
                             staged_deletes += 1
-                        else:
+                        elif res_action == "UPGRADE_WEEK_END":
                             staged_upgrades += 1
 
                 if staged_deletes or staged_upgrades:

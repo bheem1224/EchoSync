@@ -10,7 +10,7 @@ from database.music_database import get_database, Track, Artist
 from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState, User, SuggestionStagingQueue, SuggestionBlacklist
 from database.config_database import get_config_database
 from core.suggestion_engine.consensus import calculate_consensus
-from core.suggestion_engine.deletion import execute_delete_now, execute_upgrade_now, apply_lifecycle_action
+from core.suggestion_engine.deletion import execute_delete_now, execute_upgrade_now, apply_lifecycle_action, apply_lifecycle_actions_batch
 from core.matching_engine.text_utils import generate_deterministic_id
 from pathlib import Path
 from sqlalchemy import func, case
@@ -436,14 +436,20 @@ def run_manager_scan():
                 for row in session.query(WorkingUserRating.sync_id).distinct().all()
             ]
 
+        consensus_map = {}
         for sync_id in rated_sync_ids:
             consensus = calculate_consensus(sync_id)
             action = consensus.get("action", "KEEP")
             if action in ("DELETE_MONTH_END", "UPGRADE_WEEK_END"):
-                apply_lifecycle_action(sync_id, consensus)
-                if action == "DELETE_MONTH_END":
+                consensus_map[sync_id] = consensus
+
+        if consensus_map:
+            results = apply_lifecycle_actions_batch(consensus_map)
+            for raw_sync_id, res in results.items():
+                res_action = res.get("action")
+                if res_action == "DELETE_MONTH_END":
                     staged_deletes += 1
-                else:
+                elif res_action == "UPGRADE_WEEK_END":
                     staged_upgrades += 1
 
         logger.info(
