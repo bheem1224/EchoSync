@@ -177,10 +177,24 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                         can_connect = provider.authenticate()
                         
                     if not can_connect:
-                        logger.error(f"Could not connect to {active_server}")
+                        error_msg = f"Could not connect to {active_server}. Check your server status and credentials."
+                        logger.error(error_msg)
+                        from core.event_bus import event_bus
+                        event_bus.publish("NOTIFICATION", {
+                            "type": "error",
+                            "title": "Media Server Connection Failed",
+                            "message": error_msg
+                        })
                         continue
                 except Exception as e:
-                    logger.error(f"Connection failed for {active_server}: {e}")
+                    error_msg = f"Connection failed for {active_server}: {e}"
+                    logger.error(error_msg)
+                    from core.event_bus import event_bus
+                    event_bus.publish("NOTIFICATION", {
+                        "type": "error",
+                        "title": "Media Server Connection Failed",
+                        "message": error_msg
+                    })
                     continue
                 
                 # If local_success is True, ONLY grab external identifiers from this provider
