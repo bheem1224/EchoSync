@@ -229,9 +229,18 @@ class MetadataEnhancerService:
                     _iteration + 1, len(tracks_to_process), total_processed,
                 )
 
+                # Bulk fetch fingerprints for the current batch of tracks
+                track_ids = [t.id for t in tracks_to_process]
+                fingerprints = (
+                    session.query(AudioFingerprint)
+                    .filter(AudioFingerprint.track_id.in_(track_ids))
+                    .all()
+                )
+                fp_map = {fp.track_id: fp for fp in fingerprints}
+
                 # Extract necessary data into memory to perform network calls outside session
                 for track in tracks_to_process:
-                    track_fp = session.query(AudioFingerprint).filter_by(track_id=track.id).first()
+                    track_fp = fp_map.get(track.id)
                     track_data_list.append({
                         'id': track.id,
                         'file_path': track.file_path,
@@ -244,7 +253,8 @@ class MetadataEnhancerService:
                         'metadata_status': dict(track.metadata_status or {}),
                         'chromaprint': track_fp.chromaprint if track_fp else None,
                         'acoustid_id': track_fp.acoustid_id if track_fp else None,
-                        'has_fp_record': track_fp is not None
+                        'has_fp_record': track_fp is not None,
+                        'new_chromaprint_generated': False
                     })
 
             # Process tracks outside DB session
@@ -381,6 +391,8 @@ class MetadataEnhancerService:
                                     t_data['acoustid_id'] = details['acoustid_id']
                         except Exception:
                             pass
+
+                    t_data['new_chromaprint_generated'] = new_chromaprint_generated
 
                     # Step 5 (Text Fallback from Chunked Batch)
                     if not new_musicbrainz_id and t_data['artist_name'] and t_data['title']:
