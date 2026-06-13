@@ -817,8 +817,8 @@ class PlexClient(MediaServerProvider):
             
             while offset < max_limit:
                 current_limit = min(chunk_size, max_limit - offset)
-                logger.info(f"Calling Plex searchTracks offset={offset} limit={current_limit}")
-                chunk_tracks = self.music_library.searchTracks(limit=current_limit, offset=offset)
+                logger.info(f"Calling Plex searchTracks container_start={offset} container_size={current_limit}")
+                chunk_tracks = self.music_library.searchTracks(container_start=offset, container_size=current_limit)
                 
                 if not chunk_tracks:
                     break
