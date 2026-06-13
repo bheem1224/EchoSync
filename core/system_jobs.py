@@ -197,11 +197,14 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                     })
                     continue
                 
-                # If local_success is True, ONLY grab external identifiers from this provider
-                # (identifiers_only=True prevents them from creating tracks or overwriting metadata)
+                # We ONLY run active media servers in this job if local_success is False
+                # If local_success is True, we defer them to the external_identifier_sync job
                 identifiers_only = local_success
                 
-                logger.info(f"Step 2: Running database update for {active_server} (identifiers_only={identifiers_only})")
+                if identifiers_only:
+                    continue # Skip full updates here, the follow-up job will handle it
+                
+                logger.info(f"Step 2: Running full database update for {active_server}")
                 try:
                     worker = DatabaseUpdateWorker(
                         media_client=provider,
@@ -209,13 +212,17 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                         full_refresh=False,
                         server_type=active_server,
                         force_sequential=True,
-                        identifiers_only=identifiers_only
+                        identifiers_only=False
                     )
                     worker.run()
-                    if not identifiers_only:
-                        total_successful_operations += worker.successful_operations
+                    total_successful_operations += worker.successful_operations
                 except Exception as e:
                     logger.error(f"Database update worker failed for {active_server}: {e}", exc_info=True)
+
+            # Trigger follow-up external identifier sync job if we had a successful local scan
+            if local_success:
+                logger.info("Triggering follow-up external identifier sync job")
+                job_queue.execute_job_now("external_identifier_sync")
 
         except Exception as e:
             logger.error(f"Error in scheduled database update job: {e}", exc_info=True)
@@ -235,6 +242,95 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
         f"Database update job registered "
         f"(interval: {interval_seconds}s = {interval_seconds/3600:.1f}h, enabled={enabled})"
     )
+
+
+def register_external_identifier_sync_job(interval_seconds: int = 21600, enabled: bool = True):
+    """
+    Register a standalone job that only fetches external identifiers from media servers.
+    This runs as a follow-up to the main database update.
+    """
+    def run_external_identifier_sync():
+        try:
+            logger.info("Starting external identifier sync job")
+            from core.nexus_framework.plugin_loader import PluginRegistry
+            from core.database_update_worker import DatabaseUpdateWorker
+            from core.nexus_framework.plugin_loader import generate_plugin_id
+            
+            local_server_id = generate_plugin_id('echosync.local server')
+            
+            active_servers = []
+            try:
+                for p_id in PluginRegistry.get_active_services_by_type('media_server'):
+                    instance = PluginRegistry.create_instance(p_id)
+                    if instance and hasattr(instance, 'capabilities') and instance.capabilities.supports_library_scan:
+                        active_servers.append(p_id)
+            except Exception as e:
+                logger.error(f"Failed to get active media servers for external sync: {e}")
+                
+            for active_server in active_servers:
+                if active_server == local_server_id:
+                    continue
+                    
+                provider = None
+                try:
+                    provider = PluginRegistry.create_instance(active_server)
+                except Exception as e:
+                    logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
+                    continue
+                
+                if not provider:
+                    continue
+                
+                # Ensure connection
+                try:
+                    can_connect = True
+                    if hasattr(provider, 'authenticate'):
+                        can_connect = provider.authenticate()
+                        
+                    if not can_connect:
+                        error_msg = f"Could not connect to {active_server} during external identifier sync."
+                        logger.error(error_msg)
+                        from core.event_bus import event_bus
+                        event_bus.publish("NOTIFICATION", {
+                            "type": "error",
+                            "title": "Media Server Connection Failed",
+                            "message": error_msg
+                        })
+                        continue
+                except Exception as e:
+                    error_msg = f"Connection failed for {active_server}: {e}"
+                    logger.error(error_msg)
+                    continue
+                
+                logger.info(f"Running external identifier sync for {active_server}")
+                try:
+                    worker = DatabaseUpdateWorker(
+                        media_client=provider,
+                        database_path=None,
+                        full_refresh=False,
+                        server_type=active_server,
+                        force_sequential=True,
+                        identifiers_only=True
+                    )
+                    worker.run()
+                except Exception as e:
+                    logger.error(f"External identifier sync worker failed for {active_server}: {e}", exc_info=True)
+
+        except Exception as e:
+            logger.error(f"Error in external identifier sync job: {e}", exc_info=True)
+
+    job_queue.register_job(
+        name="external_identifier_sync",
+        func=run_external_identifier_sync,
+        # This job is normally triggered manually or sequentially, but we can give it an interval fallback
+        interval_seconds=interval_seconds,
+        start_after=900, 
+        enabled=enabled,
+        tags=["system", "database", "identifiers"],
+        max_retries=2
+    )
+    
+    logger.info(f"External identifier sync job registered (enabled={enabled})")
 
 
 def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool = True):
@@ -697,6 +793,9 @@ def register_all_system_jobs():
 
         # Media server scan should run every 3 hours (more frequently than DB update).
         register_media_server_scan_job(interval_seconds=10800, enabled=True)
+
+        # Standalone job for fetching external identifiers
+        register_external_identifier_sync_job(interval_seconds=21600, enabled=True)
 
         # Daily suggestion playlist generation (Phase 5).
         register_suggestion_engine_playlist_job(interval_seconds=86400, enabled=True)
