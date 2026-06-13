@@ -146,9 +146,12 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             # Step 2: Run active media servers
             try:
                 active_servers = []
-                for p_id in PluginRegistry.get_active_services_by_type('media_server'):
-                    instance = PluginRegistry.create_instance(p_id)
-                    if instance and hasattr(instance, 'capabilities') and instance.capabilities.supports_library_scan:
+                # Same fix as external_identifier_sync: avoid get_active_services_by_type which
+                # instantiates plugins prematurely and breaks is_configured() via stack inspection.
+                for p_id in PluginRegistry.get_plugins_by_type('mediaserver', exclude_disabled=True):
+                    plugin_cls = PluginRegistry.get_plugin_class(p_id)
+                    caps = getattr(plugin_cls, 'capabilities', None)
+                    if caps and getattr(caps, 'supports_library_scan', False):
                         active_servers.append(p_id)
             except Exception as e:
                 logger.error(f"Failed to get active media servers: {e}")
@@ -260,9 +263,15 @@ def register_external_identifier_sync_job(interval_seconds: int = 21600, enabled
             
             active_servers = []
             try:
-                for p_id in PluginRegistry.get_active_services_by_type('media_server'):
-                    instance = PluginRegistry.create_instance(p_id)
-                    if instance and hasattr(instance, 'capabilities') and instance.capabilities.supports_library_scan:
+                # Use get_plugins_by_type to avoid calling is_configured(), which relies on
+                # stack-based caller resolution and fails when called from a core job frame
+                # (the resolver sees 'core.system_jobs' instead of the plugin namespace, so
+                # accounts.get_all() returns empty and is_configured() always returns False).
+                # Instead, check supports_library_scan on the class before instantiation.
+                for p_id in PluginRegistry.get_plugins_by_type('mediaserver', exclude_disabled=True):
+                    plugin_cls = PluginRegistry.get_plugin_class(p_id)
+                    caps = getattr(plugin_cls, 'capabilities', None)
+                    if caps and getattr(caps, 'supports_library_scan', False):
                         active_servers.append(p_id)
             except Exception as e:
                 logger.error(f"Failed to get active media servers for external sync: {e}")
