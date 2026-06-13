@@ -219,10 +219,11 @@ def auto_map_paths():
         from plexapi.server import PlexServer
         server = PlexServer(base_url, token, timeout=10)
         
-        from database.music_database import ExternalIdentifier, Track, get_database
+        db = sdk.storage.get_music_database()
+        Track = sdk.models.Track
+        ExternalIdentifier = sdk.models.ExternalIdentifier
         mappings_derived = []
         
-        db = get_database()
         with db.session_scope() as session:
             # Query up to 15 distinct tracks that have a plex external identifier
             ext_ids = session.query(ExternalIdentifier).filter(
@@ -242,7 +243,8 @@ def auto_map_paths():
                     plex_track = server.fetchItem(int(ext.plugin_item_id))
                     if not hasattr(plex_track, 'media') or not plex_track.media or not hasattr(plex_track.media[0], 'parts') or not plex_track.media[0].parts:
                         continue
-                    remote_file = getattr(plex_track.media[0].parts[0], 'file', None)
+                    part = plex_track.media[0].parts[0]
+                    remote_file = part.file if hasattr(part, 'file') else None
                     if not remote_file:
                         continue
                         

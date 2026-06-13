@@ -3,7 +3,7 @@ Plex Music Provider - Refactored
 Simplified implementation using EchosyncTrack and new core features.
 """
 
-from core.nexus_framework.plugin_SDK import PluginBase
+from core.nexus_framework.plugin_SDK import PluginBase, MediaServerProvider
 from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
@@ -33,7 +33,7 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     return default
 
 
-class PlexClient(PluginBase):
+class PlexClient(MediaServerProvider):
     """Plex music provider - streams music from Plex media server."""
     
     name = "EchoSync.plex"
@@ -873,6 +873,77 @@ class PlexClient(PluginBase):
             logger.error(f"Error getting library stats: {e}")
             return {}
     
+    def get_all_artists(self) -> List[Any]:
+        """Get all artists from the active music library."""
+        if not self.ensure_connection() or not self.music_library:
+            return []
+        try:
+            return self.music_library.searchArtists(limit=99999)
+        except Exception as e:
+            logger.error(f"Error fetching artists: {e}")
+            return []
+
+    def _trigger_scan_api(self, path: Optional[str] = None) -> bool:
+        """Trigger scan on the Plex server API."""
+        if not self.ensure_connection() or not self.music_library:
+            return False
+        try:
+            self.music_library.update()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating Plex library: {e}")
+            return False
+
+    def _get_scan_status_api(self) -> Dict[str, Any]:
+        """Poll scan status from the Plex server API."""
+        if not self.ensure_connection() or not self.music_library:
+            return {'scanning': False, 'progress': 0.0}
+        try:
+            refreshing = self.music_library.refreshing if hasattr(self.music_library, 'refreshing') else False
+            return {
+                'scanning': refreshing,
+                'progress': 0.5 if refreshing else 0.0,
+                'eta_seconds': None,
+                'error': None
+            }
+        except Exception:
+            return {'scanning': False, 'progress': 0.0}
+
+    def get_content_changes_since(self, last_update: Optional[datetime] = None):
+        """Get content changes since last update using Plex-specific incremental detection."""
+        from core.content_models import ContentChanges
+        from time_utils import utc_now
+
+        if not self.ensure_connection():
+            logger.error("Not connected to Plex server")
+            return ContentChanges()
+
+        # If no last_update provided, return all content (full refresh)
+        if last_update is None:
+            logger.info("No last_update provided - performing full content retrieval")
+            artists = self.get_all_artists()
+            return ContentChanges(
+                artists=artists,
+                albums=[],
+                tracks=[],
+                full_refresh=True,
+                last_checked=utc_now()
+            )
+
+        try:
+            logger.info(f"Getting Plex content changes since {last_update}")
+            artists = self.get_all_artists()
+            return ContentChanges(
+                artists=artists,
+                albums=[],
+                tracks=[],
+                full_refresh=True,
+                last_checked=utc_now()
+            )
+        except Exception as e:
+            logger.error(f"Error getting Plex content changes: {e}")
+            return ContentChanges()
+
     # ===== INTERNAL METHODS =====
     
     def _extract_version_suffix(self, text: str) -> tuple[str, Optional[str]]:

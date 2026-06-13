@@ -439,6 +439,10 @@ class _SDK:
     def quality(self):
         return _QualitySDKFacade(self._get_plugin_id())
 
+    @property
+    def models(self):
+        return _PluginModelFacade()
+
     def _get_plugin_id(self):
         import inspect
         frame = inspect.currentframe()
@@ -698,6 +702,11 @@ class _PluginModelFacade:
     def Artist(self):
         from database.music_database import Artist
         return Artist
+
+    @property
+    def ExternalIdentifier(self):
+        from database.music_database import ExternalIdentifier
+        return ExternalIdentifier
 
     @property
     def Download(self):
