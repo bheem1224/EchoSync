@@ -480,8 +480,29 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
             artist_name = getattr(track, "artist_name", None)
             isrc = getattr(track, "isrc", None)
 
-            if not title or not artist_name:
-                continue
+            # 1. Gather data for the batch
+            batch_data = []
+            isrcs = set()
+            title_artist_pairs = set()
+            sync_ids = set()
+
+            for track in chunk:
+                title = getattr(track, "title", None) or getattr(track, "raw_title", None)
+                artist_name = getattr(track, "artist_name", None)
+                isrc = getattr(track, "isrc", None)
+
+                if not title or not artist_name:
+                    continue
+
+                sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
+
+                batch_data.append({
+                    "title": title,
+                    "artist_name": artist_name,
+                    "isrc": isrc,
+                    "sync_id": sync_id,
+                    "track_obj": track
+                })
 
             sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
             candidates.append({
