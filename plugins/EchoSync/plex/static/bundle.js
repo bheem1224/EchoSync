@@ -2223,7 +2223,10 @@ function pi(e, t) {
 			if (F(g, !0), !(await fetch(`${n()}/activate`, { method: "POST" })).ok) throw Error("Activation failed");
 			await v();
 		} catch (e) {
-			console.error("Failed to activate server:", e), alert("Activation failed. Check logs.");
+			console.error("Failed to activate server:", e), window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+				message: "Activation failed. Check logs.",
+				type: "error"
+			} }));
 		} finally {
 			F(g, !1);
 		}
@@ -2238,7 +2241,10 @@ function pi(e, t) {
 	}
 	async function ee() {
 		if (!Z(r).trim()) {
-			alert("Server URL is required");
+			window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+				message: "Server URL is required",
+				type: "error"
+			} }));
 			return;
 		}
 		try {
@@ -2251,9 +2257,15 @@ function pi(e, t) {
 					path_mappings: Z(a)
 				})
 			})).ok) throw Error("Save failed");
-			await v();
+			await v(), window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+				message: "Settings saved successfully",
+				type: "success"
+			} }));
 		} catch (e) {
-			console.error("Failed to save Plex settings:", e), alert("Failed to save settings.");
+			console.error("Failed to save Plex settings:", e), window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+				message: "Failed to save settings.",
+				type: "error"
+			} }));
 		} finally {
 			F(l, !1);
 		}
@@ -2290,9 +2302,18 @@ function pi(e, t) {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ base_url: Z(r) })
-			})).json())?.connected ? (alert("Connection successful!"), await v()) : alert("Connection failed. Check URL and ensure Plex is running.");
+			})).json())?.connected ? (window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+				message: "Connection successful!",
+				type: "success"
+			} })), await v()) : window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+				message: "Connection failed. Check URL and ensure Plex is running.",
+				type: "error"
+			} }));
 		} catch (e) {
-			console.error("Connection test failed:", e), alert("Test failed with error.");
+			console.error("Connection test failed:", e), window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+				message: "Test failed with error.",
+				type: "error"
+			} }));
 		} finally {
 			F(u, !1);
 		}
@@ -2304,10 +2325,22 @@ function pi(e, t) {
 			let e = await (await fetch(`${n()}/auto-map-paths`, { method: "POST" })).json();
 			if (e?.success && e.mappings) {
 				let t = e.mappings.filter((e) => !Z(a).some((t) => t.remote === e.remote && t.local === e.local));
-				t.length > 0 ? (F(a, [...Z(a), ...t]), await ee(), alert("Auto-mapping successful!")) : alert("Derived mapping is already configured.");
-			} else alert("Auto-mapping failed: " + (e?.error || "Unknown error"));
+				t.length > 0 ? (F(a, [...Z(a), ...t]), await ee(), window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+					message: "Auto-mapping successful!",
+					type: "success"
+				} }))) : window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+					message: "Derived mapping is already configured.",
+					type: "info"
+				} }));
+			} else window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+				message: "Auto-mapping failed: " + (e?.error || "Unknown error"),
+				type: "error"
+			} }));
 		} catch (e) {
-			console.error("Auto-mapping failed:", e), alert("Auto-mapping failed with error.");
+			console.error("Auto-mapping failed:", e), window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+				message: "Auto-mapping failed with error.",
+				type: "error"
+			} }));
 		} finally {
 			F(x, !1);
 		}
