@@ -200,7 +200,7 @@ def test_connection():
 def auto_map_paths():
     """Auto-generate remote to local path mappings by comparing synced tracks."""
     try:
-        from core.nexus_framework.plugin_loader import PluginStorageBox
+        from core.nexus_framework.plugin_SDK import PluginStorageBox
         sdk = PluginStorageBox()
         from core.security import decrypt_string
         
