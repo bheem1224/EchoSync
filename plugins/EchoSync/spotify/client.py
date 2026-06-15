@@ -168,7 +168,7 @@ class SpotifyClient(SyncServiceProvider):
             try:
                 from core.file_handling.storage import get_storage_service
                 storage = get_storage_service()
-                accounts = storage.list_accounts('spotify') or []
+                accounts = storage.list_accounts(self.name) or []
                 
                 # Try to find one marked as active
                 active_accounts = [a for a in accounts if a.get('is_active')]

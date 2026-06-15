@@ -292,11 +292,11 @@ def get_plugin_playlists(plugin_id):
                 storage = get_storage_service()
                 plex_user_map = _build_active_plex_user_map()
 
-                accounts = storage.list_accounts(short_name)
+                accounts = storage.list_accounts(str(plugin_id))
 
                 if not accounts:
                     # No accounts configured
-                    logger.info(f"No accounts found for {short_name}")
+                    logger.info(f"No accounts found for plugin {plugin_id}")
                     return jsonify({
                         'plugin': short_name,
                         'items': [],
