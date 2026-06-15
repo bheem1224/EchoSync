@@ -97,9 +97,8 @@ def _get_provider_for_account(provider_id, acc_id=None):
                 from core.file_handling.storage import get_storage_service
                 storage = get_storage_service()
                 
-                # We need to find an account for this plugin. Extract shortname from plugin.name
-                provider_str = plugin_class.name.split('.')[-1].lower()
-                accounts = storage.list_accounts(provider_str)
+                # We need to find an account for this plugin. Use the stringified provider_id
+                accounts = storage.list_accounts(str(provider_id))
                 if not accounts:
                     return None, None
                 acc_id_local = accounts[0]['id']
@@ -410,7 +409,8 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
 
     source_provider, default_acc = _get_provider_for_account(source, None)
     if source_provider is None:
-        raise RuntimeError(f"No {source.title()} accounts configured. Please add an account in Settings.")
+        source_name = str(source).title()
+        raise RuntimeError(f"No {source_name} accounts configured. Please add an account in Settings.")
 
     caps = getattr(source_provider, 'capabilities', None)
     if not caps or caps.supports_playlists not in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
