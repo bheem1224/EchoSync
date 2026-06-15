@@ -165,20 +165,25 @@ class SpotifyClient(SyncServiceProvider):
 
         # Auto-detect active account if not provided
         if account_id is None:
-
-            account_id = self.sdk.config.get('active_spotify_account_id')
-
-            # If still None, try to find the first available account
-            if account_id is None:
-                try:
-                    from core.nexus_framework.plugin_SDK import sdk
-                    accounts = sdk.accounts.get_all()
-                    if accounts:
-                        # Pick the first one
+            try:
+                from core.file_handling.storage import get_storage_service
+                storage = get_storage_service()
+                accounts = storage.list_accounts('spotify') or []
+                
+                # Try to find one marked as active
+                active_accounts = [a for a in accounts if a.get('is_active')]
+                if active_accounts:
+                    account_id = active_accounts[0]['id']
+                    logger.info(f"Using active Spotify account from database: {account_id}")
+                else:
+                    # Fallback to legacy config
+                    account_id = self.sdk.config.get('active_spotify_account_id')
+                    
+                    if account_id is None and accounts:
                         account_id = accounts[0]['id']
                         logger.info(f"No active account set, defaulting to first found account: {account_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to auto-detect spotify account: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to auto-detect spotify account: {e}")
 
         self.account_id: Optional[int] = account_id
 
@@ -666,9 +671,11 @@ class SpotifyClient(SyncServiceProvider):
         Yield user playlists page by page to conserve memory.
         """
         if not self.is_authenticated():
+            logger.debug(f"Account {self.account_id} is not authenticated, skipping playlists")
             return
         
         if not self._ensure_user_id():
+            logger.debug(f"Account {self.account_id} failed to get user_id, skipping playlists")
             return
             
         try:
