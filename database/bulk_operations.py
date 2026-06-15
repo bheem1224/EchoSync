@@ -342,8 +342,8 @@ class LibraryManager:
             logger.debug(f"Created new track: {track.title} by {artist.name}")
             is_new = True
         else:
+            old_title = track.title
             if not identifiers_only:
-                old_title = track.title
                 track.title = track_data.title
             if album and track.album_id != album.id:
                 track.album = album
