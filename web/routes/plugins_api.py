@@ -312,11 +312,9 @@ def get_plugin_playlists(plugin_id):
                         account_name = account.get('display_name') or account.get('account_name') or f"Account {account_id}"
 
                         if short_name == 'spotify':
-                            from plugins.EchoSync.spotify.client import SpotifyClient
-                            client = SpotifyClient(account_id=account_id)
+                            client = plugin_cls(account_id=account_id)
                         elif short_name == 'tidal':
-                            from plugins.EchoSync.tidal.client import TidalClient
-                            client = TidalClient(account_id=str(account_id))
+                            client = plugin_cls(account_id=str(account_id))
                         else:
                             continue
 

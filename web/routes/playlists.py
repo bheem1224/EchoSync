@@ -1436,7 +1436,8 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
     job_name = f"sync:plex:{playlist_name}:{int(time.time())}"
 
     def _run_sync():
-        from plugins.EchoSync.plex.client import PlexClient
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        PlexClient = PluginRegistry.get_plugin_class('plex')
 
         marker = "⇄"
         total = len(rating_keys)
