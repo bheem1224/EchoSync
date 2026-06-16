@@ -1074,9 +1074,6 @@ class PlexClient(MediaServerProvider):
                 
                 if hasattr(media, 'parts') and media.parts:
                     file_path = _safe_getattr(media.parts[0], 'file', None)
-                    # Map remote path to local path
-                    if file_path and self.path_mapper:
-                        file_path = self.path_mapper.map_to_local(file_path)
             
             # Extract Plex track ID (ratingKey)
             plex_track_id = str(_safe_getattr(plex_track, 'ratingKey', None))
@@ -1231,21 +1228,6 @@ class PlexClient(MediaServerProvider):
         if not base_url:
             logger.warning("Plex server URL not configured")
             return
-
-        # Initialize PathMapper from config.json
-        import json
-        mappings_raw = plex_config.get('path_mappings')
-        if not mappings_raw:
-            mappings_raw = self.sdk.config.get('plex.path_mappings')
-
-        mappings = []
-        if mappings_raw:
-            try:
-                mappings = json.loads(mappings_raw) if isinstance(mappings_raw, str) else mappings_raw
-            except Exception:
-                mappings = []
-
-        self.path_mapper = PathMapper(mappings)
         
         try:
             # 15 second timeout to prevent hangs on slow servers

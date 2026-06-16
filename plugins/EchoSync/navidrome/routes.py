@@ -48,22 +48,13 @@ def get_settings():
             except Exception as e:
                 logger.debug(f"Navidrome connection check failed: {e}")
         
-        # Get path mappings
-        import json
-        path_mappings_str = PluginStorageBox().config.get('navidrome.path_mappings', '[]')
-        try:
-            path_mappings = json.loads(path_mappings_str)
-        except:
-            path_mappings = []
-        
         return jsonify({
             'settings': {
                 'base_url': base_url,
                 'username': username,
                 'has_password': bool(password),
                 'connected': connected,
-                'is_active': is_active,
-                'path_mappings': path_mappings
+                'is_active': is_active
             }
         })
     except Exception as e:
@@ -94,12 +85,6 @@ def save_settings():
             password = data['password'].strip()
             PluginStorageBox().config.set('navidrome.password', password)
             logger.info(f"Navidrome password saved")
-        
-        if 'path_mappings' in data:
-            import json
-            path_mappings = data['path_mappings']
-            PluginStorageBox().config.set('navidrome.path_mappings', json.dumps(path_mappings))
-            logger.info(f"Navidrome path_mappings saved: {len(path_mappings)} mappings")
         
         return jsonify({'success': True})
     except Exception as e:

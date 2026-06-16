@@ -1,12 +1,12 @@
 <svelte:options customElement="jellyfin-dashboard-card" />
-<script>
-  export let apiBase = '';
-  import { onMount } from 'svelte';
 
-  let baseUrl = '';
-  let username = '';
-  let password = '';
-  let pathMappings = [];
+<script>
+  export let apiBase = "";
+  import { onMount } from "svelte";
+
+  let baseUrl = "";
+  let username = "";
+  let password = "";
   let hasPassword = false;
   let connected = false;
   let loading = true;
@@ -25,10 +25,10 @@
   async function activateServer() {
     try {
       activating = true;
-      await fetch(`${apiBase}/activate`, { method: 'POST' });
+      await fetch(`${apiBase}/activate`, { method: "POST" });
       await loadSettings();
     } catch (error) {
-      console.error('Failed to activate server:', error);
+      console.error("Failed to activate server:", error);
     } finally {
       activating = false;
     }
@@ -39,45 +39,43 @@
       const response = await fetch(`${apiBase}/settings`);
       const data = await response.json();
       if (data?.settings) {
-        baseUrl = data.settings.base_url || '';
-        username = data.settings.username || '';
-        pathMappings = data.settings.path_mappings || [];
+        baseUrl = data.settings.base_url || "";
+        username = data.settings.username || "";
         hasPassword = data.settings.has_password || false;
         connected = data.settings.connected || false;
         isActive = data.settings.is_active || false;
-        password = ''; 
+        password = "";
       }
     } catch (error) {
-      console.error('Failed to load Jellyfin settings:', error);
+      console.error("Failed to load Jellyfin settings:", error);
     }
   }
 
   async function saveSettings() {
     if (!baseUrl.trim()) {
-      console.error('Server URL is required');
+      console.error("Server URL is required");
       return;
     }
 
     if (!username.trim() || (!hasPassword && !password.trim())) {
-      console.error('Username and password are required');
+      console.error("Username and password are required");
       return;
     }
 
     try {
       saving = true;
       await fetch(`${apiBase}/settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           base_url: baseUrl,
           username: username,
           password: password,
-          path_mappings: pathMappings
-        })
+        }),
       });
       await loadSettings();
     } catch (error) {
-      console.error('Failed to save Jellyfin settings:', error);
+      console.error("Failed to save Jellyfin settings:", error);
     } finally {
       saving = false;
     }
@@ -86,13 +84,15 @@
   async function testConnection() {
     try {
       testing = true;
-      const response = await fetch(`${apiBase}/test-connection`, { method: 'POST' });
+      const response = await fetch(`${apiBase}/test-connection`, {
+        method: "POST",
+      });
       const data = await response.json();
       if (data?.connected) {
         await loadSettings();
       }
     } catch (error) {
-      console.error('Connection test failed:', error);
+      console.error("Connection test failed:", error);
     } finally {
       testing = false;
     }
@@ -117,8 +117,8 @@
         {/if}
       </div>
     </div>
-    <button class="btn-ghost" on:click={() => collapsed = !collapsed}>
-      {collapsed ? 'Expand' : 'Collapse'}
+    <button class="btn-ghost" on:click={() => (collapsed = !collapsed)}>
+      {collapsed ? "Expand" : "Collapse"}
     </button>
   </div>
 
@@ -127,7 +127,7 @@
   {:else if !collapsed}
     <div class="settings-section">
       <h3 class="section-title">Server Configuration</h3>
-      
+
       <div class="form-grid">
         <label class="form-field">
           <span class="field-label">Server URL</span>
@@ -137,7 +137,9 @@
             placeholder="http://192.168.1.100:8096"
             class="input-field"
           />
-          <span class="helper-text">Enter your Jellyfin server URL (include port, typically :8096)</span>
+          <span class="helper-text"
+            >Enter your Jellyfin server URL (include port, typically :8096)</span
+          >
         </label>
 
         <label class="form-field">
@@ -154,32 +156,24 @@
           <span class="field-label">Password</span>
           <div class="password-wrapper">
             <input
-              type={showPassword ? 'text' : 'password'}
+              type={showPassword ? "text" : "password"}
               bind:value={password}
-              placeholder={hasPassword ? '••••••••' : 'Enter password'}
+              placeholder={hasPassword ? "••••••••" : "Enter password"}
               class="input-field"
             />
             <button
               type="button"
               class="toggle-visibility"
-              on:click={() => showPassword = !showPassword}
+              on:click={() => (showPassword = !showPassword)}
             >
-              {showPassword ? '🙈' : '👁️'}
+              {showPassword ? "🙈" : "👁️"}
             </button>
           </div>
         </label>
 
-        <div class="path-mappings">
-          <echosync-path-mapping-editor mappings={JSON.stringify(pathMappings)} on:es-path-update={(e) => pathMappings = e.detail} />
-        </div>
-
         <div class="actions-row">
-          <button
-            class="btn-primary"
-            on:click={saveSettings}
-            disabled={saving}
-          >
-            {saving ? 'Saving...' : 'Save Settings'}
+          <button class="btn-primary" on:click={saveSettings} disabled={saving}>
+            {saving ? "Saving..." : "Save Settings"}
           </button>
 
           {#if hasPassword}
@@ -188,7 +182,7 @@
               on:click={testConnection}
               disabled={testing}
             >
-              {testing ? 'Testing...' : 'Test Connection'}
+              {testing ? "Testing..." : "Test Connection"}
             </button>
           {/if}
 
@@ -198,7 +192,7 @@
               on:click={activateServer}
               disabled={activating}
             >
-              {activating ? 'Activating...' : 'Activate Server'}
+              {activating ? "Activating..." : "Activate Server"}
             </button>
           {/if}
         </div>
@@ -214,7 +208,7 @@
     border-radius: var(--radius, 16px);
     padding: 28px;
     color: var(--text-primary);
-    font-family: 'Inter', sans-serif;
+    font-family: "Inter", sans-serif;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
   }
 
@@ -349,9 +343,6 @@
     .form-grid {
       grid-template-columns: 1fr 1fr;
     }
-    .actions-row, .path-mappings {
-      grid-column: span 2;
-    }
   }
 
   .form-field {
@@ -417,12 +408,6 @@
     font-style: italic;
   }
 
-  .path-mappings {
-    padding: 24px 0;
-    border-top: 1px solid var(--border-subtle);
-    margin-top: 12px;
-  }
-
   .actions-row {
     display: flex;
     gap: 16px;
@@ -430,7 +415,3 @@
     margin-top: 12px;
   }
 </style>
-
-
-
-

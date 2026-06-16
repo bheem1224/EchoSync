@@ -1,14 +1,14 @@
 <svelte:options customElement="plex-dashboard-card" />
+
 <script>
   /**
    * @type {string} apiBase - The base URL for API calls, provided by the dashboard host.
    */
-  export let apiBase = '';
-  import { onMount } from 'svelte';
+  export let apiBase = "";
+  import { onMount } from "svelte";
 
-  let baseUrl = '';
-  let serverName = '';
-  let pathMappings = [];
+  let baseUrl = "";
+  let serverName = "";
   let hasToken = false;
   let connected = false;
   let loading = true;
@@ -24,7 +24,7 @@
   onMount(async () => {
     // Normalize apiBase
     apiBase = apiBase.replace(/\/$/, "");
-    
+
     await loadSettings();
     loading = false;
   });
@@ -32,12 +32,16 @@
   async function activateServer() {
     try {
       activating = true;
-      const resp = await fetch(`${apiBase}/activate`, { method: 'POST' });
+      const resp = await fetch(`${apiBase}/activate`, { method: "POST" });
       if (!resp.ok) throw new Error("Activation failed");
       await loadSettings();
     } catch (error) {
-      console.error('Failed to activate server:', error);
-      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Activation failed. Check logs.", type: "error" } }));
+      console.error("Failed to activate server:", error);
+      window.dispatchEvent(
+        new CustomEvent("es-toast", {
+          detail: { message: "Activation failed. Check logs.", type: "error" },
+        }),
+      );
     } finally {
       activating = false;
     }
@@ -48,41 +52,51 @@
       const response = await fetch(`${apiBase}/settings`);
       const data = await response.json();
       if (data?.settings) {
-        baseUrl = data.settings.base_url || '';
-        serverName = data.settings.server_name || '';
-        pathMappings = data.settings.path_mappings || [];
+        baseUrl = data.settings.base_url || "";
+        serverName = data.settings.server_name || "";
         hasToken = data.settings.has_token || false;
         connected = data.settings.connected || false;
         isActive = data.settings.is_active || false;
       }
     } catch (error) {
-      console.error('Failed to load Plex settings:', error);
+      console.error("Failed to load Plex settings:", error);
     }
   }
 
   async function saveSettings() {
     if (!baseUrl.trim()) {
-      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Server URL is required", type: "error" } }));
+      window.dispatchEvent(
+        new CustomEvent("es-toast", {
+          detail: { message: "Server URL is required", type: "error" },
+        }),
+      );
       return;
     }
 
     try {
       saving = true;
-      const resp = await fetch(`${apiBase}/settings`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
+      const resp = await fetch(`${apiBase}/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           base_url: baseUrl,
           server_name: serverName,
-          path_mappings: pathMappings
-        }) 
+        }),
       });
       if (!resp.ok) throw new Error("Save failed");
       await loadSettings();
-      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Settings saved successfully", type: "success" } }));
+      window.dispatchEvent(
+        new CustomEvent("es-toast", {
+          detail: { message: "Settings saved successfully", type: "success" },
+        }),
+      );
     } catch (error) {
-      console.error('Failed to save Plex settings:', error);
-      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Failed to save settings.", type: "error" } }));
+      console.error("Failed to save Plex settings:", error);
+      window.dispatchEvent(
+        new CustomEvent("es-toast", {
+          detail: { message: "Failed to save settings.", type: "error" },
+        }),
+      );
     } finally {
       saving = false;
     }
@@ -91,16 +105,22 @@
   async function startOAuth() {
     try {
       authenticating = true;
-      const response = await fetch(`${apiBase}/auth/start`, { method: 'POST' });
+      const response = await fetch(`${apiBase}/auth/start`, { method: "POST" });
       const data = await response.json();
-      
+
       if (data?.oauth_url && data?.session_id) {
         oauthSession = data.session_id;
-        window.open(data.oauth_url, 'PlexOAuth', 'width=600,height=700,menubar=no,status=no');
-        
+        window.open(
+          data.oauth_url,
+          "PlexOAuth",
+          "width=600,height=700,menubar=no,status=no",
+        );
+
         pollInterval = setInterval(async () => {
           try {
-            const pollResp = await fetch(`${apiBase}/auth/poll/${oauthSession}`);
+            const pollResp = await fetch(
+              `${apiBase}/auth/poll/${oauthSession}`,
+            );
             const pollData = await pollResp.json();
             if (pollData?.completed) {
               clearInterval(pollInterval);
@@ -110,7 +130,7 @@
               await loadSettings();
             }
           } catch (pollError) {
-            console.error('OAuth poll error:', pollError);
+            console.error("OAuth poll error:", pollError);
             if (pollError.status === 404) {
               clearInterval(pollInterval);
               pollInterval = null;
@@ -121,7 +141,7 @@
         }, 3000);
       }
     } catch (error) {
-      console.error('Failed to start Plex OAuth:', error);
+      console.error("Failed to start Plex OAuth:", error);
       authenticating = false;
     }
   }
@@ -131,9 +151,11 @@
       clearInterval(pollInterval);
       pollInterval = null;
       try {
-        await fetch(`${apiBase}/auth/cancel/${oauthSession}`, { method: 'DELETE' });
+        await fetch(`${apiBase}/auth/cancel/${oauthSession}`, {
+          method: "DELETE",
+        });
       } catch (error) {
-        console.error('Failed to cancel OAuth:', error);
+        console.error("Failed to cancel OAuth:", error);
       }
       oauthSession = null;
       authenticating = false;
@@ -143,49 +165,39 @@
   async function testConnection() {
     try {
       testing = true;
-      const response = await fetch(`${apiBase}/test-connection`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ base_url: baseUrl }) 
+      const response = await fetch(`${apiBase}/test-connection`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base_url: baseUrl }),
       });
       const data = await response.json();
       if (data?.connected) {
-        window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Connection successful!", type: "success" } }));
+        window.dispatchEvent(
+          new CustomEvent("es-toast", {
+            detail: { message: "Connection successful!", type: "success" },
+          }),
+        );
         await loadSettings();
       } else {
-        window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Connection failed. Check URL and ensure Plex is running.", type: "error" } }));
+        window.dispatchEvent(
+          new CustomEvent("es-toast", {
+            detail: {
+              message:
+                "Connection failed. Check URL and ensure Plex is running.",
+              type: "error",
+            },
+          }),
+        );
       }
     } catch (error) {
-      console.error('Connection test failed:', error);
-      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Test failed with error.", type: "error" } }));
+      console.error("Connection test failed:", error);
+      window.dispatchEvent(
+        new CustomEvent("es-toast", {
+          detail: { message: "Test failed with error.", type: "error" },
+        }),
+      );
     } finally {
       testing = false;
-    }
-  }
-  let autoMapping = false;
-  async function autoMapPaths() {
-    try {
-      autoMapping = true;
-      const response = await fetch(`${apiBase}/auto-map-paths`, { method: 'POST' });
-      const data = await response.json();
-      if (data?.success && data.mappings) {
-        // Only append unique mappings
-        const newMappings = data.mappings.filter(m => !pathMappings.some(pm => pm.remote === m.remote && pm.local === m.local));
-        if (newMappings.length > 0) {
-          pathMappings = [...pathMappings, ...newMappings];
-          await saveSettings();
-          window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Auto-mapping successful!", type: "success" } }));
-        } else {
-          window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Derived mapping is already configured.", type: "info" } }));
-        }
-      } else {
-        window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Auto-mapping failed: " + (data?.error || "Unknown error"), type: "error" } }));
-      }
-    } catch (error) {
-      console.error('Auto-mapping failed:', error);
-      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message: "Auto-mapping failed with error.", type: "error" } }));
-    } finally {
-      autoMapping = false;
     }
   }
 </script>
@@ -208,8 +220,8 @@
         {/if}
       </div>
     </div>
-    <button class="btn-ghost-small" on:click={() => collapsed = !collapsed}>
-      {collapsed ? 'Expand' : 'Collapse'}
+    <button class="btn-ghost-small" on:click={() => (collapsed = !collapsed)}>
+      {collapsed ? "Expand" : "Collapse"}
     </button>
   </div>
 
@@ -229,7 +241,9 @@
             placeholder="http://192.168.1.100:32400"
             class="input-field"
           />
-          <span class="helper-text">Typically http://[IP]:32400. Use localhost if running natively.</span>
+          <span class="helper-text"
+            >Typically http://[IP]:32400. Use localhost if running natively.</span
+          >
         </div>
 
         <div class="form-field">
@@ -241,39 +255,18 @@
             class="input-field"
           />
         </div>
-
-        <div class="path-mappings">
-           <div class="mapping-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-              <span class="field-label" style="margin: 0;">Path Mappings</span>
-              <button class="btn-ghost-small" on:click={autoMapPaths} disabled={autoMapping || !hasToken}>
-                {autoMapping ? 'Analyzing...' : 'Auto-Generate Mappings'}
-              </button>
-           </div>
-           <!-- The editor handles its own styling, but we wrap it for layout -->
-           <div class="editor-wrapper">
-              <echosync-path-mapping-editor 
-                mappings={JSON.stringify(pathMappings)} 
-                on:es-path-update={(e) => pathMappings = e.detail} 
-              />
-           </div>
-        </div>
-
         <div class="actions-row">
-          <button
-            class="btn-primary"
-            on:click={saveSettings}
-            disabled={saving}
-          >
-            {saving ? 'Saving...' : 'Save Configuration'}
+          <button class="btn-primary" on:click={saveSettings} disabled={saving}>
+            {saving ? "Saving..." : "Save Configuration"}
           </button>
-          
+
           {#if hasToken}
             <button
               class="btn-ghost"
               on:click={testConnection}
               disabled={testing || !baseUrl.trim()}
             >
-              {testing ? 'Testing...' : 'Test Connection'}
+              {testing ? "Testing..." : "Test Connection"}
             </button>
           {/if}
 
@@ -283,7 +276,7 @@
               on:click={activateServer}
               disabled={activating}
             >
-              {activating ? 'Activating...' : 'Activate for Sync'}
+              {activating ? "Activating..." : "Activate for Sync"}
             </button>
           {/if}
 
@@ -293,10 +286,20 @@
                 Cancel Authorization
               </button>
             {:else if hasToken}
-              <button class="btn-ghost" on:click={startOAuth}>Switch Account</button>
+              <button class="btn-ghost" on:click={startOAuth}
+                >Switch Account</button
+              >
             {:else}
               <button class="btn-primary plex-btn" on:click={startOAuth}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L9.33 6.67L2 9.33L7.33 14.67L6 22L12 18.67L18 22L16.67 14.67L22 9.33L14.67 6.67L12 0Z"/></svg>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  ><path
+                    d="M12 0L9.33 6.67L2 9.33L7.33 14.67L6 22L12 18.67L18 22L16.67 14.67L22 9.33L14.67 6.67L12 0Z"
+                  /></svg
+                >
                 Sign in with Plex
               </button>
             {/if}
@@ -355,23 +358,25 @@
     letter-spacing: 0.05em;
   }
 
-  .status-badge.active { 
-    background: rgba(20, 184, 166, 0.1); 
-    color: var(--color-primary); 
+  .status-badge.active {
+    background: rgba(20, 184, 166, 0.1);
+    color: var(--color-primary);
     border: 1px solid rgba(20, 184, 166, 0.2);
   }
-  .status-badge.success { 
-    background: rgba(16, 185, 129, 0.1); 
-    color: #10b981; 
+  .status-badge.success {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
     border: 1px solid rgba(16, 185, 129, 0.2);
   }
-  .status-badge.warning { 
-    background: rgba(245, 158, 11, 0.1); 
-    color: #f59e0b; 
+  .status-badge.warning {
+    background: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
     border: 1px solid rgba(245, 158, 11, 0.2);
   }
 
-  .btn-ghost, .btn-ghost-small, .btn-danger-ghost {
+  .btn-ghost,
+  .btn-ghost-small,
+  .btn-danger-ghost {
     padding: 10px 18px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--border-subtle);
@@ -389,7 +394,8 @@
     border-radius: 6px;
   }
 
-  .btn-ghost:hover, .btn-ghost-small:hover {
+  .btn-ghost:hover,
+  .btn-ghost-small:hover {
     background: rgba(255, 255, 255, 0.08);
     border-color: rgba(255, 255, 255, 0.2);
   }
@@ -447,7 +453,11 @@
     animation: spin 1s linear infinite;
   }
 
-  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 
   .settings-section {
     margin-top: 8px;
@@ -496,14 +506,7 @@
     font-style: italic;
   }
 
-  .path-mappings {
-    padding: 20px 0;
-    border-top: 1px solid rgba(255,255,255,0.05);
-  }
 
-  .mapping-header {
-    margin-bottom: 12px;
-  }
 
   .actions-row {
     display: flex;
@@ -518,12 +521,12 @@
   }
 
   @media (max-width: 600px) {
-    .auth-box { margin-left: 0; width: 100%; }
-    .auth-box button { width: 100%; }
+    .auth-box {
+      margin-left: 0;
+      width: 100%;
+    }
+    .auth-box button {
+      width: 100%;
+    }
   }
 </style>
-
-
-
-
-

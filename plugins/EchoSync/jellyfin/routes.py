@@ -47,22 +47,13 @@ def get_settings():
             except Exception as e:
                 logger.debug(f"Jellyfin connection check failed: {e}")
         
-        # Get path mappings
-        import json
-        path_mappings_str = PluginStorageBox().config.get('jellyfin.path_mappings', '[]')
-        try:
-            path_mappings = json.loads(path_mappings_str)
-        except:
-            path_mappings = []
-        
         return jsonify({
             'settings': {
                 'base_url': base_url,
                 'username': username,
                 'has_password': bool(password),
                 'connected': connected,
-                'is_active': is_active,
-                'path_mappings': path_mappings
+                'is_active': is_active
             }
         })
     except Exception as e:
@@ -93,12 +84,6 @@ def save_settings():
             password = data['password'].strip()
             PluginStorageBox().config.set('jellyfin.password', password)
             logger.info(f"Jellyfin password saved")
-        
-        if 'path_mappings' in data:
-            import json
-            path_mappings = data['path_mappings']
-            PluginStorageBox().config.set('jellyfin.path_mappings', json.dumps(path_mappings))
-            logger.info(f"Jellyfin path_mappings saved: {len(path_mappings)} mappings")
         
         return jsonify({'success': True})
     except Exception as e:
