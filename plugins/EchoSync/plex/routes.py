@@ -249,31 +249,53 @@ def auto_map_paths():
                         continue
                         
                     # Derive mapping
-                    remote = remote_file.replace('\\', '/')
-                    local = local_track.file_path.replace('\\', '/')
+                    remote_orig = remote_file.replace('\\', '/').strip()
+                    local_orig = local_track.file_path.replace('\\', '/').strip()
                     
-                    remote_parts = remote.split('/')
-                    local_parts = local.split('/')
+                    logger.debug(f"Comparing paths - Remote: {remote_orig} | Local: {local_orig}")
+                    
+                    # Isolate Directories
+                    remote_dir = '/'.join(remote_orig.split('/')[:-1])
+                    local_dir = '/'.join(local_orig.split('/')[:-1])
+                    
+                    remote_parts = [p for p in remote_dir.split('/') if p]
+                    local_parts = [p for p in local_dir.split('/') if p]
+                    
+                    remote_parts_lower = [p.lower() for p in remote_parts]
+                    local_parts_lower = [p.lower() for p in local_parts]
                     
                     common_len = 0
-                    while common_len < len(remote_parts) and common_len < len(local_parts):
-                        if remote_parts[-(common_len + 1)] == local_parts[-(common_len + 1)]:
+                    while common_len < len(remote_parts_lower) and common_len < len(local_parts_lower):
+                        if remote_parts_lower[-(common_len + 1)] == local_parts_lower[-(common_len + 1)]:
                             common_len += 1
                         else:
                             break
                             
                     if common_len == 0:
-                        continue
+                        return jsonify({'error': 'Path structures do not align. Cannot verify common folder structure.'}), 400
                         
-                    remote_prefix = '/'.join(remote_parts[:-common_len])
-                    local_prefix = '/'.join(local_parts[:-common_len])
+                    remote_prefix_parts = remote_parts[:-common_len] if common_len > 0 else remote_parts
+                    local_prefix_parts = local_parts[:-common_len] if common_len > 0 else local_parts
                     
-                    if remote.startswith('/') and not remote_prefix.startswith('/'):
+                    remote_prefix = '/' + '/'.join(remote_prefix_parts) if remote_orig.startswith('/') else '/'.join(remote_prefix_parts)
+                    local_prefix = '/' + '/'.join(local_prefix_parts) if local_orig.startswith('/') else '/'.join(local_prefix_parts)
+                    
+                    if not remote_prefix.endswith('/') and remote_prefix_parts:
+                        remote_prefix += '/'
+                    if not local_prefix.endswith('/') and local_prefix_parts:
+                        local_prefix += '/'
+                        
+                    # Handle Windows Drive letters (e.g. C: -> C:/)
+                    if len(local_prefix) > 0 and local_prefix[-1] != '/' and ':' in local_prefix:
+                        local_prefix += '/'
+                        
+                    # Ensure absolute path indicators
+                    if remote_orig.startswith('/') and not remote_prefix.startswith('/'):
                         remote_prefix = '/' + remote_prefix
-                    if local.startswith('/') and not local_prefix.startswith('/'):
-                        local_prefix = '/' + local_prefix
-                    if not remote_prefix and remote.startswith('/'): remote_prefix = '/'
-                    if not local_prefix and local.startswith('/'): local_prefix = '/'
+                        
+                    # Guard against root mapping
+                    if remote_prefix.strip() == '/' or local_prefix.strip() == '/' or not remote_prefix or not local_prefix:
+                        return jsonify({'error': 'Path structures do not align. Resulted in dangerous root-level filesystem binding.'}), 400
                     
                     mapping = {"remote": remote_prefix, "local": local_prefix}
                     if mapping not in mappings_derived:
