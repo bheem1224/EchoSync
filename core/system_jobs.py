@@ -137,7 +137,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                                 media_client=local_provider,
                                 database_path=None,
                                 full_refresh=False,
-                                server_type="EchoSync.local_server",
+                                server_type="EchoSync.Local Server",
                                 force_sequential=True
                             )
                             worker.run()
@@ -203,14 +203,11 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                     })
                     continue
                 
-                # We ONLY run active media servers in this job if local_success is False
-                # If local_success is True, we defer them to the external_identifier_sync job
+                # Phase 2: Remote Syncs. If Phase 1 (Local Scan) succeeded, we only sync identifiers.
+                # Otherwise, we run a full sync.
                 identifiers_only = local_success
                 
-                if identifiers_only:
-                    continue # Skip full updates here, the follow-up job will handle it
-                
-                logger.info(f"Step 2: Running full database update for {active_server}")
+                logger.info(f"Step 2: Running database update for {active_server} (identifiers_only={identifiers_only})")
                 try:
                     worker = DatabaseUpdateWorker(
                         media_client=provider,
@@ -218,17 +215,12 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                         full_refresh=False,
                         server_type=active_server,
                         force_sequential=True,
-                        identifiers_only=False
+                        identifiers_only=identifiers_only
                     )
                     worker.run()
                     total_successful_operations += worker.successful_operations
                 except Exception as e:
                     logger.error(f"Database update worker failed for {active_server}: {e}", exc_info=True)
-
-            # Trigger follow-up external identifier sync job if we had a successful local scan
-            if local_success:
-                logger.info("Triggering follow-up external identifier sync job")
-                job_queue.execute_job_now("external_identifier_sync")
 
         except Exception as e:
             logger.error(f"Error in scheduled database update job: {e}", exc_info=True)

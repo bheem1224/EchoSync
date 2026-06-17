@@ -176,6 +176,8 @@ def update_database():
             from core.nexus_framework.plugin_loader import PluginRegistry
             active_servers = PluginRegistry.get_active_services_by_type('media_server')
             active_server = active_servers[0] if active_servers else None
+            if active_server:
+                provider = PluginRegistry.create_instance(active_server)
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
             return jsonify({"error": f"Media server '{active_server}' not available: {str(e)}"}), 500
@@ -348,13 +350,23 @@ def cancel_database_update():
                 return jsonify({"error": "No database update in progress"}), 400
             
             # Check if running
-            thread_obj = getattr(_db_update_worker, 'thread', None)
-            if thread_obj is None or not (callable(getattr(thread_obj, 'is_alive', None)) and thread_obj.is_alive()):
+            is_running = False
+            _job_name = getattr(_db_update_worker, '_job_name', None)
+            if _job_name:
+                try:
+                    from core.job_queue import job_queue
+                    is_running = job_queue._is_running.get(_job_name, False)
+                except Exception:
+                    pass
+            
+            if not is_running:
                 return jsonify({"error": "No database update in progress"}), 400
             
-            # Stop the worker
+            # Stop the worker and kill job
             _db_update_worker.stop()
-            _db_update_worker.wait()  # Wait for thread to finish
+            if _job_name:
+                from core.job_queue import job_queue
+                job_queue.kill_job(_job_name)
             
             logger.info("Database update cancelled by user")
             

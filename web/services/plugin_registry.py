@@ -81,13 +81,15 @@ def list_plugins() -> List[Dict]:
                 capabilities['search_capabilities'] = capabilities['search']
 
                 plugin_dict = {
-                    'id': plugin_id,  # Changed from name to integer ID!
+                    'id': str(plugin_id),  # Changed from name to integer ID! Cast to string to satisfy API contract
                     'plugin_id': plugin_id,
                     'name': db_name,
                     'display_name': db_name.replace('plugin.', '').replace('echosync.', '').title(),
                     'source_type': source_type,
                     'service_type': row['service_type'],
                     'disabled': is_disabled,
+                    'enabled': not is_disabled,
+                    'category': row['service_type'],
                     'version': row['version'] or 'Unknown',
                     'author': 'Official' if source_type == 'core' else 'Unknown',
                     'capabilities': capabilities,

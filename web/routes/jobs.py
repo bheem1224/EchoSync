@@ -69,7 +69,7 @@ def jobs_summary():
 def run_job():
     """Trigger immediate execution of a job."""
     payload = request.get_json(silent=True) or {}
-    job_name = payload.get("name")
+    job_name = payload.get("name") or request.args.get("job_id") or request.args.get("name") or request.args.get("job_name")
     
     if not job_name:
         return Response(json.dumps({"error": "job name required"}), status=400, mimetype="application/json")
