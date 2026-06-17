@@ -293,7 +293,7 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
             root_logger.addHandler(handler)
 
         # Normal: INFO and up
-        add_file_handler("normal.log", logging.INFO)
+        add_file_handler("app.log", logging.INFO)
         # Debug: DEBUG and up
         add_file_handler("debug.log", logging.DEBUG)
         # Verbose: All
@@ -324,6 +324,11 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
                 print(f"Failed to setup legacy log file handler: {_e}")
 
         root_logger.info(f"Logging initialized. Console Level: {level}, Log Dir: {log_path}")
+
+        # Silence Third-Party Noise
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        logging.getLogger("plexapi").setLevel(logging.WARNING)
+        logging.getLogger("mutagen").setLevel(logging.WARNING)
 
     except Exception as e:
         print(f"Failed to setup file logging: {e}")

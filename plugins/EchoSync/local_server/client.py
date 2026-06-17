@@ -69,7 +69,7 @@ class LocalServerProvider(PluginBase):
                 elif _tag_artist:
                     artist = _tag_artist
                 else:
-                    artist = "Unknown Artist"
+                    artist = ""
 
                 duration_ms = tags.get('duration_ms')
                 if duration_ms is None and tags.get('duration') is not None:
@@ -88,6 +88,15 @@ class LocalServerProvider(PluginBase):
                 except Exception:
                     file_size_bytes = None
                     added_at = None
+
+                import os
+                if not title or not title.strip():
+                    # Fallback to the raw filename without extension
+                    title = path.stem if hasattr(path, 'stem') else os.path.splitext(os.path.basename(str(path)))[0]
+
+                if not artist or not artist.strip():
+                    # Fallback to the parent folder name
+                    artist = path.parent.name if hasattr(path, 'parent') else os.path.basename(os.path.dirname(str(path)))
 
                 return self.create_echo_sync_track(
                     title=title,
@@ -112,7 +121,7 @@ class LocalServerProvider(PluginBase):
                     # No provider_id to prevent writing an external identifier
                 )
             except Exception as e:
-                logger.debug(f"Failed to extract tags for {path}, falling back to filename: {e}")
+                logger.warning(f"Failed to extract tags for {path}, falling back to filename: {e}")
                 
                 try:
                     file_stat = path.stat()
