@@ -30,15 +30,18 @@ class ReorganizeLibraryJob(BaseJob):
         
         logger.info("Library reorganization job completed")
 
-def register_reorganize_library_job(interval_seconds: Optional[int] = None, enabled: bool = True):
+def register_reorganize_library_job(interval_seconds: Optional[int] = 315360000, enabled: bool = True):
     """
     Registration snippet for the global JobRegistry (job_queue).
     """
     job_instance = ReorganizeLibraryJob()
     
+    # Register with a 10-year interval and start_after so it never runs automatically,
+    # but remains persistent in the UI for manual triggering.
     register_job(
         name="reorganize_library",
         func=job_instance.execute,
         interval_seconds=interval_seconds,
+        start_after=315360000,
         enabled=enabled
     )

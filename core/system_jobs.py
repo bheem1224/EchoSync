@@ -841,7 +841,7 @@ def register_all_system_jobs():
         register_plugin_update_check_job(interval_seconds=43200, enabled=True)
 
         # Ad-hoc / manual system job for physical library reorganization
-        register_reorganize_library_job(interval_seconds=None, enabled=True)
+        register_reorganize_library_job(enabled=True)
 
         logger.info("All system jobs registered successfully")
     except Exception as e:

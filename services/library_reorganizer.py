@@ -58,7 +58,13 @@ class LibraryReorganizerService:
                 title = self._sanitize(track.title or Path(track.file_path).stem)
 
                 track_num = track.track_number
-                track_padded = f"{int(track_num):02d}" if track_num is not None else "00"
+                track_padded = "00"
+                if track_num is not None:
+                    try:
+                        _t = str(track_num).split('/')[0].strip()
+                        track_padded = f"{int(_t):02d}"
+                    except ValueError:
+                        track_padded = "00"
 
                 year_str = str(track.album.release_date)[:4] if track.album and track.album.release_date else "0000"
                 
