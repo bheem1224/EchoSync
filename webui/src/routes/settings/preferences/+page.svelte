@@ -13,6 +13,10 @@
   let storageRef = $state();
   let libImportRef = $state();
   
+  // Modal state and initial settings for dirty-state detection
+  let showConfirmModal = $state(false);
+  let initialSettings = $state({ renaming_pattern: '' });
+  
   // logLevel is managed via $derived or $effect in Svelte 5 to sync with store
   let logLevel = $state('INFO');
 
@@ -26,7 +30,7 @@
 
   import { feedback } from '../../../stores/feedback';
 
-  async function saveAll() {
+  async function executeSave() {
     try {
       feedback.setLoading(true);
       // if storage component exposes save, call it
@@ -40,13 +44,10 @@
       // persist quality profiles as part of Save All
       try {
         await preferences.saveProfiles($preferences?.profiles || []);
-        feedback.addToast('Preferences saved', 'success');
       } catch (e) {
         console.error('Failed to save preferences during Save All', e);
         feedback.addToast('Failed saving preferences', 'error');
       }
-      // Note: log_level is saved immediately on dropdown change via updateSetting().
-      // Sending the full $settings.data blob here would hit the backend allowlist → 400.
       feedback.addToast('Settings saved', 'success');
     } catch (e) {
       console.error('Failed to save all settings', e);
@@ -56,9 +57,50 @@
     }
   }
 
+  async function saveAll() {
+    const currentSettings = {
+      renaming_pattern: libImportRef && typeof libImportRef.getCurrentPattern === 'function' 
+        ? libImportRef.getCurrentPattern() 
+        : initialSettings.renaming_pattern
+    };
+
+    const patternChanged = currentSettings.renaming_pattern !== initialSettings.renaming_pattern;
+
+    if (patternChanged) {
+      showConfirmModal = true;
+      return; // Pause execution, wait for modal
+    }
+
+    await executeSave();
+  }
+
+  async function confirmReorganization() {
+    showConfirmModal = false;
+    await executeSave();
+    
+    // Trigger background reorganization job
+    try {
+      await fetch('/api/jobs/run/reorganize_library', { method: 'POST' });
+      feedback.addToast('Library reorganization started. Check Active Jobs.', 'info');
+      
+      // Update initial settings to reflect the new saved state
+      initialSettings.renaming_pattern = libImportRef.getCurrentPattern();
+    } catch (err) {
+      console.error('Failed to trigger library reorganization job', err);
+      feedback.addToast('Failed to start library reorganization', 'error');
+    }
+  }
+
+  function cancelReorganization() {
+    showConfirmModal = false;
+  }
+
   onMount(async () => {
     try {
       await Promise.all([providers.load(), settings.load()]);
+      initialSettings = {
+        renaming_pattern: $settings?.data?.metadata_enhancement?.naming_template ?? '{Artist}/{Album}/{Track} - {Title}.{ext}'
+      };
     } catch (err) {
       loadError = 'Failed to load settings. Check backend /api/settings.';
       console.error(err);
@@ -176,6 +218,29 @@
     </div>
   </div>
 </section>
+
+
+<!-- ── Confirmation Modal ───────────────────────────────────────── -->
+{#if showConfirmModal}
+  <div class="modal-backdrop">
+    <div class="modal-content card">
+      <div class="modal-header">
+        <h2>Confirm Reorganization</h2>
+      </div>
+      <div class="modal-body">
+        <p>
+          You have modified your library folder renaming pattern. Saving will trigger a full, 
+          background reorganization of your music library on disk to match this new structure.
+        </p>
+        <p><strong>Do you wish to proceed?</strong></p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" on:click={cancelReorganization}>Cancel</button>
+        <button class="btn-primary" on:click={confirmReorganization}>Confirm & Reorganize</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- ── Sidebar Customization ────────────────────────────────────── -->
 <section class="sidebar-custom card" id="sidebar-customization">
@@ -569,5 +634,26 @@
   .sc-empty__hint { font-size: 12px; }
   .sc-link { color: var(--color-primary, #1db954); text-decoration: none; font-weight: 700; }
   .sc-link:hover { text-decoration: underline; }
+
+  /* ── Modal Styles ─────────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999;
+  }
+  .modal-content {
+    width: 450px; max-width: 90vw; padding: 24px;
+    display: flex; flex-direction: column; gap: 16px;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .modal-header h2 { margin: 0; font-size: 18px; color: #fff; }
+  .modal-body p { margin: 0 0 10px; font-size: 14px; color: var(--muted); line-height: 1.5; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 8px; }
+  .btn-secondary {
+    background: transparent; border: 1px solid rgba(255,255,255,0.2);
+    color: #fff; padding: 8px 16px; border-radius: 6px; cursor: pointer;
+  }
+  .btn-secondary:hover { background: rgba(255,255,255,0.05); }
 </style>
 

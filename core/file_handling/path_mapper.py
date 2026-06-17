@@ -112,3 +112,22 @@ def extract_filename(full_path):
         return full_path[last_slash + 1:]
     else:
         return full_path
+
+def extract_primary_artist(artist_string: str) -> str:
+    """
+    Extract the primary artist from a collaboration string.
+    e.g., "ATEEZ feat. LA POEM" -> "ATEEZ"
+    """
+    if not artist_string:
+        return ""
+        
+    import re
+    delimiters = [
+        r'\bfeat\.', r'\bft\.', r'\bfeaturing\b', 
+        r'\bwith\b', r'\bx\b', r'&', r','
+    ]
+    pattern = re.compile('|'.join(delimiters), re.IGNORECASE)
+    match = pattern.search(artist_string)
+    if match:
+        return artist_string[:match.start()].strip()
+    return artist_string.strip()

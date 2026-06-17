@@ -26,6 +26,7 @@ class ProfileType(Enum):
     DOWNLOAD_SEARCH = "download_search"
     LIBRARY_IMPORT = "library_import"
     AUTO_IMPORT_STRICT = "auto_import_strict"
+    DUPLICATE_DETECTION = "duplicate_detection"
 
 
 @dataclass
@@ -319,6 +320,48 @@ class AutoImportStrictProfile(ScoringProfile):
         )
 
 
+class DuplicateDetectionProfile(ScoringProfile):
+    """
+    DUPLICATE_DETECTION Profile - For verifying file collisions during Library Hygiene.
+
+    Use when: Confirming if two files are actual duplicates before automatic deletion.
+    Priority: Fingerprint (45%) > Text (40%) > Duration (15%)
+    Philosophy: High reliance on audio matching, but strict text gates to prevent
+    alternate editions or remasters from being merged incorrectly. Album mismatches
+    are forgiven for compilation repacks.
+    """
+
+    profile_type = ProfileType.DUPLICATE_DETECTION
+
+    def __init__(self):
+        self.description = "Strict duplicate detection with high fingerprint weighting."
+        self.weights = ScoringWeights(
+            text_weight=0.40,
+            title_weight=0.45,
+            artist_weight=0.45,
+            album_weight=0.10,
+            duration_weight=0.15,
+            fingerprint_weight=0.45,
+            quality_bonus=0.0,
+            version_mismatch_penalty=50.0,
+            edition_mismatch_penalty=10.0,
+            duration_tolerance_ms=5000,
+            fuzzy_match_threshold=0.85,
+            min_confidence_to_accept=95.0,
+            text_match_fallback=0.90,
+        )
+
+    def get_weights(self) -> ScoringWeights:
+        return self.weights
+
+    def describe(self) -> str:
+        return (
+            "DUPLICATE_DETECTION - Verifies file collisions before deletion. "
+            "Fingerprint (45%) + Text (40%) + Duration (15%). "
+            f"Min confidence: {self.weights.min_confidence_to_accept}%"
+        )
+
+
 class ConfigurableProfile(ScoringProfile):
     """Custom profile loaded from config.json"""
 
@@ -356,6 +399,7 @@ class ProfileFactory:
         ProfileType.DOWNLOAD_SEARCH: DownloadSearchProfile,
         ProfileType.LIBRARY_IMPORT: LibraryImportProfile,
         ProfileType.AUTO_IMPORT_STRICT: AutoImportStrictProfile,
+        ProfileType.DUPLICATE_DETECTION: DuplicateDetectionProfile,
     }
     
     _config_profiles: Optional[Dict] = None  # Cached config profiles
@@ -430,3 +474,4 @@ PROFILE_EXACT_SYNC = ExactSyncProfile()
 PROFILE_DOWNLOAD_SEARCH = DownloadSearchProfile()
 PROFILE_LIBRARY_IMPORT = LibraryImportProfile()
 PROFILE_AUTO_IMPORT_STRICT = AutoImportStrictProfile()
+PROFILE_DUPLICATE_DETECTION = DuplicateDetectionProfile()

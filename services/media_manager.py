@@ -24,9 +24,89 @@ class MediaManagerService:
             return
         try:
             event_bus.subscribe("SUGGESTION_PLAYLIST_REMOVE_INTENT", self.handle_suggestion_playlist_remove_intent)
+            
+            # The Routing Matrix Subscriptions
+            event_bus.subscribe("user_request_upgrade", self.handle_lifecycle_event)
+            event_bus.subscribe("user_request_delete", self.handle_lifecycle_event)
+            event_bus.subscribe("suggested_upgrade", self.handle_lifecycle_event)
+            event_bus.subscribe("suggested_delete", self.handle_lifecycle_event)
+            event_bus.subscribe("system_duplicate", self.handle_lifecycle_event)
+            
             self._subscribed = True
         except Exception as e:
             logger.warning(f"Failed to subscribe media manager events: {e}")
+
+    AUTO_DELETE_CONFIDENCE_THRESHOLD = 95.0
+
+    def handle_lifecycle_event(self, event_data: Dict[str, Any]) -> None:
+        """The Routing Matrix for core events."""
+        event_type = event_data.get('event_type')
+        if not event_type:
+            # Fallback if publisher didn't include it in payload
+            return
+
+        # The Strict Manual Review Guardrail
+        if event_data.get('requires_manual_review'):
+            logger.info(f"Event {event_type} explicitly flagged for manual review. Bypassing all automation.")
+            self._stage_pending_action(event_type, event_data)
+            return
+
+        # The Confidence Gate
+        if event_type == "system_duplicate":
+            confidence_score = event_data.get('confidence_score', 0.0)
+            if confidence_score < self.AUTO_DELETE_CONFIDENCE_THRESHOLD:
+                logger.info(f"Confidence {confidence_score:.1f}% below threshold {self.AUTO_DELETE_CONFIDENCE_THRESHOLD}%. Routing to manual review.")
+                reason = event_data.get('reason', f'Lifecycle Action: {event_type}')
+                event_data['reason'] = f"{reason} | Warning: Confidence too low for auto-resolve."
+                self._stage_pending_action(event_type, event_data)
+                return
+            
+        manager_config = config_manager.get("manager", {}) or {}
+        auto_level = manager_config.get("automation_level", "Level 0")
+        
+        auto_allowed = False
+        if "Hygiene" in auto_level or "Level 1" in auto_level:
+            if event_type == "system_duplicate":
+                auto_allowed = True
+        elif "Level 2" in auto_level or "Full" in auto_level:
+            auto_allowed = True
+
+        delete_ids = event_data.get('delete_ids', [])
+        
+        if auto_allowed and delete_ids:
+            logger.info(f"Event {event_type} auto-approved. Deleting {len(delete_ids)} tracks.")
+            self.execute_delete(delete_ids)
+        else:
+            logger.info(f"Event {event_type} requires manual review. Staging to pending actions.")
+            self._stage_pending_action(event_type, event_data)
+
+    def _stage_pending_action(self, event_type: str, payload: Dict[str, Any]):
+        from database.working_database import get_working_database, SuggestionStagingQueue
+        db = get_working_database()
+        with db.session_scope() as session:
+            reason = payload.get('reason', f'Lifecycle Action: {event_type}')
+            keep_id = payload.get('keep_id')
+            
+            intent_map = {
+                "user_request_upgrade": "USER_UPGRADE_REQUEST",
+                "user_request_delete": "USER_DELETE_REQUEST",
+                "suggested_upgrade": "SYSTEM_UPGRADE_SUGGESTION",
+                "suggested_delete": "SYSTEM_DELETE_SUGGESTION",
+                "system_duplicate": "HYGIENE_DUPLICATION",
+            }
+            intent_type = intent_map.get(event_type, "SYSTEM_DELETE_SUGGESTION")
+            system_user_id = db.get_system_user_id()
+            
+            staging = SuggestionStagingQueue(
+                user_id=system_user_id,
+                music_db_track_id=keep_id,
+                reason=reason,
+                intent_type=intent_type,
+                ui_label=f"Review needed for {event_type}",
+                context_data=payload,
+                status="pending"
+            )
+            session.add(staging)
 
     def _resolve_track_id_from_sync_id(self, sync_id: str) -> Optional[int]:
         base_sync_id = str(sync_id or "").split("?")[0]
@@ -172,63 +252,68 @@ class MediaManagerService:
         return None
 
 
-    def delete_track(self, track_id: int) -> bool:
+    def execute_delete(self, track_ids: List[int]) -> bool:
         """
-        Delete a track from the media server (if applicable) and local database.
+        The strict, protected central execution point for deleting tracks.
+        This is the ONLY place in the backend where physical os.remove() and
+        local track database deletions are executed.
         """
         from core.nexus_framework.plugin_loader import PluginRegistry
+        from pathlib import Path
+
+        # Fetch library pool for safety check
+        _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+        library_root = Path(_lib).resolve() if _lib else None
+
         active_servers = PluginRegistry.get_active_services_by_type('media_server')
+        all_success = True
 
-        remote_delete_success = False
-        any_server_attempted = False
-
-        if not active_servers:
-            logger.warning("No active media server configured for track deletion")
-            remote_delete_success = True  # We have no remote to delete from, proceed to local
-        else:
-            for active_server in active_servers:
-                try:
-                    server_type = active_server.split('.')[-1]
-                    plugin_item_id = self.db.get_external_identifier(server_type, track_id)
-
-                    if plugin_item_id:
-                        any_server_attempted = True
-                        provider = PluginRegistry.create_instance(active_server)
-                        if hasattr(provider, 'delete_track'):
-                            success = provider.delete_track(plugin_item_id)
-                            if success:
+        for track_id in track_ids:
+            # 1. Remote Deletion
+            if active_servers:
+                for active_server in active_servers:
+                    try:
+                        server_type = active_server.split('.')[-1]
+                        plugin_item_id = self.db.get_external_identifier(server_type, track_id)
+                        if plugin_item_id:
+                            provider = PluginRegistry.create_instance(active_server)
+                            if hasattr(provider, 'delete_track'):
+                                provider.delete_track(plugin_item_id)
                                 logger.info(f"Successfully deleted track {track_id} from {active_server}")
-                                remote_delete_success = True
-                            else:
-                                logger.error(f"Failed to delete track {track_id} (ID: {plugin_item_id}) from {active_server}")
-                        else:
-                            logger.warning(f"Provider {active_server} does not support delete_track")
-                    else:
-                        logger.info(f"Track {track_id} not linked to {server_type}, skipping remote delete")
+                    except Exception as e:
+                        logger.error(f"Error remote delete on {active_server}: {e}")
 
-                except Exception as e:
-                    logger.error(f"Error deleting from provider {active_server}: {e}")
-                    continue
+            # 2. Local Deletion
+            try:
+                with self.db.session_scope() as session:
+                    track = session.query(Track).filter(Track.id == track_id).first()
+                    if not track:
+                        continue
 
-            # If we didn't attempt to delete on ANY server because there were no external identifiers,
-            # treat it as a success so we can still clean up the local DB.
-            if not any_server_attempted:
-                remote_delete_success = True
+                    # Safety Check and Physical Deletion
+                    if track.file_path and os.path.exists(track.file_path):
+                        track_path = Path(track.file_path).resolve()
+                        
+                        if library_root and not str(track_path).startswith(str(library_root)):
+                            logger.critical(f"Aborting deletion! Path {track_path} is OUTSIDE the library pool {library_root}.")
+                            all_success = False
+                            continue
 
-        if not remote_delete_success:
-            return False
+                        from core.hook_manager import hook_manager
+                        plugin_decision = hook_manager.apply_filters('ON_CORRUPTION_DETECTED', None, file_path=str(track_path))
+                        if plugin_decision == "SKIP":
+                            logger.info(f"Plugin quarantined/skipped deletion for file: {track_path}")
+                            all_success = False
+                            continue
 
-        # 2. Delete from local database
-        try:
-            with self.db.session_scope() as session:
-                track = session.query(Track).filter(Track.id == track_id).first()
-                if track:
+                        os.remove(track_path)
+                        logger.info(f"Deleted physical file: {track_path}")
+
+                    # Database Deletion
                     session.delete(track)
                     logger.info(f"Deleted track {track_id} from local database")
-                    return True
-                else:
-                    logger.warning(f"Track {track_id} not found in database")
-                    return False
-        except Exception as e:
-            logger.error(f"Error deleting track {track_id} from database: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"Failed to delete local track {track_id}: {e}", exc_info=True)
+                all_success = False
+
+        return all_success

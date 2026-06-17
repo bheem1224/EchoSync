@@ -61,6 +61,10 @@
     };
     await settings.save(patch);
   }
+
+  export function getCurrentPattern() {
+    return data.renaming_template;
+  }
 </script>
 
 <section class="library-import card">
