@@ -53,6 +53,7 @@ class Artist(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    normalized_name: Mapped[str] = mapped_column(String, index=True, default="")
     sort_name: Mapped[Optional[str]] = mapped_column(String)
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True)
     image_url: Mapped[Optional[str]] = mapped_column(String)
@@ -74,6 +75,7 @@ class Album(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    normalized_title: Mapped[str] = mapped_column(String, index=True, default="")
     artist_id: Mapped[int] = mapped_column(
         ForeignKey("artists.id", ondelete="CASCADE"), nullable=False
     )
@@ -95,6 +97,7 @@ class Track(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    normalized_title: Mapped[str] = mapped_column(String, index=True, default="")
     sort_title: Mapped[Optional[str]] = mapped_column(String)
     edition: Mapped[Optional[str]] = mapped_column(String)  # remaster, live, remix, deluxe, acoustic, etc.
     album_id: Mapped[Optional[int]] = mapped_column(
@@ -109,6 +112,8 @@ class Track(Base):
     disc_number: Mapped[Optional[int]] = mapped_column()
     bitrate: Mapped[Optional[int]] = mapped_column()
     file_path: Mapped[Optional[str]] = mapped_column(String)
+    inode: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
+    mtime: Mapped[Optional[float]] = mapped_column(Float)
     file_format: Mapped[Optional[str]] = mapped_column(String)
     sample_rate: Mapped[Optional[int]] = mapped_column(Integer)
     bit_depth: Mapped[Optional[int]] = mapped_column(Integer)

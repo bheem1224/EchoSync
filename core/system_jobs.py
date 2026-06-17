@@ -843,6 +843,9 @@ def register_all_system_jobs():
         # Ad-hoc / manual system job for physical library reorganization
         register_reorganize_library_job(enabled=True)
 
+        # Ad-hoc / manual system job for database drift cleanup
+        register_database_cleanup_job(enabled=True)
+
         logger.info("All system jobs registered successfully")
     except Exception as e:
         logger.error(f"Failed to register system jobs: {e}", exc_info=True)

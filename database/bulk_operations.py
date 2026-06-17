@@ -69,9 +69,11 @@ class LibraryManager:
             artist = session.execute(stmt).scalar_one()
             return artist
 
-        # Check DB using case-insensitive lookup (may not strip accents)
+        # INGESTION SAFETY GUARD: Artist Generation
+        # Always normalize and strictly query before allowing a session.add()
+        
         stmt = select(Artist).where(
-            func.lower(Artist.name) == norm_name
+            Artist.normalized_name == norm_name
         )
         artist = session.execute(stmt).scalar_one_or_none()
         # Fallback for normalized lookup
@@ -88,8 +90,8 @@ class LibraryManager:
                         break
 
         if artist is None:
-            # Create new artist
-            artist = Artist(name=artist_name, sort_name=sort_name)
+            # Create new artist only if strict lookup failed
+            artist = Artist(name=artist_name, normalized_name=norm_name, sort_name=sort_name)
             session.add(artist)
             session.flush()
 
@@ -146,9 +148,11 @@ class LibraryManager:
                 album.original_release_date = original_release_date
             return album
 
-        # Check DB
+        # INGESTION SAFETY GUARD: Album Generation
+        # Strictly verify album title + artist_id combo before insert
+        
         stmt = select(Album).where(
-            func.lower(Album.title) == norm_title,
+            Album.normalized_title == norm_title,
             Album.artist_id == artist.id,
         )
         album = session.execute(stmt).scalar_one_or_none()
@@ -175,6 +179,7 @@ class LibraryManager:
         if album is None:
             album = Album(
                 title=album_title,
+                normalized_title=norm_title,
                 artist=artist,
                 release_date=release_date,
                 album_type=album_type,
@@ -256,9 +261,9 @@ class LibraryManager:
             if track:
                 return track
 
-        norm_title = self._normalize_name(title)
+        norm_title = text_utils.normalize_title(title)
         conditions = [
-            func.lower(Track.title) == norm_title,
+            Track.normalized_title == norm_title,
             Track.artist_id == artist_id,
         ]
         if album_id:
@@ -317,8 +322,10 @@ class LibraryManager:
             if identifiers_only:
                 return None, False
 
+            norm_title = text_utils.normalize_title(track_data.title)
             track = Track(
                 title=track_data.title,
+                normalized_title=norm_title,
                 sort_title=track_data.sort_title,
                 edition=track_data.edition,
                 artist=artist,
