@@ -49,6 +49,23 @@ class LibraryReorganizerService:
                     logger.warning(f"Skipping track {track.id}: file missing at {track.file_path}")
                     continue
 
+                raw_artist = track.artist.name if track.artist else "Unknown Artist"
+                raw_album = track.album.title if track.album else "Unknown Album"
+
+                # ----------------------------------------------------
+                # Quarantine Check: Missing core metadata
+                # ----------------------------------------------------
+                if raw_artist.lower() == "unknown artist" or raw_album.lower() == "unknown album":
+                    quarantine_dir = Path("/data/downloads/poor_metadata")
+                    os.makedirs(quarantine_dir, exist_ok=True)
+                    target_path = quarantine_dir / os.path.basename(track.file_path)
+
+                    shutil.move(track.file_path, target_path)
+                    logger.warning(f"Ejected track {track.id} to quarantine staging due to missing tags: {track.file_path}")
+
+                    session.delete(track)
+                    continue
+
                 # Prepare tokens
                 raw_artist = track.artist.name if track.artist else "Unknown Artist"
                 primary_artist = extract_primary_artist(raw_artist)
