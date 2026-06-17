@@ -53,7 +53,7 @@ class Artist(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    normalized_name: Mapped[str] = mapped_column(String, index=True, default="")
+    normalized_name: Mapped[str] = mapped_column(String, index=True, server_default="")
     sort_name: Mapped[Optional[str]] = mapped_column(String)
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True)
     image_url: Mapped[Optional[str]] = mapped_column(String)
@@ -75,7 +75,7 @@ class Album(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    normalized_title: Mapped[str] = mapped_column(String, index=True, default="")
+    normalized_title: Mapped[str] = mapped_column(String, index=True, server_default="")
     artist_id: Mapped[int] = mapped_column(
         ForeignKey("artists.id", ondelete="CASCADE"), nullable=False
     )
@@ -97,7 +97,7 @@ class Track(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    normalized_title: Mapped[str] = mapped_column(String, index=True, default="")
+    normalized_title: Mapped[str] = mapped_column(String, index=True, server_default="")
     sort_title: Mapped[Optional[str]] = mapped_column(String)
     edition: Mapped[Optional[str]] = mapped_column(String)  # remaster, live, remix, deluxe, acoustic, etc.
     album_id: Mapped[Optional[int]] = mapped_column(
