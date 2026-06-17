@@ -76,7 +76,10 @@ class UserHistoryService:
 
             for server_id in active_servers:
                 try:
-                    plugin_id = self.config_db.get_or_create_service_id(server_id)
+                    plugin_cls = PluginRegistry.get_plugin_class(server_id)
+                    server_name = getattr(plugin_cls, 'name', str(server_id)) if plugin_cls else str(server_id)
+                    
+                    plugin_id = self.config_db.get_or_create_service_id(server_name)
                     accounts = self.config_db.get_accounts(service_id=plugin_id, is_active=True)
                     
                     if not accounts:

@@ -103,6 +103,29 @@ class DatabaseUpdateWorker:
                     "Backfill of provider identifiers failed (non-fatal): %s", bf_err, exc_info=True
                 )
             
+            # --- Discrepancy Warning ---
+            try:
+                if hasattr(self.media_client, 'get_library_stats'):
+                    stats = self.media_client.get_library_stats()
+                    total_remote_tracks = stats.get('total_tracks', 0)
+                    
+                    if total_remote_tracks > 0:
+                        from database.music_database import Track, ExternalIdentifier
+                        with db.session_scope() as session:
+                            total_local_tracks = session.query(Track).join(ExternalIdentifier).filter(
+                                ExternalIdentifier.plugin_source == self.server_type
+                            ).count()
+                        
+                        discrepancy = abs(total_remote_tracks - total_local_tracks)
+                        if discrepancy > 0:
+                            msg = f"Discrepancy Warning: {discrepancy} tracks differ between remote ({total_remote_tracks}) and local ({total_local_tracks}). Possible path misalignment or orphaned records."
+                            logger.warning(msg)
+                            if not hasattr(self, 'warnings'):
+                                self.warnings = []
+                            self.warnings.append(msg)
+            except Exception as e:
+                logger.error(f"Error checking track discrepancy: {e}")
+
         except Exception as e:
             logger.error(f"Error in DatabaseUpdateWorker: {e}", exc_info=True)
             self.failed_operations += 1

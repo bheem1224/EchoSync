@@ -39,7 +39,7 @@ from core.file_handling.local_io import LocalFileHandler
 from core.settings import config_manager
 from core.job_queue import register_job
 from core.tiered_logger import get_logger
-from services.metadata_enhancer import get_metadata_enhancer
+from services.metadata_enhancer import RetroactiveEnhancer
 from database.working_database import get_working_database, ReviewTask
 
 logger = get_logger("services.auto_importer")
@@ -67,7 +67,7 @@ class AutoImportService:
     def __init__(self):
         _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
         self.library_root = Path(_lib) if _lib else None
-        self.enhancer = get_metadata_enhancer()
+        self.enhancer = RetroactiveEnhancer()
         self._scan_lock = threading.Lock()
         self._processing_lock = threading.Lock()
         self._processing_files = set()
@@ -309,13 +309,13 @@ class AutoImportService:
                 "Processing directory group: %s (%d file(s))", dir_path, len(dir_files)
             )
             try:
-                batch_results = self.enhancer.identify_batch(dir_files)
+                dir_files_str = [str(f) for f in dir_files]
+                batch_results = self.enhancer.identify_batch(dir_files_str)
             except Exception as exc:
                 logger.error(
                     "identify_batch error for '%s': %s", dir_path, exc, exc_info=True
                 )
-                batch_results = [(None, 0.0)] * len(dir_files)
-
+                batch_results = {}
 
             # ── Phase 3: per-file decision logic (Chunked Concurrency) ─────────
             import asyncio
@@ -327,11 +327,12 @@ class AutoImportService:
             CHUNK_SIZE = 50
             for chunk_start in range(0, len(dir_files), CHUNK_SIZE):
                 chunk_files = dir_files[chunk_start:chunk_start + CHUNK_SIZE]
-                chunk_results = batch_results[chunk_start:chunk_start + CHUNK_SIZE]
 
                 # Step A: Identify which files need strict fallback
                 fallback_needed = []
-                for file_path, (metadata, confidence) in zip(chunk_files, chunk_results):
+                for file_path in chunk_files:
+                    metadata = batch_results.get(str(file_path))
+                    confidence = 0.95 if metadata else 0.0
                     if (metadata is None or confidence < confidence_threshold) and auto_import:
                         fallback_needed.append(file_path)
 
@@ -364,7 +365,9 @@ class AutoImportService:
                 mb_results_dict = asyncio.run(fetch_fallbacks(local_tracks)) if local_tracks else {}
 
                 # Step D: Process Results and Finalize
-                for file_path, (metadata, confidence) in zip(chunk_files, chunk_results):
+                for file_path in chunk_files:
+                    metadata = batch_results.get(str(file_path))
+                    confidence = 0.95 if metadata else 0.0
                     file_key = str(file_path)
                     try:
                         if file_path in local_tracks:
@@ -400,18 +403,18 @@ class AutoImportService:
                             else:
                                 logger.info(f"Match found but auto_import is False for {file_path}")
                                 self.enhancer.create_or_update_review_task(
-                                    file_path, metadata, confidence, status='pending'
+                                    str(file_path), "Match found but auto_import is False", match_data=metadata
                                 )
                         else:
                             self.enhancer.create_or_update_review_task(
-                                file_path, metadata, confidence, status='pending'
+                                str(file_path), "No confident match found", match_data=metadata
                             )
 
                     except Exception as e:
                         logger.error(f"Error processing decision for {file_path}: {e}", exc_info=True)
                         try:
                             self.enhancer.create_or_update_review_task(
-                                file_path, None, 0.0, status='pending'
+                                str(file_path), f"Error processing decision: {e}", match_data=None
                             )
                         except Exception as e2:
                             logger.error(f"Failed to create review task for {file_path}: {e2}")

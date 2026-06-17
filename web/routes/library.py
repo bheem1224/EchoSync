@@ -288,7 +288,8 @@ def get_database_update_status():
                 "albums": _db_update_worker.processed_albums,
                 "tracks": _db_update_worker.processed_tracks,
                 "successful": _db_update_worker.successful_operations,
-                "failed": _db_update_worker.failed_operations
+                "failed": _db_update_worker.failed_operations,
+                "warnings": getattr(_db_update_worker, "warnings", [])
             }
 
     return jsonify({

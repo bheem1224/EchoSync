@@ -294,53 +294,25 @@ class RetroactiveEnhancer:
 
         return metadata, confidence
 
-    def identify_batch(
-        self, files: List[Path]
-    ) -> List[Tuple[Optional[Dict[str, Any]], float]]:
-        """Identify a batch of files sharing a parent directory (typically one album).
-
-        Uses an in-process ``album_cache`` to avoid N+1 AcoustID / MusicBrainz
-        round-trips.  After the first successful identification yields a
-        ``release_id``, the full MusicBrainz release is fetched *once* via
-        ``MusicBrainzClient.get_release`` (itself cached for 30 days) and
-        indexed by track number and title.  Subsequent files in the same batch
-        look up their metadata in O(1) — no network call needed.
-
-        Returns:
-            List of ``(metadata, confidence)`` tuples in the same order as
-            *files*.
-        """
-        results: List[Tuple[Optional[Dict[str, Any]], float]] = []
-        # release_id -> {"album": str, "cover_art_url": str|None, "tracks": [...]}
-        album_cache: Dict[str, Any] = {}
+    def identify_batch(self, file_paths: list[str]) -> dict:
+        results = {}
+        fingerprint_provider = self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm='chromaprint')
         metadata_provider = self._get_plugin(Capability.FETCH_METADATA)
 
-        for file_path in files:
-            # ── Try album cache first ─────────────────────────────────────────
-            if album_cache:
-                cached = _match_from_album_cache(file_path, album_cache)
-                if cached is not None:
-                    results.append(cached)
-                    continue
-
-            # ── Full identification pipeline ──────────────────────────────────
-            metadata, confidence = self.identify_file(file_path)
-            results.append((metadata, confidence))
-
-            # ── Populate album cache on first successful release_id ───────────
-            if metadata and metadata.get("release_id") and metadata_provider:
-                release_id = metadata["release_id"]
-                if release_id not in album_cache:
-                    get_release = getattr(metadata_provider, "get_release", None)
-                    if get_release is not None:
-                        release_data = get_release(release_id)
-                        if release_data and release_data.get("tracks"):
-                            album_cache[release_id] = release_data
-                            logger.info(
-                                "Album memory cache populated: release=%s, tracks=%d",
-                                release_id,
-                                len(release_data["tracks"]),
-                            )
+        for path_str in file_paths:
+            metadata = None
+            try:
+                fingerprint = FingerprintGenerator.generate(path_str)
+                if fingerprint and fingerprint_provider:
+                    duration_ms = _tagging_read(Path(path_str)).get("duration", 0)
+                    duration_sec = int(duration_ms / 1000) if duration_ms else 0
+                    mbids = fingerprint_provider.resolve_fingerprint(fingerprint, duration_sec)
+                    if mbids and metadata_provider:
+                        mbid = mbids[0]
+                        metadata = metadata_provider.get_metadata(mbid)
+            except Exception as e:
+                logger.error(f"Error identifying {path_str}: {e}")
+            results[path_str] = metadata
 
         return results
 
@@ -394,26 +366,29 @@ class RetroactiveEnhancer:
             logger.warning("tag_file: failed to write tags for %s: %s", file_path.name, exc)
             raise
 
-    def create_or_update_review_task(self, file_path: Path, metadata: Optional[Dict[str, Any]], confidence: float, status='pending'):
-        """Create or update a task in the review queue."""
+    def create_or_update_review_task(self, file_path: str, decision: str, match_data: dict = None) -> None:
         try:
             db = get_working_database()
             with db.session_scope() as session:
-                existing = session.query(ReviewTask).filter(ReviewTask.file_path == str(file_path)).first()
+                existing = session.query(ReviewTask).filter(ReviewTask.file_path == file_path).first()
                 if existing:
-                    existing.detected_metadata = metadata
-                    existing.confidence_score = confidence
-                    existing.status = status
+                    existing.detected_metadata = match_data
+                    existing.status = 'pending'
+                    # We can use confidence_score column to store the decision string or add a comment/log.
+                    # Since decision is a string and the table has confidence_score (Float), 
+                    # we should probably just rely on logs for 'decision' if there is no string column,
+                    # or if the user added one, but let's just log it.
+                    logger.info(f"Review task decision for {file_path}: {decision}")
                     existing.created_at = datetime.datetime.now(datetime.UTC)
                 else:
                     task = ReviewTask(
-                        file_path=str(file_path),
-                        status=status,
-                        detected_metadata=metadata,
-                        confidence_score=confidence
+                        file_path=file_path,
+                        status='pending',
+                        detected_metadata=match_data,
+                        confidence_score=0.0
                     )
                     session.add(task)
-            logger.info(f"Review Task {status}: {file_path}")
+            logger.info(f"Review Task pending: {file_path}")
         except Exception as e:
             logger.error(f"Failed to update review task: {e}")
 
@@ -476,32 +451,6 @@ class RetroactiveEnhancer:
 
 def get_metadata_enhancer():
     return MetadataEnhancerService.get_instance()
-
-def register_metadata_enhancer_service():
-    """Kept for compatibility, though it no longer registers background jobs."""
-    get_metadata_enhancer()
-    logger.info("Metadata Enhancer Service initialized")
-class RetroactiveEnhancer:
-    """Background service for library-wide batch metadata enhancement."""
-
-    def _get_plugin(self, capability: Capability, required_algorithm: str = None):
-        from core.nexus_framework.plugin_loader import PluginRegistry
-        
-        plugins = PluginRegistry.get_plugins_with_capability(capability)
-        for p in plugins:
-            if not required_algorithm:
-                return p
-            
-            # Check algorithm support if required
-            caps = getattr(p, 'capabilities', None)
-            if caps and capability == Capability.RESOLVE_FINGERPRINT:
-                algorithms = getattr(caps, 'fingerprint_algorithms', []) or []
-                if not algorithms and getattr(caps, 'supports_fingerprinting', False):
-                    algorithms = ['chromaprint']  # Default legacy
-                if required_algorithm in algorithms:
-                    return p
-                    
-        return None
 
     def enhance_library_metadata(self, batch_size=50) -> None:
         """Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
@@ -840,5 +789,10 @@ class MetadataEnhancerService:
         from core.nexus_framework.plugin_loader import get_plugin_by_capability
         return get_plugin_by_capability(capability)
 
+def get_metadata_enhancer():
+    return MetadataEnhancerService.get_instance()
 
-
+def register_metadata_enhancer_service():
+    """Kept for compatibility, though it no longer registers background jobs."""
+    get_metadata_enhancer()
+    logger.info("Metadata Enhancer Service initialized")

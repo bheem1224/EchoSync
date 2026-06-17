@@ -421,10 +421,10 @@ class ConfigDatabase:
             logger.error(f"Failed to initialize config schema: {e}", exc_info=True)
 
     # Service helpers
-    def get_or_create_service_id(self, name: str) -> int:
+    def get_or_create_service_id(self, name) -> int:
         # Strip channel-suffix (@beta / @stable) produced by SDK._get_plugin_id()
         # so all lookups operate on the canonical plugin name regardless of active channel.
-        if name and '@' in name:
+        if isinstance(name, str) and '@' in name:
             name = name.split('@')[0]
 
         # 1. Try to find existing using the extremely robust get_service_id

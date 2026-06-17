@@ -401,45 +401,36 @@ class PersonalizedPlaylistsService:
             )
     
     def _register_provider_algorithms(self):
-        """
-        Auto-discover and register algorithms from plugins.
-        
-        Scans provider capability registry for providers that declare
-        playlist_algorithms support and loads them dynamically.
-        """
         try:
-            from core.nexus_framework.plugin_SDK import CAPABILITY_REGISTRY
-            import inspect
+            from core.nexus_framework.plugin_loader import PluginRegistry
             
-            for provider_name, capabilities in CAPABILITY_REGISTRY.items():
-                if capabilities.playlist_algorithms:
-                    # Provider declares algorithm support
-                    logger.info(f"Provider '{provider_name}' supports algorithms: {capabilities.playlist_algorithms}")
+            for p_id, plugin_info in PluginRegistry.get_all().items():
+                plugin_cls = plugin_info.get('class')
+                if not plugin_cls: continue
+                caps = getattr(plugin_cls, 'capabilities', None)
+                
+                if getattr(caps, 'playlist_algorithms', None):
+                    provider_name = getattr(plugin_cls, 'name', '').lower()
+                    logger.info(f"Provider '{provider_name}' supports algorithms: {caps.playlist_algorithms}")
                     
-                    # Try to load provider-specific algorithm module
                     try:
-                        module_name = f"providers.{provider_name}.algorithms"
+                        module_name = f"plugins.{provider_name}.algorithms"
                         provider_module = __import__(module_name, fromlist=[''])
                         
-                        # Look for algorithm classes in provider module
                         for attr_name in dir(provider_module):
                             attr = getattr(provider_module, attr_name)
-                            # Check if it's a PlaylistAlgorithm subclass (not the base class)
                             if (isinstance(attr, type) and 
                                 issubclass(attr, PlaylistAlgorithm) and 
                                 attr is not PlaylistAlgorithm):
                                 
-                                # Instantiate with flexible argument handling
                                 try:
-                                    # Get the signature of __init__
+                                    import inspect
                                     sig = inspect.signature(attr.__init__)
                                     params = list(sig.parameters.keys())
                                     
-                                    # Remove 'self'
                                     if 'self' in params:
                                         params.remove('self')
                                     
-                                    # Build kwargs based on available parameters
                                     kwargs = {}
                                     if 'database' in params:
                                         kwargs['database'] = self.database
@@ -448,7 +439,6 @@ class PersonalizedPlaylistsService:
                                     
                                     algo_instance = attr(**kwargs) if kwargs else attr()
                                     self.register_algorithm(algo_instance)
-                                
                                 except Exception as e:
                                     logger.warning(f"Error instantiating algorithm from {provider_name}: {e}")
                     
@@ -564,10 +554,10 @@ class PersonalizedPlaylistsService:
     
     def _get_discovery_pool_tracks(self, limit: int = 500) -> List[Dict[str, Any]]:
         """Get tracks from discovery pool"""
+        from sqlalchemy import text
         try:
-            with self.database._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
+            with self.database.session_scope() as session:
+                rows = session.execute(text("""
                     SELECT
                         spotify_track_id,
                         track_name,
@@ -580,10 +570,9 @@ class PersonalizedPlaylistsService:
                         track_data_json
                     FROM discovery_pool
                     ORDER BY RANDOM()
-                    LIMIT ?
-                """, (limit,))
+                    LIMIT :limit
+                """), {"limit": limit}).mappings().all()
                 
-                rows = cursor.fetchall()
                 tracks = []
                 for row in rows:
                     track_dict = dict(row)
@@ -676,11 +665,9 @@ class PersonalizedPlaylistsService:
             start_year = decade
             end_year = decade + 9
 
-            with self.database._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Query discovery_pool - get 10x more for diversity filtering
-                cursor.execute("""
+            from sqlalchemy import text
+            with self.database.session_scope() as session:
+                rows = session.execute(text("""
                     SELECT
                         spotify_track_id,
                         track_name,
@@ -693,12 +680,11 @@ class PersonalizedPlaylistsService:
                         track_data_json
                     FROM discovery_pool
                     WHERE release_date IS NOT NULL
-                      AND CAST(SUBSTR(release_date, 1, 4) AS INTEGER) BETWEEN ? AND ?
+                      AND CAST(SUBSTR(release_date, 1, 4) AS INTEGER) BETWEEN :start_year AND :end_year
                     ORDER BY RANDOM()
-                    LIMIT ?
-                """, (start_year, end_year, limit * 10))
+                    LIMIT :limit
+                """), {"start_year": start_year, "end_year": end_year, "limit": limit * 10}).mappings().all()
 
-                rows = cursor.fetchall()
                 all_tracks = []
                 for row in rows:
                     track_dict = dict(row)
@@ -773,16 +759,13 @@ class PersonalizedPlaylistsService:
         Consolidates specific Spotify genres into broader parent categories.
         """
         try:
-            with self.database._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Get all tracks with genres from discovery pool
-                cursor.execute("""
+            from sqlalchemy import text
+            with self.database.session_scope() as session:
+                rows = session.execute(text("""
                     SELECT artist_genres
                     FROM discovery_pool
                     WHERE artist_genres IS NOT NULL
-                """)
-                rows = cursor.fetchall()
+                """)).mappings().all()
 
                 if not rows:
                     logger.warning("No genres found in discovery pool - genres may not be populated yet")
@@ -793,7 +776,7 @@ class PersonalizedPlaylistsService:
 
                 for row in rows:
                     try:
-                        artist_genres_json = row[0]
+                        artist_genres_json = row['artist_genres']
                         if artist_genres_json:
                             genres = json.loads(artist_genres_json)
                             # Map each Spotify genre to parent and count tracks
@@ -832,11 +815,9 @@ class PersonalizedPlaylistsService:
         Supports both parent genres (e.g., "Electronic/Dance") and specific genres (e.g., "house").
         """
         try:
-            with self.database._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Get all tracks with genres from discovery pool
-                cursor.execute("""
+            from sqlalchemy import text
+            with self.database.session_scope() as session:
+                rows = session.execute(text("""
                     SELECT
                         spotify_track_id,
                         track_name,
@@ -849,8 +830,7 @@ class PersonalizedPlaylistsService:
                         track_data_json
                     FROM discovery_pool
                     WHERE artist_genres IS NOT NULL
-                """)
-                rows = cursor.fetchall()
+                """)).mappings().all()
 
                 # Determine if this is a parent genre or specific genre
                 is_parent_genre = genre in self.GENRE_MAPPING
@@ -870,7 +850,7 @@ class PersonalizedPlaylistsService:
 
                 for row in rows:
                     try:
-                        artist_genres_json = row[7]  # artist_genres column
+                        artist_genres_json = row['artist_genres']
                         if artist_genres_json:
                             genres = json.loads(artist_genres_json)
 
@@ -888,18 +868,18 @@ class PersonalizedPlaylistsService:
                             if genre_match:
                                 # Convert row to dict (exclude artist_genres from output)
                                 track_dict = {
-                                    'spotify_track_id': row[0],
-                                    'track_name': row[1],
-                                    'artist_name': row[2],
-                                    'album_name': row[3],
-                                    'album_cover_url': row[4],
-                                    'duration_ms': row[5],
-                                    'popularity': row[6]
+                                    'spotify_track_id': row['spotify_track_id'],
+                                    'track_name': row['track_name'],
+                                    'artist_name': row['artist_name'],
+                                    'album_name': row['album_name'],
+                                    'album_cover_url': row['album_cover_url'],
+                                    'duration_ms': row['duration_ms'],
+                                    'popularity': row['popularity']
                                 }
                                 # Parse track_data_json if available
-                                if row[8]:  # track_data_json column
+                                if row['track_data_json']:
                                     try:
-                                        track_dict['track_data_json'] = json.loads(row[8])
+                                        track_dict['track_data_json'] = json.loads(row['track_data_json'])
                                     except:
                                         pass
                                 matching_tracks.append(track_dict)

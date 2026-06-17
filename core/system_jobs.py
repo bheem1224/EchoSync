@@ -59,8 +59,10 @@ def _get_top_listened_artists(limit: int = 5):
     artist_play_counts = defaultdict(int)
 
     with working_db.session_scope() as session:
-        for server_name in active_servers:
-            service_id = config_db.get_or_create_service_id(server_name)
+        for p_id in active_servers:
+            plugin_cls = PluginRegistry.get_plugin_class(p_id)
+            plugin_name = getattr(plugin_cls, 'name', str(p_id)) if plugin_cls else str(p_id)
+            service_id = config_db.get_or_create_service_id(plugin_name)
             active_accounts = config_db.get_accounts(service_id=service_id, is_active=True)
             
             for account in active_accounts:
