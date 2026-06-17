@@ -21,6 +21,7 @@ from core.personalized_playlists import get_personalized_playlists_service
 from services.library_hygiene import DuplicateHygieneService
 from core.suggestion_engine.deletion import process_lifecycle_actions
 from core.suggestion_engine.consensus import calculate_consensus
+from core.jobs.reorganize_library_job import register_reorganize_library_job
 
 logger = get_logger("system_jobs")
 
@@ -838,6 +839,9 @@ def register_all_system_jobs():
         # 12-hour plugin update check
         cleanup_orphaned_plugin_databases()
         register_plugin_update_check_job(interval_seconds=43200, enabled=True)
+
+        # Ad-hoc / manual system job for physical library reorganization
+        register_reorganize_library_job(interval_seconds=None, enabled=True)
 
         logger.info("All system jobs registered successfully")
     except Exception as e:
