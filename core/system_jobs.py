@@ -18,7 +18,6 @@ from database.music_database import get_database
 from database.config_database import get_config_database
 from database.working_database import get_working_database, User, UserRating
 from core.personalized_playlists import get_personalized_playlists_service
-from plugins.EchoSync.local_server.database_cleanup import register_database_cleanup_job
 from services.library_hygiene import DuplicateHygieneService
 from core.suggestion_engine.deletion import process_lifecycle_actions
 from core.suggestion_engine.consensus import calculate_consensus
@@ -843,9 +842,6 @@ def register_all_system_jobs():
 
         # Ad-hoc / manual system job for physical library reorganization
         register_reorganize_library_job(enabled=True)
-
-        # Ad-hoc / manual system job for database drift cleanup
-        register_database_cleanup_job(enabled=True)
 
         logger.info("All system jobs registered successfully")
     except Exception as e:
