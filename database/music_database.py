@@ -110,39 +110,79 @@ class Track(Base):
     duration: Mapped[Optional[int]] = mapped_column()  # milliseconds
     track_number: Mapped[Optional[int]] = mapped_column()
     disc_number: Mapped[Optional[int]] = mapped_column()
-    bitrate: Mapped[Optional[int]] = mapped_column()
-    file_path: Mapped[Optional[str]] = mapped_column(String)
-    inode: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
-    mtime: Mapped[Optional[float]] = mapped_column(Float)
-    file_format: Mapped[Optional[str]] = mapped_column(String)
-    sample_rate: Mapped[Optional[int]] = mapped_column(Integer)
-    bit_depth: Mapped[Optional[int]] = mapped_column(Integer)
-    file_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger)
     added_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime())
 
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     isrc: Mapped[Optional[str]] = mapped_column(String)
-    sync_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    sync_id: Mapped[str] = mapped_column(String(8), unique=True, index=True, nullable=False)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
     metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
 
     album: Mapped[Optional[Album]] = relationship(back_populates="tracks")
     artist: Mapped[Artist] = relationship(back_populates="tracks")
-    external_identifiers: Mapped[List["ExternalIdentifier"]] = relationship(
-        back_populates="track", cascade="all, delete-orphan"
-    )
-    audio_fingerprints: Mapped[List["AudioFingerprint"]] = relationship(
-        back_populates="track", cascade="all, delete-orphan"
-    )
     aliases: Mapped[List["TrackAlias"]] = relationship(
         back_populates="track", cascade="all, delete-orphan"
     )
+    media_files: Mapped[List["LocalMedia"]] = relationship(
+        back_populates="track", cascade="all, delete-orphan"
+    )
+
+    def get_best_media(self) -> Optional["LocalMedia"]:
+        """Return the highest-quality LocalMedia file attached to this track."""
+        if not self.media_files:
+            return None
+        _LOSSLESS = {'flac', 'alac', 'wav', 'dsd', 'dsf', 'dff', 'ape'}
+        def _quality_key(m: "LocalMedia"):
+            fmt = (m.file_format or '').lower()
+            is_lossless = 1 if fmt in _LOSSLESS else 0
+            return (is_lossless, m.bitrate or 0, m.sample_rate or 0, m.bit_depth or 0)
+        return max(self.media_files, key=_quality_key)
+
+    @property
+    def file_path(self) -> Optional[str]:
+        """Backwards-compatible accessor. Returns best media's file_path."""
+        best = self.get_best_media()
+        return best.file_path if best else None
+
+    @property
+    def audio_fingerprints(self):
+        """Aggregate all fingerprints from all attached media files."""
+        fps = []
+        for m in self.media_files:
+            fps.extend(m.audio_fingerprints)
+        return fps
 
     @hybrid_property
     def get_consensus_rating(self) -> int:
         if self.global_rating is None:
             return 0
         return int(round(self.global_rating))
+
+class LocalMedia(Base):
+    __tablename__ = "local_media"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    media_id: Mapped[str] = mapped_column(String(8), unique=True, index=True, nullable=False)
+    track_id: Mapped[int] = mapped_column(
+        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    file_path: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    file_format: Mapped[Optional[str]] = mapped_column(String)
+    bitrate: Mapped[Optional[int]] = mapped_column(Integer)
+    sample_rate: Mapped[Optional[int]] = mapped_column(Integer)
+    bit_depth: Mapped[Optional[int]] = mapped_column(Integer)
+    file_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger)
+    inode: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
+    mtime: Mapped[Optional[float]] = mapped_column(Float)
+    added_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime())
+
+    track: Mapped[Track] = relationship(back_populates="media_files")
+    audio_fingerprints: Mapped[List["AudioFingerprint"]] = relationship(
+        back_populates="media", cascade="all, delete-orphan"
+    )
+    external_identifiers: Mapped[List["ExternalIdentifier"]] = relationship(
+        back_populates="media", cascade="all, delete-orphan"
+    )
 
 
 class ExternalIdentifier(Base):
@@ -152,22 +192,22 @@ class ExternalIdentifier(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    track_id: Mapped[int] = mapped_column(
-        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
+    media_id: Mapped[str] = mapped_column(
+        ForeignKey("local_media.media_id", ondelete="CASCADE"), nullable=False, index=True
     )
     plugin_source: Mapped[str] = mapped_column(String, nullable=False, index=True)
     plugin_item_id: Mapped[str] = mapped_column(String, nullable=False)
     raw_data: Mapped[Optional[dict]] = mapped_column(JSON)
 
-    track: Mapped[Track] = relationship(back_populates="external_identifiers")
+    media: Mapped[LocalMedia] = relationship(back_populates="external_identifiers")
 
 
 class AudioFingerprint(Base):
     __tablename__ = "audio_fingerprints"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    track_id: Mapped[int] = mapped_column(
-        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
+    media_id: Mapped[str] = mapped_column(
+        ForeignKey("local_media.media_id", ondelete="CASCADE"), nullable=False, index=True
     )
     # chromaprint: raw locally-generated Chromaprint string (AcoustID algorithm output).
     # acoustid_id: the AcoustID service's confirmed UUID for this recording (returned after lookup).
@@ -176,7 +216,7 @@ class AudioFingerprint(Base):
     chromaprint: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     acoustid_id: Mapped[Optional[str]] = mapped_column(String)
 
-    track: Mapped[Track] = relationship(back_populates="audio_fingerprints")
+    media: Mapped[LocalMedia] = relationship(back_populates="audio_fingerprints")
 
 
 class TrackAlias(Base):

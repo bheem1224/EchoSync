@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import inspect
+from datetime import datetime
 
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
@@ -1017,6 +1018,10 @@ class PluginBase(ABC):
         track_number: Optional[int] = None,
         disc_number: Optional[int] = None,
         bitrate: Optional[int] = None,
+        sample_rate: Optional[int] = None,
+        bit_depth: Optional[int] = None,
+        file_size_bytes: Optional[int] = None,
+        added_at: Optional[datetime] = None,
         file_format: Optional[str] = None,
         file_path: Optional[str] = None,
             fingerprint: Optional[str] = None,
@@ -1148,9 +1153,6 @@ class PluginBase(ABC):
             duration=parsed_duration,
             track_number=track_number,
             disc_number=disc_number,
-            bitrate=bitrate,
-            file_format=file_format,
-            file_path=file_path,
             release_year=year,
             musicbrainz_id=musicbrainz_id,
             isrc=isrc,
@@ -1158,6 +1160,23 @@ class PluginBase(ABC):
             quality_tags=quality_tags,
             identifiers=identifiers
         )
+
+        media_list = extra_fields.pop('media', [])
+        if file_path or file_format or bitrate or file_size_bytes or added_at:
+            from core.matching_engine.echo_sync_track import EchosyncMedia
+            media = EchosyncMedia(
+                file_path=file_path,
+                file_format=file_format,
+                bitrate=bitrate,
+                sample_rate=sample_rate,
+                bit_depth=bit_depth,
+                file_size_bytes=file_size_bytes,
+                added_at=added_at
+            )
+            media_list.append(media)
+        
+        if media_list:
+            track_kwargs['media'] = media_list
         
         # Add any valid EchosyncTrack fields from extra_fields
         import dataclasses

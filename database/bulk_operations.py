@@ -231,7 +231,8 @@ class LibraryManager:
 
             stmt = (
                 select(Track)
-                .join(ExternalIdentifier)
+                .join(LocalMedia, Track.id == LocalMedia.track_id)
+                .join(ExternalIdentifier, LocalMedia.media_id == ExternalIdentifier.media_id)
                 .where(
                     ExternalIdentifier.plugin_source == source,
                     ExternalIdentifier.plugin_item_id == item_id,
@@ -256,7 +257,7 @@ class LibraryManager:
         Fallback: find track by file_path OR (title + artist + album + track_number).
         """
         if file_path:
-            stmt = select(Track).where(Track.file_path == file_path)
+            stmt = select(Track).join(LocalMedia).where(LocalMedia.file_path == file_path)
             track = session.execute(stmt).scalar_one_or_none()
             if track:
                 return track
@@ -321,8 +322,10 @@ class LibraryManager:
                     return True
 
         # 2. Check by file_path
-        if track_data.file_path:
-            stmt = select(Track.id).where(Track.file_path == track_data.file_path)
+        media_files = getattr(track_data, 'media', [])
+        primary_file_path = media_files[0].file_path if media_files else None
+        if primary_file_path:
+            stmt = select(Track.id).join(LocalMedia).where(LocalMedia.file_path == primary_file_path)
             if session.execute(stmt).first() is not None:
                 return True
 
@@ -358,25 +361,31 @@ class LibraryManager:
                         ExternalIdentifier.plugin_item_id == str(plugin_item_id)
                     )
                     ext_id = session.execute(stmt).scalar_one_or_none()
-                    if ext_id and ext_id.track:
-                        track = ext_id.track
+                    if ext_id and ext_id.media and ext_id.media.track:
+                        track = ext_id.media.track
                         break
 
         if track is None:
             track = self._find_track_by_identifiers(session, track_data.identifiers)
 
         if track is None:
+            media_files = getattr(track_data, 'media', [])
+            primary_file_path = media_files[0].file_path if media_files else None
             track = self._find_track_by_metadata(
                 session,
                 track_data.title,
                 artist.id,
                 album.id if album else None,
                 track_number=track_data.track_number,
-                file_path=track_data.file_path,
+                file_path=primary_file_path,
             )
             if track is not None and track_data.identifiers:
-                existing_ids = {(e.plugin_source, e.plugin_item_id) for e in track.external_identifiers}
-                existing_plugins = {e.plugin_source for e in track.external_identifiers}
+                existing_ids = set()
+                existing_plugins = set()
+                for m in track.media_files:
+                    for e in m.external_identifiers:
+                        existing_ids.add((e.plugin_source, e.plugin_item_id))
+                        existing_plugins.add(e.plugin_source)
                 conflict = False
                 for src, pid in track_data.identifiers.items():
                     if src and pid:
@@ -402,13 +411,6 @@ class LibraryManager:
                 duration=track_data.duration,
                 track_number=track_data.track_number,
                 disc_number=track_data.disc_number,
-                bitrate=track_data.bitrate,
-                file_path=track_data.file_path,
-                file_format=track_data.file_format,
-                sample_rate=track_data.sample_rate,
-                bit_depth=track_data.bit_depth,
-                file_size_bytes=track_data.file_size_bytes,
-                added_at=track_data.added_at,
                 musicbrainz_id=track_data.musicbrainz_id,
                 isrc=track_data.isrc,
                 sync_id=track_data.sync_id,
@@ -484,54 +486,106 @@ class LibraryManager:
             logger.debug(f"Updated existing track: {track.title} by {artist.name}")
             is_new = False
 
-        # Link identifiers
-        for source, item_id in track_data.identifiers.items():
-            if not source or not item_id or source == 'acoustid_id':
+        # Upsert Media Files
+        primary_media = None
+        for media_data in getattr(track_data, 'media', []):
+            if not media_data.file_path:
                 continue
 
-            if not isinstance(item_id, str):
-                item_id = str(item_id)
+            stmt = select(LocalMedia).where(LocalMedia.file_path == media_data.file_path)
+            media_row = session.execute(stmt).scalar_one_or_none()
 
-            stmt = select(ExternalIdentifier).where(
-                ExternalIdentifier.plugin_source == source,
-                ExternalIdentifier.plugin_item_id == item_id,
-            )
-            ext_id = session.execute(stmt).scalar_one_or_none()
+            if media_row is None:
+                m_id = media_data.media_id
+                if not m_id:
+                    import nanoid
+                    m_id = nanoid.generate(alphabet='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz', size=8)
 
-            if ext_id is None:
-                ext_id = ExternalIdentifier(
+                media_row = LocalMedia(
                     track=track,
-                    plugin_source=source,
-                    plugin_item_id=item_id,
-                    raw_data=None,
+                    media_id=m_id,
+                    file_path=media_data.file_path,
+                    file_format=media_data.file_format,
+                    bitrate=media_data.bitrate,
+                    sample_rate=media_data.sample_rate,
+                    bit_depth=media_data.bit_depth,
+                    file_size_bytes=media_data.file_size_bytes,
+                    added_at=media_data.added_at,
+                    inode=media_data.inode,
+                    mtime=media_data.mtime,
                 )
-                session.add(ext_id)
+                session.add(media_row)
             else:
-                if ext_id.track_id != track.id:
-                    logger.warning(
-                        f"ExternalIdentifier collision resolved: Re-mapping {source}:{item_id} from track {ext_id.track_id} to {track.id}"
+                if media_row.track_id != track.id:
+                    logger.warning(f"Media file {media_row.file_path} moved to track {track.id}")
+                    media_row.track = track
+                if media_data.file_format is not None: media_row.file_format = media_data.file_format
+                if media_data.bitrate is not None: media_row.bitrate = media_data.bitrate
+                if media_data.sample_rate is not None: media_row.sample_rate = media_data.sample_rate
+                if media_data.bit_depth is not None: media_row.bit_depth = media_data.bit_depth
+                if media_data.file_size_bytes is not None: media_row.file_size_bytes = media_data.file_size_bytes
+                if media_data.added_at is not None: media_row.added_at = media_data.added_at
+                if media_data.inode is not None: media_row.inode = media_data.inode
+                if media_data.mtime is not None: media_row.mtime = media_data.mtime
+            
+            if not primary_media:
+                primary_media = media_row
+
+        if not primary_media and track.media_files:
+            primary_media = track.get_best_media()
+
+        # Link identifiers (Only if we have a primary_media to attach it to)
+        if primary_media:
+            for source, item_id in track_data.identifiers.items():
+                if not source or not item_id or source == 'acoustid_id':
+                    continue
+
+                if not isinstance(item_id, str):
+                    item_id = str(item_id)
+
+                stmt = select(ExternalIdentifier).where(
+                    ExternalIdentifier.plugin_source == source,
+                    ExternalIdentifier.plugin_item_id == item_id,
+                )
+                ext_id = session.execute(stmt).scalar_one_or_none()
+
+                if ext_id is None:
+                    ext_id = ExternalIdentifier(
+                        media=primary_media,
+                        plugin_source=source,
+                        plugin_item_id=item_id,
+                        raw_data=None,
                     )
-                    ext_id.track = track
+                    session.add(ext_id)
+                else:
+                    if ext_id.media_id != primary_media.media_id:
+                        logger.warning(
+                            f"ExternalIdentifier collision resolved: Re-mapping {source}:{item_id} from media {ext_id.media_id} to {primary_media.media_id}"
+                        )
+                        ext_id.media = primary_media
 
-        # Audio Fingerprint
-        if track_data.fingerprint:
-            stmt = select(AudioFingerprint).where(
-                AudioFingerprint.chromaprint == track_data.fingerprint
-            )
-            af = session.execute(stmt).scalar_one_or_none()
-
-            if af is None:
-                af = AudioFingerprint(
-                    track=track,
-                    chromaprint=track_data.fingerprint,
-                    acoustid_id=track_data.acoustid_id
+            # Audio Fingerprint
+            if getattr(track_data, 'fingerprint', None):
+                stmt = select(AudioFingerprint).where(
+                    AudioFingerprint.chromaprint == track_data.fingerprint
                 )
-                session.add(af)
-            else:
-                if af.track_id != track.id:
-                    af.track = track
-                if track_data.acoustid_id and not af.acoustid_id:
-                    af.acoustid_id = track_data.acoustid_id
+                af = session.execute(stmt).scalar_one_or_none()
+
+                if af is None:
+                    af = AudioFingerprint(
+                        media=primary_media,
+                        chromaprint=track_data.fingerprint,
+                        acoustid_id=track_data.acoustid_id
+                    )
+                    session.add(af)
+                else:
+                    if af.media_id != primary_media.media_id:
+                        af.media = primary_media
+                    if getattr(track_data, 'acoustid_id', None) and not af.acoustid_id:
+                        af.acoustid_id = track_data.acoustid_id
+        else:
+            if getattr(track_data, 'identifiers', None) or getattr(track_data, 'fingerprint', None):
+                logger.warning(f"Could not link identifiers or fingerprint for track '{track.title}' because no media file was associated.")
 
         return track, is_new
 
@@ -543,7 +597,7 @@ class LibraryManager:
         deleted_track_ids: set[int] = set()
 
         for plugin_source, item_ids in observed_identifiers.items():
-            stmt = select(Track.id).join(ExternalIdentifier).where(
+            stmt = select(Track.id).join(LocalMedia).join(ExternalIdentifier, LocalMedia.media_id == ExternalIdentifier.media_id).where(
                 ExternalIdentifier.plugin_source == plugin_source
             )
 
@@ -573,9 +627,9 @@ class LibraryManager:
         except Exception:
             return 0
         
-        stmt = select(Track.id, Track.file_path).where(
-            Track.file_path.isnot(None),
-            Track.file_path != ''
+        stmt = select(Track.id, LocalMedia.file_path).join(LocalMedia).where(
+            LocalMedia.file_path.isnot(None),
+            LocalMedia.file_path != ''
         )
         
         stale_ids = []

@@ -16,6 +16,11 @@ class MockMusicDatabase:
         self.cursor.fetchone.return_value = None
         self.cursor.fetchall.return_value = []
 
+        self.session = MagicMock()
+        self.mock_result = MagicMock()
+        self.session.execute.return_value = self.mock_result
+        self.mock_result.mappings.return_value.all.side_effect = lambda: self.cursor.fetchall.return_value
+
     # Return a context manager that yields the underlying conn so
     # that `with database._get_connection() as conn:` returns `self.conn`.
     def _get_connection(self):
@@ -27,6 +32,16 @@ class MockMusicDatabase:
             def __exit__(self, exc_type, exc, tb):
                 return False
         return _Ctx(self.conn)
+
+    def session_scope(self):
+        class _Ctx:
+            def __init__(self, session):
+                self._session = session
+            def __enter__(self):
+                return self._session
+            def __exit__(self, exc_type, exc, tb):
+                return False
+        return _Ctx(self.session)
 
 @pytest.fixture
 def mock_db():
@@ -130,9 +145,11 @@ def test_get_decade_playlist(service: PersonalizedPlaylistsService, mock_db):
         playlist = service.get_decade_playlist(2010, limit=3)
     
     # Check that the correct query was executed
-    mock_db.cursor.execute.assert_called_once()
-    assert "BETWEEN ? AND ?" in mock_db.cursor.execute.call_args[0][0]
-    assert mock_db.cursor.execute.call_args[0][1] == (2010, 2019, 30) # start, end, limit*10
+    mock_db.session.execute.assert_called_once()
+    query = mock_db.session.execute.call_args[0][0].text
+    params = mock_db.session.execute.call_args[0][1]
+    assert "BETWEEN :start_year AND :end_year" in query
+    assert params == {"start_year": 2010, "end_year": 2019, "limit": 30}
 
     assert len(playlist) <= 3
     # The exact tracks are hard to predict due to shuffle, but we can check artists
@@ -144,11 +161,11 @@ def test_get_decade_playlist(service: PersonalizedPlaylistsService, mock_db):
 def test_get_available_genres(service: PersonalizedPlaylistsService, mock_db):
     """Test consolidating and counting genres from the discovery pool."""
     mock_rows = [
-        (json.dumps(['deep house', 'edm']),), # Electronic/Dance
-        (json.dumps(['post-punk', 'indie rock']),), # Rock
-        (json.dumps(['uk garage']),), # Electronic/Dance
-        (json.dumps(['unknown genre']),), # Other
-        (json.dumps(['k-pop']),), # Pop
+        {'artist_genres': json.dumps(['deep house', 'edm'])}, # Electronic/Dance
+        {'artist_genres': json.dumps(['post-punk', 'indie rock'])}, # Rock
+        {'artist_genres': json.dumps(['uk garage'])}, # Electronic/Dance
+        {'artist_genres': json.dumps(['unknown genre'])}, # Other
+        {'artist_genres': json.dumps(['k-pop'])}, # Pop
     ]
     # Create 10 of each to meet the threshold
     mock_db.cursor.fetchall.return_value = (mock_rows * 10)

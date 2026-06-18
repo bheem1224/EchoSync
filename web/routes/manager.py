@@ -63,31 +63,15 @@ def _normalize_sync_id(sync_id: str) -> str:
 def _sync_id_from_track_id(track_id: int) -> str | None:
     db = get_database()
     with db.session_scope() as session:
-        row = (
-            session.query(Track.title, Artist.name)
-            .join(Artist, Track.artist_id == Artist.id)
-            .filter(Track.id == track_id)
-            .first()
-        )
+        row = session.query(Track.sync_id).filter(Track.id == track_id).first()
         if not row:
             return None
-        encoded = generate_deterministic_id(row.name, row.title)
-        return f"ss:track:meta:{encoded}"
+        return row.sync_id
 
 
 def _resolve_track_preview(sync_id: str):
     base_sync_id = _normalize_sync_id(sync_id)
-    if not base_sync_id.startswith("ss:track:meta:"):
-        return None
-
-    encoded = base_sync_id.split("ss:track:meta:", 1)[1]
-    if not encoded:
-        return None
-
-    try:
-        decoded = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
-        artist_name, title = decoded.split("|", 1)
-    except Exception:
+    if not base_sync_id:
         return None
 
     db = get_database()
@@ -95,10 +79,7 @@ def _resolve_track_preview(sync_id: str):
         row = (
             session.query(Track.id, Track.title, Artist.name)
             .join(Artist, Track.artist_id == Artist.id)
-            .filter(
-                func.lower(Artist.name) == artist_name.lower(),
-                func.lower(Track.title) == title.lower(),
-            )
+            .filter(Track.sync_id == base_sync_id)
             .first()
         )
         if not row:

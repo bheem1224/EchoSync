@@ -1157,6 +1157,19 @@ class PlexClient(MediaServerProvider):
                     'raw_data': None # Avoid storing heavy object
                 })
 
+            from core.matching_engine.echo_sync_track import EchosyncMedia
+            media = []
+            if file_path or file_format or bitrate or file_size_bytes or added_at:
+                media.append(EchosyncMedia(
+                    file_path=file_path,
+                    file_format=file_format,
+                    bitrate=bitrate,
+                    sample_rate=sample_rate,
+                    bit_depth=bit_depth,
+                    file_size_bytes=file_size_bytes,
+                    added_at=added_at
+                ))
+
             track = EchosyncTrack(
                 raw_title=title,
                 artist_name=artist,
@@ -1169,14 +1182,9 @@ class PlexClient(MediaServerProvider):
                 duration=duration_ms,
                 track_number=track_number,
                 disc_number=disc_number,
-                bitrate=bitrate,
-                file_path=file_path,
-                file_format=file_format,
                 release_year=year,
                 added_at=added_at,
-                sample_rate=sample_rate,
-                bit_depth=bit_depth,
-                file_size_bytes=file_size_bytes,
+                media=media,
                 identifiers=identifiers
             )
             

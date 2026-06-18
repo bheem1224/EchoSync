@@ -307,33 +307,7 @@ class DuplicateHygieneService:
         base_sync_id = (sync_id or "").split("?")[0]
 
         with self.db.session_scope() as session:
-            if base_sync_id.startswith("ss:track:mbid:"):
-                mbid = base_sync_id.split("ss:track:mbid:", 1)[1]
-                if not mbid:
-                    return None
-                return session.query(Track).filter(Track.musicbrainz_id == mbid).first()
-
-            if base_sync_id.startswith("ss:track:meta:"):
-                encoded = base_sync_id.split("ss:track:meta:", 1)[1]
-                if not encoded:
-                    return None
-                try:
-                    decoded = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
-                    artist_name, title = decoded.split("|", 1)
-                except Exception:
-                    return None
-
-                return (
-                    session.query(Track)
-                    .join(Artist, Track.artist_id == Artist.id)
-                    .filter(
-                        func.lower(Artist.name) == artist_name.lower(),
-                        func.lower(Track.title) == title.lower(),
-                    )
-                    .first()
-                )
-
-        return None
+            return session.query(Track).filter_by(sync_id=base_sync_id).first()
 
     def queue_quality_upgrade_for_sync_id(
         self,
@@ -434,8 +408,7 @@ class DuplicateHygieneService:
 
                 for ext, track in ext_idents:
                     # Resolve to sync_id
-                    from core.matching_engine.text_utils import generate_deterministic_id
-                    sync_id = f"ss:track:meta:{generate_deterministic_id(track.artist.name, track.title)}"
+                    sync_id = track.sync_id
 
                     states = work_session.query(UserTrackState).filter(
                         UserTrackState.sync_id == sync_id

@@ -353,7 +353,7 @@ class UserHistoryService:
 
                             if interaction_plugin_id in plugin_id_to_track:
                                 track = plugin_id_to_track[interaction_plugin_id]
-                                sync_id = f"ss:track:meta:{generate_deterministic_id(track.artist.name, track.title)}"
+                                sync_id = track.sync_id
                                 interaction_records.append({
                                     "interaction": interaction,
                                     "sync_id": sync_id,
@@ -412,7 +412,7 @@ class UserHistoryService:
                                 )
                                 continue
                             matched_track = pair_to_track[pair]
-                            sync_id = f"ss:track:meta:{generate_deterministic_id(matched_track.artist.name, matched_track.title)}"
+                            sync_id = matched_track.sync_id
 
                         play_count = int(getattr(interaction, 'play_count', 0) or 0)
                         if interaction.rating is None and play_count <= 0:

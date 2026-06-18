@@ -110,40 +110,11 @@ class MediaManagerService:
 
     def _resolve_track_id_from_sync_id(self, sync_id: str) -> Optional[int]:
         base_sync_id = str(sync_id or "").split("?")[0]
-
-        # Handle mbid URI path.
-        if base_sync_id.startswith("ss:track:mbid:"):
-            mbid = base_sync_id.split("ss:track:mbid:", 1)[1]
-            if not mbid:
-                return None
-            with self.db.session_scope() as session:
-                row = session.query(Track.id).filter(Track.musicbrainz_id == mbid).first()
-                return int(row[0]) if row else None
-
-        # Handle meta URI path: ss:track:meta:{base64(artist|title)}
-        if not base_sync_id.startswith("ss:track:meta:"):
-            return None
-
-        encoded = base_sync_id.split("ss:track:meta:", 1)[1]
-        if not encoded:
-            return None
-
-        try:
-            decoded = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
-            artist_name, title = decoded.split("|", 1)
-        except Exception:
+        if not base_sync_id:
             return None
 
         with self.db.session_scope() as session:
-            row = (
-                session.query(Track.id)
-                .join(Artist, Track.artist_id == Artist.id)
-                .filter(
-                    func.lower(Artist.name) == artist_name.lower(),
-                    func.lower(Track.title) == title.lower(),
-                )
-                .first()
-            )
+            row = session.query(Track.id).filter(Track.sync_id == base_sync_id).first()
             return int(row[0]) if row else None
 
     def handle_suggestion_playlist_remove_intent(self, event_data: Dict[str, Any]) -> None:

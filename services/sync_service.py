@@ -962,29 +962,17 @@ class PlaylistSyncService:
         elif hasattr(db, "fetch_existing_sync_ids"):
             existing_sync_ids = db.fetch_existing_sync_ids(sync_ids)
         else:
-            # We need to map sync_id strings to DB queries
-            mbids_to_check = []
-            meta_to_check = []
-
-            for sid in sync_ids:
-                if sid.startswith("ss:track:mbid:"):
-                    mbids_to_check.append(sid.replace("ss:track:mbid:", ""))
-                else:
-                    meta_to_check.append(sid) # Fallback handling for meta URNs could be complex without decoding
-
             with db.session_scope() as session:
-                if mbids_to_check:
-                    # Chunk the IN clause if it's huge
-                    chunk_size = 500
-                    for i in range(0, len(mbids_to_check), chunk_size):
-                        chunk = mbids_to_check[i:i + chunk_size]
-                        found_tracks = session.query(Track.musicbrainz_id).filter(
-                            Track.musicbrainz_id.in_(chunk)
-                        ).all()
+                chunk_size = 500
+                for i in range(0, len(sync_ids), chunk_size):
+                    chunk = sync_ids[i:i + chunk_size]
+                    found_tracks = session.query(Track.sync_id).filter(
+                        Track.sync_id.in_(chunk)
+                    ).all()
 
-                        for t in found_tracks:
-                            if t.musicbrainz_id:
-                                existing_sync_ids.add(f"ss:track:mbid:{t.musicbrainz_id}")
+                    for t in found_tracks:
+                        if t.sync_id:
+                            existing_sync_ids.add(t.sync_id)
 
             # Also check the download queue so we don't re-queue active downloads
             work_db = get_working_database()

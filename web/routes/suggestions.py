@@ -26,29 +26,6 @@ logger = get_logger("suggestions")
 bp = Blueprint("suggestions", __name__, url_prefix="/api/suggestions")
 
 
-def _decode_sync_id_pair(sync_id: str):
-    """Decode ss:track:meta sync IDs into (artist, title) pairs."""
-    raw = str(sync_id or "").strip()
-    if not raw.startswith("ss:track:meta:"):
-        return None
-
-    encoded = raw.split("ss:track:meta:", 1)[1].split("?", 1)[0].strip()
-    if not encoded:
-        return None
-
-    try:
-        padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
-        decoded = base64.b64decode(padded).decode("utf-8", errors="ignore")
-        artist_name, track_title = decoded.split("|", 1)
-        artist_name = artist_name.strip()
-        track_title = track_title.strip()
-        if artist_name and track_title:
-            return artist_name, track_title
-    except Exception:
-        return None
-
-    return None
-
 
 def _resolve_scope_account(accounts, requested_account_id=None, requested_user_id=None):
     """Resolve scope account by account_id/user_id, else first active managed user."""
@@ -91,13 +68,7 @@ def _calculate_top_genres_for_user(work_session, music_session, user_id: int, li
         .all()
     ]
 
-    decoded_pairs = []
-    for sync_id in rated_sync_ids:
-        pair = _decode_sync_id_pair(sync_id)
-        if pair:
-            decoded_pairs.append((pair[0].lower(), pair[1].lower()))
-
-    if not decoded_pairs:
+    if not rated_sync_ids:
         return []
 
     from database.music_database import Track, Artist
@@ -105,7 +76,7 @@ def _calculate_top_genres_for_user(work_session, music_session, user_id: int, li
     matched_tracks = (
         music_session.query(Track, Artist)
         .join(Artist, Track.artist_id == Artist.id)
-        .filter(tuple_(func.lower(Artist.name), func.lower(Track.title)).in_(decoded_pairs))
+        .filter(Track.sync_id.in_(rated_sync_ids))
         .all()
     )
 

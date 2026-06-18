@@ -60,6 +60,56 @@ class QualityTag(Enum):
 # - 'spotify_id'                (Spotify ID)
 
 @dataclass
+class EchosyncMedia:
+    """Represents a specific physical audio file on a local or remote server."""
+    file_path: str
+    media_id: Optional[str] = None  # NanoID
+    file_format: Optional[str] = None
+    bitrate: Optional[int] = None
+    sample_rate: Optional[int] = None
+    bit_depth: Optional[int] = None
+    file_size_bytes: Optional[int] = None
+    inode: Optional[int] = None
+    mtime: Optional[float] = None
+    added_at: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'media_id': self.media_id,
+            'file_path': self.file_path,
+            'file_format': self.file_format,
+            'bitrate': self.bitrate,
+            'sample_rate': self.sample_rate,
+            'bit_depth': self.bit_depth,
+            'file_size_bytes': self.file_size_bytes,
+            'inode': self.inode,
+            'mtime': self.mtime,
+            'added_at': self.added_at.isoformat() if self.added_at else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "EchosyncMedia":
+        added_at = data.get('added_at')
+        if added_at and isinstance(added_at, str):
+            try:
+                added_at = datetime.fromisoformat(added_at)
+            except ValueError:
+                pass
+        return cls(
+            file_path=data.get('file_path'),
+            media_id=data.get('media_id'),
+            file_format=data.get('file_format'),
+            bitrate=data.get('bitrate'),
+            sample_rate=data.get('sample_rate'),
+            bit_depth=data.get('bit_depth'),
+            file_size_bytes=data.get('file_size_bytes'),
+            inode=data.get('inode'),
+            mtime=data.get('mtime'),
+            added_at=added_at
+        )
+
+
+@dataclass
 class EchosyncTrack:
     """
     Track data container matching the SQLAlchemy database schema.
@@ -87,17 +137,12 @@ class EchosyncTrack:
     duration: Optional[int] = None  # Milliseconds
     track_number: Optional[int] = None
     disc_number: Optional[int] = None
-    bitrate: Optional[int] = None
-    file_path: Optional[str] = None
-    file_format: Optional[str] = None
     release_year: Optional[int] = None
     version: Optional[str] = None  # e.g., "Remix", "Live", "Extended"
     added_at: Optional[datetime] = None
-
-    # Technical Metadata
-    sample_rate: Optional[int] = None
-    bit_depth: Optional[int] = None
-    file_size_bytes: Optional[int] = None
+    
+    # Physical Media Files (1:N relationship)
+    media: List[EchosyncMedia] = field(default_factory=list)
 
     # Identifiers
     musicbrainz_id: Optional[str] = None
@@ -121,57 +166,9 @@ class EchosyncTrack:
 
     # External Provider Links
     identifiers: Dict[str, Any] = field(default_factory=dict)
-
-
-
-    @property
-    def sync_id(self) -> str:
-        import base64
-
-        # Base identity: ss:track:meta:{base64(lowercase_artist|lowercase_title)}
-        # Ensure we safely access artist_name instead of artists[0] since artists doesn't exist on EchosyncTrack
-        artist = self.artist_name.lower() if getattr(self, "artist_name", None) else "unknown"
-        title = self.title.lower() if getattr(self, "title", None) else "unknown"
-        payload = f"{artist}|{title}"
-
-        encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-        base_sync_id = f"ss:track:meta:{encoded}"
-
-        # Append available attributes as query parameters directly
-        dur = self.duration if self.duration else ""
-        mbid = self.musicbrainz_id if self.musicbrainz_id else ""
-        isrc = self.isrc if self.isrc else ""
-
-        # Get external_id if any identifier is present
-        ext_id = ""
-        if self.identifiers:
-            # Prefer some specific ones if multiple
-            if 'spotify_id' in self.identifiers:
-                ext_id = self.identifiers['spotify_id']
-            elif 'plex_guid' in self.identifiers:
-                ext_id = self.identifiers['plex_guid']
-            elif 'musicbrainz_recording_id' in self.identifiers and not mbid:
-                 mbid = self.identifiers['musicbrainz_recording_id']
-            elif len(self.identifiers) > 0:
-                 ext_id = list(self.identifiers.values())[0]
-
-        # Append only parameters that have a value
-        import urllib.parse
-        params = {}
-        if self.duration:
-            params['dur'] = str(self.duration)
-        if mbid:
-            params['mbid'] = mbid
-        if self.isrc:
-            params['isrc'] = self.isrc
-        if ext_id:
-            params['ext'] = ext_id
-
-        if params:
-            query_string = urllib.parse.urlencode(params)
-            return f"{base_sync_id}?{query_string}"
-
-        return base_sync_id
+    
+    # Opaque conceptual anchor (NanoID)
+    sync_id: Optional[str] = None
 
     def __post_init__(self):
 
@@ -332,15 +329,10 @@ class EchosyncTrack:
             'duration_ms': self.duration,
             'track_number': self.track_number,
             'disc_number': self.disc_number,
-            'bitrate': self.bitrate,
-            'file_path': self.file_path,
-            'file_format': self.file_format,
             'release_year': self.release_year,
             'version': self.version,
             'added_at': self.added_at.isoformat() if self.added_at else None,
-            'sample_rate': self.sample_rate,
-            'bit_depth': self.bit_depth,
-            'file_size_bytes': self.file_size_bytes,
+            'media': [m.to_dict() for m in self.media],
             'mbid': self.musicbrainz_id,
             'isrc': self.isrc,
             'acoustid': self.acoustid_id,
@@ -383,6 +375,7 @@ class EchosyncTrack:
             isrc_value = identifiers.get('isrc')
 
         track = cls(
+            sync_id=data.get('sync_id'),
             raw_title=raw_title,
             artist_name=data.get('artist') or data.get('artist_name', 'Unknown Artist'),
             album_artist=data.get('album_artist'),
@@ -396,15 +389,10 @@ class EchosyncTrack:
             duration=duration_value,
             track_number=data.get('track_number'),
             disc_number=data.get('disc_number'),
-            bitrate=data.get('bitrate'),
-            file_path=data.get('file_path'),
-            file_format=data.get('file_format'),
             release_year=data.get('release_year'),
             version=data.get('version'),
             added_at=added_at,
-            sample_rate=data.get('sample_rate'),
-            bit_depth=data.get('bit_depth'),
-            file_size_bytes=data.get('file_size_bytes'),
+            media=[EchosyncMedia.from_dict(m) for m in data.get('media', [])],
             musicbrainz_id=data.get('mbid') or data.get('musicbrainz_id'),
             isrc=isrc_value,
             acoustid_id=data.get('acoustid') or data.get('acoustid_id'),
