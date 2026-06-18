@@ -826,7 +826,11 @@ class PlexClient(MediaServerProvider):
                 for raw_track in chunk_tracks:
                     if isinstance(raw_track, PlexTrack):
                         try:
-                            track = self._convert_track_to_echosync(raw_track)
+                            # PERF: deep=False avoids per-track HTTP calls to
+                            # /metadata/{artistKey} and /metadata/{albumKey}.
+                            # We rely on the cheap XML attributes already in
+                            # the batch payload (grandparentTitle, parentTitle).
+                            track = self._convert_track_to_echosync(raw_track, deep=False)
                             if track:
                                 yield track
                         except Exception as e:
@@ -978,8 +982,19 @@ class PlexClient(MediaServerProvider):
         
         return text, None
     
-    def _convert_track_to_echosync(self, plex_track: PlexTrack) -> Optional[EchosyncTrack]:
-        """Convert Plex track to EchosyncTrack using factory method."""
+    def _convert_track_to_echosync(self, plex_track: PlexTrack, deep: bool = True) -> Optional[EchosyncTrack]:
+        """Convert Plex track to EchosyncTrack.
+
+        Args:
+            plex_track: The plexapi Track object.
+            deep: When True (default), call plex_track.artist() and
+                  plex_track.album() which each fire a /metadata/{key}
+                  HTTP round-trip.  When False (bulk mode), use only
+                  the cheap XML attributes already present in the batch
+                  payload (grandparentTitle, parentTitle, originalTitle).
+                  Deep metadata hydration is deferred to the Retroactive
+                  Metadata Enhancer.
+        """
         try:
             # Extract basic metadata
             title = _safe_getattr(plex_track, 'title', None)
@@ -1006,30 +1021,36 @@ class PlexClient(MediaServerProvider):
                     f"Using originalTitle (track artist) for '{title}': artist='{artist}'"
                 )
 
-            # Step 2: fall back to album artist via artist() / grandparentTitle
+            # Step 2: fall back to album artist
             if not artist:
-                try:
-                    artist_obj = plex_track.artist()
-                    artist = _safe_getattr(artist_obj, 'title', None) if artist_obj else None
-                    logger.debug(f"Extracted artist for '{title}': artist_obj={artist_obj}, artist_title={artist}")
-                except (NotFound, AttributeError, Exception) as e:
-                    logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
+                if deep:
+                    # Deep mode: HTTP round-trip to /metadata/{artistKey}
+                    try:
+                        artist_obj = plex_track.artist()
+                        artist = _safe_getattr(artist_obj, 'title', None) if artist_obj else None
+                        logger.debug(f"Extracted artist for '{title}': artist_obj={artist_obj}, artist_title={artist}")
+                    except (NotFound, AttributeError, Exception) as e:
+                        logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
 
-            # Step 3: cheap XML attribute fallback
+            # Step 3: cheap XML attribute (always available in batch payload)
             if not artist:
                 artist = _safe_getattr(plex_track, 'grandparentTitle', None)
                 if artist:
-                    logger.debug(f"Using grandparentTitle fallback for '{title}': artist={artist}")
+                    logger.debug(f"Using grandparentTitle for '{title}': artist={artist}")
                 else:
                     logger.warning(f"Failed to extract artist for track '{title}' via originalTitle, artist(), and grandparentTitle")
             
             album = None
-            try:
-                album_obj = plex_track.album()
-                album = _safe_getattr(album_obj, 'title', None) or ""
-            except (NotFound, AttributeError, Exception) as e:
-                logger.debug(f"Failed to get album for track '{title}': {e}")
-                # Fallback to parentTitle (album name in Plex XML structure)
+            if deep:
+                # Deep mode: HTTP round-trip to /metadata/{albumKey}
+                try:
+                    album_obj = plex_track.album()
+                    album = _safe_getattr(album_obj, 'title', None) or ""
+                except (NotFound, AttributeError, Exception) as e:
+                    logger.debug(f"Failed to get album for track '{title}': {e}")
+                    album = _safe_getattr(plex_track, 'parentTitle', None) or ""
+            else:
+                # Bulk mode: use cheap XML attribute, no HTTP call
                 album = _safe_getattr(plex_track, 'parentTitle', None) or ""
             
             if not title:

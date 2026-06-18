@@ -17,7 +17,7 @@ from .music_database import Artist, Album, Track, ExternalIdentifier, AudioFinge
 
 logger = get_logger("bulk_operations")
 
-BATCH_SIZE = 100  # Commit every N tracks
+BATCH_SIZE = 2000  # Commit every N tracks (tuned for SQLite WAL throughput)
 
 
 class LibraryManager:
@@ -278,6 +278,7 @@ class LibraryManager:
         self,
         session: Session,
         track_data: EchosyncTrack,
+        _prefetched_ids: Optional[Dict[str, set]] = None,
     ) -> bool:
         """
         Lightweight existence check that does NOT create Artist or Album rows.
@@ -287,17 +288,31 @@ class LibraryManager:
         don't exist in the local database.
 
         Checks (in order):
-          1. ExternalIdentifiers (fast, indexed)
+          0. In-memory pre-fetched identifier set (O(1), no DB hit)
+          1. ExternalIdentifiers (fast, indexed) — only if no pre-fetched set
           2. file_path (fast, indexed)
           3. Normalized title + artist name via JOIN (no Artist row needed)
+
+        Args:
+            _prefetched_ids: Optional dict of {plugin_source: set(plugin_item_id)}.
+                             When provided, step 0 replaces step 1 entirely,
+                             eliminating per-row SELECT queries.
         """
-        # 1. Check by external identifiers (cheapest — indexed unique constraint)
+        # 0/1. Check by external identifiers
         if track_data.identifiers:
             for source, item_id in track_data.identifiers.items():
                 if not source or not item_id:
                     continue
                 if not isinstance(item_id, str):
                     item_id = str(item_id)
+
+                # Fast path: O(1) in-memory lookup from pre-fetched set
+                if _prefetched_ids and source in _prefetched_ids:
+                    if item_id in _prefetched_ids[source]:
+                        return True
+                    continue  # source was fully pre-fetched, skip DB
+
+                # Slow path: per-row DB query (only for sources not pre-fetched)
                 stmt = select(ExternalIdentifier.id).where(
                     ExternalIdentifier.plugin_source == source,
                     ExternalIdentifier.plugin_item_id == item_id,
@@ -666,88 +681,105 @@ class LibraryManager:
             except Exception:
                 pass
 
+        # PERF: Pre-fetch all known identifier IDs for the source plugin into
+        # an in-memory set. This replaces 13K+ per-row SELECT queries with a
+        # single bulk query + O(1) set lookups inside _track_exists_locally.
+        prefetched_ids: Optional[Dict[str, set]] = None
+        if identifiers_only and source_name:
+            try:
+                stmt = select(ExternalIdentifier.plugin_item_id).where(
+                    ExternalIdentifier.plugin_source == source_name
+                )
+                source_ids = {row[0] for row in session.execute(stmt).all()}
+                prefetched_ids = {source_name: source_ids}
+                logger.info(
+                    "Pre-fetched %d existing identifiers for source '%s'",
+                    len(source_ids), source_name,
+                )
+            except Exception as e:
+                logger.warning("Failed to pre-fetch identifiers for '%s': %s", source_name, e)
+
         try:
             for idx, track_data in enumerate(tracks):
                 if idx and idx % 10 == 0:
                     time.sleep(0)
 
                 try:
-                    with session.begin_nested():
-                        if not track_data.title or not track_data.title.strip():
-                            failed_count += 1
-                            logger.warning(
-                                "Skipping track %s due to missing title: artist='%s' album='%s'",
-                                idx + 1, track_data.artist_name, track_data.album_title,
-                            )
-                            continue
-
-                        if not track_data.artist_name or not track_data.artist_name.strip():
-                            failed_count += 1
-                            logger.warning(
-                                "Skipping track %s due to missing artist: title='%s'",
-                                idx + 1, track_data.title,
-                            )
-                            continue
-
-                        if (idx + 1) % 100 == 0 or idx == 0:
-                            logger.debug(
-                                "Processing track %s: title='%s' artist='%s' album='%s'",
-                                idx + 1, track_data.title, track_data.artist_name, track_data.album_title,
-                            )
-
-                        # ORPHAN GUARD: When identifiers_only=True, check if the
-                        # track exists locally BEFORE creating Artist/Album rows.
-                        # Without this gate, _get_or_create_artist and
-                        # _get_or_create_album would flush new rows that become
-                        # orphans when _upsert_track later returns None.
-                        if identifiers_only and not self._track_exists_locally(session, track_data):
-                            logger.debug(
-                                "identifiers_only skip: no local match for '%s' by '%s'",
-                                track_data.title, track_data.artist_name,
-                            )
-                            continue
-
-                        artist = self._get_or_create_artist(
-                            session,
-                            track_data.artist_name,
-                            sort_name=track_data.artist_sort_name
+                    if not track_data.title or not track_data.title.strip():
+                        failed_count += 1
+                        logger.warning(
+                            "Skipping track %s due to missing title: artist='%s' album='%s'",
+                            idx + 1, track_data.artist_name, track_data.album_title,
                         )
-                        if artist and artist.id:
-                            seen_artist_ids.add(artist.id)
+                        continue
 
-                        album = self._get_or_create_album(
-                            session,
-                            track_data.album_title,
-                            artist,
-                            track_data.release_year,
-                            album_type=track_data.album_type,
-                            release_group_id=track_data.album_release_group_id,
-                            mb_release_id=track_data.mb_release_id,
-                            original_release_date=track_data.original_release_date
+                    if not track_data.artist_name or not track_data.artist_name.strip():
+                        failed_count += 1
+                        logger.warning(
+                            "Skipping track %s due to missing artist: title='%s'",
+                            idx + 1, track_data.title,
                         )
-                        if album and album.id:
-                            seen_album_ids.add(album.id)
+                        continue
 
-                        track, is_new = self._upsert_track(session, track_data, artist, album, identifiers_only=identifiers_only)
+                    if (idx + 1) % 100 == 0 or idx == 0:
+                        logger.debug(
+                            "Processing track %s: title='%s' artist='%s' album='%s'",
+                            idx + 1, track_data.title, track_data.artist_name, track_data.album_title,
+                        )
 
-                        if track is None:
-                            # Skip if identifiers_only=True and no matching track is found
+                    # ORPHAN GUARD: When identifiers_only=True, check if the
+                    # track exists locally BEFORE creating Artist/Album rows.
+                    # Without this gate, _get_or_create_artist and
+                    # _get_or_create_album would flush new rows that become
+                    # orphans when _upsert_track later returns None.
+                    if identifiers_only and not self._track_exists_locally(session, track_data, _prefetched_ids=prefetched_ids):
+                        logger.debug(
+                            "identifiers_only skip: no local match for '%s' by '%s'",
+                            track_data.title, track_data.artist_name,
+                        )
+                        continue
+
+                    artist = self._get_or_create_artist(
+                        session,
+                        track_data.artist_name,
+                        sort_name=track_data.artist_sort_name
+                    )
+                    if artist and artist.id:
+                        seen_artist_ids.add(artist.id)
+
+                    album = self._get_or_create_album(
+                        session,
+                        track_data.album_title,
+                        artist,
+                        track_data.release_year,
+                        album_type=track_data.album_type,
+                        release_group_id=track_data.album_release_group_id,
+                        mb_release_id=track_data.mb_release_id,
+                        original_release_date=track_data.original_release_date
+                    )
+                    if album and album.id:
+                        seen_album_ids.add(album.id)
+
+                    track, is_new = self._upsert_track(session, track_data, artist, album, identifiers_only=identifiers_only)
+
+                    if track is None:
+                        # Skip if identifiers_only=True and no matching track is found
+                        continue
+
+                    if track_data.file_path:
+                        observed_file_paths.add(track_data.file_path)
+
+                    for source, item_id in (track_data.identifiers or {}).items():
+                        if not source or item_id is None:
                             continue
+                        if not isinstance(item_id, str):
+                            item_id = str(item_id)
+                        observed_identifiers[source].add(item_id)
 
-                        if track_data.file_path:
-                            observed_file_paths.add(track_data.file_path)
-
-                        for source, item_id in (track_data.identifiers or {}).items():
-                            if not source or item_id is None:
-                                continue
-                            if not isinstance(item_id, str):
-                                item_id = str(item_id)
-                            observed_identifiers[source].add(item_id)
-
-                        if is_new:
-                            imported_count += 1
-                        else:
-                            updated_count += 1
+                    if is_new:
+                        imported_count += 1
+                    else:
+                        updated_count += 1
 
                 except Exception as e:
                     failed_count += 1

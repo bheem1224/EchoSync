@@ -243,6 +243,13 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     except Exception:
         # older SQLite versions may not support WAL; ignore failure
         pass
+    # PERF: synchronous=NORMAL skips fsync() on every commit.  With WAL mode
+    # active this is safe — only the last transaction is at risk on an *OS*
+    # crash (not a process crash), acceptable for a re-syncable media library.
+    try:
+        cursor.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
     cursor.close()
 
 
