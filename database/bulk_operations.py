@@ -274,6 +274,60 @@ class LibraryManager:
         stmt = select(Track).where(*conditions)
         return session.execute(stmt).scalars().first()
 
+    def _track_exists_locally(
+        self,
+        session: Session,
+        track_data: EchosyncTrack,
+    ) -> bool:
+        """
+        Lightweight existence check that does NOT create Artist or Album rows.
+
+        Used as an early-exit gate when identifiers_only=True to prevent
+        orphan Artist/Album rows from being committed for tracks that
+        don't exist in the local database.
+
+        Checks (in order):
+          1. ExternalIdentifiers (fast, indexed)
+          2. file_path (fast, indexed)
+          3. Normalized title + artist name via JOIN (no Artist row needed)
+        """
+        # 1. Check by external identifiers (cheapest — indexed unique constraint)
+        if track_data.identifiers:
+            for source, item_id in track_data.identifiers.items():
+                if not source or not item_id:
+                    continue
+                if not isinstance(item_id, str):
+                    item_id = str(item_id)
+                stmt = select(ExternalIdentifier.id).where(
+                    ExternalIdentifier.plugin_source == source,
+                    ExternalIdentifier.plugin_item_id == item_id,
+                )
+                if session.execute(stmt).first() is not None:
+                    return True
+
+        # 2. Check by file_path
+        if track_data.file_path:
+            stmt = select(Track.id).where(Track.file_path == track_data.file_path)
+            if session.execute(stmt).first() is not None:
+                return True
+
+        # 3. Check by normalized title + artist name (JOIN avoids needing an artist_id)
+        if track_data.title and track_data.artist_name:
+            norm_title = text_utils.normalize_title(track_data.title)
+            norm_artist = self._normalize_name(track_data.artist_name)
+            stmt = (
+                select(Track.id)
+                .join(Artist, Track.artist_id == Artist.id)
+                .where(
+                    Track.normalized_title == norm_title,
+                    Artist.normalized_name == norm_artist,
+                )
+            )
+            if session.execute(stmt).first() is not None:
+                return True
+
+        return False
+
     def _upsert_track(
         self, session: Session, track_data: EchosyncTrack, artist: Artist, album: Optional[Album], identifiers_only: bool = False
     ) -> tuple[Optional[Track], bool]:
@@ -640,6 +694,18 @@ class LibraryManager:
                                 "Processing track %s: title='%s' artist='%s' album='%s'",
                                 idx + 1, track_data.title, track_data.artist_name, track_data.album_title,
                             )
+
+                        # ORPHAN GUARD: When identifiers_only=True, check if the
+                        # track exists locally BEFORE creating Artist/Album rows.
+                        # Without this gate, _get_or_create_artist and
+                        # _get_or_create_album would flush new rows that become
+                        # orphans when _upsert_track later returns None.
+                        if identifiers_only and not self._track_exists_locally(session, track_data):
+                            logger.debug(
+                                "identifiers_only skip: no local match for '%s' by '%s'",
+                                track_data.title, track_data.artist_name,
+                            )
+                            continue
 
                         artist = self._get_or_create_artist(
                             session,
