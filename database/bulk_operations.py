@@ -747,10 +747,21 @@ class LibraryManager:
                     if artist and artist.id:
                         seen_artist_ids.add(artist.id)
 
+                    album_artist_str = track_data.album_artist
+                    if not album_artist_str or not album_artist_str.strip():
+                        album_artist_str = track_data.artist_name
+
+                    album_artist_entity = self._get_or_create_artist(
+                        session,
+                        album_artist_str,
+                        # sort_name for the album artist is not strictly defined in EchosyncTrack,
+                        # but we can try falling back to artist_sort_name or leave it None.
+                    )
+
                     album = self._get_or_create_album(
                         session,
                         track_data.album_title,
-                        artist,
+                        album_artist_entity,
                         track_data.release_year,
                         album_type=track_data.album_type,
                         release_group_id=track_data.album_release_group_id,

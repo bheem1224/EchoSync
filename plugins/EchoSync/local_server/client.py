@@ -101,6 +101,7 @@ class LocalServerProvider(PluginBase):
                 return self.create_echo_sync_track(
                     title=title,
                     artist=artist,
+                    album_artist=_album_artist if _album_artist else None,
                     album=tags.get('album'),
                     duration_ms=duration_ms,
                     isrc=isrc,
@@ -143,16 +144,51 @@ class LocalServerProvider(PluginBase):
 
         import concurrent.futures
         
-        # Collect all valid files first (rglob is generally fast)
-        files = [p for p in library_dir.rglob('*') if p.is_file() and p.suffix.lower() in supported_exts]
+        def _iter_audio_files(root: Path) -> Generator[Path, None, None]:
+            """Walk the directory tree, yielding audio files while tolerating
+            per-directory PermissionError/OSError."""
+            try:
+                for entry in root.iterdir():
+                    if entry.name == '.zfs':
+                        logger.debug(f"Skipping ZFS directory: {entry}")
+                        continue
+                    try:
+                        if entry.is_symlink():
+                            try:
+                                resolved = entry.resolve(strict=True)
+                                if not resolved.exists():
+                                    continue
+                            except (OSError, RuntimeError):
+                                continue
+
+                        if entry.is_dir():
+                            yield from _iter_audio_files(entry)
+                        elif entry.is_file() and entry.suffix.lower() in supported_exts:
+                            yield entry
+                    except PermissionError:
+                        logger.warning(f"Permission denied, skipping: {entry}")
+                    except OSError as e:
+                        logger.warning(f"OS error scanning {entry}: {e}")
+            except PermissionError:
+                logger.warning(f"Permission denied, skipping directory: {root}")
+            except OSError as e:
+                logger.warning(f"OS error scanning directory {root}: {e}")
+
+        # Collect all valid files first using the safe generator
+        files = list(_iter_audio_files(library_dir))
+        logger.info(f"Local crawler discovered {len(files)} audio files under {library_dir}")
         
         # Process concurrently
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             future_to_path = {executor.submit(process_file, path): path for path in files}
             for future in concurrent.futures.as_completed(future_to_path):
-                track = future.result()
-                if track:
-                    yield track
+                path = future_to_path[future]
+                try:
+                    track = future.result()
+                    if track:
+                        yield track
+                except Exception as e:
+                    logger.warning(f"Failed to process {path}: {e}")
 
     def get_stream_url(self, track_id_or_path: str) -> str:
         """

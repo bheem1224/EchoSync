@@ -1007,6 +1007,7 @@ class PluginBase(ABC):
     def create_echo_sync_track(
         title: str,
         artist: str,
+        album_artist: Optional[str] = None,
         album: Optional[str] = None,
         duration_ms: Optional[int] = None,
         isrc: Optional[str] = None,
@@ -1141,6 +1142,7 @@ class PluginBase(ABC):
         track_kwargs = dict(
             raw_title=title_str,
             artist_name=artist_str,
+            album_artist=album_artist,
             album_title=album_str,
             edition=edition,
             duration=parsed_duration,

@@ -78,6 +78,7 @@ class EchosyncTrack:
 
     # Artist/Album Metadata
     artist_sort_name: Optional[str] = None
+    album_artist: Optional[str] = None
     album_sort_title: Optional[str] = None
     album_type: Optional[str] = None
     album_release_group_id: Optional[str] = None
@@ -320,6 +321,7 @@ class EchosyncTrack:
             'raw_title': self.raw_title,
             'display_title': self.display_title,
             'artist': self.artist_name,
+            'album_artist': self.album_artist,
             'album_title': self.album_title,
             'edition': self.edition,
             'sort_title': self.sort_title,
@@ -383,6 +385,7 @@ class EchosyncTrack:
         track = cls(
             raw_title=raw_title,
             artist_name=data.get('artist') or data.get('artist_name', 'Unknown Artist'),
+            album_artist=data.get('album_artist'),
             album_title=data.get('album_title', 'Unknown Album'),
             edition=data.get('edition'),
             sort_title=data.get('sort_title'),

@@ -1021,24 +1021,32 @@ class PlexClient(MediaServerProvider):
                     f"Using originalTitle (track artist) for '{title}': artist='{artist}'"
                 )
 
-            # Step 2: fall back to album artist
-            if not artist:
-                if deep:
-                    # Deep mode: HTTP round-trip to /metadata/{artistKey}
-                    try:
-                        artist_obj = plex_track.artist()
-                        artist = _safe_getattr(artist_obj, 'title', None) if artist_obj else None
-                        logger.debug(f"Extracted artist for '{title}': artist_obj={artist_obj}, artist_title={artist}")
-                    except (NotFound, AttributeError, Exception) as e:
-                        logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
+            # Step 2: Extract album artist (TPE2)
+            album_artist = None
+            if deep:
+                # Deep mode: HTTP round-trip to /metadata/{artistKey}
+                try:
+                    artist_obj = plex_track.artist()
+                    album_artist = _safe_getattr(artist_obj, 'title', None) if artist_obj else None
+                    logger.debug(f"Extracted album_artist for '{title}': album_artist={album_artist}")
+                except (NotFound, AttributeError, Exception) as e:
+                    logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
 
             # Step 3: cheap XML attribute (always available in batch payload)
-            if not artist:
-                artist = _safe_getattr(plex_track, 'grandparentTitle', None)
-                if artist:
-                    logger.debug(f"Using grandparentTitle for '{title}': artist={artist}")
+            if not album_artist:
+                album_artist = _safe_getattr(plex_track, 'grandparentTitle', None)
+                if album_artist:
+                    logger.debug(f"Using grandparentTitle for '{title}': album_artist={album_artist}")
                 else:
-                    logger.warning(f"Failed to extract artist for track '{title}' via originalTitle, artist(), and grandparentTitle")
+                    logger.warning(f"Failed to extract album_artist for track '{title}'")
+
+            # Fallback for track artist if missing
+            if not artist:
+                artist = album_artist
+                if artist:
+                    logger.debug(f"Falling back to album_artist for track artist '{title}': artist={artist}")
+                else:
+                    logger.warning(f"Failed to extract artist for track '{title}'")
             
             album = None
             if deep:
@@ -1152,6 +1160,7 @@ class PlexClient(MediaServerProvider):
             track = EchosyncTrack(
                 raw_title=title,
                 artist_name=artist,
+                album_artist=album_artist,
                 album_title=album,
                 # Optional fields
                 sort_title=_safe_getattr(plex_track, 'titleSort', None),
