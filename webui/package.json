@@ -8,7 +8,7 @@
     "preview": "vite preview"
   },
   "devDependencies": {
-    "@sveltejs/kit": "^2.54.0",
+    "@sveltejs/kit": "^2.62.0",
     "autoprefixer": "10.4.27",
     "postcss": "^8.5.15",
     "svelte": "^5.55.10",
