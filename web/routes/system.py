@@ -810,52 +810,96 @@ def trigger_metadata_enhancement():
         return jsonify({"error": str(exc)}), 500
 
 
-@bp.post("/database/rebuild")
+@bp.post("/system/reset/state")
 @require_auth
-def rebuild_database():
-    """Rebuild the music library database by dropping and recreating all tables.
+def reset_state():
+    """Drops all tables in working.db and calls create_all() to give a clean operational slate."""
+    try:
+        from database.working_database import get_working_database
+        logger.info("System state reset requested - dropping and recreating working.db")
+        working_db = get_working_database()
+        working_db.drop_all()
+        working_db.create_all()
+        return jsonify({"success": True, "message": "System state reset successfully."}), 200
+    except Exception as e:
+        logger.error(f"Error resetting system state: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to reset system state"}), 500
 
-    This is a destructive operation that will clear all synced tracks from the
-    music library database. The database will be empty after this operation,
-    and library scans will need to be re-run to repopulate it.
 
-    Returns JSON: { "success": true, "message": "..." }
-    """
+@bp.post("/system/reset/library")
+@require_auth
+def reset_library():
+    """Drops and recreates all tables in music_library.db (Wipes the media database, forces a re-crawl)."""
     try:
         from database.music_database import get_database
-        from database.working_database import get_working_database
-        
-        logger.info("Database rebuild requested - clearing music library and working database")
-        
-        # Get database instances
+        logger.info("Library reset requested - dropping and recreating music_library.db")
         music_db = get_database()
-        working_db = get_working_database()
-        
-        # Drop all tables in both databases
-        logger.info("Dropping music library database tables...")
         music_db.drop_all()
-        
-        logger.info("Dropping working database tables...")
-        working_db.drop_all()
-        
-        # Recreate the schemas
-        logger.info("Recreating music library database schema...")
         music_db.create_all()
-        
-        logger.info("Recreating working database schema...")
-        working_db.create_all()
-        
-        logger.info("Database rebuild completed successfully")
-        return jsonify({
-            "success": True,
-            "message": "Database rebuilt successfully. Library is now empty and ready for rescanning."
-        }), 200
+        return jsonify({"success": True, "message": "Music library reset successfully. Ready for rescanning."}), 200
     except Exception as e:
-        logger.error(f"Error rebuilding database: {e}", exc_info=True)
-        return jsonify({
-            "success": False,
-            "error": "Failed to rebuild database"
-        }), 500
+        logger.error(f"Error resetting library: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to reset library"}), 500
+
+
+@bp.post("/system/reset/factory")
+@require_auth
+def reset_factory():
+    """Deletes working.db, music_library.db, and config.db, triggering OOBE on next boot."""
+    try:
+        from core.state import system_state
+        from core.job_queue import JobQueue
+        import threading
+        import time
+        
+        logger.warning("Factory reset requested! Deleting all primary databases.")
+        
+        def execute_factory_reset():
+            time.sleep(2)  # Allow API response to return
+            try:
+                from database.working_database import close_working_database
+                close_working_database()
+            except ImportError:
+                pass
+            
+            try:
+                from database.music_database import close_database
+                close_database()
+            except ImportError:
+                pass
+                
+            try:
+                from database.config_database import close_config_database
+                close_config_database()
+            except ImportError:
+                pass
+            
+            data_dir = os.getenv("ECHOSYNC_DATA_DIR", "data")
+            db_files = [
+                os.path.join(data_dir, "working.db"),
+                os.path.join(data_dir, "music_library.db"),
+                os.path.join(data_dir, "config.db")
+            ]
+            
+            for db_path in db_files:
+                if os.path.exists(db_path):
+                    try:
+                        os.remove(db_path)
+                        logger.info(f"Deleted database: {db_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to delete {db_path}: {e}")
+                        
+            logger.warning("Factory reset complete. Executing hard restart to trigger OOBE.")
+            os._exit(1)
+            
+        system_state.restart_pending = True
+        JobQueue.RESTART_PENDING = True
+        threading.Thread(target=execute_factory_reset, daemon=True).start()
+        
+        return jsonify({"success": True, "message": "Factory reset initiated. System will restart shortly."}), 200
+    except Exception as e:
+        logger.error(f"Error initiating factory reset: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to initiate factory reset"}), 500
 
 @bp.post('/jobs/<job_name>/kill')
 @require_auth

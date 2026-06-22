@@ -26,7 +26,6 @@ from sqlalchemy import (
     UniqueConstraint
 )
 from sqlalchemy.pool import NullPool
-from sqlalchemy.ext.hybrid import hybrid_property, Comparator
 from sqlalchemy.orm import (
     validates,
     DeclarativeBase,
@@ -35,7 +34,6 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
     sessionmaker,
-    synonym,
     scoped_session,
 )
 
@@ -57,21 +55,23 @@ class WorkingBase(DeclarativeBase):
     """Base metadata class for WorkingDatabase SQLAlchemy models."""
 
 
-class WorkingAccount(WorkingBase):
-    __tablename__ = "working_accounts"
+# Phase 2: The Unified Identity Merge
+class Account(WorkingBase):
+    __tablename__ = "accounts"
+    
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-
     plugin_id: Mapped[int] = mapped_column(Integer, index=True)
-    remote_user_id: Mapped[str] = mapped_column(String(255), index=True)
-
+    remote_account_id: Mapped[str] = mapped_column(String(255), index=True)
+    username: Mapped[Optional[str]] = mapped_column(String)
+    
     __table_args__ = (
-        UniqueConstraint('plugin_id', 'remote_user_id', name='uq_working_account_anchor'),
+        UniqueConstraint('plugin_id', 'remote_account_id', name='uq_account_plugin_remote'),
     )
 
     track_states: Mapped[list["UserTrackState"]] = relationship(
         back_populates="account",
         cascade="all, delete-orphan",
-        foreign_keys="[UserTrackState.user_id]"
+        foreign_keys="[UserTrackState.account_id]"
     )
     artist_ratings: Mapped[list["UserArtistRating"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     album_ratings: Mapped[list["UserAlbumRating"]] = relationship(back_populates="account", cascade="all, delete-orphan")
@@ -84,40 +84,14 @@ class UserRating(WorkingBase):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(nullable=False, index=True)
-
-    @hybrid_property
-    def user_id(self):
-        return self.account_id
-
-    @user_id.setter
-    def user_id(self, value):
-        self.account_id = hash_legacy_user(value)
-
-    class _UserRatingUserIdComparator(Comparator):
-        def __eq__(self, other):
-            return self.expression == hash_legacy_user(other)
-
-        def operate(self, op, other, **kwargs):
-            if op.__name__ == 'eq':
-                return op(self.expression, hash_legacy_user(other), **kwargs)
-            return op(self.expression, other, **kwargs)
-
-    @user_id.comparator
-    def user_id(cls):
-        return cls._UserRatingUserIdComparator(cls.account_id)
-    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # 8-character Base62 NanoID
     rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 1-5, or system flags 0.1, 2.1, 3.1
     play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
-    @validates('sync_id')
-    def validate_sync_id(self, key, sync_id):
-        if sync_id:
-            return str(sync_id).split('?')[0]
-        return sync_id
 
-
+# TODO: Defer to v2.8.0 Entity Overhaul
 class WatchlistArtist(WorkingBase):
     """Model for tracking watched artists and their scan status."""
     __tablename__ = "watchlist_artists"
@@ -134,27 +108,17 @@ class WatchlistArtist(WorkingBase):
     )
 
 
-class User(WorkingBase):
-    """Model for authenticated users and system identity."""
-    __tablename__ = "users"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    username: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
-    provider_identifier: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True)
-    provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-
-
-
 class ReviewTask(WorkingBase):
     """Model for items in the Metadata Review Queue."""
     __tablename__ = "review_tasks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    file_path: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    media_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String, default="pending", nullable=False)  # pending, approved, ignored
     detected_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
     confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_checked_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime())
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
@@ -166,8 +130,10 @@ class DownloadQueue(WorkingBase):
     __tablename__ = "download_queue"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    echo_sync_track: Mapped[dict] = mapped_column(JSON, nullable=False)  # Serialized EchosyncTrack
+    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # 8-character Base62 NanoID
+    # Serialized EchosyncTrack containing the new slimmed-down conceptual serialization 
+    # (media array instead of top-level file data).
+    echo_sync_track: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -178,54 +144,19 @@ class DownloadQueue(WorkingBase):
     )
 
 
-class Download(WorkingBase):
-    """Model for tracking download state (Central Control)."""
-    __tablename__ = "downloads"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    echo_sync_track: Mapped[dict] = mapped_column(JSON, nullable=False)  # Serialized EchosyncTrack
-    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
-    provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
-    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
-
-
-    @validates('sync_id')
-    def validate_sync_id(self, key, sync_id):
-        if sync_id:
-            return str(sync_id).split('?')[0]
-        return sync_id
-
-
 class UserTrackState(WorkingBase):
     __tablename__ = "user_track_states"
     __table_args__ = (
-        UniqueConstraint("user_id", "sync_id", name="uq_user_track_state"),
+        UniqueConstraint("account_id", "sync_id", name="uq_user_track_state"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("working_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
-    account_id = synonym('user_id')
-
-    def __init__(self, **kwargs):
-        for key in ('user_id', 'account_id'):
-            if key in kwargs:
-                kwargs[key] = hash_legacy_user(kwargs[key])
-        super().__init__(**kwargs)
-
-    @validates('user_id', 'account_id')
-    def validate_user_id(self, key, value):
-        return hash_legacy_user(value)
-
-    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # 8-character Base62 NanoID
+    
     is_unlinked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_hard_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    sponsor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("working_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
+    sponsor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     admin_exempt_deletion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     admin_force_upgrade: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     lifecycle_action: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
@@ -235,16 +166,11 @@ class UserTrackState(WorkingBase):
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
-    account: Mapped["WorkingAccount"] = relationship(back_populates="track_states", foreign_keys=[user_id])
-    sponsor: Mapped[Optional["WorkingAccount"]] = relationship(foreign_keys=[sponsor_id])
-
-    @validates('sync_id')
-    def validate_sync_id(self, key, sync_id):
-        if sync_id:
-            return str(sync_id).split('?')[0]
-        return sync_id
+    account: Mapped["Account"] = relationship(back_populates="track_states", foreign_keys=[account_id])
+    sponsor: Mapped[Optional["Account"]] = relationship(foreign_keys=[sponsor_id])
 
 
+# TODO: Defer to v2.8.0 Entity Overhaul
 class UserArtistRating(WorkingBase):
     __tablename__ = "user_artist_ratings"
     __table_args__ = (
@@ -252,14 +178,15 @@ class UserArtistRating(WorkingBase):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("working_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     artist_urn: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rating: Mapped[float] = mapped_column(Float)
     is_monitored: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    account: Mapped["WorkingAccount"] = relationship(back_populates="artist_ratings")
+    account: Mapped["Account"] = relationship(back_populates="artist_ratings")
 
 
+# TODO: Defer to v2.8.0 Entity Overhaul
 class UserAlbumRating(WorkingBase):
     __tablename__ = "user_album_ratings"
     __table_args__ = (
@@ -267,39 +194,11 @@ class UserAlbumRating(WorkingBase):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("working_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     album_urn: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rating: Mapped[float] = mapped_column(Float)
 
-    account: Mapped["WorkingAccount"] = relationship(back_populates="album_ratings")
-
-
-class MediaServerPlaylist(WorkingBase):
-    __tablename__ = "media_server_playlists"
-    __table_args__ = (
-        UniqueConstraint("server_source", "playlist_id", name="uq_media_server_playlist"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    server_source: Mapped[str] = mapped_column(String, nullable=False)
-    playlist_id: Mapped[str] = mapped_column(String, nullable=False)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
-
-    items: Mapped[list["MediaServerPlaylistItem"]] = relationship(back_populates="playlist", cascade="all, delete-orphan")
-
-
-class MediaServerPlaylistItem(WorkingBase):
-    __tablename__ = "media_server_playlist_items"
-    __table_args__ = (
-        UniqueConstraint("playlist_id", "plugin_item_id", name="uq_playlist_item"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    playlist_id: Mapped[int] = mapped_column(ForeignKey("media_server_playlists.id", ondelete="CASCADE"), nullable=False, index=True)
-    plugin_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-
-    playlist: Mapped["MediaServerPlaylist"] = relationship(back_populates="items")
+    account: Mapped["Account"] = relationship(back_populates="album_ratings")
 
 
 class PlaybackHistory(WorkingBase):
@@ -314,62 +213,23 @@ class PlaybackHistory(WorkingBase):
     listened_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, index=True)
 
 
-def hash_legacy_user(val):
-    if val is None:
-        return None
-    if isinstance(val, int) or str(val).isdigit():
-        return int(val)
-    import binascii
-    return binascii.crc32(str(val).encode('utf-8')) & 0x7fffffff
-
-
 class SuggestionStagingQueue(WorkingBase):
     __tablename__ = "suggestion_staging_queue"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "music_db_track_id", "reason",
-            name="uq_suggestion_per_user_track_reason"
-        ),
-        UniqueConstraint(
-            "user_id", "sync_id", "reason",
-            name="uq_suggestion_per_user_sync_reason"
+            "account_id", "sync_id", "reason",
+            name="uq_suggestion_per_account_sync_reason"
         ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    account_id = synonym('user_id')
-
-    def __init__(self, **kwargs):
-        for key in ('user_id', 'account_id'):
-            if key in kwargs:
-                kwargs[key] = hash_legacy_user(kwargs[key])
-        super().__init__(**kwargs)
-
-    @validates('user_id', 'account_id')
-    def validate_user_id(self, key, value):
-        return hash_legacy_user(value)
-
-    # Primary key of the matching local track in music.db's ``tracks`` table.
-    # NULL for playlist-gap suggestions where the track does not yet exist locally.
-    music_db_track_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    sync_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
-
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    sync_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)  # NanoID
     reason: Mapped[str] = mapped_column(String, nullable=False, index=True)
 
-    # Structured intent type from the 6-value Intent Engine taxonomy.
-    # Nullable so existing rows (pre-migration) keep working – the UI
-    # should fall back to ``reason`` when this is NULL.
     intent_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
-
-    # Human-readable label shown in the UI alongside the suggestion.
     ui_label: Mapped[str] = mapped_column(String, nullable=False)
-
-    # Free-form JSON blob -- callers may store extra context (matched source title,
-    # duration diff, sync context, playlist name, etc.) to help the user decide.
     context_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-
-    # Lifecycle: "pending" -> "accepted" | "dismissed" | "vetoed"
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
@@ -377,141 +237,29 @@ class SuggestionStagingQueue(WorkingBase):
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
-    @validates('sync_id')
-    def validate_sync_id(self, key, sync_id):
-        if sync_id:
-            return str(sync_id).split('?')[0]
-        return sync_id
-
 
 class SuggestionBlacklist(WorkingBase):
     """
-    Persistent veto list for sync_ids.  Once a sync_id is added here the
+    Persistent veto list for sync_ids. Once a sync_id is added here the
     Intent Engine will never surface it again in any queue, regardless of
     future rating changes.
-
-    Populated via ``POST /api/manager/veto``.
     """
     __tablename__ = "suggestion_blacklist"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    sync_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    sync_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)  # NanoID
     reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Optional admin note
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
-    @validates('sync_id')
-    def validate_sync_id(self, key, sync_id):
-        if sync_id:
-            return str(sync_id).split('?')[0]
-        return sync_id
 
+class PluginStateKVS(WorkingBase):
+    __tablename__ = "plugin_state_kvs"
 
-import threading
-from contextlib import contextmanager
-
-_override_local = threading.local()
-
-class RestrictedConnection:
-    def __init__(self, conn, provider_name):
-        self.conn = conn
-        self.provider_name = provider_name
-
-    def execute(self, statement, *args, **kwargs):
-        if getattr(_override_local, 'override_active', False):
-            return self.conn.execute(statement, *args, **kwargs)
-
-        # Extremely basic DDL block for non-prefixed tables
-        import re
-        stmt_str = str(statement).upper()
-
-        # Block DROP/ALTER
-        if 'DROP TABLE' in stmt_str or 'ALTER TABLE' in stmt_str:
-            match = re.search(r'(DROP|ALTER) TABLE (IF EXISTS )?([a-zA-Z0-9_]+)', stmt_str)
-            if match:
-                table_name = match.group(3)
-                if not table_name.startswith(f"PRV_{self.provider_name.upper()}_"):
-                    raise PermissionError(f"Plugin '{self.provider_name}' is not allowed to modify table '{table_name}'")
-
-        # Block INSERT/UPDATE/DELETE
-        if any(kw in stmt_str for kw in ['INSERT INTO', 'UPDATE', 'DELETE FROM']):
-            match = re.search(r'(INSERT INTO|UPDATE|DELETE FROM)\\s+([a-zA-Z0-9_]+)', stmt_str)
-            if match:
-                table_name = match.group(2)
-                if not table_name.startswith(f"PRV_{self.provider_name.upper()}_"):
-                    raise PermissionError(f"Plugin '{self.provider_name}' is not allowed to write to core table '{table_name}'")
-
-        return self.conn.execute(statement, *args, **kwargs)
-
-    def commit(self):
-        return self.conn.commit()
-
-class PluginStorageBox:
-    """Sandbox wrapper for providers to create their own tables."""
-
-    def __init__(self, provider_name: str, engine, metadata):
-        self.provider_name = provider_name
-        self._engine = engine
-        self.metadata = metadata
-
-    @contextmanager
-    def connect(self):
-        import sqlite3
-        with self._engine.connect() as conn:
-            # Add authorizer to the underlying sqlite3 connection
-            raw_conn = conn.connection.driver_connection
-            if getattr(raw_conn, 'set_authorizer', None):
-                def authorizer_callback(action, table, column, sql_location, ignore):
-                    if action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE, sqlite3.SQLITE_DROP, sqlite3.SQLITE_ALTER_TABLE):
-                        if table and not table.upper().startswith(f"PRV_{self.provider_name.upper()}_"):
-                            if not getattr(_override_local, 'override_active', False):
-                                return sqlite3.SQLITE_DENY
-                    return sqlite3.SQLITE_OK
-                raw_conn.set_authorizer(authorizer_callback)
-
-            try:
-                yield RestrictedConnection(conn, self.provider_name)
-            finally:
-                if getattr(raw_conn, 'set_authorizer', None):
-                    raw_conn.set_authorizer(None)
-
-    @contextmanager
-    def core_write_override(self):
-        """Context manager to temporarily lift write restrictions."""
-        _override_local.override_active = True
-        try:
-            yield
-        finally:
-            _override_local.override_active = False
-
-    def create_table(self, table_name_suffix: str, *columns_definition) -> Table:
-        """
-        Create a table with the enforced `prv_{provider_name}_` prefix.
-
-        Args:
-            table_name_suffix: The name of the table without the provider prefix.
-            *columns_definition: SQLAlchemy Columns to define the schema.
-
-        Returns:
-            The SQLAlchemy Table object created.
-        """
-        table_name = f"prv_{self.provider_name}_{table_name_suffix}"
-
-        # Check if table already exists in metadata to avoid re-creation errors
-        if table_name in self.metadata.tables:
-            return self.metadata.tables[table_name]
-
-        table = Table(
-            table_name,
-            self.metadata,
-            *columns_definition,
-            extend_existing=True
-        )
-        return table
-
-    def execute(self) -> None:
-        """Execute the table creations."""
-        self.metadata.create_all(self._engine)
+    plugin_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
@@ -526,6 +274,50 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     except Exception:
         pass
     cursor.close()
+
+
+class PluginDatabaseFactory:
+    """
+    Phase 1: Persistent Plugin Database Factory.
+    Dynamically points to a centralized, persistent directory for plugin DBs.
+    Structured to abstract away the dialect, so it can return PostgreSQL schemas in the future.
+    """
+    def __init__(self, plugin_id: str):
+        self.plugin_id = plugin_id
+        
+        # Dynamically point to data/plugin_storage/{plugin_id}/storage.db
+        data_dir = os.getenv("ECHOSYNC_DATA_DIR", "data")
+        self.storage_dir = Path(data_dir) / "plugin_storage" / str(self.plugin_id)
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.database_path = self.storage_dir / "storage.db"
+        self.engine_url = f"sqlite:///{self.database_path}"
+        
+        self.engine = create_engine(
+            self.engine_url,
+            future=True,
+            echo=False,
+            poolclass=NullPool,
+            connect_args={"check_same_thread": False}
+        )
+        event.listen(self.engine, "connect", _sqlite_pragmas)
+        self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
+
+    def get_engine(self):
+        """Return the underlying engine. Future-proofs for returning a Postgres schema engine."""
+        return self.engine
+
+    @contextmanager
+    def session_scope(self) -> Generator[Session, None, None]:
+        session = self.SessionLocal()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
 
 class WorkingDatabase:
@@ -587,23 +379,26 @@ class WorkingDatabase:
     def get_system_user_id(self) -> int:
         """Get or create the system user ID for automated flags."""
         with self.session_scope() as session:
-            user = session.query(User).filter(User.username == "Echosync System").first()
-            if user:
-                return user.id
+            account = session.query(Account).filter(Account.username == "Echosync System").first()
+            if account:
+                return account.id
 
-            # Create system user
-            system_user = User(
+            # Create system user account. Use plugin_id=0 for system.
+            system_account = Account(
                 username="Echosync System",
-                provider_identifier="system_local_admin",
-                provider="local"
+                plugin_id=0,
+                remote_account_id="system_local_admin"
             )
-            session.add(system_user)
+            session.add(system_account)
             session.commit()
-            return system_user.id
+            return system_account.id
 
-    def get_provider_storage(self, provider_name: str) -> PluginStorageBox:
-        """Get a sandbox storage wrapper for a specific provider."""
-        return PluginStorageBox(provider_name, self.engine, WorkingBase.metadata)
+    def get_provider_storage(self, plugin_id: str) -> PluginDatabaseFactory:
+        """
+        Phase 1 requirement: Returns a factory that dynamically points to 
+        the plugin's distinct persistent database.
+        """
+        return PluginDatabaseFactory(plugin_id)
 
     def dispose(self) -> None:
         self.engine.dispose()
@@ -611,13 +406,11 @@ class WorkingDatabase:
 
 _working_db_instance: Optional[WorkingDatabase] = None
 
-
 def get_working_database(database_path: Optional[str] = None) -> WorkingDatabase:
     global _working_db_instance
     if _working_db_instance is None:
         _working_db_instance = WorkingDatabase(database_path)
     return _working_db_instance
-
 
 def close_working_database() -> None:
     global _working_db_instance
@@ -628,35 +421,24 @@ def close_working_database() -> None:
 
 working_session_registry = scoped_session(lambda: get_working_database().SessionLocal)
 
-
 __all__ = [
     "WorkingBase",
-    "User",
+    "Account",
     "UserRating",
     "WatchlistArtist",
     "ReviewTask",
-    "Download",
+    "DownloadQueue",
     "UserTrackState",
     "UserArtistRating",
     "UserAlbumRating",
-    "MediaServerPlaylist",
-    "MediaServerPlaylistItem",
     "PlaybackHistory",
     "SuggestionStagingQueue",
     "SuggestionBlacklist",
+    "PluginStateKVS",
+    "PluginDatabaseFactory",
     "WorkingDatabase",
     "get_working_database",
     "close_working_database",
     "INTENT_TYPES",
     "working_session_registry",
 ]
-
-
-
-class PluginStateKVS(WorkingBase):
-    __tablename__ = "plugin_state_kvs"
-
-    plugin_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    key: Mapped[str] = mapped_column(String, primary_key=True)
-    value: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
