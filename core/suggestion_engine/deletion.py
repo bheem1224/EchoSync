@@ -15,7 +15,7 @@ UPGRADE_WEEK_END = "UPGRADE_WEEK_END"
 
 
 def _normalize_sync_id(sync_id: str) -> str:
-    return (sync_id or "").split("?")[0]
+    return (sync_id or "")[0]
 
 
 def _get_or_create_states_for_sync_id(session, sync_id: str):
@@ -25,10 +25,10 @@ def _get_or_create_states_for_sync_id(session, sync_id: str):
 
     # Create minimal state rows for users that have ratings on this sync_id.
     rated_user_ids = [
-        user_id for (user_id,) in session.query(UserRating.user_id).filter(UserRating.sync_id == sync_id).distinct().all()
+        user_id for (user_id,) in session.query(UserRating.account_id).filter(UserRating.sync_id == sync_id).distinct().all()
     ]
     for user_id in rated_user_ids:
-        session.add(UserTrackState(user_id=user_id, sync_id=sync_id))
+        session.add(UserTrackState(account_id=user_id, sync_id=sync_id))
 
     if rated_user_ids:
         session.flush()
@@ -215,8 +215,8 @@ def apply_lifecycle_actions_batch(consensus_map: Dict[str, Dict[str, Any]]) -> D
             veto_checks.append(base_sync_id)
             if base_sync_id.startswith("ss:track:meta:"):
                 try:
-                    encoded = base_sync_id.split("ss:track:meta:", 1)[1]
-                    decoded = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
+
+
                     artist_name, title = decoded.split("|", 1)
                     parsed_tracks.append((artist_name.lower(), title.lower(), base_sync_id))
                 except Exception:

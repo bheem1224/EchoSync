@@ -1,7 +1,7 @@
 from core.event_bus import event_bus as default_event_bus
 from time_utils import utc_now
 from core.tiered_logger import get_logger
-from database.working_database import get_working_database, UserRating, UserTrackState, User
+from database.working_database import get_working_database, UserRating, UserTrackState, Account
 from core.suggestion_engine.consensus import calculate_consensus, stars_to_ten_point
 from core.suggestion_engine.deletion import apply_lifecycle_action
 
@@ -22,15 +22,15 @@ class StateListenerService:
 
     def _resolve_account_id(self, session, provider_user_id, provider_name):
         provider_user_id = str(provider_user_id)
-        user = session.query(User).filter(
-            User.provider_identifier == provider_user_id,
-            User.provider == provider_name
+        user = session.query(Account).filter(
+            Account.remote_account_id == provider_user_id,
+            Account.plugin_id == 1
         ).first()
         if not user:
-            user = User(
+            user = Account(
                 username=f"{provider_name}_{provider_user_id}",
-                provider_identifier=provider_user_id,
-                provider=provider_name
+                remote_account_id=provider_user_id,
+                plugin_id=1
             )
             session.add(user)
             session.flush()
@@ -49,7 +49,7 @@ class StateListenerService:
         with self.Session() as session:
             try:
                 internal_account_id = self._resolve_account_id(session, provider_user_id, provider_name)
-                base_sync_id = sync_id.split('?')[0]
+                base_sync_id = sync_id
 
                 existing = session.query(UserRating).filter(
                     UserRating.account_id == internal_account_id,

@@ -4,7 +4,7 @@ from time_utils import utc_now
 import json
 from core.tiered_logger import get_logger
 from services.download_manager import get_download_manager
-from database.working_database import get_working_database, Download
+from database.working_database import get_working_database, DownloadQueue
 from core.job_queue import list_jobs as jq_list_jobs
 
 logger = get_logger("downloads_route")
@@ -33,7 +33,7 @@ def get_queue():
     """Return all downloads in the queue with their current status."""
     try:
         with get_working_database().session_scope() as session:
-            downloads = session.query(Download).all()
+            downloads = session.query(DownloadQueue).all()
             
             queue_items = []
             for download in downloads:
@@ -79,7 +79,7 @@ def run_downloads():
         if download_job and download_job.get("running"):
             return Response(
                 json.dumps({
-                    "error": "Download manager is already running",
+                    "error": "DownloadQueue manager is already running",
                     "reason": "A download operation is in progress. Please wait for it to complete.",
                     "job": "download_manager",
                     "started_at": download_job.get("last_started")
@@ -92,7 +92,7 @@ def run_downloads():
         dm.process_downloads_now()
         
         return Response(
-            json.dumps({"success": True, "message": "Download processing triggered"}),
+            json.dumps({"success": True, "message": "DownloadQueue processing triggered"}),
             status=200,
             mimetype="application/json"
         )
@@ -110,11 +110,11 @@ def delete_download(download_id: int):
     """Remove a specific download from the queue."""
     try:
         with get_working_database().session_scope() as session:
-            download = session.query(Download).filter(Download.id == download_id).first()
+            download = session.query(DownloadQueue).filter(DownloadQueue.id == download_id).first()
             
             if not download:
                 return Response(
-                    json.dumps({"success": False, "error": "Download not found"}),
+                    json.dumps({"success": False, "error": "DownloadQueue not found"}),
                     status=404,
                     mimetype="application/json"
                 )
@@ -124,7 +124,7 @@ def delete_download(download_id: int):
             
             logger.info(f"Deleted download {download_id} from queue")
             return Response(
-                json.dumps({"success": True, "message": f"Download {download_id} removed"}),
+                json.dumps({"success": True, "message": f"DownloadQueue {download_id} removed"}),
                 status=200,
                 mimetype="application/json"
             )
@@ -142,7 +142,7 @@ def clear_queue():
     """Clear all downloads from the queue."""
     try:
         with get_working_database().session_scope() as session:
-            count = session.query(Download).delete()
+            count = session.query(DownloadQueue).delete()
             session.commit()
             
             logger.info(f"Cleared {count} downloads from queue")
@@ -165,11 +165,11 @@ def search_download(download_id: int):
     """Trigger search and download for a specific queue item."""
     try:
         with get_working_database().session_scope() as session:
-            download = session.query(Download).filter(Download.id == download_id).first()
+            download = session.query(DownloadQueue).filter(DownloadQueue.id == download_id).first()
             
             if not download:
                 return Response(
-                    json.dumps({"success": False, "error": "Download not found"}),
+                    json.dumps({"success": False, "error": "DownloadQueue not found"}),
                     status=404,
                     mimetype="application/json"
                 )
@@ -213,7 +213,7 @@ def delete_batch():
             )
         
         with get_working_database().session_scope() as session:
-            count = session.query(Download).filter(Download.id.in_(ids)).delete(synchronize_session=False)
+            count = session.query(DownloadQueue).filter(DownloadQueue.id.in_(ids)).delete(synchronize_session=False)
             session.commit()
             
             logger.info(f"Deleted {count} downloads from queue (batch)")

@@ -410,11 +410,23 @@ class _HealthCheckSDKFacade:
             plugin=self.plugin_id
         )
 
+
+class _DatabaseFacade:
+    def __init__(self, plugin_id: str):
+        self.plugin_id = plugin_id
+
+    def get_plugin_session(self):
+        from database.working_database import get_working_database
+        working_db = get_working_database()
+        provider_storage = working_db.get_provider_storage(self.plugin_id)
+        return provider_storage.session_scope()
+
 class _SDK:
     def __init__(self):
         # We don't know the plugin_id here yet as it's a global singleton,
         # but facade methods will verify caller.
         self._accounts = _AccountsSDKFacade()
+        self._db = _DatabaseFacade(self._get_plugin_id())
         self.plugins = _PluginsSDKFacade()
         self.file = _FileSDKFacade()
         self.health = _HealthCheckSDKFacade(self._get_plugin_id())
@@ -431,6 +443,10 @@ class _SDK:
     def storage(self):
         from core.file_handling.storage import get_storage_service
         return get_storage_service()
+
+    @property
+    def db(self):
+        return _DatabaseFacade(self._get_plugin_id())
 
     @property
     def accounts(self):

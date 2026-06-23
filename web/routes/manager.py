@@ -7,7 +7,7 @@ from core.settings import config_manager
 from services.library_hygiene import DuplicateHygieneService
 from services.metadata_enhancer import get_metadata_enhancer
 from database.music_database import get_database, Track, Artist
-from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState, User, SuggestionStagingQueue, SuggestionBlacklist
+from database.working_database import get_working_database, UserRating as WorkingUserRating, UserTrackState, Account, SuggestionStagingQueue, SuggestionBlacklist
 from database.config_database import get_config_database
 from core.suggestion_engine.consensus import calculate_consensus
 from core.suggestion_engine.deletion import execute_delete_now, execute_upgrade_now, apply_lifecycle_action, apply_lifecycle_actions_batch
@@ -57,7 +57,7 @@ def automation_level_to_routing(level: int) -> dict:
 
 
 def _normalize_sync_id(sync_id: str) -> str:
-    return (sync_id or "").split("?")[0].strip()
+    return str(sync_id or "").strip()
 
 
 def _sync_id_from_track_id(track_id: int) -> str | None:
@@ -110,7 +110,7 @@ def _resolve_working_user_for_trends():
 
     with working_db.session_scope() as session:
         if requested_user_id:
-            resolved_user = session.query(User).filter(User.id == requested_user_id).first()
+            resolved_user = session.query(User).filter(Account.id == requested_user_id).first()
             if resolved_user:
                 session.expunge(resolved_user)
                 return resolved_user, None, "user_id"
@@ -128,11 +128,11 @@ def _resolve_working_user_for_trends():
                 resolved_account_id = account.get("id")
                 plex_user_id = str(account.get("user_id") or "").strip()
                 if plex_user_id:
-                    resolved_user = session.query(User).filter(User.provider_identifier == plex_user_id).first()
+                    resolved_user = session.query(User).filter(Account.provider_identifier == plex_user_id).first()
                 if not resolved_user:
                     display_name = (account.get("display_name") or account.get("account_name") or "").strip()
                     if display_name:
-                        resolved_user = session.query(User).filter(User.username == display_name).first()
+                        resolved_user = session.query(User).filter(Account.username == display_name).first()
                 if resolved_user:
                     session.expunge(resolved_user)
                     return resolved_user, resolved_account_id, "account_id"
@@ -147,11 +147,11 @@ def _resolve_working_user_for_trends():
             resolved_account_id = fallback_account.get("id")
             plex_user_id = str(fallback_account.get("user_id") or "").strip()
             if plex_user_id:
-                resolved_user = session.query(User).filter(User.provider_identifier == plex_user_id).first()
+                resolved_user = session.query(User).filter(Account.provider_identifier == plex_user_id).first()
             if not resolved_user:
                 display_name = (fallback_account.get("display_name") or fallback_account.get("account_name") or "").strip()
                 if display_name:
-                    resolved_user = session.query(User).filter(User.username == display_name).first()
+                    resolved_user = session.query(User).filter(Account.username == display_name).first()
 
         # Expunge before the session closes so commit() does not expire the object's
         # attributes and callers can safely access .id / .username after this function returns.

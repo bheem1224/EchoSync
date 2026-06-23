@@ -223,7 +223,7 @@ class AutoImportService:
             with work_db.session_scope() as session:
                 task = (
                     session.query(ReviewTask)
-                    .filter(ReviewTask.file_path == file_path)
+                    .filter(ReviewTask.media_id == file_path)
                     .first()
                 )
                 if task is None:

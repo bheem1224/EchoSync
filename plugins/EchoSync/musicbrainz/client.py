@@ -284,9 +284,7 @@ class MusicBrainzClient(PluginBase):
         lookup_str = f"{artist}||{title}".lower()
         lookup_hash = hashlib.sha256(lookup_str.encode('utf-8')).hexdigest()
 
-        storage = self.sdk.storage
-        working_db = storage.get_working_database()
-        with working_db.session_scope() as session:
+        with self.sdk.db.get_plugin_session() as session:
             cached = session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first()
             if cached:
                 # Convert back to EchosyncTrack objects
@@ -373,7 +371,7 @@ class MusicBrainzClient(PluginBase):
                 # Cache successful results
                 if results:
                     try:
-                        with working_db.session_scope() as session:
+                        with self.sdk.db.get_plugin_session() as session:
                             if not session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first():
                                 metadata_json = [t.model_dump() for t in results]
                                 cached_entry = PluginMusicbrainzCache(
@@ -510,9 +508,7 @@ class MusicBrainzClient(PluginBase):
                 # Cache successful results
                 if best_matches:
                     try:
-                        storage = self.sdk.storage
-                        working_db = storage.get_working_database()
-                        with working_db.session_scope() as session:
+                        with self.sdk.db.get_plugin_session() as session:
                             # Avoid duplicates
                             if not session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first():
                                 metadata_json = [t.model_dump() for t in best_matches]

@@ -44,7 +44,16 @@ from sqlalchemy.orm import (
 )
 
 
+
+import string
+import random
+
+def generate_nanoid(size=8) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(random.choices(alphabet, k=size))
+
 class Base(DeclarativeBase):
+
     """Base metadata class for SQLAlchemy models."""
 
 
@@ -162,7 +171,7 @@ class LocalMedia(Base):
     __tablename__ = "local_media"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    media_id: Mapped[str] = mapped_column(String(8), unique=True, index=True, nullable=False)
+    media_id: Mapped[str] = mapped_column(String(8), unique=True, index=True, nullable=False, default=generate_nanoid)
     track_id: Mapped[int] = mapped_column(
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -503,101 +512,25 @@ class MusicDatabase:
         return results
 
     def get_external_identifier_map(self, plugin_source: str, track_ids: List[int]) -> Dict[int, str]:
-        """Return a map of track_id -> plugin_item_id for a plugin.
-
-        Used to quickly determine whether tracks already exist on a target source
-        (e.g., Plex ratingKeys) without issuing repeated lookups.
-        """
         if not track_ids:
             return {}
 
         with self.session_scope() as session:
             rows = (
                 session.query(
-                    ExternalIdentifier.track_id,
+                    LocalMedia.track_id,
                     ExternalIdentifier.plugin_item_id,
                 )
+                .select_from(ExternalIdentifier)
+                .join(LocalMedia, ExternalIdentifier.media_id == LocalMedia.media_id)
                 .filter(
+                    LocalMedia.track_id.in_(track_ids),
                     ExternalIdentifier.plugin_source == plugin_source,
-                    ExternalIdentifier.track_id.in_(track_ids),
                 )
                 .all()
             )
 
-            return {track_id: plugin_item_id for track_id, plugin_item_id in rows}
-
-    def get_external_identifier(self, plugin_source: str, track_id: int) -> Optional[str]:
-        """Return a single plugin_item_id for a track/plugin if present."""
-        mapping = self.get_external_identifier_map(plugin_source, [track_id])
-        return mapping.get(track_id)
-
-    def track_has_external_identifier(self, plugin_source: str, track_id: int) -> bool:
-        """Boolean helper for quick existence checks."""
-        return bool(self.get_external_identifier(plugin_source, track_id))
-
-    @property
-    def session_factory(self):
-        """Expose the configured sessionmaker for external consumers (e.g., LibraryManager)."""
-        return self.SessionLocal
-
-    def count_artists(self) -> int:
-        """Return total artists stored."""
-        with self.session_scope() as session:
-            return session.query(Artist).count()
-
-    def count_albums(self) -> int:
-        """Return total albums stored."""
-        with self.session_scope() as session:
-            return session.query(Album).count()
-
-    def count_tracks(self) -> int:
-        """Return total tracks stored."""
-        with self.session_scope() as session:
-            return session.query(Track).count()
-
-    def get_total_storage_used(self) -> int:
-        """Return total size of all tracks in bytes."""
-        from sqlalchemy import func
-        with self.session_scope() as session:
-            result = session.query(func.sum(Track.file_size_bytes)).scalar()
-            return int(result or 0)
-
-    def check_track_exists(self, title: str, artist: str, confidence_threshold: float = 0.7, server_source: str = None) -> Tuple[Optional[Track], float]:
-        """Check if a track exists in the database using fuzzy matching."""
-        # Local imports to avoid potential circular dependency at module level
-        import re
-        from sqlalchemy import or_
-
-        profile = ExactSyncProfile()
-        engine = WeightedMatchingEngine(profile)
-
-        # Create source track object
-        source_track = EchosyncTrack(
-            raw_title=title,
-            artist_name=artist,
-            album_title=""
-        )
-
-        best_match = None
-        best_score = 0.0
-
-        # Pass 2 Base String generation for broader database search
-        base_title = re.sub(r'[\(\[].*?[\)\]]', '', title)
-        base_title = re.sub(r'-.*$', '', base_title).strip()
-
-        base_artist = re.sub(r'[\(\[].*?[\)\]]', '', artist)
-        base_artist = re.sub(r'-.*$', '', base_artist).strip()
-
-        with self.session_scope() as session:
-            # Find candidates using the broader base strings
-            candidates = session.query(Track).join(Artist).filter(
-                or_(
-                    Artist.name.ilike(f"%{base_artist}%"),
-                    Track.title.ilike(f"%{base_title}%")
-                )
-            ).limit(50).all()
-
-            for candidate in candidates:
+            for row in rows:
                 # Convert DB track to EchosyncTrack for comparison
                 cand_obj = EchosyncTrack(
                     raw_title=candidate.title,

@@ -3,7 +3,7 @@ Tests for DownloadManager._on_track_imported queue cancellation.
 — services/download_manager.py —
 
 When the TRACK_IMPORTED event fires (a file has been confirmed in the local
-library), the Download Manager must silently cancel any active or queued
+library), the DownloadQueue Manager must silently cancel any active or queued
 downloads whose ISRC matches the imported track.  This prevents duplicate
 files appearing on disk and avoids redundant provider searches.
 
@@ -22,7 +22,7 @@ import pytest
 from unittest.mock import patch
 
 from time_utils import utc_now
-from database.working_database import Download
+from database.working_database import DownloadQueue
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from services.download_manager import DownloadManager
 
@@ -58,7 +58,7 @@ def manager(mock_db, mock_work_db):
 # ── Helper ─────────────────────────────────────────────────────────────────────
 
 def _insert_download(work_db, isrc: str, status: str = "queued") -> int:
-    """Insert a single Download row and return its primary-key id.
+    """Insert a single DownloadQueue row and return its primary-key id.
 
     The title and artist_name are derived from the ISRC so that two downloads
     with different ISRCs also have different names.  This prevents the
@@ -71,7 +71,7 @@ def _insert_download(work_db, isrc: str, status: str = "queued") -> int:
         "isrc": isrc,
     }
     with work_db.session_scope() as session:
-        dl = Download(
+        dl = DownloadQueue(
             sync_id=f"ss:isrc:{isrc}",
             echo_sync_track=track_json,
             status=status,
@@ -113,7 +113,7 @@ class TestTrackImportedCancelsQueue:
         manager._on_track_imported(_make_imported_payload(isrc))
 
         with mock_work_db.session_scope() as session:
-            dl = session.get(Download, dl_id)
+            dl = session.get(DownloadQueue, dl_id)
             assert dl.status == "cancelled"
 
     def test_searching_download_is_cancelled_on_isrc_match(self, manager, mock_work_db):
@@ -127,7 +127,7 @@ class TestTrackImportedCancelsQueue:
         manager._on_track_imported(_make_imported_payload(isrc))
 
         with mock_work_db.session_scope() as session:
-            dl = session.get(Download, dl_id)
+            dl = session.get(DownloadQueue, dl_id)
             assert dl.status == "cancelled"
 
     def test_downloading_download_is_cancelled_on_isrc_match(self, manager, mock_work_db):
@@ -141,7 +141,7 @@ class TestTrackImportedCancelsQueue:
         manager._on_track_imported(_make_imported_payload(isrc))
 
         with mock_work_db.session_scope() as session:
-            dl = session.get(Download, dl_id)
+            dl = session.get(DownloadQueue, dl_id)
             assert dl.status == "cancelled"
 
     def test_non_matching_isrc_leaves_download_untouched(self, manager, mock_work_db):
@@ -154,7 +154,7 @@ class TestTrackImportedCancelsQueue:
         manager._on_track_imported(_make_imported_payload("USRC00000000"))
 
         with mock_work_db.session_scope() as session:
-            dl = session.get(Download, dl_id)
+            dl = session.get(DownloadQueue, dl_id)
             assert dl.status == "queued"    # fully unchanged
 
     def test_cancellation_reason_written_to_track_json(self, manager, mock_work_db):
@@ -168,7 +168,7 @@ class TestTrackImportedCancelsQueue:
         manager._on_track_imported(_make_imported_payload(isrc))
 
         with mock_work_db.session_scope() as session:
-            dl = session.get(Download, dl_id)
+            dl = session.get(DownloadQueue, dl_id)
             assert dl.status == "cancelled"
             assert isinstance(dl.echo_sync_track, dict)
             assert "cancellation_reason" in dl.echo_sync_track
@@ -186,7 +186,7 @@ class TestTrackImportedCancelsQueue:
         manager._on_track_imported(_make_imported_payload(isrc))
 
         with mock_work_db.session_scope() as session:
-            dl = session.get(Download, dl_id)
+            dl = session.get(DownloadQueue, dl_id)
             assert dl.status == "cancelled"    # already there — unchanged
 
 
@@ -210,9 +210,9 @@ class TestBatchCancellation:
 
         with mock_work_db.session_scope() as session:
             for dl_id in ids:
-                dl = session.get(Download, dl_id)
+                dl = session.get(DownloadQueue, dl_id)
                 assert dl.status == "cancelled", (
-                    f"Download {dl_id} was expected to be cancelled but is '{dl.status}'"
+                    f"DownloadQueue {dl_id} was expected to be cancelled but is '{dl.status}'"
                 )
 
     def test_unrelated_downloads_survive_batch_cancellation(self, manager, mock_work_db):
@@ -229,8 +229,8 @@ class TestBatchCancellation:
         manager._on_track_imported(_make_imported_payload(target_isrc))
 
         with mock_work_db.session_scope() as session:
-            target_dl = session.get(Download, target_id)
-            other_dl  = session.get(Download, other_id)
+            target_dl = session.get(DownloadQueue, target_id)
+            other_dl  = session.get(DownloadQueue, other_id)
 
             assert target_dl.status == "cancelled"
             assert other_dl.status  == "queued"     # unaffected
@@ -276,6 +276,6 @@ class TestMalformedPayloadHandling:
         })
 
         with mock_work_db.session_scope() as session:
-            dl = session.get(Download, dl_id)
+            dl = session.get(DownloadQueue, dl_id)
             # Not cancelled: ISRC mismatch path; name-match also fails.
             assert dl.status == "queued"

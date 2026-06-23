@@ -94,7 +94,12 @@ def test_api_plugins_contract(client):
         PluginResponse.model_validate(plugin_data)
 
 
-def test_api_library_tracks_contract(client):
+def test_api_library_tracks_contract(client, monkeypatch, tmp_path):
+    from database.music_database import get_database, Base
+    import os
+    db = get_database(os.path.join(str(tmp_path), "music.db"))
+    Base.metadata.create_all(db.engine)
+    monkeypatch.setattr("web.routes.local_metadata.get_database", lambda: db)
     """Validate /api/external/library/tracks contract"""
     # Note: The track list endpoint is registered under the external API provider
     response = client.get("/api/external/library/tracks")

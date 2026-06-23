@@ -16,7 +16,7 @@ from core.settings import config_manager
 from core.job_queue import job_queue
 from database.music_database import get_database
 from database.config_database import get_config_database
-from database.working_database import get_working_database, User, UserRating
+from database.working_database import get_working_database, Account, UserRating
 from core.personalized_playlists import get_personalized_playlists_service
 from services.library_hygiene import DuplicateHygieneService
 from core.suggestion_engine.deletion import process_lifecycle_actions
@@ -38,7 +38,7 @@ def _decode_artist_from_sync_id(sync_id: str) -> str:
 
     try:
         padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
-        decoded = base64.b64decode(padded.encode("ascii")).decode("utf-8", errors="ignore")
+
         artist, _title = decoded.split("|", 1)
         return artist.strip()
     except Exception:
@@ -72,9 +72,9 @@ def _get_top_listened_artists(limit: int = 5):
 
                 user = None
                 if provider_user_id:
-                    user = session.query(User).filter(User.provider_identifier == provider_user_id).first()
+                    user = session.query(User).filter(Account.provider_identifier == provider_user_id).first()
                 if not user and account_name:
-                    user = session.query(User).filter(User.username == account_name).first()
+                    user = session.query(User).filter(Account.username == account_name).first()
 
                 if user:
                     active_user_ids.add(user.id)

@@ -1,5 +1,5 @@
 """
-User History Service for v2.1.0 Suggestion Engine baseline population.
+Account History Service for v2.1.0 Suggestion Engine baseline population.
 
 Syncs historical play counts and ratings from providers into working.db,
 indexed by deterministic sync_id generated from normalized track metadata.
@@ -9,13 +9,13 @@ from typing import Optional, Dict, List, Set
 import re
 from core.tiered_logger import get_logger
 from database.config_database import get_config_database
-from database.working_database import get_working_database, UserRating, User, PlaybackHistory
-from database.music_database import get_database as get_music_database, Track, Artist
+from database.working_database import get_working_database, UserRating, Account, PlaybackHistory
+from database.music_database import LocalMedia, get_database as get_music_database, Track, Artist
 from core.matching_engine.text_utils import generate_deterministic_id
 from core.user_history import UserTrackInteraction
 from sqlalchemy import tuple_
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from database.music_database import ExternalIdentifier
+from database.music_database import LocalMedia, ExternalIdentifier
 from time_utils import utc_now
 
 logger = get_logger("user_history_service")
@@ -176,7 +176,7 @@ class UserHistoryService:
             self.logger.error(error_msg, exc_info=True)
             stats['errors'].append(error_msg)
         
-        self.logger.info(f"User history sync complete: {stats}")
+        self.logger.info(f"Account history sync complete: {stats}")
         return stats
     
     def _get_or_create_working_user(
@@ -185,38 +185,38 @@ class UserHistoryService:
         account_name: str,
         provider_user_id: Optional[str] = None,
         provider: str = 'unknown'
-    ) -> Optional[User]:
+    ) -> Optional[Account]:
         """
         Get or create user record in working.db.
         
         Returns:
-            User object from working_db, or None if creation failed
+            Account object from working_db, or None if creation failed
         """
         try:
             with self.working_db.session_scope() as session:
                 # Try to find existing user by provider_identifier
                 if provider_user_id:
-                    user = session.query(User).filter(
-                        User.provider_identifier == provider_user_id,
-                        User.provider == provider
+                    user = session.query(Account).filter(
+                        Account.remote_account_id == provider_user_id,
+                        Account.plugin_id == 1
                     ).first()
                     if user:
                         return user
                 
                 # Try to find by username + provider
-                user = session.query(User).filter(
-                    User.username == account_name,
-                    User.provider == provider
+                user = session.query(Account).filter(
+                    Account.username == account_name,
+                    Account.plugin_id == 1
                 ).first()
                 
                 if user:
                     return user
                 
                 # Create new user
-                user = User(
+                user = Account(
                     username=account_name,
-                    provider_identifier=provider_user_id,
-                    provider=provider
+                    remote_account_id=provider_user_id,
+                    plugin_id=1
                 )
                 session.add(user)
                 session.commit()
@@ -302,7 +302,8 @@ class UserHistoryService:
                     if plugin_item_ids and plugin_source:
                         ext_idents = (
                             music_session.query(ExternalIdentifier, Track)
-                            .join(Track, ExternalIdentifier.track_id == Track.id)
+                            .join(LocalMedia, ExternalIdentifier.media_id == LocalMedia.media_id)
+                            .join(Track, LocalMedia.track_id == Track.id)
                             .filter(
                                 ExternalIdentifier.plugin_source == plugin_source,
                                 ExternalIdentifier.plugin_item_id.in_(list(plugin_item_ids))
@@ -325,8 +326,8 @@ class UserHistoryService:
                             extracted_id = self._extract_plugin_item_id(interaction)
                             interaction_plugin_id = self._normalize_plugin_item_id(extracted_id) or extracted_id
 
-                            user_record = work_session.query(User).filter_by(id=account_id).first()
-                            playback_user_id = user_record.provider_identifier if user_record and user_record.provider_identifier else str(account_id)
+                            user_record = work_session.query(Account).filter_by(id=account_id).first()
+                            playback_user_id = user_record.remote_account_id if user_record and user_record.remote_account_id else str(account_id)
 
                             if interaction_plugin_id:
                                 playback_payloads.append({
@@ -364,7 +365,7 @@ class UserHistoryService:
                             if interaction_plugin_id and interaction_plugin_id.startswith('ss:track:meta:'):
                                 interaction_records.append({
                                     "interaction": interaction,
-                                    "sync_id": interaction_plugin_id.split('?')[0],
+                                    "sync_id": interaction_plugin_id,
                                     "matched_by_id": True,
                                 })
                                 continue
@@ -499,7 +500,7 @@ class UserHistoryService:
             return
 
         for p in rating_payloads:
-            p['sync_id'] = str(p['sync_id']).split('?')[0]
+            p['sync_id'] = str(p['sync_id'])
 
         if self.working_db.engine.dialect.name == 'sqlite':
             # Backward compatibility: some existing working.db files have
@@ -543,7 +544,7 @@ class UserHistoryService:
             work_session.execute(upsert_stmt)
             return
 
-        sync_ids = [payload['sync_id'].split('?')[0] for payload in rating_payloads]
+        sync_ids = [payload['sync_id'] for payload in rating_payloads]
         existing_sync_ids = {
             sync_id
             for (sync_id,) in work_session.query(UserRating.sync_id).filter(

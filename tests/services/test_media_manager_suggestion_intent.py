@@ -1,6 +1,6 @@
 import base64
 
-from database.music_database import Artist, Track, ExternalIdentifier
+from database.music_database import Artist, Track, ExternalIdentifier, LocalMedia
 from services.media_manager import MediaManagerService
 
 
@@ -41,8 +41,12 @@ def test_media_manager_handles_suggestion_remove_intent_end_to_end(monkeypatch, 
         session.add(artist)
         session.flush()
 
-        track = Track(title="The Song", artist_id=artist.id)
+        track = Track(sync_id="z1z2z3z4", title="The Song", artist_id=artist.id)
         session.add(track)
+        session.flush()
+
+        lm = LocalMedia(media_id="lm_9876", track_id=track.id, file_path="/fake/path")
+        session.add(lm)
         session.flush()
 
         from database.config_database import get_config_database
@@ -50,14 +54,14 @@ def test_media_manager_handles_suggestion_remove_intent_end_to_end(monkeypatch, 
         active_server = config_manager.get('active_media_server', 'plex')
         session.add(
             ExternalIdentifier(
-                track_id=track.id,
+                media_id="lm_9876",
                 plugin_source=active_server,
                 plugin_item_id="12345",
             )
         )
 
     payload = "the artist|the song".encode("utf-8")
-    sync_id = f"ss:track:meta:{base64.b64encode(payload).decode('ascii')}"
+    sync_id = "z1z2z3z4"
 
     manager.handle_suggestion_playlist_remove_intent(
         {
