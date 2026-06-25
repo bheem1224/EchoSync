@@ -27,22 +27,19 @@ logger = get_logger("system_jobs")
 
 
 def _decode_artist_from_sync_id(sync_id: str) -> str:
-    """Decode artist from base sync identity ss:track:meta:{base64(artist|title)}."""
-    raw = str(sync_id or "").strip()
-    if not raw.startswith("ss:track:meta:"):
+    """Decode artist from base sync identity (database lookup via sync_id)."""
+    if not sync_id:
         return ""
-
-    encoded = raw.split("ss:track:meta:", 1)[1].split("?", 1)[0].strip()
-    if not encoded:
-        return ""
-
     try:
-        padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
-
-        artist, _title = decoded.split("|", 1)
-        return artist.strip()
+        from database.music_database import Track
+        db = get_database()
+        with db.session_scope() as session:
+            track = session.query(Track).filter_by(sync_id=sync_id).first()
+            if track and track.artist:
+                return track.artist.name.strip()
     except Exception:
-        return ""
+        pass
+    return ""
 
 
 def _get_top_listened_artists(limit: int = 5):

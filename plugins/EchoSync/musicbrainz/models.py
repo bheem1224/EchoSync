@@ -15,7 +15,5 @@ class PluginMusicbrainzCache(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
 def init_db():
-    from database.working_database import get_working_database
-    working_db = get_working_database()
-    provider_storage = working_db.get_provider_storage('EchoSync.musicbrainz')
-    Base.metadata.create_all(bind=provider_storage.engine)
+    with sdk.db.get_plugin_session() as session:
+        Base.metadata.create_all(bind=session.bind)

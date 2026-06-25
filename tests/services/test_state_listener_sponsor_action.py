@@ -37,7 +37,7 @@ def test_sponsor_rating_removes_from_suggestions_playlist(tmp_path, monkeypatch)
 
     with db.session_scope() as session:
         # Create a Account to satisfy Foreign Key
-        account = Account(plugin_id=1, remote_user_id="42")
+        account = Account(plugin_id=1, remote_account_id="42")
         session.add(account)
         session.flush()
         account_id = account.id

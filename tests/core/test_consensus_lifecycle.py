@@ -109,11 +109,8 @@ def test_deletion_respects_admin_exempt_and_force_upgrade(tmp_path, monkeypatch)
         assert exempt_state is not None
         assert force_state is not None
 
-        assert exempt_state.lifecycle_action in [None, "DELETE_MONTH_END"]
-        pass
-
-        pass
-        pass
+        assert exempt_state.lifecycle_action is None
+        assert force_state.lifecycle_action == "UPGRADE_WEEK_END"
 
     # No immediate intent events are emitted by staging decisions.
     assert bus.events == []

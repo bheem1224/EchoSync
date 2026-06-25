@@ -41,6 +41,7 @@ from sqlalchemy.orm import (
     relationship,
     sessionmaker,
     scoped_session,
+    validates,
 )
 
 
@@ -78,6 +79,13 @@ class Artist(Base):
         back_populates="artist", cascade="all, delete-orphan"
     )
 
+    @validates("name")
+    def validate_name(self, key, value):
+        if value:
+            from core.matching_engine.text_utils import normalize_text
+            self.normalized_name = normalize_text(value)
+        return value
+
 
 class Album(Base):
     __tablename__ = "albums"
@@ -99,6 +107,13 @@ class Album(Base):
     tracks: Mapped[List["Track"]] = relationship(
         back_populates="album", cascade="all, delete-orphan"
     )
+
+    @validates("title")
+    def validate_title(self, key, value):
+        if value:
+            from core.matching_engine.text_utils import normalize_text
+            self.normalized_title = normalize_text(value)
+        return value
 
 
 class Track(Base):
@@ -123,7 +138,7 @@ class Track(Base):
 
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     isrc: Mapped[Optional[str]] = mapped_column(String)
-    sync_id: Mapped[str] = mapped_column(String(8), unique=True, index=True, nullable=False)
+    sync_id: Mapped[str] = mapped_column(String(8), unique=True, index=True, nullable=False, default=generate_nanoid)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
     metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
 
@@ -134,6 +149,13 @@ class Track(Base):
     )
     media_files: Mapped[List["LocalMedia"]] = relationship(
         back_populates="track", cascade="all, delete-orphan"
+    )
+    external_identifiers: Mapped[List["ExternalIdentifier"]] = relationship(
+        "ExternalIdentifier",
+        secondary="local_media",
+        primaryjoin="Track.id == LocalMedia.track_id",
+        secondaryjoin="LocalMedia.media_id == ExternalIdentifier.media_id",
+        viewonly=True,
     )
 
     def get_best_media(self) -> Optional["LocalMedia"]:
@@ -166,6 +188,13 @@ class Track(Base):
         if self.global_rating is None:
             return 0
         return int(round(self.global_rating))
+
+    @validates("title")
+    def validate_title(self, key, value):
+        if value:
+            from core.matching_engine.text_utils import normalize_title
+            self.normalized_title = normalize_title(value)
+        return value
 
 class LocalMedia(Base):
     __tablename__ = "local_media"
@@ -345,6 +374,11 @@ class MusicDatabase:
 
     def session(self) -> Session:
         return self.SessionLocal()
+
+    @property
+    def session_factory(self):
+        """Expose the configured sessionmaker for external consumers (e.g., LibraryManager)."""
+        return self.SessionLocal
 
     @contextmanager
     def session_scope(self) -> Generator[Session, None, None]:
@@ -529,28 +563,29 @@ class MusicDatabase:
                 )
                 .all()
             )
+            return {track_id: plugin_item_id for track_id, plugin_item_id in rows}
 
-            for row in rows:
-                # Convert DB track to EchosyncTrack for comparison
-                cand_obj = EchosyncTrack(
-                    raw_title=candidate.title,
-                    artist_name=candidate.artist.name,
-                    album_title=candidate.album.title if candidate.album else "",
-                    duration=candidate.duration,
-                )
+    def count_artists(self) -> int:
+        """Return total artists stored."""
+        with self.session_scope() as session:
+            return session.query(Artist).count()
 
-                result = engine.calculate_match(source_track, cand_obj)
-                if result.confidence_score > best_score:
-                    best_score = result.confidence_score
-                    best_match = candidate
+    def count_albums(self) -> int:
+        """Return total albums stored."""
+        with self.session_scope() as session:
+            return session.query(Album).count()
 
-            if best_match:
-                session.expunge(best_match)
+    def count_tracks(self) -> int:
+        """Return total tracks stored."""
+        with self.session_scope() as session:
+            return session.query(Track).count()
 
-        if best_score >= (confidence_threshold * 100):
-            return best_match, best_score / 100.0
-
-        return None, 0.0
+    def get_total_storage_used(self) -> int:
+        """Return total size of all tracks in bytes."""
+        from sqlalchemy import func
+        with self.session_scope() as session:
+            result = session.query(func.sum(LocalMedia.file_size_bytes)).scalar()
+            return int(result or 0)
 
     def get_library_hierarchy(self) -> List[Dict]:
         """Fetch the entire library hierarchy (Artist -> Album -> Track)."""

@@ -49,7 +49,7 @@ class StateListenerService:
         with self.Session() as session:
             try:
                 internal_account_id = self._resolve_account_id(session, provider_user_id, provider_name)
-                base_sync_id = sync_id
+                base_sync_id = sync_id.split("?")[0]
 
                 existing = session.query(UserRating).filter(
                     UserRating.account_id == internal_account_id,

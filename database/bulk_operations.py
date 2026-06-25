@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine import text_utils
 from core.tiered_logger import get_logger
-from .music_database import Artist, Album, Track, ExternalIdentifier, AudioFingerprint
+from .music_database import Artist, Album, Track, ExternalIdentifier, AudioFingerprint, LocalMedia, generate_nanoid
 
 logger = get_logger("bulk_operations")
 
@@ -454,18 +454,6 @@ class LibraryManager:
                 track.track_number = track_data.track_number
             if track_data.disc_number is not None:
                 track.disc_number = track_data.disc_number
-            if track_data.bitrate is not None:
-                track.bitrate = track_data.bitrate
-            if track_data.file_path is not None:
-                track.file_path = track_data.file_path
-            if track_data.file_format is not None:
-                track.file_format = track_data.file_format
-            if track_data.sample_rate is not None:
-                track.sample_rate = track_data.sample_rate
-            if track_data.bit_depth is not None:
-                track.bit_depth = track_data.bit_depth
-            if track_data.file_size_bytes is not None:
-                track.file_size_bytes = track_data.file_size_bytes
             if track_data.added_at is not None:
                 track.added_at = track_data.added_at
             if track_data.musicbrainz_id is not None:
@@ -498,8 +486,7 @@ class LibraryManager:
             if media_row is None:
                 m_id = media_data.media_id
                 if not m_id:
-                    import nanoid
-                    m_id = nanoid.generate(alphabet='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz', size=8)
+                    m_id = generate_nanoid(size=8)
 
                 media_row = LocalMedia(
                     track=track,
@@ -533,6 +520,20 @@ class LibraryManager:
 
         if not primary_media and track.media_files:
             primary_media = track.get_best_media()
+
+        if not primary_media and track_data.identifiers:
+            virtual_path = f"virtual://{track_data.sync_id or track.sync_id}"
+            stmt = select(LocalMedia).where(LocalMedia.file_path == virtual_path)
+            media_row = session.execute(stmt).scalar_one_or_none()
+            if media_row is None:
+                m_id = generate_nanoid(size=8)
+                media_row = LocalMedia(
+                    track=track,
+                    media_id=m_id,
+                    file_path=virtual_path,
+                )
+                session.add(media_row)
+            primary_media = media_row
 
         # Link identifiers (Only if we have a primary_media to attach it to)
         if primary_media:
@@ -831,8 +832,9 @@ class LibraryManager:
                         # Skip if identifiers_only=True and no matching track is found
                         continue
 
-                    if track_data.file_path:
-                        observed_file_paths.add(track_data.file_path)
+                    for media_item in getattr(track_data, "media", []):
+                        if media_item.file_path:
+                            observed_file_paths.add(media_item.file_path)
 
                     for source, item_id in (track_data.identifiers or {}).items():
                         if not source or item_id is None:

@@ -15,7 +15,7 @@ UPGRADE_WEEK_END = "UPGRADE_WEEK_END"
 
 
 def _normalize_sync_id(sync_id: str) -> str:
-    return (sync_id or "")[0]
+    return (sync_id or "").split("?")[0]
 
 
 def _get_or_create_states_for_sync_id(session, sync_id: str):
@@ -213,14 +213,16 @@ def apply_lifecycle_actions_batch(consensus_map: Dict[str, Dict[str, Any]]) -> D
         action = (consensus or {}).get("action", "KEEP")
         if action == DELETE_MONTH_END:
             veto_checks.append(base_sync_id)
-            if base_sync_id.startswith("ss:track:meta:"):
-                try:
-
-
-                    artist_name, title = decoded.split("|", 1)
-                    parsed_tracks.append((artist_name.lower(), title.lower(), base_sync_id))
-                except Exception:
-                    pass
+            try:
+                music_db = get_music_database()
+                with music_db.session_scope() as music_session:
+                    track = music_session.query(Track).filter_by(sync_id=base_sync_id).first()
+                    if track and track.artist:
+                        artist_name = track.artist.name
+                        title = track.title
+                        parsed_tracks.append((artist_name.lower(), title.lower(), base_sync_id))
+            except Exception:
+                pass
 
     # 2. Bulk veto resolution using MusicDB
     vetoed_sync_ids = set()
