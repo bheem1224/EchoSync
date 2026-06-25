@@ -1,8 +1,8 @@
 from services.user_history_service import UserHistoryService
 from core.user_history import UserTrackInteraction
 from core.matching_engine.text_utils import generate_deterministic_id
-from database.music_database import Artist, Track, ExternalIdentifier
-from database.working_database import User, UserRating
+from database.music_database import Artist, Track, ExternalIdentifier, LocalMedia
+from database.working_database import Account, UserRating
 
 
 def _test_sync_active_plex_users_to_working_db_creates_day1_users(mock_work_db):
@@ -30,7 +30,7 @@ def _test_sync_active_plex_users_to_working_db_creates_day1_users(mock_work_db):
     assert synced == 2
 
     with mock_work_db.session_scope() as work_session:
-        users = work_session.query(User).order_by(User.username).all()
+        users = work_session.query(Account).order_by(Account.username).all()
         assert [u.username for u in users] == ["Kid A", "Kid B"]
         assert [u.provider_identifier for u in users] == ["plex-user-1", "plex-user-2"]
 
@@ -45,15 +45,15 @@ def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, moc
         music_session.add(artist)
         music_session.flush()
         music_session.add_all([
-            Track(title="Song One", artist=artist),
-            Track(title="Song Two", artist=artist),
+            Track(sync_id="s1o2n3g1", title="Song One", artist=artist),
+            Track(sync_id="s2o2n3g2", title="Song Two", artist=artist),
         ])
 
     with mock_work_db.session_scope() as work_session:
-        user = User(username="listener", provider="plex")
+        user = Account(username="listener", remote_account_id="plex", plugin_id=1)
         work_session.add(user)
         work_session.flush()
-        existing_sync_id = f"ss:track:meta:{generate_deterministic_id('Artist A', 'Song One')}"
+        existing_sync_id = "s1o2n3g1"
         work_session.add(UserRating(account_id=user.id, sync_id=existing_sync_id, rating=2.0))
         user_id = user.id
 
@@ -79,7 +79,7 @@ def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, moc
         }
 
     assert ratings[existing_sync_id] == (4.5, 7)
-    new_sync_id = f"ss:track:meta:{generate_deterministic_id('Artist A', 'Song Two')}"
+    new_sync_id = "s2o2n3g2"
     assert ratings[new_sync_id] == (3.0, 3)
     assert len(ratings) == 2
 
@@ -93,10 +93,11 @@ def test_process_interactions_persists_listen_count_without_rating(mock_db, mock
         artist = Artist(name="Artist B")
         music_session.add(artist)
         music_session.flush()
-        music_session.add(Track(title="Playcount Only", artist=artist))
+        track_playcount = Track(sync_id="p1a2y3c4", title="Playcount Only", artist=artist)
+        music_session.add(track_playcount)
 
     with mock_work_db.session_scope() as work_session:
-        user = User(username="listener2", provider="plex")
+        user = Account(username="listener2", remote_account_id="plex", plugin_id=1)
         work_session.add(user)
         work_session.flush()
         user_id = user.id
@@ -118,7 +119,7 @@ def test_process_interactions_persists_listen_count_without_rating(mock_db, mock
     assert stats["ratings_imported"] == 0
     assert stats["listen_count_imported"] == 12
 
-    sync_id = f"ss:track:meta:{generate_deterministic_id('Artist B', 'Playcount Only')}"
+    sync_id = "p1a2y3c4"
     with mock_work_db.session_scope() as work_session:
         row = work_session.query(UserRating).filter(UserRating.account_id == user_id, UserRating.sync_id == sync_id).one()
         assert row.play_count == 12
@@ -135,13 +136,17 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
         music_session.add(artist)
         music_session.flush()
 
-        track = Track(title="Gangsta's Paradise", artist=artist)
+        track = Track(sync_id="g1p2r3d4", title="Gangsta's Paradise", artist=artist)
         music_session.add(track)
+        music_session.flush()
+
+        lm = LocalMedia(media_id="lm_1234", track_id=track.id, file_path="/fake/path")
+        music_session.add(lm)
         music_session.flush()
 
         music_session.add(
             ExternalIdentifier(
-                track_id=track.id,
+                media_id="lm_1234",
                 plugin_source="plex",
                 plugin_item_id="120760",
                 raw_data=None,
@@ -149,7 +154,7 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
         )
 
     with mock_work_db.session_scope() as work_session:
-        user = User(username="listener3", provider="plex")
+        user = Account(username="listener3", remote_account_id="plex", plugin_id=1)
         work_session.add(user)
         work_session.flush()
         user_id = user.id
@@ -171,7 +176,7 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
     assert stats["ratings_imported"] == 1
     assert stats["listen_count_imported"] == 2
 
-    expected_sync_id = f"ss:track:meta:{generate_deterministic_id('Coolio', 'Gangsta\'s Paradise')}"
+    expected_sync_id = "g1p2r3d4"
     with mock_work_db.session_scope() as work_session:
         row = work_session.query(UserRating).filter(UserRating.account_id == user_id, UserRating.sync_id == expected_sync_id).one()
         assert row.rating == 4.0
@@ -188,13 +193,17 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
         music_session.add(artist)
         music_session.flush()
 
-        track = Track(title="Gangsta's Paradise", artist=artist)
+        track = Track(sync_id="g1p2r3d4", title="Gangsta's Paradise", artist=artist)
         music_session.add(track)
+        music_session.flush()
+
+        lm = LocalMedia(media_id="lm_1234", track_id=track.id, file_path="/fake/path")
+        music_session.add(lm)
         music_session.flush()
 
         music_session.add(
             ExternalIdentifier(
-                track_id=track.id,
+                media_id="lm_1234",
                 plugin_source="plex",
                 plugin_item_id="120760",
                 raw_data=None,
@@ -202,7 +211,7 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
         )
 
     with mock_work_db.session_scope() as work_session:
-        user = User(username="listener4", provider="plex")
+        user = Account(username="listener4", remote_account_id="plex", plugin_id=1)
         work_session.add(user)
         work_session.flush()
         user_id = user.id
@@ -238,7 +247,7 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
     assert stats["ratings_imported"] == 2
     assert stats["listen_count_imported"] == 3
 
-    expected_sync_id = f"ss:track:meta:{generate_deterministic_id('Coolio', 'Gangsta\'s Paradise')}"
+    expected_sync_id = "g1p2r3d4"
     with mock_work_db.session_scope() as work_session:
         row = work_session.query(UserRating).filter(UserRating.account_id == user_id, UserRating.sync_id == expected_sync_id).one()
         assert row.rating == 4.0

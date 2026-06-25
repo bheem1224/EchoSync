@@ -25,7 +25,7 @@ def stars_to_ten_point(stars: float) -> int:
 
 def calculate_consensus(sync_id: str) -> Dict[str, Any]:
     """Calculate lifecycle action for a track based on mapped consensus rating."""
-    base_sync_id = sync_id.split('?')[0]
+    base_sync_id = sync_id
 
     db = get_working_database()
     with db.session_scope() as session:

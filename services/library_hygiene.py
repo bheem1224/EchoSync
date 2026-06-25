@@ -304,7 +304,7 @@ class DuplicateHygieneService:
 
     def _resolve_track_by_sync_id(self, sync_id: str) -> Optional[Track]:
         """Resolve a DB track from deterministic sync_id formats."""
-        base_sync_id = (sync_id or "").split("?")[0]
+        base_sync_id = str(sync_id or "")
 
         with self.db.session_scope() as session:
             return session.query(Track).filter_by(sync_id=base_sync_id).first()

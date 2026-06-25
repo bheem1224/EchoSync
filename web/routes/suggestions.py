@@ -13,7 +13,7 @@ from flask import Blueprint, jsonify, request
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from database.config_database import get_config_database
-from database.working_database import get_working_database, UserRating, User, Download
+from database.working_database import get_working_database, UserRating, Account, DownloadQueue
 from database.music_database import get_database as get_music_database
 from core.account_manager import AccountManager
 from services.download_manager import get_download_manager
@@ -145,8 +145,8 @@ def get_suggestion_accounts():
                 # Find user in working_db and count their high ratings
                 with working_db.session_scope() as work_session:
                     with music_db.session_scope() as music_session:
-                        user = work_session.query(User).filter(
-                            User.provider_identifier == account.get('user_id')
+                        user = work_session.query(Account).filter(
+                            Account.provider_identifier == account.get('user_id')
                         ).first() if account.get('user_id') else None
                     
                         if user:
@@ -240,8 +240,8 @@ def get_pending_suggestions(account_id: int):
         
         try:
             with working_db.session_scope() as session:
-                user = session.query(User).filter(
-                    User.provider_identifier == account.get('user_id')
+                user = session.query(Account).filter(
+                    Account.provider_identifier == account.get('user_id')
                 ).first() if account.get('user_id') else None
             
             if user:
@@ -352,22 +352,22 @@ def get_suggestion_audit():
         working_db = get_working_database()
         config_db = get_config_database()
         
-        # Get Download records as audit history
+        # Get DownloadQueue records as audit history
         audit_history = []
         
         try:
             with working_db.session_scope() as session:
                 from sqlalchemy import desc
                 
-                query = session.query(Download)
+                query = session.query(DownloadQueue)
                 
                 # Optionally filter by account (would need to link via user)
                 if account_id:
-                    # Would need to implement account_id linking in Download model
+                    # Would need to implement account_id linking in DownloadQueue model
                     pass
                 
                 downloads = query.order_by(
-                    desc(Download.created_at)
+                    desc(DownloadQueue.created_at)
                 ).limit(limit).all()
                 
                 for dl in downloads:

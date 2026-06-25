@@ -284,7 +284,7 @@ class PlaylistSyncService:
             media_client, server_type = self._get_active_media_client()
             self._update_progress(playlist.name, f"Matching tracks against {server_type.title()} library", "", 20, 5, 2, total_tracks=total_tracks)
             
-            # Use the same robust matching approach as "Download Missing Tracks"
+            # Use the same robust matching approach as "DownloadQueue Missing Tracks"
             match_results = []
             for i, track in enumerate(playlist.tracks):
                 if self._cancelled:
@@ -941,7 +941,7 @@ class PlaylistSyncService:
         Queues the missing tracks for download.
         """
         from database.music_database import get_database, Track
-        from database.working_database import get_working_database, Download
+        from database.working_database import get_working_database, DownloadQueue
 
         logger.info(f"Starting lightweight batch sync for {len(sync_ids)} items")
         provider_name = getattr(self.provider, 'name', 'unknown') if hasattr(self, 'provider') else 'unknown'
@@ -980,9 +980,9 @@ class PlaylistSyncService:
                 chunk_size = 500
                 for i in range(0, len(sync_ids), chunk_size):
                     chunk = sync_ids[i:i + chunk_size]
-                    queued_downloads = session.query(Download.sync_id).filter(
-                        Download.sync_id.in_([c.split('?')[0] for c in chunk]),
-                        Download.status.in_(['queued', 'searching', 'downloading'])
+                    queued_downloads = session.query(DownloadQueue.sync_id).filter(
+                        DownloadQueue.sync_id.in_([c for c in chunk]),
+                        DownloadQueue.status.in_(['queued', 'searching', 'downloading'])
                     ).all()
                     for d in queued_downloads:
                         existing_sync_ids.add(d.sync_id)

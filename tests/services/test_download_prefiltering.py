@@ -139,7 +139,7 @@ class TestDownloadManagerPrefilterBypass:
             raw_title="Song",
             artist_name="Artist",
             album_title="Album",
-            file_format="flac",
+            quality_tags="flac",
         )
         candidate.identifiers["username"] = "peerA"
         candidate.identifiers["plugin_item_id"] = "Artist/Album/01 - Song.flac"

@@ -109,7 +109,7 @@ class MediaManagerService:
             session.add(staging)
 
     def _resolve_track_id_from_sync_id(self, sync_id: str) -> Optional[int]:
-        base_sync_id = str(sync_id or "").split("?")[0]
+        base_sync_id = str(sync_id or "")
         if not base_sync_id:
             return None
 
@@ -137,7 +137,7 @@ class MediaManagerService:
                 logger.warning(f"Unable to resolve track_id from sync_id: {sync_id}")
                 return
 
-            provider_track_id = self.db.get_external_identifier(active_server, track_id)
+            provider_track_id = self.db.get_external_identifier_map(active_server, [track_id]).get(track_id)
             if not provider_track_id:
                 logger.warning(f"No external identifier for track {track_id} on provider {active_server}")
                 return

@@ -1,5 +1,5 @@
 """
-Download Manager Service - Central Orchestrator for Downloads
+DownloadQueue Manager Service - Central Orchestrator for DownloadQueues
 
 This service acts as the "Source of Truth" for all downloads in Echosync.
 It manages the download lifecycle:
@@ -31,7 +31,7 @@ from time_utils import utc_now
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.nexus_framework.plugin_SDK import PluginBase
 from database.music_database import get_database, Track, Artist, Album
-from database.working_database import get_working_database, Download
+from database.working_database import get_working_database, DownloadQueue
 
 logger = logging.getLogger("download_manager")
 
@@ -81,7 +81,7 @@ class DownloadManager:
             cancelled_count = 0
 
             with self.work_db.session_scope() as session:
-                items = session.query(Download).filter(Download.status.in_(active_states)).all()
+                items = session.query(DownloadQueue).filter(DownloadQueue.status.in_(active_states)).all()
                 for item in items:
                     item_sig = self._normalize_track_signature(item.echo_sync_track or {})
                     # Match on ISRC if present
@@ -338,7 +338,7 @@ class DownloadManager:
                 # No user priority defined, use registry order
                 sorted_names = available_providers
             
-            logger.info(f"Download provider search order: {sorted_names}")
+            logger.info(f"DownloadQueue provider search order: {sorted_names}")
             
             # Instantiate providers in sorted order
             instances = []
@@ -391,8 +391,8 @@ class DownloadManager:
                 )
                 return existing_id
 
-            download = Download(
-                sync_id=track.sync_id.split('?')[0],
+            download = DownloadQueue(
+                sync_id=track.sync_id,
                 echo_sync_track=track_json,
                 status="queued",
                 created_at=utc_now(),
@@ -401,7 +401,7 @@ class DownloadManager:
             session.add(download)
             session.flush() # Populate ID
 
-            logger.info(f"Download queued with ID: {download.id}")
+            logger.info(f"DownloadQueue queued with ID: {download.id}")
             return download.id
 
     async def start_background_task(self):
@@ -420,14 +420,14 @@ class DownloadManager:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             logger.info(
-                "Download Manager: no running event loop — auto-start skipped. "
+                "DownloadQueue Manager: no running event loop — auto-start skipped. "
                 "The job queue will drive download processing via process_downloads_now()."
             )
             return
 
         self._loop = loop
         self._loop_task = loop.create_task(self._process_loop())
-        logger.info("Download Manager background task started (shared async loop)")
+        logger.info("DownloadQueue Manager background task started (shared async loop)")
 
     async def stop_background_task(self):
         """Stop the background processing loop."""
@@ -439,12 +439,12 @@ class DownloadManager:
                 pass
             self._loop_task = None
         self._loop = None
-        logger.info("Download Manager background task stopped")
+        logger.info("DownloadQueue Manager background task stopped")
 
     async def _recover_stuck_items(self):
         """Reset items stuck in 'searching' state back to 'queued' on startup."""
         with self.work_db.session_scope() as session:
-            stuck_items = session.query(Download).filter(Download.status.ilike("searching")).all()
+            stuck_items = session.query(DownloadQueue).filter(DownloadQueue.status.ilike("searching")).all()
             if stuck_items:
                 logger.warning(f"Found {len(stuck_items)} stuck downloads. Resetting to 'queued'.")
                 for item in stuck_items:
@@ -453,9 +453,9 @@ class DownloadManager:
             
             # Also clean up legacy downloads with invalid provider_id format
             # These are from before the compound ID (username|filename) format was implemented
-            legacy_items = session.query(Download).filter(
-                Download.status.ilike("downloading"),
-                Download.provider_id.isnot(None)
+            legacy_items = session.query(DownloadQueue).filter(
+                DownloadQueue.status.ilike("downloading"),
+                DownloadQueue.provider_id.isnot(None)
             ).all()
             
             cleaned = 0
@@ -482,7 +482,7 @@ class DownloadManager:
                 # 1. Process Queued Items
                 await self._process_queued_items()
 
-                # 2. Check Active Downloads
+                # 2. Check Active DownloadQueues
                 await self._check_active_downloads()
 
                 # 3. Sleep
@@ -504,7 +504,7 @@ class DownloadManager:
         with self.work_db.session_scope() as session:
             # Get up to 30 queued items to enable concurrent searches
             # Order by created_at DESC to prioritize newer tracks first
-            items = session.query(Download).filter(Download.status.ilike("queued")).order_by(Download.created_at.desc()).limit(30).all()
+            items = session.query(DownloadQueue).filter(DownloadQueue.status.ilike("queued")).order_by(DownloadQueue.created_at.desc()).limit(30).all()
             if items:
                 logger.info(f"Found {len(items)} queued items for processing.")
 
@@ -535,7 +535,7 @@ class DownloadManager:
 
     async def _execute_waterfall_search_and_download(self, download_id: int, providers: List[PluginBase]):
         """
-        Perform Waterfall Search -> Match -> Download for a single item.
+        Perform Waterfall Search -> Match -> DownloadQueue for a single item.
         
         Algorithm:
         1. For each provider in priority order:
@@ -543,16 +543,16 @@ class DownloadManager:
            - Get matching engine candidates
            - If perfect match (score >= 90), break and download
            - Otherwise, track best candidate and continue
-        2. Download the best candidate found across all providers
+        2. DownloadQueue the best candidate found across all providers
         """
         target_track = None
 
         # Reload fresh state and reconstruct EchosyncTrack from queue payload
         # This ensures no metadata (ISRC, Album, etc) is lost
         with self.work_db.session_scope() as session:
-            download = session.query(Download).get(download_id)
+            download = session.query(DownloadQueue).get(download_id)
             if not download:
-                logger.error(f"Download ID {download_id} not found in DB.")
+                logger.error(f"DownloadQueue ID {download_id} not found in DB.")
                 return
             # Reconstruct from stored JSON to preserve all metadata
             target_track = EchosyncTrack.from_dict(download.echo_sync_track)
@@ -848,10 +848,10 @@ class DownloadManager:
                 return
 
             if provider_id:
-                logger.info(f"Download started: {provider_id}")
+                logger.info(f"DownloadQueue started: {provider_id}")
                 self._update_status(download_id, "downloading", provider_id)
             else:
-                logger.error(f"Download provider {winning_provider_name} returned no provider_id")
+                logger.error(f"DownloadQueue provider {winning_provider_name} returned no provider_id")
                 self._update_status(download_id, "failed_start_download")
 
         except Exception as e:
@@ -867,7 +867,7 @@ class DownloadManager:
         active_downloads = []
         with self.work_db.session_scope() as session:
             # Find items marked 'downloading'
-            items = session.query(Download).filter(Download.status.ilike("downloading")).all()
+            items = session.query(DownloadQueue).filter(DownloadQueue.status.ilike("downloading")).all()
             for item in items:
                 active_downloads.append((item.id, item.provider_id))
 
@@ -937,14 +937,14 @@ class DownloadManager:
                     self._update_status(db_id, new_status, provider_id, speed, progress)
 
                     if new_status != "downloading":
-                        logger.info(f"Download {db_id} (Provider {found_provider}, ID {provider_id}) finished with status: {new_status}")
+                        logger.info(f"DownloadQueue {db_id} (Provider {found_provider}, ID {provider_id}) finished with status: {new_status}")
 
                         if new_status == "completed":
-                            logger.info(f"Download completed, removing {db_id} from queue")
+                            logger.info(f"DownloadQueue completed, removing {db_id} from queue")
                             self._remove_from_queue(db_id)
-                            logger.info(f"Download {db_id} completed. TODO: Trigger Auto Import/Post-Processing.")
+                            logger.info(f"DownloadQueue {db_id} completed. TODO: Trigger Auto Import/Post-Processing.")
                 else:
-                    logger.info(f"Download {db_id} not found in any active provider transfers - marking as completed")
+                    logger.info(f"DownloadQueue {db_id} not found in any active provider transfers - marking as completed")
                     self._update_status(db_id, "completed")
                     self._remove_from_queue(db_id)
 
@@ -1423,7 +1423,7 @@ class DownloadManager:
             free_slots = int(candidate.identifiers.get('free_upload_slots', 0) or 0)
             upload_speed = int(candidate.identifiers.get('upload_speed', 0) or 0)
             queue_length = int(candidate.identifiers.get('queue_length', 0) or 0)
-            size = int(candidate.file_size_bytes or candidate.identifiers.get('size', 0) or 0)
+            size = int(candidate.media[0].get("size", 0) if getattr(candidate, "media", []) else 0 or candidate.identifiers.get('size', 0) or 0)
             size_rank = size if prefer_larger_files else -size
             plugin_item_id = candidate.identifiers.get('plugin_item_id', '') or ''
             return (
@@ -1441,7 +1441,7 @@ class DownloadManager:
         """CLEANUP TASK 1: Remove a download from the queue after successful completion."""
         try:
             with self.work_db.session_scope() as session:
-                download = session.query(Download).get(download_id)
+                download = session.query(DownloadQueue).get(download_id)
                 if download:
                     session.delete(download)
                     logger.info(f"Removed completed download {download_id} from queue")
@@ -1456,8 +1456,8 @@ class DownloadManager:
         try:
             with self.work_db.session_scope() as session:
                 # Get all queued items
-                queued_items = session.query(Download).filter(
-                    Download.status.in_(['queued', 'searching', 'downloading', 'failed_no_match'])
+                queued_items = session.query(DownloadQueue).filter(
+                    DownloadQueue.status.in_(['queued', 'searching', 'downloading', 'failed_no_match'])
                 ).all()
                 
                 if not queued_items:
@@ -1498,7 +1498,7 @@ class DownloadManager:
     def _update_status(self, download_id: int, status: str, provider_id: Optional[str] = None, speed: float = 0.0, progress: float = 0.0):
         """Helper to update DB status, speed, and progress"""
         with self.work_db.session_scope() as session:
-            download = session.query(Download).get(download_id)
+            download = session.query(DownloadQueue).get(download_id)
             if download:
                 download.status = (status or "").lower()
                 
@@ -1520,7 +1520,7 @@ class DownloadManager:
 
         active_states = {"queued", "searching", "downloading", "QUEUED", "SEARCHING", "DOWNLOADING"}
         with self.work_db.session_scope() as session:
-            items = session.query(Download).filter(Download.status.in_(active_states)).all()
+            items = session.query(DownloadQueue).filter(DownloadQueue.status.in_(active_states)).all()
             for item in items:
                 other_sig = self._normalize_track_signature(item.echo_sync_track or {})
                 if signature == other_sig:
@@ -1552,7 +1552,7 @@ class DownloadManager:
     def get_status(self, download_id: int) -> Optional[Dict]:
         """Get status for UI"""
         with self.work_db.session_scope() as session:
-            download = session.query(Download).get(download_id)
+            download = session.query(DownloadQueue).get(download_id)
             if download:
                 return {
                     "id": download.id,
@@ -1609,8 +1609,8 @@ class DownloadManager:
         try:
             with self.work_db.session_scope() as session:
                 # Get all queued items
-                queued_items = session.query(Download).filter(
-                    Download.status.in_(['queued', 'searching', 'failed_no_match'])
+                queued_items = session.query(DownloadQueue).filter(
+                    DownloadQueue.status.in_(['queued', 'searching', 'failed_no_match'])
                 ).all()
 
                 if not queued_items:
@@ -1688,7 +1688,7 @@ class DownloadManager:
                 logger.info("Manual download processing completed")
 
             asyncio.run_coroutine_threadsafe(_manual_pass(), self._loop)
-            logger.info("Download processing triggered on existing event loop")
+            logger.info("DownloadQueue processing triggered on existing event loop")
             return
 
         # No persistent loop — run a self-contained one-shot cycle.
@@ -1700,12 +1700,12 @@ class DownloadManager:
             self._purge_existing_tracks_from_queue()
             await self._process_queued_items()
             await self._check_active_downloads()
-            logger.info("Download processing cycle complete")
+            logger.info("DownloadQueue processing cycle complete")
 
         try:
             asyncio.run(_one_pass())
         except Exception as e:
-            logger.error(f"Download processing cycle failed: {e}", exc_info=True)
+            logger.error(f"DownloadQueue processing cycle failed: {e}", exc_info=True)
 
     def _requeue_retryable_failed_items(self, limit: int = 50) -> int:
         """Move retryable failed items back to queued so manual runs can re-attempt them.
@@ -1726,9 +1726,9 @@ class DownloadManager:
         requeued = 0
         with self.work_db.session_scope() as session:
             items = (
-                session.query(Download)
-                .filter(Download.status.in_(retryable_statuses))
-                .order_by(Download.created_at.desc())  # Newest first
+                session.query(DownloadQueue)
+                .filter(DownloadQueue.status.in_(retryable_statuses))
+                .order_by(DownloadQueue.created_at.desc())  # Newest first
                 .limit(limit)
                 .all()
             )
@@ -1777,5 +1777,5 @@ def register_download_manager_job(interval_seconds: int = 21600):
     )
 
     logger.info(
-        f"Download manager job registered (name: download_manager, interval: {interval_seconds}s, first run after startup: {interval_seconds}s)"
+        f"DownloadQueue manager job registered (name: download_manager, interval: {interval_seconds}s, first run after startup: {interval_seconds}s)"
     )

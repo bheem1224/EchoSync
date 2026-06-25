@@ -15,5 +15,5 @@ class PluginMusicbrainzCache(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
 def init_db():
-    working_db = sdk.storage.get_working_database()
-    Base.metadata.create_all(bind=working_db.engine)
+    with sdk.db.get_plugin_session() as session:
+        Base.metadata.create_all(bind=session.bind)

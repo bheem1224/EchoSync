@@ -25,10 +25,10 @@ def _get_or_create_states_for_sync_id(session, sync_id: str):
 
     # Create minimal state rows for users that have ratings on this sync_id.
     rated_user_ids = [
-        user_id for (user_id,) in session.query(UserRating.user_id).filter(UserRating.sync_id == sync_id).distinct().all()
+        user_id for (user_id,) in session.query(UserRating.account_id).filter(UserRating.sync_id == sync_id).distinct().all()
     ]
     for user_id in rated_user_ids:
-        session.add(UserTrackState(user_id=user_id, sync_id=sync_id))
+        session.add(UserTrackState(account_id=user_id, sync_id=sync_id))
 
     if rated_user_ids:
         session.flush()
@@ -213,14 +213,16 @@ def apply_lifecycle_actions_batch(consensus_map: Dict[str, Dict[str, Any]]) -> D
         action = (consensus or {}).get("action", "KEEP")
         if action == DELETE_MONTH_END:
             veto_checks.append(base_sync_id)
-            if base_sync_id.startswith("ss:track:meta:"):
-                try:
-                    encoded = base_sync_id.split("ss:track:meta:", 1)[1]
-                    decoded = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
-                    artist_name, title = decoded.split("|", 1)
-                    parsed_tracks.append((artist_name.lower(), title.lower(), base_sync_id))
-                except Exception:
-                    pass
+            try:
+                music_db = get_music_database()
+                with music_db.session_scope() as music_session:
+                    track = music_session.query(Track).filter_by(sync_id=base_sync_id).first()
+                    if track and track.artist:
+                        artist_name = track.artist.name
+                        title = track.title
+                        parsed_tracks.append((artist_name.lower(), title.lower(), base_sync_id))
+            except Exception:
+                pass
 
     # 2. Bulk veto resolution using MusicDB
     vetoed_sync_ids = set()
