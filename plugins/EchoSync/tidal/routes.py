@@ -2,6 +2,7 @@
 import logging
 from flask import Blueprint, request, jsonify
 from core.tiered_logger import get_logger
+from core.nexus_framework.plugin_SDK import sdk
 
 logger = get_logger("tidal_routes")
 bp = Blueprint("tidal_routes", __name__, url_prefix="/api/plugins/tidal")
@@ -164,9 +165,7 @@ def update_account(account_id):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         
-        import zlib
-        from core.nexus_framework.plugin_SDK import PluginStorageBox
-        sdk = PluginStorageBox()
+        # Using global SDK singleton
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
@@ -198,9 +197,7 @@ def update_account(account_id):
             if plugin: plugin.secrets.set('client_secret', client_secret_value)
         
         # Return updated account
-        import zlib
-        from core.nexus_framework.plugin_SDK import PluginStorageBox
-        sdk = PluginStorageBox()
+        # Using global SDK singleton
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
@@ -229,9 +226,7 @@ def activate_account(account_id):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         
-        import zlib
-        from core.nexus_framework.plugin_SDK import PluginStorageBox
-        sdk = PluginStorageBox()
+        # Using global SDK singleton
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
@@ -260,9 +255,7 @@ def delete_account(account_id):
         return jsonify({'error': 'Tidal provider is disabled'}), 403
     try:
         
-        import zlib
-        from core.nexus_framework.plugin_SDK import PluginStorageBox
-        sdk = PluginStorageBox()
+        # Using global SDK singleton
         deleted = sdk.accounts.delete_account(account_id)
         
         if not deleted:
@@ -313,9 +306,7 @@ def debug_account(account_id):
         
         
         # Check if account exists
-        import zlib
-        from core.nexus_framework.plugin_SDK import PluginStorageBox
-        sdk = PluginStorageBox()
+        # Using global SDK singleton
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         

@@ -1,4 +1,4 @@
-from core.nexus_framework.plugin_SDK import PluginStorageBox
+from core.nexus_framework.plugin_SDK import sdk
 """Jellyfin provider routes."""
 
 import logging
@@ -18,12 +18,12 @@ def get_settings():
     if PluginRegistry.is_plugin_disabled('jellyfin'):
         return jsonify({'settings': {}}), 200
     try:
-        base_url = PluginStorageBox().config.get('jellyfin.base_url', '')
-        username = PluginStorageBox().config.get('jellyfin.username', '')
-        password = PluginStorageBox().config.get('jellyfin.password', '')
+        base_url = sdk.config.get('jellyfin.base_url', '')
+        username = sdk.config.get('jellyfin.username', '')
+        password = sdk.config.get('jellyfin.password', '')
         
         # Check if this is the active media server
-        active_media_server = PluginStorageBox().config.get('active_media_server', 'plex')
+        active_media_server = sdk.config.get('active_media_server', 'plex')
         is_active = (active_media_server == 'jellyfin')
         
         # Check connection status
@@ -72,17 +72,17 @@ def save_settings():
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
-            PluginStorageBox().config.set('jellyfin.base_url', base_url)
+            sdk.config.set('jellyfin.base_url', base_url)
             logger.info(f"Jellyfin base_url saved: {base_url}")
         
         if 'username' in data:
             username = data['username'].strip()
-            PluginStorageBox().config.set('jellyfin.username', username)
+            sdk.config.set('jellyfin.username', username)
             logger.info(f"Jellyfin username saved: {username}")
         
         if 'password' in data:
             password = data['password'].strip()
-            PluginStorageBox().config.set('jellyfin.password', password)
+            sdk.config.set('jellyfin.password', password)
             logger.info(f"Jellyfin password saved")
         
         return jsonify({'success': True})
@@ -95,7 +95,7 @@ def save_settings():
 def activate_server():
     """Set Jellyfin as the active media server."""
     try:
-        PluginStorageBox().config.set('active_media_server', 'jellyfin')
+        sdk.config.set('active_media_server', 'jellyfin')
         logger.info("Jellyfin set as active media server")
         return jsonify({
             'success': True,
@@ -110,9 +110,9 @@ def activate_server():
 def test_connection():
     """Test connection to Jellyfin server."""
     try:
-        base_url = PluginStorageBox().config.get('jellyfin.base_url', '').strip()
-        username = PluginStorageBox().config.get('jellyfin.username', '').strip()
-        password = PluginStorageBox().config.get('jellyfin.password', '').strip()
+        base_url = sdk.config.get('jellyfin.base_url', '').strip()
+        username = sdk.config.get('jellyfin.username', '').strip()
+        password = sdk.config.get('jellyfin.password', '').strip()
         
         if not base_url:
             return jsonify({'error': 'Server URL is required'}), 400

@@ -1,4 +1,4 @@
-from core.nexus_framework.plugin_SDK import PluginStorageBox
+from core.nexus_framework.plugin_SDK import sdk
 """Plex provider routes."""
 
 import threading
@@ -22,11 +22,11 @@ def get_settings():
     if PluginRegistry.is_plugin_disabled('plex'):
         return jsonify({'settings': {}}), 200
     try:
-        base_url = PluginStorageBox().config.get('plex.base_url', '')
-        server_name = PluginStorageBox().config.get('plex.server_name', '')
+        base_url = sdk.config.get('plex.base_url', '')
+        server_name = sdk.config.get('plex.server_name', '')
         
         # Retrieve token from Singleton Account
-        sdk = PluginStorageBox()
+        # Using global SDK singleton
         from core.security import decrypt_string
         
         accounts = sdk.accounts.get_all()
@@ -39,7 +39,7 @@ def get_settings():
                 token = decrypt_string(token_data.get('access_token'))
 
         # Check if this is the active media server
-        active_media_server = PluginStorageBox().config.get('active_media_server', 'plex')
+        active_media_server = sdk.config.get('active_media_server', 'plex')
         is_active = (active_media_server == 'plex')
         
         # Check connection status
@@ -77,18 +77,18 @@ def save_settings():
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
-            PluginStorageBox().config.set('plex.base_url', base_url)
+            sdk.config.set('plex.base_url', base_url)
             logger.info(f"Plex base_url saved: {base_url}")
         
         if 'server_name' in data:
             server_name = data['server_name'].strip()
-            PluginStorageBox().config.set('plex.server_name', server_name)
+            sdk.config.set('plex.server_name', server_name)
             logger.info(f"Plex server_name saved: {server_name}")
         
         if 'token' in data:
             # We don't save tokens to config_manager anymore. We save them to account_tokens
             token = data['token'].strip()
-            sdk = PluginStorageBox()
+            # Using global SDK singleton
             from core.security import encrypt_string
             from .client import PlexClient
             import time
@@ -119,7 +119,7 @@ def save_settings():
 def activate_server():
     """Set Plex as the active media server."""
     try:
-        PluginStorageBox().config.set('active_media_server', 'plex')
+        sdk.config.set('active_media_server', 'plex')
         logger.info("Plex set as active media server")
         return jsonify({
             'success': True,
@@ -138,10 +138,10 @@ def test_connection():
 
         base_url = str(
             payload.get('base_url')
-            or PluginStorageBox().config.get('plex.base_url', '')
+            or sdk.config.get('plex.base_url', '')
         ).strip()
 
-        sdk = PluginStorageBox()
+        # Using global SDK singleton
         from core.security import decrypt_string
 
         
@@ -287,7 +287,7 @@ def poll_oauth(session_id: str):
             logger.debug(f"Plex poll API check failed: {e}")
 
         if is_logged_in and auth_token:
-            sdk = PluginStorageBox()
+            # Using global SDK singleton
             from core.security import encrypt_string
             from .client import PlexClient
             
@@ -368,7 +368,7 @@ def sync_plex_users():
     """Sync Plex admin and managed users into settings database and return the updated list."""
     try:
         from .client import PlexClient
-        sdk = PluginStorageBox()
+        # Using global SDK singleton
 
         client = PlexClient()
         client.import_managed_users()

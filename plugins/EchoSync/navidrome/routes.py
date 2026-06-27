@@ -1,4 +1,4 @@
-from core.nexus_framework.plugin_SDK import PluginStorageBox
+from core.nexus_framework.plugin_SDK import sdk
 """Navidrome provider routes."""
 
 import logging
@@ -18,12 +18,12 @@ def get_settings():
     if PluginRegistry.is_plugin_disabled('navidrome'):
         return jsonify({'settings': {}}), 200
     try:
-        base_url = PluginStorageBox().config.get('navidrome.base_url', '')
-        username = PluginStorageBox().config.get('navidrome.username', '')
-        password = PluginStorageBox().config.get('navidrome.password', '')
+        base_url = sdk.config.get('navidrome.base_url', '')
+        username = sdk.config.get('navidrome.username', '')
+        password = sdk.config.get('navidrome.password', '')
         
         # Check if this is the active media server
-        active_media_server = PluginStorageBox().config.get('active_media_server', 'plex')
+        active_media_server = sdk.config.get('active_media_server', 'plex')
         is_active = (active_media_server == 'navidrome')
         
         # Check connection status
@@ -73,17 +73,17 @@ def save_settings():
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
-            PluginStorageBox().config.set('navidrome.base_url', base_url)
+            sdk.config.set('navidrome.base_url', base_url)
             logger.info(f"Navidrome base_url saved: {base_url}")
         
         if 'username' in data:
             username = data['username'].strip()
-            PluginStorageBox().config.set('navidrome.username', username)
+            sdk.config.set('navidrome.username', username)
             logger.info(f"Navidrome username saved: {username}")
         
         if 'password' in data:
             password = data['password'].strip()
-            PluginStorageBox().config.set('navidrome.password', password)
+            sdk.config.set('navidrome.password', password)
             logger.info(f"Navidrome password saved")
         
         return jsonify({'success': True})
@@ -96,7 +96,7 @@ def save_settings():
 def activate_server():
     """Set Navidrome as the active media server."""
     try:
-        PluginStorageBox().config.set('active_media_server', 'navidrome')
+        sdk.config.set('active_media_server', 'navidrome')
         logger.info("Navidrome set as active media server")
         return jsonify({
             'success': True,
@@ -111,9 +111,9 @@ def activate_server():
 def test_connection():
     """Test connection to Navidrome server."""
     try:
-        base_url = PluginStorageBox().config.get('navidrome.base_url', '').strip()
-        username = PluginStorageBox().config.get('navidrome.username', '').strip()
-        password = PluginStorageBox().config.get('navidrome.password', '').strip()
+        base_url = sdk.config.get('navidrome.base_url', '').strip()
+        username = sdk.config.get('navidrome.username', '').strip()
+        password = sdk.config.get('navidrome.password', '').strip()
         
         if not base_url:
             return jsonify({'error': 'Server URL is required'}), 400

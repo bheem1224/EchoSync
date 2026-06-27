@@ -509,58 +509,6 @@ class _SDK:
 
 sdk = _SDK()
 
-class PluginStorageBox:
-    def __init__(self):
-        import inspect
-        import zlib
-        from database.working_database import PluginStorageBox as InternalStorageBox
-        from database.working_database import get_working_database, WorkingBase
-
-        self.plugin_id = None
-
-        # Walk the stack to bypass decorators and find the true plugin origin
-        for frame_info in inspect.stack():
-            filename = frame_info.filename.replace('\\', '/')
-
-            # Check if the execution frame originates from a plugin directory
-            if '/plugins/' in filename and ('/data/plugins/' in filename or '/app/plugins/' in filename):
-                try:
-                    # Extract namespace: /plugins/Author/PluginName/...
-                    sub_path = filename.split('/plugins/')[-1]
-                    parts = sub_path.split('/')
-                    if len(parts) >= 2:
-                        author = parts[0]
-                        plugin_name = parts[1]
-                        namespace = f"{author}.{plugin_name}"
-
-                        # Compute the exact database integer hash
-                        self.plugin_id = zlib.crc32(namespace.lower().encode('utf-8')) & 0xFFFFFFFF
-                        break
-                except Exception:
-                    continue
-
-        if not self.plugin_id:
-            raise RuntimeError(
-                f"Zero-Trust Violation: Could not derive plugin identity from call stack. "
-                f"Are you instantiating PluginStorageBox outside a plugin directory?"
-            )
-
-        db = get_working_database()
-        self._internal_storage = InternalStorageBox(provider_name=str(self.plugin_id), engine=db.engine, metadata=WorkingBase.metadata)
-
-        # In order to act as a unified facade for sdk.config, sdk.secrets, etc.
-        # we will hold a reference to the global SDK and proxy to it if internal_storage doesn't have it
-        self._global_sdk = sdk
-
-    def __getattr__(self, name):
-        # 1. Try to get it from the global SDK (for .config, .secrets, .accounts, etc.)
-        if hasattr(self._global_sdk, name):
-            return getattr(self._global_sdk, name)
-        # 2. Try to get it from internal storage (for .connect(), .create_table(), etc.)
-        if hasattr(self._internal_storage, name):
-            return getattr(self._internal_storage, name)
-        raise AttributeError(f"'PluginStorageBox' object has no attribute '{name}'")
-
 
 class WasmPluginWrapper:
     """Wrapper to safely execute .wasm plugins via wasmtime-py"""
