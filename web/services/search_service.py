@@ -82,7 +82,12 @@ class SearchAdapter:
 
         return results
 
-    async def federated_discovery(self, query: str, enabled_plugin_ids: Optional[List[int]] = None) -> List[Dict]:
+    async def federated_discovery(
+        self,
+        query: str,
+        enabled_plugin_ids: Optional[List[int]] = None,
+        enabled_providers: Optional[List[str]] = None
+    ) -> List[Dict]:
         """Async federated discovery utilizing all search providers."""
         
         search_providers = []
@@ -92,6 +97,11 @@ class SearchAdapter:
                 
             try:
                 provider = PluginRegistry.create_instance(plugin_id)
+                if enabled_providers is not None:
+                    prov_names_lower = [p.lower() for p in enabled_providers]
+                    if provider.name.lower() not in prov_names_lower:
+                        continue
+                        
                 caps = get_plugin_capabilities(plugin_id)
                 if getattr(caps.search, 'tracks', False):
                     search_providers.append((provider, plugin_id))
