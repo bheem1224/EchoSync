@@ -1093,17 +1093,6 @@ function Zt(e) {
 		}
 	});
 }
-new Set([
-	"copyWithin",
-	"fill",
-	"pop",
-	"push",
-	"reverse",
-	"shift",
-	"sort",
-	"splice",
-	"unshift"
-]);
 var Qt, $t, en, tn;
 function nn() {
 	if (Qt === void 0) {

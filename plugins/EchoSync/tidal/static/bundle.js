@@ -1099,17 +1099,6 @@ function tn(e) {
 		}
 	});
 }
-new Set([
-	"copyWithin",
-	"fill",
-	"pop",
-	"push",
-	"reverse",
-	"shift",
-	"sort",
-	"splice",
-	"unshift"
-]);
 var nn, rn, an, on;
 function sn() {
 	if (nn === void 0) {
