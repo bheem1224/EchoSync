@@ -1,22 +1,22 @@
 <script>
   import { page } from '$app/stores';
-  import { providers } from '../stores/providers';
+  import { plugins } from '../stores/plugins';
   import { metadataQueue } from '../stores/metadataQueue';
   import { openSettings } from '../stores/settingsPanel';
   import { pluginViews } from '../stores/pluginViews';
   import { sidebarPrefs, LOCKED_ROUTES } from '../stores/preferences';
   import { onMount } from 'svelte';
 
-  let providerCapabilities = $state([]);
+  let pluginCapabilities = $state([]);
 
   onMount(() => {
     // metadataQueue.fetchCount();
   });
 
-  // Sync provider capabilities reactively
+  // Sync plugin capabilities reactively
   $effect(() => {
-    if ($providers.loaded) {
-      providerCapabilities = Object.values($providers.items)
+    if ($plugins.loaded) {
+      pluginCapabilities = Object.values($plugins.items)
         .filter((p) => !p.disabled)
         .map((p) => p.capabilities);
     }
@@ -29,7 +29,7 @@
     { label: 'Dashboard', href: '/dashboard', icon: '🏠',  locked: false },
     { label: 'Sync',      href: '/sync',      icon: '🔄',  locked: true  },
     { label: 'Search',    href: '/search',    icon: '🔍',  locked: false,
-      guard: () => providerCapabilities.some((c) => c?.search?.tracks) },
+      guard: () => pluginCapabilities.some((c) => c?.search?.tracks) },
     { label: 'Discover',  href: '/discover',  icon: '✨',  locked: false },
     { label: 'Library',   href: '/library',   icon: '🎵',  locked: true  },
   ];
@@ -50,11 +50,11 @@
   // ── Settings links ────────────────────────────────────────────────────
   const settingsLinks = $derived([
     { label: 'Preferences',       href: '/settings/preferences' },
-    { label: '── Providers',      href: null, divider: true },
+    { label: '── Plugins',      href: null, divider: true },
     { label: 'Music Services',    href: '/settings/music-services' },
     { label: 'Servers',           href: '/settings/servers' },
     { label: 'Download Clients',  href: '/settings/download-clients' },
-    { label: '── Plugins',        href: null, divider: true },
+    { label: '── Plugin Store',   href: null, divider: true },
     { label: 'Plugin Store',      href: '/settings/plugin-store' },
     { label: '── Other',          href: null, divider: true },
     { label: 'Metadata',          href: '/settings/metadata' },

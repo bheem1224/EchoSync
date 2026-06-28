@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { providers } from '../../stores/providers';
+  import { plugins } from '../../stores/plugins';
   import { settings } from '../../stores/settings';
   import { settingsPanel } from '../../stores/settingsPanel';
   import QualityProfiles from '../../components/QualityProfiles.svelte';
@@ -40,20 +40,20 @@
 
   onMount(async () => {
     try {
-      await Promise.all([providers.load(), settings.load()]);
+      await Promise.all([plugins.load(), settings.load()]);
     } catch (err) {
       loadError = 'Failed to load settings. Check backend /api/settings.';
       console.error(err);
     }
   });
 
-  $: providerList = Object.values($providers?.items ?? []);
+  $: pluginList = Object.values($plugins?.items ?? []);
   $: userSettings = $settings?.data ?? {};
-  $: streamingProviders = providerList.filter((p) => (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE' || p.capabilities?.supports_sync);
-  $: serverProviders = providerList.filter((p) => p.capabilities?.server);
-  $: metadataProviders = providerList.filter((p) => p.capabilities?.metadata);
-  $: searchProviders = providerList.filter((p) => p.capabilities?.search?.tracks);
-  $: miscProviders = providerList.filter((p) => !streamingProviders.includes(p) && !serverProviders.includes(p) && !metadataProviders.includes(p) && !searchProviders.includes(p));
+  $: streamingPlugins = pluginList.filter((p) => (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE' || p.capabilities?.supports_sync);
+  $: serverPlugins = pluginList.filter((p) => p.capabilities?.server);
+  $: metadataPlugins = pluginList.filter((p) => p.capabilities?.metadata);
+  $: searchPlugins = pluginList.filter((p) => p.capabilities?.search?.tracks);
+  $: miscPlugins = pluginList.filter((p) => !streamingPlugins.includes(p) && !serverPlugins.includes(p) && !metadataPlugins.includes(p) && !searchPlugins.includes(p));
 
   function updateSetting(key, value) {
     settings.save({ [key]: value });
@@ -155,7 +155,7 @@
     color: var(--text);
   }
 
-  .provider-settings-grid {
+  .plugin-settings-grid {
     display: flex;
     flex-direction: column;
     gap: 16px;

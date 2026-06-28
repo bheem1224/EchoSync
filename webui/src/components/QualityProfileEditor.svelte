@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import { dndzone } from 'svelte-dnd-action';
-  import { providers } from '../stores/providers';
+  import { plugins } from '../stores/plugins';
 
   const { profile = null } = $props();
   const dispatch = createEventDispatcher();
@@ -22,15 +22,15 @@
     'MP3','FLAC','OGG','AAC','ALAC','APE','WAV','DSD'
   ];
 
-  // Derived state from providers store
-  const providerList = $derived(Object.values($providers?.items ?? {}));
-  const hasMetadataProvider = $derived(providerList.some((p) => p.capabilities?.metadata_richness === 'HIGH' || p.capabilities?.metadata_richness === 'MEDIUM'));
-  const hasMatchingProvider = $derived(providerList.some((p) =>
+  // Derived state from plugins store
+  const pluginList = $derived(Object.values($plugins?.items ?? {}));
+  const hasMetadataPlugin = $derived(pluginList.some((p) => p.capabilities?.metadata_richness === 'HIGH' || p.capabilities?.metadata_richness === 'MEDIUM'));
+  const hasMatchingPlugin = $derived(pluginList.some((p) =>
     p.capabilities?.metadata_richness === 'HIGH' ||
     p.capabilities?.search?.tracks ||
     p.capabilities?.search_capabilities?.tracks
   ));
-  const hasDownloaderWithSearch = $derived(providerList.some(p => p.capabilities?.search?.tracks));
+  const hasDownloaderWithSearch = $derived(pluginList.some(p => p.capabilities?.search?.tracks));
 
   onMount(() => {
     if (profile) {
@@ -193,7 +193,7 @@
 
     <section class="advanced">
       <h3 class="text-base font-semibold mb-3">Tie-Breaker Strategy</h3>
-      {#if hasMatchingProvider && hasDownloaderWithSearch}
+      {#if hasMatchingPlugin && hasDownloaderWithSearch}
         <label class="flex flex-col gap-1">
           <span class="text-xs text-secondary font-medium mb-1">Select priority when multiple high-quality matches are found:</span>
           <select
@@ -205,8 +205,8 @@
             <option value="SPEED" class="bg-black/50 text-white">Speed (Fastest)</option>
           </select>
         </label>
-      {:else if !hasMatchingProvider}
-        <p class="muted">Tie-breaker options available when capable providers are installed.</p>
+      {:else if !hasMatchingPlugin}
+        <p class="muted">Tie-breaker options available when capable plugins are installed.</p>
       {/if}
     </section>
 
