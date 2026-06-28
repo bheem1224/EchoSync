@@ -10,7 +10,7 @@
   import BottomPlayer from '../components/BottomPlayer.svelte';
   import EncryptionKeyWarning from '../components/EncryptionKeyWarning.svelte';
   import MigrationModal from '../components/MigrationModal.svelte';
-  import { providers } from '../stores/providers';
+  import { plugins } from '../stores/plugins';
   import { systemStatus } from '../stores/systemStatus';
   import { loadPluginViews } from '../stores/pluginViews';
   import apiClient from '../api/client';
@@ -25,7 +25,7 @@
 
   onMount(async () => {
     theme.init();
-    providers.load();
+    plugins.load();
     loadPluginViews();          // fire-and-forget — populates pluginViews store
     systemStatus.startPolling(5000); // Poll every 5 seconds
 
