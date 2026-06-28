@@ -624,10 +624,17 @@ class MusicDatabase:
             # inflates row count to artists×albums×tracks, causing an OOM spike.
             from datetime import date
 
-            # OPTIMIZATION: yield_per fetches results in batches of 1000 to drastically lower RAM
-            artists_query = session.query(Artist).options(
-                selectinload(Artist.albums).selectinload(Album.tracks)
-            ).order_by(Artist.name).yield_per(1000)
+            # Query only artists that have actual local media files attached to their tracks
+            artists_query = (
+                session.query(Artist)
+                .options(
+                    selectinload(Artist.albums)
+                    .selectinload(Album.tracks)
+                    .selectinload(Track.media_files)
+                )
+                .filter(Artist.albums.any(Album.tracks.any(Track.media_files.any())))
+                .order_by(Artist.name)
+            )
 
             hierarchy = []
             for artist in artists_query:
@@ -642,6 +649,11 @@ class MusicDatabase:
                 sorted_albums = sorted(artist.albums, key=lambda a: _safe_parse_date(a.release_date), reverse=True)
 
                 for album in sorted_albums:
+                    # Filter tracks that actually have local files attached to them
+                    album_tracks = [t for t in album.tracks if t.media_files]
+                    if not album_tracks:
+                        continue
+
                     parsed_date = _safe_parse_date(album.release_date)
                     album_data = {
                         "id": album.id,
@@ -652,7 +664,7 @@ class MusicDatabase:
                     }
 
                     # Sort tracks by disc number and track number
-                    sorted_tracks = sorted(album.tracks, key=lambda t: (t.disc_number or 1, t.track_number or 0))
+                    sorted_tracks = sorted(album_tracks, key=lambda t: (t.disc_number or 1, t.track_number or 0))
 
                     for track in sorted_tracks:
                         album_data["tracks"].append({

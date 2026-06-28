@@ -1,26 +1,13 @@
 """Library adapter for summarizing library servers and canonical tracks."""
 
 from typing import Dict, List
-import os
 from pathlib import Path
 from core.settings import config_manager
-from core.nexus_framework.plugin_loader import get_plugin_capabilities
-from core.nexus_framework.plugin_SDK import MetadataRichness
 
-from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from database.music_database import get_database
 from core.tiered_logger import get_logger
 
 logger = get_logger("library_service")
-
-
-def _metadata_completeness(richness: str) -> str:
-    mapping = {
-        'LOW': 'partial',
-        'MEDIUM': 'standard',
-        'HIGH': 'complete',
-    }
-    return mapping.get(richness, 'unknown')
 
 
 def _get_database_size_mb() -> float:
@@ -44,71 +31,6 @@ class LibraryAdapter:
         Returns:
             dict: servers, stats, tracks, artists, albums
         """
-        servers: List[Dict] = []
-        provider_artists = 0
-        provider_albums = 0
-        provider_tracks = 0
-        
-        # Get the active media server
-        active_server = config_manager.get('active_media_server', 'plex')
-        
-        # Get all media server providers
-        provider_names = PluginRegistry.list_plugins()
-        
-        for provider_name in provider_names:
-            # skip disabled providers entirely; they shouldn't count toward
-            # servers or be instantiated for stats
-            if PluginRegistry.is_plugin_disabled(provider_name):
-                logger.debug(f"Skipping disabled provider in library overview: {provider_name}")
-                continue
-
-            try:
-                caps = get_plugin_capabilities(provider_name)
-                
-                # Skip if not a library/media server provider
-                if not caps.supports_library_scan:
-                    continue
-                
-                richness = caps.metadata.name
-                is_active = (provider_name == active_server)
-                
-                # Try to get library stats from the provider if it's active
-                track_count = 0
-                artist_count = 0
-                album_count = 0
-                
-                if is_active:
-                    try:
-                        # only instantiate active provider (and it's not disabled)
-                        provider = PluginRegistry.create_instance(provider_name)
-                        if provider and hasattr(provider, 'ensure_connection') and hasattr(provider, 'get_library_stats'):
-                            if provider.ensure_connection():
-                                stats = provider.get_library_stats()
-                                track_count = stats.get('tracks', 0)
-                                artist_count = stats.get('artists', 0)
-                                album_count = stats.get('albums', 0)
-                                
-                                # Store provider stats separately
-                                provider_tracks = track_count
-                                provider_artists = artist_count
-                                provider_albums = album_count
-                    except Exception as e:
-                        logger.error(f"Error getting stats from {provider_name}: {e}")
-                
-                servers.append({
-                    "name": provider_name,
-                    "type": "media_server",
-                    "metadata_richness": richness,
-                    "track_count": track_count,
-                    "artist_count": artist_count,
-                    "album_count": album_count,
-                    "is_active": is_active,
-                })
-                
-            except Exception as e:
-                logger.error(f"Error processing provider {provider_name}: {e}")
-                continue
-
         # Get actual database stats (what's been synced to Echosync database)
         db_tracks = 0
         db_artists = 0
@@ -128,22 +50,31 @@ class LibraryAdapter:
             logger.debug(f"Database stats retrieved: {db_tracks} tracks, {db_artists} artists, {db_albums} albums")
         except Exception as e:
             logger.error(f"Error getting database stats: {e}", exc_info=True)
-            db_artists = 0
-            db_albums = 0
-            db_tracks = 0
+
+        active_server = config_manager.get('active_media_server', 'plex')
+        
+        servers = [{
+            "name": active_server,
+            "type": "media_server",
+            "metadata_richness": "standard",
+            "track_count": db_tracks,
+            "artist_count": db_artists,
+            "album_count": db_albums,
+            "is_active": True,
+        }]
 
         tracks = []
         artists = []
         albums = []
         
-        # Stats should reflect what's actually in the Echosync database
+        # Stats reflect what's actually in the Echosync database
         stats = {
             "synced_tracks": db_tracks,
             "synced_artists": db_artists,
             "synced_albums": db_albums,
-            "total_tracks": provider_tracks,  # Available in source provider
-            "total_artists": provider_artists,
-            "total_albums": provider_albums,
+            "total_tracks": db_tracks,
+            "total_artists": db_artists,
+            "total_albums": db_albums,
             "database_size_mb": db_size_mb,
         }
 

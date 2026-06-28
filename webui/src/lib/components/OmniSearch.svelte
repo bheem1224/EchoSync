@@ -130,7 +130,7 @@
     }
 
     // Settings search (either via #settings, > prefix, or local fallback)
-    if (settingsContext || evaluatedQuery.startsWith(">") || (!evaluatedQuery.match(/^[>!?#]/) && !forcedPrefix)) {
+    if (settingsContext || evaluatedQuery.startsWith(">") || (!evaluatedQuery.match(/^[>!?#@]/) && !forcedPrefix)) {
       const searchTerm = settingsContext 
         ? cleanQuery.trim().toLowerCase() 
         : (evaluatedQuery.startsWith(">") ? evaluatedQuery.replace(/^>\s*/, '').toLowerCase() : evaluatedQuery.toLowerCase());
@@ -923,6 +923,40 @@
       </p>
 
       <div class="flex flex-col gap-4 mb-6">
+        <!-- Legacy Shortcut Tokens -->
+        <div class="bg-black/20 border border-white/5 p-3.5 rounded-xl">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="bg-accent/10 text-accent font-mono text-xs px-2 py-0.5 rounded border border-accent/20">&gt;</span>
+            <span class="text-xs text-muted">Search Settings & Commands</span>
+          </div>
+          <p class="text-slate-300 text-xs font-medium">Example: <code class="text-white bg-white/5 px-1.5 py-0.5 rounded">&gt; preferences</code></p>
+        </div>
+
+        <div class="bg-black/20 border border-white/5 p-3.5 rounded-xl">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="bg-accent/10 text-accent font-mono text-xs px-2 py-0.5 rounded border border-accent/20">!</span>
+            <span class="text-xs text-muted">Search & Manage Plugins</span>
+          </div>
+          <p class="text-slate-300 text-xs font-medium">Example: <code class="text-white bg-white/5 px-1.5 py-0.5 rounded">! spotify</code></p>
+        </div>
+
+        <div class="bg-black/20 border border-white/5 p-3.5 rounded-xl">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="bg-accent/10 text-accent font-mono text-xs px-2 py-0.5 rounded border border-accent/20">#</span>
+            <span class="text-xs text-muted">Search Library Only</span>
+          </div>
+          <p class="text-slate-300 text-xs font-medium">Example: <code class="text-white bg-white/5 px-1.5 py-0.5 rounded"># abbey road</code></p>
+        </div>
+
+        <div class="bg-black/20 border border-white/5 p-3.5 rounded-xl">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="bg-accent/10 text-accent font-mono text-xs px-2 py-0.5 rounded border border-accent/20">@</span>
+            <span class="text-xs text-muted">Search Artists Only</span>
+          </div>
+          <p class="text-slate-300 text-xs font-medium">Example: <code class="text-white bg-white/5 px-1.5 py-0.5 rounded">@ beatles</code></p>
+        </div>
+
+        <!-- Advanced Tokens -->
         <div class="bg-black/20 border border-white/5 p-3.5 rounded-xl">
           <div class="flex items-center justify-between mb-1.5">
             <span class="bg-accent/10 text-accent font-mono text-xs px-2 py-0.5 rounded border border-accent/20">@plugin</span>
@@ -950,7 +984,7 @@
 
       <button 
         type="button" 
-        class="w-full py-2.5 bg-accent text-black font-bold rounded-xl border-none cursor-pointer hover:brightness-110 active:scale-[0.98] transition-all"
+        class="btn btn-primary w-full mt-4"
         on:click={() => showHelpBooklet = false}
       >
         Got it!
