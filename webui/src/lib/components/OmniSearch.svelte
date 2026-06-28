@@ -728,7 +728,7 @@
                             </button>
                             
                             {#if ext.ownership_state === 'missing'}
-                              <button class="ml-4 px-4 py-2 text-[11px] font-bold bg-accent text-black rounded-lg hover:scale-105 active:scale-95 transition-all shadow-[0_0_15px_rgba(15,239,136,0.3)] flex items-center gap-1.5 border-none cursor-pointer" on:click|stopPropagation={() => handleSelect(ext, 'download')}>
+                              <button class="ml-4 px-4 py-2 text-[11px] font-bold bg-accent text-black rounded-lg hover:scale-105 active:scale-95 transition-all shadow-[0_0_15px_rgba(15,239,136,0.3)] flex items-center gap-1.5 border-none cursor-pointer" on:click|stopPropagation={() => handleAction(ext, 'download')}>
                                 📥 Download
                               </button>
                             {/if}
@@ -887,7 +887,7 @@
                   </button>
                   
                   {#if ext.ownership_state === 'missing'}
-                    <button class="ml-4 px-3 py-1.5 text-[10px] font-bold bg-accent text-black rounded hover:scale-105 active:scale-95 transition-all shadow-lg flex items-center gap-1 border-none cursor-pointer" on:click|stopPropagation={() => handleSelect(ext, 'download')}>
+                    <button class="ml-4 px-3 py-1.5 text-[10px] font-bold bg-accent text-black rounded hover:scale-105 active:scale-95 transition-all shadow-lg flex items-center gap-1 border-none cursor-pointer" on:click|stopPropagation={() => handleAction(ext, 'download')}>
                       📥 Download
                     </button>
                   {/if}

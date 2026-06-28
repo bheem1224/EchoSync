@@ -40,19 +40,25 @@ class DuplicateHygieneService:
 
                 for fp_hash in duplicate_hashes:
                     # Get all tracks for this fingerprint
+                    from sqlalchemy.orm import joinedload
                     fingerprints = (
                         session.query(AudioFingerprint)
+                        .options(joinedload(AudioFingerprint.media))
                         .filter(AudioFingerprint.chromaprint == fp_hash)
                         .all()
                     )
 
-                    track_ids = [fp.track_id for fp in fingerprints]
+                    track_ids = list({fp.media.track_id for fp in fingerprints if fp.media})
                     # Fetch tracks eagerly with Artist to avoid N+1 inside loop
                     # Actually session is open, so lazy load is fine, but better to be efficient if possible.
-                    from sqlalchemy.orm import joinedload
+                    from sqlalchemy.orm import joinedload, selectinload
                     tracks = (
                         session.query(Track)
-                        .options(joinedload(Track.artist), joinedload(Track.album))
+                        .options(
+                            joinedload(Track.artist),
+                            joinedload(Track.album),
+                            selectinload(Track.media_files)
+                        )
                         .join(Artist)
                         .filter(Track.id.in_(track_ids))
                         .all()
@@ -128,12 +134,14 @@ class DuplicateHygieneService:
                 logger.warning(f"Could not load quality profile {profile_id}: {e}")
 
         def sort_key(t):
-            br = t.bitrate or 0
+            br = max([m.bitrate for m in t.media if m.bitrate] or [0])
+            sample_rate = max([m.sample_rate for m in t.media if m.sample_rate] or [0])
+            file_size = max([m.file_size_bytes for m in t.media if m.file_size_bytes] or [0])
             effective_br = br if br <= max_bitrate else -br
             return (
                 effective_br,
-                t.sample_rate or 0,
-                t.file_size_bytes or 0
+                sample_rate,
+                file_size
             )
 
         sorted_tracks = sorted(verified_tracks, key=sort_key, reverse=True)

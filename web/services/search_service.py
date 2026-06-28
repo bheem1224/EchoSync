@@ -265,7 +265,7 @@ class SearchAdapter:
                         "source": source,
                         "is_local": is_local,
                         "external_url": external_url,
-                        "provider": provider_name
+                        "plugin": provider_name
                     }
                     if local_artist_id:
                         entry["artist_id"] = local_artist_id

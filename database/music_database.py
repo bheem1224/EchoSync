@@ -53,6 +53,30 @@ def generate_nanoid(size=8) -> str:
     alphabet = string.ascii_letters + string.digits
     return ''.join(random.choices(alphabet, k=size))
 
+def _safe_parse_date(release_date) -> date:
+    if not release_date:
+        return date.min
+    if isinstance(release_date, date):
+        return release_date
+    if isinstance(release_date, str):
+        release_date = release_date.strip()
+        if not release_date:
+            return date.min
+        try:
+            return date.fromisoformat(release_date)
+        except ValueError:
+            pass
+        try:
+            return datetime.fromisoformat(release_date).date()
+        except ValueError:
+            pass
+        if len(release_date) == 4 and release_date.isdigit():
+            try:
+                return date(int(release_date), 1, 1)
+            except ValueError:
+                pass
+    return date.min
+
 class Base(DeclarativeBase):
 
     """Base metadata class for SQLAlchemy models."""
@@ -168,6 +192,11 @@ class Track(Base):
             is_lossless = 1 if fmt in _LOSSLESS else 0
             return (is_lossless, m.bitrate or 0, m.sample_rate or 0, m.bit_depth or 0)
         return max(self.media_files, key=_quality_key)
+
+    @property
+    def media(self) -> List["LocalMedia"]:
+        """Backwards-compatible accessor. Returns all attached media files."""
+        return self.media_files
 
     @property
     def file_path(self) -> Optional[str]:
@@ -609,15 +638,16 @@ class MusicDatabase:
                     "albums": []
                 }
 
-                # Sort albums by release date or title
-                sorted_albums = sorted(artist.albums, key=lambda a: a.release_date or date.min, reverse=True)
+                # Sort albums by release date or title using safe date parser
+                sorted_albums = sorted(artist.albums, key=lambda a: _safe_parse_date(a.release_date), reverse=True)
 
                 for album in sorted_albums:
+                    parsed_date = _safe_parse_date(album.release_date)
                     album_data = {
                         "id": album.id,
                         "title": album.title,
                         "cover_image_url": album.cover_image_url,
-                        "year": album.release_date.year if album.release_date else None,
+                        "year": parsed_date.year if parsed_date != date.min else None,
                         "tracks": []
                     }
 
