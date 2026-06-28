@@ -8,7 +8,7 @@ from datetime import date, datetime
 import time
 
 from sqlalchemy import select, func, delete
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, Session, selectinload
 
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.matching_engine import text_utils
@@ -918,12 +918,14 @@ class LibraryManager:
         try:
             # --- Step 1: build file_path → (plugin_item_id, ext_id pk) map ---
             rows = session.execute(
-                select(Track.file_path, ExternalIdentifier.plugin_item_id, ExternalIdentifier.id)
-                .join(ExternalIdentifier, ExternalIdentifier.track_id == Track.id)
+                select(LocalMedia.file_path, ExternalIdentifier.plugin_item_id, ExternalIdentifier.id)
+                .select_from(Track)
+                .join(LocalMedia, Track.id == LocalMedia.track_id)
+                .join(ExternalIdentifier, LocalMedia.media_id == ExternalIdentifier.media_id)
                 .where(
                     ExternalIdentifier.plugin_source == plugin_source,
-                    Track.file_path.isnot(None),
-                    Track.file_path != '',
+                    LocalMedia.file_path.isnot(None),
+                    LocalMedia.file_path != '',
                 )
             ).all()
 
@@ -948,7 +950,8 @@ class LibraryManager:
 
             # --- Step 2: find tracks at those file_paths that lack the identifier ---
             already_linked_subq = (
-                select(ExternalIdentifier.track_id)
+                select(LocalMedia.track_id)
+                .join(ExternalIdentifier, LocalMedia.media_id == ExternalIdentifier.media_id)
                 .where(ExternalIdentifier.plugin_source == plugin_source)
                 .scalar_subquery()
             )
@@ -962,27 +965,34 @@ class LibraryManager:
                 # Fetch orphan tracks without triggering autoflush of pending state.
                 with session.no_autoflush:
                     orphan_tracks = session.execute(
-                        select(Track).where(
-                            Track.file_path.in_(batch_paths),
+                        select(Track)
+                        .options(selectinload(Track.media_files))
+                        .join(LocalMedia, Track.id == LocalMedia.track_id)
+                        .where(
+                            LocalMedia.file_path.in_(batch_paths),
                             Track.id.not_in(already_linked_subq),
                         )
                     ).scalars().all()
 
                 for track in orphan_tracks:
-                    pid, ext_pk = fp_to_info.get(track.file_path, (None, None))
+                    # Find the LocalMedia for this track that has the batch path
+                    target_media = next((m for m in track.media_files if m.file_path in fp_to_info), None)
+                    if not target_media:
+                        continue
+                    pid, ext_pk = fp_to_info.get(target_media.file_path, (None, None))
                     if not pid or not ext_pk:
                         continue
 
-                    # Re-point the existing ExternalIdentifier row to this track.
+                    # Re-point the existing ExternalIdentifier row to this media.
                     ext_row = session.get(ExternalIdentifier, ext_pk)
                     if ext_row is None:
                         continue
-                    old_track_id = ext_row.track_id
-                    ext_row.track_id = track.id
+                    old_media_id = ext_row.media_id
+                    ext_row.media_id = target_media.media_id
                     updated_count += 1
                     logger.debug(
-                        "backfill: re-pointed %s identifier '%s' from track %d → track %d ('%s')",
-                        plugin_source, pid, old_track_id, track.id, track.title,
+                        "backfill: re-pointed %s identifier '%s' from media %s → media %s ('%s')",
+                        plugin_source, pid, old_media_id, target_media.media_id, track.title,
                     )
 
             session.commit()
