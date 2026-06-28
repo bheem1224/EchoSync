@@ -77,6 +77,30 @@ def _safe_parse_date(release_date) -> date:
                 pass
     return date.min
 
+def _safe_int(val, default: int = 0) -> int:
+    if val is None:
+        return default
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return int(val)
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return default
+        try:
+            return int(float(val))
+        except ValueError:
+            digits = []
+            for char in val:
+                if char.isdigit():
+                    digits.append(char)
+                else:
+                    break
+            if digits:
+                return int("".join(digits))
+    return default
+
 class Base(DeclarativeBase):
 
     """Base metadata class for SQLAlchemy models."""
@@ -663,8 +687,8 @@ class MusicDatabase:
                         "tracks": []
                     }
 
-                    # Sort tracks by disc number and track number
-                    sorted_tracks = sorted(album_tracks, key=lambda t: (t.disc_number or 1, t.track_number or 0))
+                    # Sort tracks by disc number and track number safely
+                    sorted_tracks = sorted(album_tracks, key=lambda t: (_safe_int(t.disc_number, 1), _safe_int(t.track_number, 0)))
 
                     for track in sorted_tracks:
                         album_data["tracks"].append({

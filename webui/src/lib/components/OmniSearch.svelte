@@ -197,7 +197,7 @@
       }
       else if (prefix === '#') {
         if (term.trim()) {
-            const res = await apiClient.get(`/search?q=${encodeURIComponent(term)}`);
+            const res = await apiClient.get(`/manager/search?q=${encodeURIComponent(term)}`);
             results.library.tracks = res.data?.tracks || [];
             results.library.albums = res.data?.albums || [];
             results.library.artists = res.data?.artists || [];
@@ -210,7 +210,7 @@
       }
       else if (prefix === '@') {
         if (term.trim()) {
-            const res = await apiClient.get(`/search?q=${encodeURIComponent(term)}&types=artists`);
+            const res = await apiClient.get(`/manager/search?q=${encodeURIComponent(term)}&types=artists`);
             results.library.artists = res.data?.artists || [];
             results.library.albums = [];
             results.library.tracks = [];
@@ -237,7 +237,7 @@
                     }];
                 }
             } else {
-                const res = await apiClient.get(`/search?q=${encodeURIComponent(value)}&field=${encodeURIComponent(key)}`);
+                const res = await apiClient.get(`/manager/search?q=${encodeURIComponent(value)}&field=${encodeURIComponent(key)}`);
                 results.library.tracks = res.data?.tracks || [];
                 results.library.albums = res.data?.albums || [];
                 results.library.artists = res.data?.artists || [];
@@ -248,15 +248,36 @@
       }
       else {
         if (term.trim()) {
-            const res = await apiClient.get(`/search?q=${encodeURIComponent(term)}`);
-            results.library.tracks = res.data?.tracks || [];
-            results.library.albums = res.data?.albums || [];
-            results.library.artists = res.data?.artists || [];
+            const res = await apiClient.get(`/search?q=${encodeURIComponent(term)}&types=tracks,albums,artists`);
+            const searchResults = res.data?.results || [];
+            
+            const tracks = [];
+            const albums = [];
+            const artists = [];
+            const external = [];
+            
+            for (const item of searchResults) {
+                if (item.is_local) {
+                    if (item.type === 'tracks') {
+                        tracks.push(item);
+                    } else if (item.type === 'albums') {
+                        albums.push(item);
+                    } else if (item.type === 'artists') {
+                        artists.push(item);
+                    }
+                } else {
+                    external.push(item);
+                }
+            }
+            results.library.tracks = tracks;
+            results.library.albums = albums;
+            results.library.artists = artists;
+            results.external = external;
         } else {
             clearLibrary();
+            results.external = [];
         }
         results.plugins = [];
-        results.external = [];
       }
     } catch (err) {
       console.error("OmniSearch performSearch error:", err);
