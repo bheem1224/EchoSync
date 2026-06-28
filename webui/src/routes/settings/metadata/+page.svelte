@@ -1,15 +1,15 @@
 <script>
   import { onMount } from 'svelte';
-  import { providers } from '../../../stores/providers';
+  import { plugins } from '../../../stores/plugins';
   import { feedback } from '../../../stores/feedback';
   import { getConfig, setConfig } from '../../../stores/config';
   import DynamicPluginLoader from '../../../components/DynamicPluginLoader.svelte';
 
   // Tabs
-  let activeTab = $state('providers'); // providers, settings
+  let activeTab = $state('plugins'); // plugins, settings
 
-  // Providers Logic
-  let metadataProviders = $state([]);
+  // Plugins Logic
+  let metadataPlugins = $state([]);
   let loadError = $state('');
 
   onMount(async () => {
@@ -18,12 +18,12 @@
     await loadSettings();
   });
 
-  // --- Providers ---
+  // --- Plugins ---
   async function loadProviders() {
     try {
-      await providers.load().catch(() => {});
-      const allProviders = Object.values($providers?.items ?? []);
-      metadataProviders = allProviders
+      await plugins.load().catch(() => {});
+      const allProviders = Object.values($plugins?.items ?? []);
+      metadataPlugins = allProviders
         .filter(p => !p.disabled)
         .filter(p => {
           return (
@@ -34,7 +34,7 @@
           );
         });
     } catch (err) {
-      loadError = 'Failed to load metadata providers. Check backend connection.';
+      loadError = 'Failed to load metadata plugins. Check backend connection.';
       console.error(err);
     }
   }
@@ -44,9 +44,9 @@
       // Logic preserved for fallback
   }
 
-  function getProviderIcon(providerName) {
+  function getProviderIcon(pluginName) {
     const icons = { acoustid: '🔍', musicbrainz: '🎵', lrclib: '📝', listenbrainz: '🧠' };
-    return icons[providerName] || '⚙️';
+    return icons[pluginName] || '⚙️';
   }
 </script>
 
@@ -58,16 +58,16 @@
   <header class="page__header">
     <div class="page__eyebrow">Intelligence</div>
     <h1>Metadata Manager</h1>
-    <p class="subtitle">Manage metadata providers and enhancement settings.</p>
+    <p class="subtitle">Manage metadata plugins and enhancement settings.</p>
   </header>
 
   <div class="tabs">
-      <button class="tab-btn" class:active={activeTab === 'providers'} on:click={() => activeTab = 'providers'}>Providers</button>
+      <button class="tab-btn" class:active={activeTab === 'plugins'} on:click={() => activeTab = 'plugins'}>Plugins</button>
       <button class="tab-btn" class:active={activeTab === 'settings'} on:click={() => activeTab = 'settings'}>Settings</button>
   </div>
 
   <div class="tab-content">
-      {#if activeTab === 'providers'}
+      {#if activeTab === 'plugins'}
           {#if loadError}
             <div class="error-card"><p>{loadError}</p></div>
           {:else}
@@ -84,39 +84,39 @@
               </svelte:fragment>
 
               <svelte:fragment slot="empty-state">
-                {#if metadataProviders.length > 0}
-                  <div class="providers-grid">
-                    {#each metadataProviders as provider (provider.id)}
-                      <div class="provider-card">
-                        <div class="provider-header">
-                          <div class="provider-title">
-                            <span class="provider-icon">{getProviderIcon(String(provider.name || provider.id).toLowerCase())}</span>
+                {#if metadataPlugins.length > 0}
+                  <div class="plugins-grid">
+                    {#each metadataPlugins as plugin (plugin.id)}
+                      <div class="plugin-card">
+                        <div class="plugin-header">
+                          <div class="plugin-title">
+                            <span class="plugin-icon">{getProviderIcon(String(plugin.name || plugin.id).toLowerCase())}</span>
                             <div>
-                              <h2>{provider.display_name || provider.name}</h2>
-                              <p class="provider-type">
-                                {#if provider.capabilities?.resolve_fingerprint}<span class="badge">Fingerprinting</span>{/if}
-                                {#if provider.capabilities?.fetch_metadata}<span class="badge">Metadata</span>{/if}
+                              <h2>{plugin.display_name || plugin.name}</h2>
+                              <p class="plugin-type">
+                                {#if plugin.capabilities?.resolve_fingerprint}<span class="badge">Fingerprinting</span>{/if}
+                                {#if plugin.capabilities?.fetch_metadata}<span class="badge">Metadata</span>{/if}
                               </p>
                             </div>
                           </div>
-                          <div class="provider-status">
-                            {#if provider.is_configured}
+                          <div class="plugin-status">
+                            {#if plugin.is_configured}
                               <span class="status-badge configured">✓ Configured</span>
                             {:else}
                               <span class="status-badge not-configured">⚠ Not Configured</span>
                             {/if}
                           </div>
                         </div>
-                        <p class="provider-description">{provider.description ?? 'Metadata provider service.'}</p>
-                        <div class="provider-actions">
-                           <a href="/settings/metadata/{String(provider.name || provider.id).toLowerCase()}" class="link">Configure →</a>
+                        <p class="plugin-description">{plugin.description ?? 'Metadata plugin service.'}</p>
+                        <div class="plugin-actions">
+                           <a href="/settings/metadata/{String(plugin.name || plugin.id).toLowerCase()}" class="link">Configure →</a>
                         </div>
                       </div>
                     {/each}
                   </div>
                 {:else}
                   <div class="empty-state">
-                    <p class="muted">No metadata providers detected or enabled.</p>
+                    <p class="muted">No metadata plugins detected or enabled.</p>
                   </div>
                 {/if}
               </svelte:fragment>
@@ -155,19 +155,19 @@
   .tab-btn:hover { color: rgba(255,255,255,0.7); }
   .tab-btn.active { color: var(--color-primary, #1db954); border-bottom-color: var(--color-primary, #1db954); }
 
-  /* Providers Grid */
-  .providers-grid { display: flex; flex-direction: column; gap: 16px; }
-  .provider-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-  .provider-header { display: flex; justify-content: space-between; align-items: flex-start; }
-  .provider-title { display: flex; gap: 14px; }
-  .provider-icon { font-size: 32px; background: rgba(255,255,255,0.04); padding: 8px; border-radius: 10px; }
-  .provider-title h2 { margin: 0 0 4px 0; font-size: 18px; font-weight: 700; }
-  .provider-type { display: flex; gap: 6px; }
+  /* Plugins Grid */
+  .plugins-grid { display: flex; flex-direction: column; gap: 16px; }
+  .plugin-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .plugin-header { display: flex; justify-content: space-between; align-items: flex-start; }
+  .plugin-title { display: flex; gap: 14px; }
+  .plugin-icon { font-size: 32px; background: rgba(255,255,255,0.04); padding: 8px; border-radius: 10px; }
+  .plugin-title h2 { margin: 0 0 4px 0; font-size: 18px; font-weight: 700; }
+  .plugin-type { display: flex; gap: 6px; }
   .badge { background: rgba(59, 130, 246, 0.1); color: #3b82f6; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
   .status-badge { padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; }
   .status-badge.configured { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
   .status-badge.not-configured { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
-  .provider-description { color: var(--text-muted, rgba(255,255,255,0.45)); font-size: 13px; line-height: 1.5; margin: 0; }
+  .plugin-description { color: var(--text-muted, rgba(255,255,255,0.45)); font-size: 13px; line-height: 1.5; margin: 0; }
   
   .link { color: var(--color-primary, #1db954); text-decoration: none; font-weight: 700; font-size: 13px; }
   .link:hover { text-decoration: underline; }

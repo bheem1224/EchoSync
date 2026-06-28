@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { providers } from '../../stores/providers';
+  import { plugins } from '../../stores/plugins';
   import { jobs } from '../../stores/jobs';
   import { preferences } from '../../stores/preferences';
   import apiClient from '../../api/client';
@@ -59,11 +59,11 @@
     selectedQuality = qualityProfiles[0]?.name || '';
   }
 
-  $: playlistProviders = Object.values($providers.items).filter(p => 
+  $: playlistPlugins = Object.values($plugins.items).filter(p => 
     (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE'
   );
 
-  $: syncTargets = Object.values($providers.items).filter(p => 
+  $: syncTargets = Object.values($plugins.items).filter(p => 
     // Streaming services (Spotify, Tidal) OR Media servers (Plex, Jellyfin, Navidrome)
     (p.capabilities?.supports_playlists === 'READ_WRITE') || 
     (p.capabilities?.supports_library_scan ?? false)
@@ -105,7 +105,7 @@
 
   async function loadPlaylists() {
     if (!sourceProvider) {
-      console.log('[Sync] No source provider selected');
+      console.log('[Sync] No source plugin selected');
       return;
     }
 
@@ -115,7 +115,7 @@
     selectedPlaylists = []; // Clear selections when loading new playlists
 
     try {
-      console.log(`[Sync] Loading playlists for provider: ${sourceProvider}`);
+      console.log(`[Sync] Loading playlists for plugin: ${sourceProvider}`);
       const response = await apiClient.get(`/plugins/${sourceProvider}/playlists`);
       console.log('[Sync] Full response object:', response);
       console.log('[Sync] Response data:', response.data);
@@ -498,7 +498,7 @@
   }
 
   onMount(() => {
-    providers.load();
+    plugins.load();
     preferences.load();
     loadScheduledSyncs();
   });
@@ -535,11 +535,11 @@
         <div class="form-group">
           <label for="source">Select where to sync from:</label>
           <select id="source" bind:value={sourceProvider} on:change={() => {
-              console.log('[Debug] Source provider selected:', sourceProvider);
+              console.log('[Debug] Source plugin selected:', sourceProvider);
               loadPlaylists();
             }}>
             <option value="">-- Select Source --</option>
-            {#each playlistProviders as p}
+            {#each playlistPlugins as p}
               <option value={p.id}>{p.display_name}</option>
             {/each}
           </select>
@@ -590,7 +590,7 @@
         </div>
       {:else if playlists.length === 0}
         <div class="empty-state">
-          <p class="muted">No playlists found for this provider.</p>
+          <p class="muted">No playlists found for this plugin.</p>
         </div>
       {:else}
         <div class="playlists-grid">
@@ -887,7 +887,7 @@
       <div class="form-group">
         <label for="schedule-source">Source Service:</label>
         <select id="schedule-source" bind:value={scheduleForm.source}>
-          {#each playlistProviders as p}
+          {#each playlistPlugins as p}
             <option value={p.id}>{p.name}</option>
           {/each}
         </select>

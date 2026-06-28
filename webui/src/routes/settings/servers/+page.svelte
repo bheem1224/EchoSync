@@ -1,22 +1,22 @@
 <script>
   import { onMount } from 'svelte';
-  import { providers } from '../../../stores/providers';
+  import { plugins } from '../../../stores/plugins';
   import DynamicPluginLoader from '../../../components/DynamicPluginLoader.svelte';
 
   // ── State ──────────────────────────────────────────────────────────────
   let loadError = $state('');
-  /** Provider objects from the store, used to render fallback cards. */
-  let serverProviders = $state([]);
+  /** Plugin objects from the store, used to render fallback cards. */
+  let serverPlugins = $state([]);
 
   onMount(async () => {
     try {
-      await providers.load().catch(e =>
-        console.warn('[servers] Partial provider load failure:', e)
+      await plugins.load().catch(e =>
+        console.warn('[servers] Partial plugin load failure:', e)
       );
 
-      const allProviders = Object.values($providers?.items ?? []);
+      const allProviders = Object.values($plugins?.items ?? []);
       
-      serverProviders = allProviders
+      serverPlugins = allProviders
         .filter(p => !p.disabled)
         .filter(p => {
           return (
@@ -30,7 +30,7 @@
     }
   });
 
-  const hasFallbackProviders = $derived(serverProviders.length > 0);
+  const hasFallbackPlugins = $derived(serverPlugins.length > 0);
 </script>
 
 <svelte:head>
@@ -59,21 +59,21 @@
       </svelte:fragment>
 
       <svelte:fragment slot="empty-state">
-        {#if hasFallbackProviders}
+        {#if hasFallbackPlugins}
           <div class="services-grid">
-            {#each serverProviders as provider (provider.id)}
-              <div class="provider-card">
-                <div class="provider-card__header">
-                  <span class="provider-card__icon" aria-hidden="true">
-                    {provider.name?.includes('Plex') ? '🎬' : '📡'}
+            {#each serverPlugins as plugin (plugin.id)}
+              <div class="plugin-card">
+                <div class="plugin-card__header">
+                  <span class="plugin-card__icon" aria-hidden="true">
+                    {plugin.name?.includes('Plex') ? '🎬' : '📡'}
                   </span>
                   <div>
-                    <div class="provider-card__name">{provider.name ?? provider.id}</div>
-                    <div class="provider-card__type">{provider.service_type ?? 'Media Server'}</div>
+                    <div class="plugin-card__name">{plugin.name ?? plugin.id}</div>
+                    <div class="plugin-card__type">{plugin.service_type ?? 'Media Server'}</div>
                   </div>
                 </div>
-                <p class="provider-card__desc">
-                  {provider.description ?? 'Connect and sync your library from this server.'}
+                <p class="plugin-card__desc">
+                  {plugin.description ?? 'Connect and sync your library from this server.'}
                 </p>
               </div>
             {/each}
@@ -83,7 +83,7 @@
             <div class="empty-state__icon">📡</div>
             <p class="empty-state__title">No Media Servers Found</p>
             <p class="empty-state__body">
-              Enable a media server provider in the
+              Enable a media server plugin in the
               <a href="/settings/plugin-store" class="link">Plugin Store</a>.
             </p>
           </div>
@@ -166,35 +166,35 @@
     gap: 12px;
   }
 
-  .provider-card {
+  .plugin-card {
     padding: 20px 22px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 14px;
     transition: border-color 0.2s, background 0.2s;
   }
-  .provider-card:hover {
+  .plugin-card:hover {
     background: rgba(255, 255, 255, 0.06);
     border-color: rgba(255, 255, 255, 0.14);
   }
 
-  .provider-card__header {
+  .plugin-card__header {
     display: flex;
     align-items: center;
     gap: 12px;
     margin-bottom: 10px;
   }
-  .provider-card__icon {
+  .plugin-card__icon {
     font-size: 22px;
     color: var(--color-primary);
     line-height: 1;
   }
-  .provider-card__name {
+  .plugin-card__name {
     font-size: 15px;
     font-weight: 700;
     color: var(--text-primary, #fff);
   }
-  .provider-card__type {
+  .plugin-card__type {
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -202,20 +202,20 @@
     margin-top: 2px;
   }
 
-  .provider-card__desc {
+  .plugin-card__desc {
     margin: 0 0 14px 0;
     font-size: 13px;
     color: var(--text-muted, rgba(255,255,255,0.5));
     line-height: 1.5;
   }
-  .provider-card__link {
+  .plugin-card__link {
     font-size: 12px;
     font-weight: 700;
     color: var(--color-primary);
     text-decoration: none;
     transition: opacity 0.15s;
   }
-  .provider-card__link:hover { opacity: 0.75; }
+  .plugin-card__link:hover { opacity: 0.75; }
 
   .empty-state {
     padding: 52px 24px;

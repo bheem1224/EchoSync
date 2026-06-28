@@ -9,14 +9,14 @@ def aggregate_search():
     if not q:
         return jsonify({"error": "missing query"}), 400
 
-    providers_param = request.args.get("providers") or ""
-    provider_names = [p for p in providers_param.split(",") if p] or None
+    plugins_param = request.args.get("plugins") or ""
+    plugin_names = [p for p in plugins_param.split(",") if p] or None
 
     types_param = request.args.get("types") or ""
     search_types = [t for t in types_param.split(",") if t] or None
 
     adapter = SearchAdapter()
-    results = adapter.aggregate(q, provider_names=provider_names, search_types=search_types)
+    results = adapter.aggregate(q, plugin_names=plugin_names, search_types=search_types)
     return jsonify({"query": q, "results": results}), 200
 
 
@@ -27,13 +27,13 @@ def federated_discovery():
     if not q:
         return jsonify({"error": "missing query"}), 400
 
-    providers_param = request.args.get("providers") or ""
-    provider_names = [p for p in providers_param.split(",") if p] or None
+    plugins_param = request.args.get("plugins") or ""
+    plugin_names = [p for p in plugins_param.split(",") if p] or None
 
     adapter = SearchAdapter()
     # Run the async federated discovery in a sync context to avoid Flask [async] extra requirement
     try:
-        results = asyncio.run(adapter.federated_discovery(q, enabled_providers=provider_names))
+        results = asyncio.run(adapter.federated_discovery(q, enabled_plugins=plugin_names))
     except Exception as e:
         from core.tiered_logger import get_logger
         get_logger("search_route").error(f"Federated discovery error: {e}")

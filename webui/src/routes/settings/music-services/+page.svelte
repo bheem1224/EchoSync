@@ -1,23 +1,23 @@
 <script>
   import { onMount } from 'svelte';
-  import { providers } from '../../../stores/providers';
+  import { plugins } from '../../../stores/plugins';
   import DynamicPluginLoader from '../../../components/DynamicPluginLoader.svelte';
 
   // ── State ──────────────────────────────────────────────────────────────
   let loadError = $state('');
-  /** Provider objects from the store, used to render fallback cards for
+  /** Plugin objects from the store, used to render fallback cards for
    *  services that don't yet ship a Web Component plugin bundle. */
-  let musicServiceProviders = $state([]);
+  let musicServicePlugins = $state([]);
 
   onMount(async () => {
     try {
-      await providers.load().catch(e =>
-        console.warn('[music-services] Partial provider load failure:', e)
+      await plugins.load().catch(e =>
+        console.warn('[music-services] Partial plugin load failure:', e)
       );
 
-      const allProviders = Object.values($providers?.items ?? []);
+      const allProviders = Object.values($plugins?.items ?? []);
 
-      musicServiceProviders = allProviders
+      musicServicePlugins = allProviders
         .filter(p => !p.disabled)
         .filter(p => {
           // Keep streaming and relevant services for this page
@@ -34,8 +34,8 @@
     }
   });
 
-  /** Whether there are any providers at all to show a fallback grid for */
-  const hasFallbackProviders = $derived(musicServiceProviders.length > 0);
+  /** Whether there are any plugins at all to show a fallback grid for */
+  const hasFallbackPlugins = $derived(musicServicePlugins.length > 0);
 </script>
 
 <svelte:head>
@@ -46,7 +46,7 @@
   <header class="page__header">
     <div class="page__eyebrow">Services</div>
     <h1>Music Services</h1>
-    <p class="subtitle">Configure your streaming services and music providers</p>
+    <p class="subtitle">Configure your streaming services and music plugins</p>
   </header>
 
   {#if loadError}
@@ -68,21 +68,21 @@
       </svelte:fragment>
 
       <svelte:fragment slot="empty-state">
-        {#if hasFallbackProviders}
+        {#if hasFallbackPlugins}
           <div class="services-grid">
-            {#each musicServiceProviders as provider (provider.id)}
-              <div class="provider-card">
-                <div class="provider-card__header">
-                  <span class="provider-card__icon" aria-hidden="true">
-                    {provider.id === 'spotify' ? '♫' : provider.id === 'tidal' ? '◈' : '♪'}
+            {#each musicServicePlugins as plugin (plugin.id)}
+              <div class="plugin-card">
+                <div class="plugin-card__header">
+                  <span class="plugin-card__icon" aria-hidden="true">
+                    {plugin.id === 'spotify' ? '♫' : plugin.id === 'tidal' ? '◈' : '♪'}
                   </span>
                   <div>
-                    <div class="provider-card__name">{provider.name ?? provider.id}</div>
-                    <div class="provider-card__type">{provider.service_type ?? 'Music Service'}</div>
+                    <div class="plugin-card__name">{plugin.name ?? plugin.id}</div>
+                    <div class="plugin-card__type">{plugin.service_type ?? 'Music Service'}</div>
                   </div>
                 </div>
-                <p class="provider-card__desc">
-                  {provider.description ?? 'This service is currently using the legacy view or is not yet configured.'}
+                <p class="plugin-card__desc">
+                  {plugin.description ?? 'This service is currently using the legacy view or is not yet configured.'}
                 </p>
               </div>
             {/each}
@@ -92,7 +92,7 @@
             <div class="empty-state__icon">🎵</div>
             <p class="empty-state__title">No Music Services Active</p>
             <p class="empty-state__body">
-              Enable a music service provider in the
+              Enable a music service plugin in the
               <a href="/settings/plugin-store" class="link">Plugin Store</a>.
             </p>
           </div>
@@ -116,12 +116,12 @@
   @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
   .services-grid { display: flex; flex-direction: column; gap: 12px; }
-  .provider-card { padding: 20px 22px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 14px; }
-  .provider-card__header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-  .provider-card__icon { font-size: 22px; color: var(--color-primary); }
-  .provider-card__name { font-size: 15px; font-weight: 700; color: #fff; text-transform: capitalize; }
-  .provider-card__type { font-size: 11px; color: var(--text-muted, rgba(255,255,255,0.4)); text-transform: uppercase; }
-  .provider-card__desc { margin: 0; font-size: 13px; color: var(--text-muted, rgba(255,255,255,0.5)); line-height: 1.5; }
+  .plugin-card { padding: 20px 22px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 14px; }
+  .plugin-card__header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .plugin-card__icon { font-size: 22px; color: var(--color-primary); }
+  .plugin-card__name { font-size: 15px; font-weight: 700; color: #fff; text-transform: capitalize; }
+  .plugin-card__type { font-size: 11px; color: var(--text-muted, rgba(255,255,255,0.4)); text-transform: uppercase; }
+  .plugin-card__desc { margin: 0; font-size: 13px; color: var(--text-muted, rgba(255,255,255,0.5)); line-height: 1.5; }
 
   .empty-state { padding: 52px 24px; text-align: center; border-radius: 16px; background: rgba(255, 255, 255, 0.02); border: 1px dashed rgba(255, 255, 255, 0.08); }
   .empty-state__icon { font-size: 36px; margin-bottom: 12px; opacity: 0.5; }

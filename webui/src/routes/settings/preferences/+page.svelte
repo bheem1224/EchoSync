@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { providers } from '../../../stores/providers';
+  import { plugins } from '../../../stores/plugins';
   import { settings } from '../../../stores/settings';
   import { settingsPanel } from '../../../stores/settingsPanel';
   import QualityProfiles from '../../../components/QualityProfiles.svelte';
@@ -97,7 +97,7 @@
 
   onMount(async () => {
     try {
-      await Promise.all([providers.load(), settings.load()]);
+      await Promise.all([plugins.load(), settings.load()]);
       initialSettings = {
         renaming_pattern: $settings?.data?.metadata_enhancement?.naming_template ?? '{Artist}/{Album}/{Track} - {Title}.{ext}'
       };
@@ -107,16 +107,16 @@
     }
   });
 
-  const providerList = $derived(Object.values($providers?.items ?? []));
+  const pluginList = $derived(Object.values($plugins?.items ?? []));
   const userSettings = $derived($settings?.data ?? {});
   const devMode = $derived(userSettings?.dev_mode === true);
   const safeMode = $derived(userSettings?.safe_mode === true);
   
-  const streamingProviders = $derived(providerList.filter((p) => (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE' || p.capabilities?.supports_sync));
-  const serverProviders = $derived(providerList.filter((p) => p.capabilities?.server));
-  const metadataProviders = $derived(providerList.filter((p) => p.capabilities?.metadata));
-  const searchProviders = $derived(providerList.filter((p) => p.capabilities?.search?.tracks));
-  const miscProviders = $derived(providerList.filter((p) => !streamingProviders.includes(p) && !serverProviders.includes(p) && !metadataProviders.includes(p) && !searchProviders.includes(p)));
+  const streamingProviders = $derived(pluginList.filter((p) => (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE' || p.capabilities?.supports_sync));
+  const serverPlugins = $derived(pluginList.filter((p) => p.capabilities?.server));
+  const metadataPlugins = $derived(pluginList.filter((p) => p.capabilities?.metadata));
+  const searchPlugins = $derived(pluginList.filter((p) => p.capabilities?.search?.tracks));
+  const miscPlugins = $derived(pluginList.filter((p) => !streamingProviders.includes(p) && !serverPlugins.includes(p) && !metadataPlugins.includes(p) && !searchPlugins.includes(p)));
 
   function updateSetting(key, value) {
     settings.save({ [key]: value });

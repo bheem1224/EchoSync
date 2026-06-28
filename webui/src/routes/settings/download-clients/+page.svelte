@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { providers } from '../../../stores/providers';
+  import { plugins } from '../../../stores/plugins';
   import DynamicPluginLoader from '../../../components/DynamicPluginLoader.svelte';
 
   // ── State ──────────────────────────────────────────────────────────────
@@ -9,8 +9,8 @@
 
   onMount(async () => {
     try {
-      await providers.load();
-      const allProviders = Object.values($providers?.items ?? []);
+      await plugins.load();
+      const allProviders = Object.values($plugins?.items ?? []);
       
       clientProviders = allProviders
         .filter(p => !p.disabled)
@@ -27,7 +27,7 @@
     }
   });
 
-  const hasFallbackProviders = $derived(clientProviders.length > 0);
+  const hasFallbackPlugins = $derived(clientProviders.length > 0);
 </script>
 
 <svelte:head>
@@ -55,18 +55,18 @@
       </svelte:fragment>
 
       <svelte:fragment slot="empty-state">
-        {#if hasFallbackProviders}
+        {#if hasFallbackPlugins}
           <div class="fallback-grid">
-            {#each clientProviders as provider (provider.id)}
-              <div class="provider-card">
-                <div class="provider-header">
-                  <span class="provider-icon">📥</span>
+            {#each clientProviders as plugin (plugin.id)}
+              <div class="plugin-card">
+                <div class="plugin-header">
+                  <span class="plugin-icon">📥</span>
                   <div>
-                    <div class="provider-name">{provider.name ?? provider.id}</div>
-                    <div class="provider-type">Download Client</div>
+                    <div class="plugin-name">{plugin.name ?? plugin.id}</div>
+                    <div class="plugin-type">Download Client</div>
                   </div>
                 </div>
-                <p class="provider-desc">{provider.description ?? 'Configure your download client settings.'}</p>
+                <p class="plugin-desc">{plugin.description ?? 'Configure your download client settings.'}</p>
               </div>
             {/each}
           </div>
@@ -93,12 +93,12 @@
   @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
   .fallback-grid { display: flex; flex-direction: column; gap: 12px; }
-  .provider-card { padding: 22px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 14px; }
-  .provider-header { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
-  .provider-icon { font-size: 24px; }
-  .provider-name { font-size: 16px; font-weight: 700; color: #fff; }
-  .provider-type { font-size: 11px; color: var(--text-muted, rgba(255,255,255,0.4)); text-transform: uppercase; }
-  .provider-desc { font-size: 13px; color: var(--text-muted, rgba(255,255,255,0.5)); margin: 0; }
+  .plugin-card { padding: 22px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 14px; }
+  .plugin-header { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+  .plugin-icon { font-size: 24px; }
+  .plugin-name { font-size: 16px; font-weight: 700; color: #fff; }
+  .plugin-type { font-size: 11px; color: var(--text-muted, rgba(255,255,255,0.4)); text-transform: uppercase; }
+  .plugin-desc { font-size: 13px; color: var(--text-muted, rgba(255,255,255,0.5)); margin: 0; }
 
   .empty-state { padding: 60px; text-align: center; background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.08); border-radius: 16px; color: var(--text-muted, rgba(255,255,255,0.4)); }
 </style>
