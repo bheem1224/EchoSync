@@ -141,6 +141,7 @@ class SpotifyClient(SyncServiceProvider):
     category = "provider"
     supports_downloads = False
     supports_isrc_lookup = True
+    metadata_quality_score = 60
     rate_limit = 5.0  # 5 requests/second rate limit
     capabilities = ProviderCapabilities(
         name='spotify',

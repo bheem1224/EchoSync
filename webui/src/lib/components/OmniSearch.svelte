@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import apiClient from '../../api/client';
+  import apiClient, { API_BASE_URL } from '../../api/client';
   import { plugins } from '../../stores/plugins';
 
   // ── Svelte 5 Props ────────────────────────────────────────────────────
@@ -22,6 +22,82 @@
   let searchTimer;
   let activeIndex = $state(-1);
   let inputRef = $state();
+  let activeSearchAbortController = null;
+
+  function getCookie(name) {
+    if (typeof document === 'undefined') return null;
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+  }
+
+  function appendStreamChunk(chunk) {
+    const items = chunk.results || [];
+    
+    const newTracks = [...results.library.tracks];
+    const newAlbums = [...results.library.albums];
+    const newArtists = [...results.library.artists];
+    const newExternal = [...results.external];
+    
+    for (const item of items) {
+      if (item.is_local) {
+        if (item.type === 'tracks') {
+          if (!newTracks.some(t => t.id === item.id)) {
+            newTracks.push(item);
+          }
+        } else if (item.type === 'albums') {
+          if (!newAlbums.some(a => a.id === item.id)) {
+            newAlbums.push(item);
+          }
+        } else if (item.type === 'artists') {
+          if (!newArtists.some(ar => ar.id === item.id)) {
+            newArtists.push(item);
+          }
+        }
+      } else {
+        const itemIsrc = (item.isrc || item.identifiers?.isrc || '').toLowerCase();
+        const itemTitle = (item.title || item.name || '').toLowerCase();
+        const itemArtist = (item.artist || item.artist_name || '').toLowerCase();
+        
+        const isLocalDuplicate = newTracks.some(t => {
+          const tIsrc = (t.isrc || t.identifiers?.isrc || '').toLowerCase();
+          const tTitle = (t.title || t.name || '').toLowerCase();
+          const tArtist = (t.artist || t.artist_name || '').toLowerCase();
+          return (itemIsrc && tIsrc === itemIsrc) || (tTitle === itemTitle && tArtist === itemArtist);
+        });
+        
+        if (isLocalDuplicate) {
+          continue;
+        }
+        
+        const existingIndex = newExternal.findIndex(ext => {
+          const extIsrc = (ext.isrc || ext.identifiers?.isrc || '').toLowerCase();
+          const extTitle = (ext.title || ext.name || '').toLowerCase();
+          const extArtist = (ext.artist || ext.artist_name || '').toLowerCase();
+          return (itemIsrc && extIsrc === itemIsrc) || (extTitle === itemTitle && extArtist === itemArtist);
+        });
+        
+        if (existingIndex !== -1) {
+          const existingItem = newExternal[existingIndex];
+          const existingScore = existingItem.metadata_quality_score || 50;
+          const newScore = item.metadata_quality_score || 50;
+          
+          if (newScore > existingScore) {
+            newExternal[existingIndex] = item;
+          }
+        } else {
+          newExternal.push(item);
+        }
+      }
+    }
+    
+    results.library.tracks = newTracks;
+    results.library.albums = newAlbums;
+    results.library.artists = newArtists;
+    newExternal.sort((a, b) => (b.metadata_quality_score || 50) - (a.metadata_quality_score || 50));
+    results.external = newExternal;
+  }
 
   let results = $state({
     settings: [],
@@ -41,6 +117,11 @@
     { label: "Settings: Download Clients", path: "/settings/download-clients" },
     { label: "Settings: Plugin Store", path: "/settings/plugin-store" },
     { label: "Settings: System", path: "/settings/system" },
+    { label: "Settings: Downloads", path: "/settings/downloads" },
+    { label: "Settings: Jobs", path: "/settings/jobs" },
+    { label: "Settings: Metadata", path: "/settings/metadata" },
+    { label: "Settings: Misc", path: "/settings/misc" },
+    { label: "Settings: Search", path: "/settings/search" },
     { label: "Dashboard", path: "/dashboard" },
     { label: "Sync Queue", path: "/sync" },
     { label: "Library Manager", path: "/library/manager" },
@@ -48,6 +129,38 @@
     { label: "Search", path: "/search" },
     { label: "Discover", path: "/discover" }
   ];
+
+  const settingsLexicon = {
+    "quality": "/settings/preferences",
+    "transcode": "/settings/preferences",
+    "theme": "/settings/preferences",
+    "dark mode": "/settings/preferences",
+    "accent": "/settings/preferences",
+    "downloads": "/settings/downloads",
+    "downloading": "/settings/downloads",
+    "download clients": "/settings/download-clients",
+    "sabnzbd": "/settings/download-clients",
+    "qbittorrent": "/settings/download-clients",
+    "aria2": "/settings/download-clients",
+    "plex": "/settings/servers",
+    "jellyfin": "/settings/servers",
+    "navidrome": "/settings/servers",
+    "subsonic": "/settings/servers",
+    "spotify": "/settings/music-services",
+    "tidal": "/settings/music-services",
+    "deezer": "/settings/music-services",
+    "plugins": "/settings/plugin-store",
+    "extensions": "/settings/plugin-store",
+    "addons": "/settings/plugin-store",
+    "metadata": "/settings/metadata",
+    "logs": "/settings/system",
+    "database": "/settings/system",
+    "storage": "/settings/system",
+    "network": "/settings/system",
+    "jobs": "/settings/jobs",
+    "tasks": "/settings/jobs",
+    "scheduler": "/settings/jobs"
+  };
 
   const GUIDE_ITEMS = [
     { prefix: "> ", label: ">", desc: "Search Settings & Commands" },
@@ -136,8 +249,13 @@
         : (evaluatedQuery.startsWith(">") ? evaluatedQuery.replace(/^>\s*/, '').toLowerCase() : evaluatedQuery.toLowerCase());
       
       if (searchTerm) {
+        const lexiconMatches = Object.entries(settingsLexicon)
+          .filter(([keyword, path]) => keyword.includes(searchTerm))
+          .map(([keyword, path]) => path);
+
         results.settings = SETTINGS_ROUTES.filter(route => 
-          route.label.toLowerCase().includes(searchTerm)
+          route.label.toLowerCase().includes(searchTerm) ||
+          lexiconMatches.includes(route.path)
         );
       } else {
         results.settings = SETTINGS_ROUTES;
@@ -153,6 +271,12 @@
   }
 
   async function performSearch(cleanQuery = null, pluginFilter = null) {
+    if (activeSearchAbortController) {
+      activeSearchAbortController.abort();
+    }
+    activeSearchAbortController = new AbortController();
+    const signal = activeSearchAbortController.signal;
+
     try {
       const termToSearch = cleanQuery !== null ? cleanQuery : evaluatedQuery;
       const prefixMatch = termToSearch.match(/^([>!?#@])\s*(.*)/);
@@ -171,13 +295,19 @@
       }
       else if (prefix === '!') {
         if (term.trim()) {
-            const res = await apiClient.get(`/plugins/search?q=${encodeURIComponent(term)}`);
-            results.plugins = res.data?.results || res.data?.plugins || [];
+            const termLower = term.trim().toLowerCase();
+            const allPlugins = Object.values($plugins?.items ?? []);
+            results.plugins = allPlugins.filter(p => 
+              (p.name && p.name.toLowerCase().includes(termLower)) ||
+              (p.id && String(p.id).toLowerCase().includes(termLower)) ||
+              (p.description && p.description.toLowerCase().includes(termLower))
+            );
         } else {
-            results.plugins = [];
+            results.plugins = Object.values($plugins?.items ?? []);
         }
         results.external = [];
         clearLibrary();
+        results.settings = [];
       }
       else if (prefix === '?' || pluginFilter) {
         // Discovery search: append pluginFilter if token parser detected it
@@ -248,31 +378,56 @@
       }
       else {
         if (term.trim()) {
-            const res = await apiClient.get(`/search?q=${encodeURIComponent(term)}&types=tracks,albums,artists`);
-            const searchResults = res.data?.results || [];
-            
-            const tracks = [];
-            const albums = [];
-            const artists = [];
-            const external = [];
-            
-            for (const item of searchResults) {
-                if (item.is_local) {
-                    if (item.type === 'tracks') {
-                        tracks.push(item);
-                    } else if (item.type === 'albums') {
-                        albums.push(item);
-                    } else if (item.type === 'artists') {
-                        artists.push(item);
+            const csrfToken = getCookie('echo_csrf');
+            const headers = {};
+            if (csrfToken) {
+                headers['X-Echo-CSRF'] = csrfToken;
+            }
+
+            clearLibrary();
+            results.external = [];
+
+            const response = await fetch(`${API_BASE_URL}/search?q=${encodeURIComponent(term)}&types=tracks,albums,artists`, {
+                headers,
+                credentials: 'include',
+                signal
+            });
+
+            if (!response.ok) {
+                throw new Error(`Search failed: ${response.statusText}`);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let isDone = false;
+
+            while (!isDone) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const dataStr = line.slice(6).trim();
+                        if (dataStr) {
+                            try {
+                                const chunk = JSON.parse(dataStr);
+                                if (chunk.status === 'done') {
+                                    isDone = true;
+                                    break;
+                                }
+                                appendStreamChunk(chunk);
+                            } catch (e) {
+                                console.error("Failed to parse SSE chunk:", e);
+                            }
+                        }
                     }
-                } else {
-                    external.push(item);
                 }
             }
-            results.library.tracks = tracks;
-            results.library.albums = albums;
-            results.library.artists = artists;
-            results.external = external;
         } else {
             clearLibrary();
             results.external = [];
@@ -355,6 +510,8 @@
       goto(`/library?artist_id=${item.artist_id}&highlight_album=${item.id}`);
     } else if (type === 'track') {
       goto(`/library?artist_id=${item.artist_id}&highlight_track=${item.id}`);
+    } else if (type === 'plugin') {
+      goto(`/settings/plugin-store`);
     }
 
     if (onselect) onselect({ item, type });
@@ -472,7 +629,7 @@
     <div class="search-fallback mt-8">
       <div class="results-list">
         {#each Object.entries(results.library) as [libType, items]}
-          {#if items.length > 0}
+          {#if items.length > 0 && libType !== 'tracks'}
             <div class="result-section">
               <h3 class="section-title">Library {libType}</h3>
               <div class="section-items">
@@ -481,7 +638,7 @@
                     <div class="result-info">
                       <div class="result-main">
                         <div class="cover-placeholder" aria-hidden="true">
-                          {libType === 'artists' ? '👤' : (libType === 'albums' ? '💿' : '🎵')}
+                          {libType === 'artists' ? '👤' : '💿'}
                         </div>
                         <div>
                           <strong class="result-title">{item.title || item.name || 'Unknown'}</strong>
@@ -491,11 +648,6 @@
                     </div>
                     <div class="result-meta">
                       <span class="source-badge">Local Library</span>
-                      <div class="result-actions">
-                        <button class="action-btn play-btn" title="Play" on:click={() => handleAction(item, 'play')}>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                        </button>
-                      </div>
                     </div>
                   </div>
                 {/each}
@@ -503,6 +655,53 @@
             </div>
           {/if}
         {/each}
+
+        {#if results.library.tracks.length > 0}
+          <div class="result-section">
+            <h3 class="section-title">Library Tracks</h3>
+            <div class="section-items">
+              {#each results.library.tracks as item}
+                <div class="result-card">
+                  <div class="result-info">
+                    <div class="result-main">
+                      {#if item.cover_art}
+                        <img src={item.cover_art} alt={item.title} class="cover-art" />
+                      {:else}
+                        <div class="cover-placeholder" aria-hidden="true">🎵</div>
+                      {/if}
+                      <div>
+                        <strong class="result-title">{item.title || item.name || 'Unknown'}</strong>
+                        <p class="result-artist">
+                          {#if item.artist_id}
+                            <a href="/library?artist_id={item.artist_id}" class="artist-link">{item.artist || item.artist_name || ''}</a>
+                          {:else}
+                            <a href="/library?q={encodeURIComponent(item.artist || item.artist_name || '')}" class="artist-link">{item.artist || item.artist_name || ''}</a>
+                          {/if}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="result-meta">
+                    <span class="source-badge">Local Library</span>
+                    <span class="plugin-badge">{item.plugin || 'plex'}</span>
+                    <div class="result-actions">
+                      <button class="action-btn play-btn" title="Play" on:click={() => handleAction(item, 'play')}>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                      </button>
+                      {#if item.artist_id}
+                        <a href="/library?artist_id={item.artist_id}" class="library-btn-link">
+                          <button class="action-btn library-btn" title="View in Library">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                          </button>
+                        </a>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
 
         {#if results.external.length > 0}
           <div class="result-section">
@@ -692,18 +891,39 @@
                       <div class="mb-1">
                         <div class="text-muted text-[10px] font-bold px-5 py-2 uppercase tracking-widest bg-black/20">Library Tracks</div>
                         {#each results.library.tracks as track, i}
-                          <button 
-                            class="w-full text-left px-5 py-3 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent cursor-pointer flex items-center gap-3 group" 
+                          <div 
+                            class="w-full text-left px-5 py-3 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent flex items-center justify-between group"
                             class:active-item={activeIndex === getFlattenedIndex('track', i)}
-                            on:click={() => handleSelect(track, 'track')}
                           >
-                            <div class="w-8 h-8 rounded bg-white/5 flex items-center justify-center text-xs shrink-0 border border-white/5 group-hover:border-accent/30 transition-colors" class:active-border={activeIndex === getFlattenedIndex('track', i)}>🎵</div>
-                            <div class="flex-1 min-w-0">
-                              <div class="truncate">{track.title}</div>
-                              <div class="text-xs text-muted truncate">{track.artist_name || ''}</div>
+                            <button class="flex-1 text-left border-none bg-transparent cursor-pointer flex items-center gap-4 min-w-0" on:click={() => handleSelect(track, 'track')}>
+                                {#if track.cover_art}
+                                  <img src={track.cover_art} alt={track.title} class="w-10 h-10 rounded object-cover shadow-lg border border-white/5 group-hover:border-accent/40" class:active-border={activeIndex === getFlattenedIndex('track', i)} />
+                                {:else}
+                                  <div class="w-10 h-10 rounded bg-white/5 flex items-center justify-center text-xs border border-white/5 group-hover:border-accent/40" class:active-border={activeIndex === getFlattenedIndex('track', i)}>🎵</div>
+                                {/if}
+                                <div class="flex flex-col min-w-0 flex-1">
+                                  <span class="font-medium truncate group-hover:text-accent transition-colors" class:active-text={activeIndex === getFlattenedIndex('track', i)}>{track.title || track.name}</span>
+                                  <span class="text-xs text-muted truncate">{track.artist || track.artist_name || ''}</span>
+                                  <span class="text-[9px] text-muted flex gap-1 mt-1">
+                                    <span class="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 font-mono uppercase tracking-tighter">{track.source === 'local' ? 'Local Library' : (track.source || 'Local Library')}</span>
+                                    <span class="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 font-mono uppercase tracking-tighter">{track.plugin || 'plex'}</span>
+                                  </span>
+                                </div>
+                            </button>
+                            
+                            <div class="flex items-center gap-2">
+                              <button class="px-3 py-1.5 text-[10px] font-bold bg-accent text-black rounded hover:scale-105 active:scale-95 transition-all flex items-center gap-1 border-none cursor-pointer" on:click|stopPropagation={() => handleAction(track, 'play')}>
+                                ▶️ Play
+                              </button>
+                              {#if track.artist_id}
+                                <a href="/library?artist_id={track.artist_id}" class="no-underline">
+                                  <button class="px-3 py-1.5 text-[10px] font-bold bg-white/10 text-white border border-white/10 rounded hover:bg-white/20 transition-all cursor-pointer">
+                                    📁 View
+                                  </button>
+                                </a>
+                              {/if}
                             </div>
-                            <span class="text-xs text-muted opacity-0 group-hover:opacity-100 transition-opacity" class:opacity-100={activeIndex === getFlattenedIndex('track', i)}>Jump to Track ↵</span>
-                          </button>
+                          </div>
                         {/each}
                       </div>
                     {/if}
@@ -868,9 +1088,21 @@
             <div class="mb-1">
               <div class="text-muted text-[10px] font-bold px-4 py-2 uppercase tracking-widest bg-black/20">Library Tracks</div>
               {#each results.library.tracks as track}
-                <button class="w-full text-left px-4 py-2 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent cursor-pointer" on:click={() => handleSelect(track, 'track')}>
-                  {track.title} <span class="text-xs text-muted ml-2">{track.artist_name || ''}</span>
-                </button>
+                <div class="w-full text-left px-4 py-2 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent flex items-center justify-between">
+                  <button class="flex-1 text-left border-none bg-transparent cursor-pointer flex items-center gap-3" on:click={() => handleSelect(track, 'track')}>
+                      <div class="w-8 h-8 rounded bg-white/5 flex items-center justify-center text-xs">🎵</div>
+                      <div class="flex flex-col">
+                        <span>{track.title} <span class="text-xs text-muted ml-1">— {track.artist_name || ''}</span></span>
+                        <span class="text-[10px] text-muted flex gap-1 mt-0.5">
+                          <span class="bg-white/5 px-1 py-0.5 rounded">{track.source === 'local' ? 'Local Library' : (track.source || 'Local Library')}</span>
+                        </span>
+                      </div>
+                  </button>
+                  
+                  <button class="ml-4 px-3 py-1.5 text-[10px] font-bold bg-accent text-black rounded hover:scale-105 active:scale-95 transition-all shadow-lg flex items-center gap-1 border-none cursor-pointer" on:click|stopPropagation={() => handleAction(track, 'play')}>
+                    ▶️ Play
+                  </button>
+                </div>
               {/each}
             </div>
           {/if}
@@ -956,7 +1188,16 @@
         <div class="bg-black/20 border border-white/5 p-3.5 rounded-xl">
           <div class="flex items-center justify-between mb-1.5">
             <span class="bg-accent/10 text-accent font-mono text-xs px-2 py-0.5 rounded border border-accent/20">!</span>
-            <span class="text-xs text-muted">Search & Manage Plugins</span>
+            <span class="text-xs text-muted flex items-center gap-2">
+              Search & Manage Plugins
+              <button 
+                type="button" 
+                class="text-[10px] text-accent hover:underline bg-transparent border-none cursor-pointer font-semibold p-0"
+                on:click|stopPropagation={() => { showHelpBooklet = false; goto('/settings/plugin-store'); }}
+              >
+                Open Plugin Store
+              </button>
+            </span>
           </div>
           <p class="text-slate-300 text-xs font-medium">Example: <code class="text-white bg-white/5 px-1.5 py-0.5 rounded">! spotify</code></p>
         </div>

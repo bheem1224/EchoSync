@@ -707,6 +707,7 @@ class PluginBase(ABC):
     supports_downloads: bool = False  # Indicates if provider supports downloads
     enabled: bool = True  # Flag to enable/disable provider without deleting files
     version: str = "Unknown"  # Version string for the provider/plugin
+    metadata_quality_score: int = 50  # Quality score of metadata from this provider (0-100)
 
 
     # Set to True in providers that can resolve metadata by ISRC code.

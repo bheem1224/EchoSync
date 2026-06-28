@@ -36,6 +36,7 @@ class MusicBrainzClient(PluginBase):
 
     name = "EchoSync.musicbrainz"
     supports_isrc_lookup = True
+    metadata_quality_score = 95
     service_type = "metadata"
     capabilities = ProviderCapabilities(
         name="EchoSync.musicbrainz",

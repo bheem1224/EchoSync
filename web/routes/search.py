@@ -1,4 +1,5 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, Response, stream_with_context
+import json
 from web.services.search_service import SearchAdapter
 
 bp = Blueprint("search", __name__, url_prefix="/api/search")
@@ -16,8 +17,18 @@ def aggregate_search():
     search_types = [t for t in types_param.split(",") if t] or None
 
     adapter = SearchAdapter()
-    results = adapter.aggregate(q, plugin_names=plugin_names, search_types=search_types)
-    return jsonify({"query": q, "results": results}), 200
+
+    def generate():
+        try:
+            for source, results in adapter.aggregate_stream(q, plugin_names=plugin_names, search_types=search_types):
+                yield f"data: {json.dumps({'source': source, 'results': results})}\n\n"
+        except Exception as e:
+            from core.tiered_logger import get_logger
+            get_logger("search_route").error(f"Error in aggregate_search stream generator: {e}")
+        finally:
+            yield "data: {\"status\": \"done\"}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
 
 
 @bp.get("/discovery")
