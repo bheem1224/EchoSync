@@ -648,8 +648,17 @@
                         </div>
                       </div>
                     </div>
-                    <div class="result-meta">
-                      <span class="source-badge">Local Library</span>
+                    <div class="result-meta flex items-center gap-2">
+                      {#if item.source === 'local'}
+                        <span class="badge badge-primary">LOCAL LIBRARY</span>
+                      {:else if item.plugin_id}
+                        <span class="badge badge-secondary">{$plugins.find(p => p.id === item.plugin_id)?.name || 'Plugin'}</span>
+                      {/if}
+                      <div class="result-actions flex items-center">
+                        <button class="action-btn play-btn flex items-center justify-center" title="Play" on:click={() => handleAction(item, 'play')}>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 {/each}
@@ -690,7 +699,7 @@
                       <span class="badge badge-secondary">{getPluginName(item.plugin_id)}</span>
                     {/if}
                     <div class="result-actions flex items-center">
-                      <button class="action-btn play-btn flex items-center justify-center" title="Play" onclick={(e) => { e.stopPropagation(); handleAction(item, 'play'); }}>
+                      <button class="action-btn play-btn flex items-center justify-center" title="Play" on:click|stopPropagation={() => handleAction(item, 'play')}>
                         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                       </button>
                       {#if item.artist_id}
@@ -741,7 +750,7 @@
                     {/if}
                     <div class="result-actions flex items-center">
                       {#if item.is_local}
-                        <button class="action-btn play-btn flex items-center justify-center" title="Play" onclick={(e) => { e.stopPropagation(); handleAction(item, 'play'); }}>
+                        <button class="action-btn play-btn flex items-center justify-center" title="Play" on:click|stopPropagation={() => handleAction(item, 'play')}>
                           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                         </button>
                         {#if item.artist_id}
