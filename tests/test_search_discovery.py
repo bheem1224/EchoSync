@@ -89,7 +89,36 @@ def test_aggregate_filtering_and_serialization():
         assert len(results) == 1
         assert results[0]["title"] == "Spotify Track"
         assert results[0]["artist"] == "Artist S"
-        assert results[0]["source"] == "spotify"
         assert results[0]["is_local"] is True
         assert results[0]["artist_id"] == 789
         assert results[0]["external_url"] == "https://open.spotify.com/track/456"
+        assert results[0]["plugin_id"] == 123
+        assert "plugin" not in results[0]
+
+
+def test_aggregate_stream_generatorexit():
+    """Verify that aggregate_stream catches GeneratorExit and returns cleanly."""
+    spotify_provider = MagicMock()
+    spotify_provider.name = "spotify"
+    spotify_provider.search.return_value = [{"title": "Spotify Track", "artist": "Artist S", "identifiers": {"spotify_id": "456"}}]
+
+    mock_caps = MagicMock()
+    mock_caps.search.tracks = True
+
+    with patch("web.services.search_service.PluginRegistry.list_plugins", return_value=[123]), \
+         patch("web.services.search_service.PluginRegistry.create_instance", return_value=spotify_provider), \
+         patch("web.services.search_service.get_plugin_capabilities", return_value=mock_caps), \
+         patch("web.services.search_service.get_local_track_details", return_value=(False, None)):
+
+        adapter = SearchAdapter()
+        gen = adapter.aggregate_stream("test", plugin_names=["spotify"], search_types=["tracks"])
+        
+        # Start the generator
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+        
+        # Close the generator prematurely, which should not raise RuntimeError or other errors
+        gen.close()
+

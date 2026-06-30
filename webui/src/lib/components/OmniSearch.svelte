@@ -13,6 +13,8 @@
     onselect = null 
   } = $props();
 
+  const getPluginName = (id) => Object.values($plugins?.items ?? []).find(p => p.id === id)?.name || $plugins?.find?.(p => p.id === id)?.name || 'Unknown Plugin';
+
   // ── Component State ───────────────────────────────────────────────────
   let query = $state("");
   let isFocused = $state(false);
@@ -681,11 +683,14 @@
                       </div>
                     </div>
                   </div>
-                  <div class="result-meta">
-                    <span class="source-badge">Local Library</span>
-                    <span class="plugin-badge">{item.plugin || 'plex'}</span>
-                    <div class="result-actions">
-                      <button class="action-btn play-btn" title="Play" on:click={() => handleAction(item, 'play')}>
+                  <div class="result-meta flex items-center gap-2">
+                    {#if item.source === 'local'}
+                      <span class="badge badge-primary">LOCAL LIBRARY</span>
+                    {:else if item.plugin_id}
+                      <span class="badge badge-secondary">{getPluginName(item.plugin_id)}</span>
+                    {/if}
+                    <div class="result-actions flex items-center">
+                      <button class="action-btn play-btn flex items-center justify-center" title="Play" onclick={(e) => { e.stopPropagation(); handleAction(item, 'play'); }}>
                         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                       </button>
                       {#if item.artist_id}
@@ -728,23 +733,15 @@
                       </div>
                     </div>
                   </div>
-                  <div class="result-meta">
-                    <span class="source-badge">
-                      {item.source === 'local' ? 'Local Library' : (item.source || item.plugin || 'Unknown')}
-                    </span>
-                    {#if item.external_url}
-                      <a href={item.external_url} target="_blank" rel="noopener noreferrer" class="plugin-link">
-                        <span class="plugin-badge clickable" title="Open external source">
-                          {item.plugin}
-                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left: 4px; display: inline-block; vertical-align: middle;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                        </span>
-                      </a>
-                    {:else}
-                      <span class="plugin-badge">{item.plugin}</span>
+                  <div class="result-meta flex items-center gap-2">
+                    {#if item.source === 'local'}
+                      <span class="badge badge-primary">LOCAL LIBRARY</span>
+                    {:else if item.plugin_id}
+                      <span class="badge badge-secondary">{getPluginName(item.plugin_id)}</span>
                     {/if}
-                    <div class="result-actions">
+                    <div class="result-actions flex items-center">
                       {#if item.is_local}
-                        <button class="action-btn play-btn" title="Play" on:click={() => handleAction(item, 'play')}>
+                        <button class="action-btn play-btn flex items-center justify-center" title="Play" onclick={(e) => { e.stopPropagation(); handleAction(item, 'play'); }}>
                           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                         </button>
                         {#if item.artist_id}

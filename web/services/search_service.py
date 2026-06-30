@@ -160,7 +160,7 @@ class SearchAdapter:
                                 else:
                                     continue
                                 
-                                item_dict["plugin_id"] = plugin_id
+                                item_dict["plugin_id"] = provider.plugin_id_int
                                 item_dict["type"] = kind
                                 item_dict["confidence"] = getattr(item_dict, "confidence", 1.0)
                                 
@@ -196,7 +196,6 @@ class SearchAdapter:
                                             if spot_id:
                                                 external_url = f"https://open.spotify.com/track/{spot_id}"
                                 item_dict["external_url"] = external_url
-                                item_dict["plugin"] = provider.name
                                 item_dict["metadata_quality_score"] = getattr(provider, "metadata_quality_score", 50)
                                 
                                 provider_results.append(item_dict)
@@ -247,11 +246,16 @@ class SearchAdapter:
         t.daemon = True
         t.start()
 
-        while True:
-            chunk = q.get()
-            if chunk is None:
-                break
-            yield chunk
+        try:
+            while True:
+                chunk = q.get()
+                if chunk is None:
+                    break
+                yield chunk
+        except GeneratorExit:
+            return
+        except Exception as e:
+            get_logger("search_adapter").error(f"Error in aggregate_stream yield loop: {e}")
 
     def aggregate(
         self,
