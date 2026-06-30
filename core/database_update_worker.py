@@ -110,9 +110,9 @@ class DatabaseUpdateWorker:
                     total_remote_tracks = stats.get('total_tracks', 0)
                     
                     if total_remote_tracks > 0:
-                        from database.music_database import Track, ExternalIdentifier
+                        from database.music_database import Track, ExternalIdentifier, LocalMedia
                         with db.session_scope() as session:
-                            total_local_tracks = session.query(Track).join(ExternalIdentifier).filter(
+                            total_local_tracks = session.query(Track).join(LocalMedia).join(ExternalIdentifier).filter(
                                 ExternalIdentifier.plugin_source == self.server_type
                             ).count()
                         

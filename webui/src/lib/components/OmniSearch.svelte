@@ -27,6 +27,14 @@
   let inputRef = $state();
   let activeSearchAbortController = null;
 
+  function formatDuration(ms) {
+    if (!ms) return '-:--';
+    const seconds = Math.floor(ms / 1000);
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
   function getCookie(name) {
     if (typeof document === 'undefined') return null;
     const value = `; ${document.cookie}`;
@@ -498,6 +506,16 @@
 
   async function handleAction(item, action) {
     try {
+      if (action === 'play' && item.source === 'local') {
+        player.play(item);
+        if (!inline) {
+          closeModal();
+          inputRef?.blur();
+          clearResults();
+        }
+        return;
+      }
+      
       const response = await apiClient.post('/search/route', { item, action, target: 'default' });
       if (action === 'play' && response.data?.track) {
         player.play(response.data.track);
@@ -1058,7 +1076,7 @@
       {/if}
 
       {#if showResults && !showGuide}
-        <div class="absolute top-full left-0 right-0 mt-2 bg-surface border border-glass-border shadow-2xl rounded-global overflow-y-auto max-h-[60vh] backdrop-blur-md pb-2 custom-scrollbar">
+        <div class="absolute top-full left-0 right-0 mt-2 bg-surface border border-glass-border shadow-2xl rounded-global overflow-visible max-h-[60vh] backdrop-blur-md pb-2 custom-scrollbar">
           {#if !isSearching && flattenedResults.length === 0}
             <div class="text-muted text-sm p-4 text-center">No results found.</div>
           {/if}
@@ -1100,20 +1118,36 @@
             <div class="mb-1">
               <div class="text-muted text-[10px] font-bold px-4 py-2 uppercase tracking-widest bg-black/20">Library Tracks</div>
               {#each results.library.tracks as track}
-                <div class="w-full text-left px-4 py-2 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent flex items-center justify-between">
-                  <button class="flex-1 text-left border-none bg-transparent cursor-pointer flex items-center gap-3" on:click={() => handleSelect(track, 'track')}>
-                      <div class="w-8 h-8 rounded bg-white/5 flex items-center justify-center text-xs">🎵</div>
-                      <div class="flex flex-col">
-                        <span>{track.title} <span class="text-xs text-muted ml-1">— {track.artist_name || ''}</span></span>
-                        <span class="text-[10px] text-muted flex gap-1 mt-0.5">
-                          <span class="bg-white/5 px-1 py-0.5 rounded">{track.source === 'local' ? 'Local Library' : (track.source || 'Local Library')}</span>
-                        </span>
+                <div 
+                  class="w-full track-row group hover:bg-white/5 rounded-md px-3 py-2 grid grid-cols-[40px_1fr_60px_auto] items-center gap-2 transition-colors cursor-pointer relative"
+                  on:click={() => handleSelect(track, 'track')}
+                  role="button"
+                  tabindex="0"
+                  on:keydown={(e) => e.key === 'Enter' && handleSelect(track, 'track')}
+                >
+                  <span class="text-gray-500 text-xs font-mono">{track.track_number || '-'}</span>
+                  <span class="text-white text-sm font-medium truncate">{track.title} <span class="text-xs text-muted ml-1">— {track.artist_name || ''}</span></span>
+                  <span class="text-gray-500 text-xs font-mono text-right">{track.duration ? formatDuration(track.duration) : '-:--'}</span>
+
+                  <div class="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                          class="p-1.5 rounded-full hover:bg-blue-500/20 text-blue-400 transition-colors active:scale-95 border-none bg-transparent cursor-pointer flex items-center justify-center"
+                          on:click|stopPropagation={() => handleAction(track, 'play')}
+                          title="Play"
+                      >
+                          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                      </button>
+
+                      <div class="relative menu-container">
+                          <button
+                              class="p-1.5 rounded-full hover:bg-gray-700 text-gray-400 hover:text-white transition-colors active:scale-95 border-none bg-transparent cursor-pointer flex items-center justify-center"
+                              on:click|stopPropagation={() => {}} 
+                              title="Options"
+                          >
+                              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+                          </button>
                       </div>
-                  </button>
-                  
-                  <button class="ml-4 px-3 py-1.5 text-[10px] font-bold bg-accent text-black rounded hover:scale-105 active:scale-95 transition-all shadow-lg flex items-center gap-1 border-none cursor-pointer" on:click|stopPropagation={() => handleAction(track, 'play')}>
-                    ▶️ Play
-                  </button>
+                  </div>
                 </div>
               {/each}
             </div>
