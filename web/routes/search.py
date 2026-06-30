@@ -22,11 +22,12 @@ def aggregate_search():
         try:
             for source, results in adapter.aggregate_stream(q, plugin_names=plugin_names, search_types=search_types):
                 yield f"data: {json.dumps({'source': source, 'results': results})}\n\n"
+            yield "data: {\"status\": \"done\"}\n\n"
+        except GeneratorExit:
+            return
         except Exception as e:
             from core.tiered_logger import get_logger
             get_logger("search_route").error(f"Error in aggregate_search stream generator: {e}")
-        finally:
-            yield "data: {\"status\": \"done\"}\n\n"
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream")
 
@@ -63,5 +64,5 @@ def route_search_result():
     adapter = SearchAdapter()
     result = adapter.route_result(item=item, action=action, target=target)
 
-    status = 202 if result.get("accepted") else 400
+    status = 200 if result.get("accepted") else 400
     return jsonify(result), status

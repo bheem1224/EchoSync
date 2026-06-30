@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import apiClient, { API_BASE_URL } from '../../api/client';
   import { plugins } from '../../stores/plugins';
+  import { player } from '../../stores/player';
 
   // ── Svelte 5 Props ────────────────────────────────────────────────────
   let { 
@@ -497,7 +498,15 @@
 
   async function handleAction(item, action) {
     try {
-      await apiClient.post('/search/route', { item, action, target: 'default' });
+      const response = await apiClient.post('/search/route', { item, action, target: 'default' });
+      if (action === 'play' && response.data?.track) {
+        player.play(response.data.track);
+        if (!inline) {
+          closeModal();
+          inputRef?.blur();
+          clearResults();
+        }
+      }
     } catch (err) {
       console.error('Search action failed:', err.message);
     }
@@ -518,12 +527,9 @@
 
     if (onselect) onselect({ item, type });
     
-    if (!inline && mode === 'modal') {
+    if (!inline) {
       closeModal();
-    } else if (!inline) {
-      inputRef.blur();
-      isFocused = false;
-      query = "";
+      inputRef?.blur();
       clearResults();
     }
   }

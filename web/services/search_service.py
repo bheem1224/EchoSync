@@ -507,8 +507,10 @@ class SearchAdapter:
             return {"accepted": False, "error": f"Unsupported action: {action}"}
 
         return {
+            "status": "success",
             "accepted": True,
             "action": action,
             "target": target,
             "item": item,
+            "track": item if action == "play" else None
         }
