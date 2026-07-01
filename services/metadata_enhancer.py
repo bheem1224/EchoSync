@@ -370,7 +370,7 @@ class RetroactiveEnhancer:
         try:
             db = get_working_database()
             with db.session_scope() as session:
-                existing = session.query(ReviewTask).filter(ReviewTask.file_path == file_path).first()
+                existing = session.query(ReviewTask).filter(ReviewTask.media_id == file_path).first()
                 if existing:
                     existing.detected_metadata = match_data
                     existing.status = 'pending'
@@ -382,7 +382,7 @@ class RetroactiveEnhancer:
                     existing.created_at = datetime.datetime.now(datetime.UTC)
                 else:
                     task = ReviewTask(
-                        file_path=file_path,
+                        media_id=file_path,
                         status='pending',
                         detected_metadata=match_data,
                         confidence_score=0.0
@@ -541,7 +541,8 @@ def get_metadata_enhancer():
 
                 # Extract necessary data into memory to perform network calls outside session
                 for track in tracks_to_process:
-                    track_fp = session.query(AudioFingerprint).filter_by(track_id=track.id).first()
+                    from database.music_database import LocalMedia
+                    track_fp = session.query(AudioFingerprint).join(LocalMedia, AudioFingerprint.media_id == LocalMedia.media_id).filter(LocalMedia.track_id == track.id).first()
                     track_data_list.append({
                         'id': track.id,
                         'file_path': track.file_path,

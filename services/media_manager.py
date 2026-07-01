@@ -262,23 +262,27 @@ class MediaManagerService:
                         continue
 
                     # Safety Check and Physical Deletion
-                    if track.file_path and os.path.exists(track.file_path):
-                        track_path = Path(track.file_path).resolve()
-                        
-                        if library_root and not str(track_path).startswith(str(library_root)):
-                            logger.critical(f"Aborting deletion! Path {track_path} is OUTSIDE the library pool {library_root}.")
-                            all_success = False
-                            continue
+                    for media in track.media_files:
+                        if media.file_path and not media.file_path.startswith("virtual://") and os.path.exists(media.file_path):
+                            track_path = Path(media.file_path).resolve()
+                            
+                            if library_root and not str(track_path).startswith(str(library_root)):
+                                logger.critical(f"Aborting deletion! Path {track_path} is OUTSIDE the library pool {library_root}.")
+                                all_success = False
+                                continue
 
-                        from core.hook_manager import hook_manager
-                        plugin_decision = hook_manager.apply_filters('ON_CORRUPTION_DETECTED', None, file_path=str(track_path))
-                        if plugin_decision == "SKIP":
-                            logger.info(f"Plugin quarantined/skipped deletion for file: {track_path}")
-                            all_success = False
-                            continue
+                            from core.hook_manager import hook_manager
+                            plugin_decision = hook_manager.apply_filters('ON_CORRUPTION_DETECTED', None, file_path=str(track_path))
+                            if plugin_decision == "SKIP":
+                                logger.info(f"Plugin quarantined/skipped deletion for file: {track_path}")
+                                all_success = False
+                                continue
 
-                        os.remove(track_path)
-                        logger.info(f"Deleted physical file: {track_path}")
+                            try:
+                                os.remove(track_path)
+                                logger.info(f"Deleted physical file: {track_path}")
+                            except Exception as e:
+                                logger.error(f"Failed to remove physical file {track_path}: {e}")
 
                     # Database Deletion
                     session.delete(track)
