@@ -237,6 +237,8 @@ class PluginSecurityScanner(ast.NodeVisitor):
                 if base_module in ("subprocess", "ctypes") and self.privileged:
                     continue
                 self.violations.append((node.lineno, f"forbidden import '{alias.name}'"))
+            elif alias.name.startswith("core.file_handling.storage") and not self.privileged:
+                self.violations.append((node.lineno, "forbidden import of core storage service; use the SDK instead"))
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
@@ -249,6 +251,13 @@ class PluginSecurityScanner(ast.NodeVisitor):
                     pass
                 else:
                     self.violations.append((node.lineno, f"forbidden from-import '{node.module}'"))
+            elif not self.privileged:
+                is_storage = (
+                    node.module == "core.file_handling.storage"
+                    or (node.module == "core.file_handling" and any(alias.name == "storage" for alias in node.names))
+                )
+                if is_storage:
+                    self.violations.append((node.lineno, "forbidden import of core storage service; use the SDK instead"))
         self.generic_visit(node)
 
     def visit_Constant(self, node: ast.Constant) -> None:
@@ -654,7 +663,7 @@ class PluginLoader:
                 )
                 return False  # fail closed
 
-            scanner = PluginSecurityScanner()
+            scanner = PluginSecurityScanner(privileged=privileged)
             scanner.visit(tree)
 
             for line, description in scanner.violations:

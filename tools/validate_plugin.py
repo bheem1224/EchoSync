@@ -105,8 +105,8 @@ def validate_plugin(directory):
     expected_folder = plugin_id.split('.')[-1]
     actual_folder = os.path.basename(os.path.normpath(directory))
 
-    if actual_folder != expected_folder:
-        error(f"Folder name mismatch. Expected '{expected_folder}' based on manifest ID, got '{actual_folder}'.")
+    if actual_folder.lower() != expected_folder.lower():
+        error(f"Folder name mismatch. Expected '{expected_folder}' (case-insensitive) based on manifest ID, got '{actual_folder}'.")
         return False
 
     # Phase 1: Layout & Asset Checking

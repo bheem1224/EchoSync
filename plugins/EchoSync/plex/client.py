@@ -1243,11 +1243,10 @@ class PlexClient(MediaServerProvider):
         from core.security import decrypt_string
         
 
-        from core.file_handling.storage import get_storage_service
-        storage = get_storage_service()
 
-        # Load tokens from account_tokens securely
-        token_data = storage.get_account_token(self.account_id)
+
+        # Load tokens from account_tokens securely using the SDK accounts manager
+        token_data = self.accounts.get_token(self.account_id)
         if not token_data or not token_data.get('access_token'):
             logger.error(f"Plex token not configured for account {self.account_id}")
             return
@@ -1284,9 +1283,8 @@ class PlexClient(MediaServerProvider):
             return []
 
         from core.nexus_framework.plugin_SDK import sdk
-        from core.file_handling.storage import get_storage_service
-        storage = get_storage_service()
-        token_data = storage.get_account_token(self.account_id) if self.account_id else None
+
+        token_data = self.accounts.get_token(self.account_id) if self.account_id else None
 
         try:
             myplex_account = self.server.myPlexAccount()
@@ -1309,8 +1307,7 @@ class PlexClient(MediaServerProvider):
         )
         admin_email = _safe_getattr(myplex_account, 'email', None)
 
-        admin_account_id = storage.upsert_account(
-            'plex',
+        admin_account_id = self.accounts.upsert_account(
             account_name=admin_account_name,
             display_name=admin_account_name,
             user_id=str(admin_user_id) if admin_user_id is not None else None,
@@ -1340,8 +1337,7 @@ class PlexClient(MediaServerProvider):
             display_name = _safe_getattr(user, 'title', None) or _safe_getattr(user, 'username', None) or username
             email = _safe_getattr(user, 'email', None)
 
-            managed_account_id = storage.upsert_account(
-                'plex',
+            managed_account_id = self.accounts.upsert_account(
                 account_name=username or display_name,
                 display_name=display_name,
                 user_id=str(user_id) if user_id is not None else None,
@@ -1351,7 +1347,7 @@ class PlexClient(MediaServerProvider):
             if managed_account_id:
                 imported_ids.append(int(managed_account_id))
 
-        accounts = storage.list_accounts('plex') or []
+        accounts = self.accounts.get_all() or []
         imported = [account for account in accounts if account.get('id') in set(imported_ids)]
         logger.info(f"Imported {len(imported)} Plex account rows (admin + managed users)")
         return imported
@@ -1402,9 +1398,8 @@ class PlexClient(MediaServerProvider):
         if account_id is None:
             return None, None, None
 
-        from core.file_handling.storage import get_storage_service
-        storage = get_storage_service()
-        accounts = storage.list_accounts('plex') or []
+
+        accounts = self.accounts.get_all() or []
         account = next((item for item in accounts if item.get('id') == account_id), None)
         if not account:
             logger.warning(f"No Plex account found for history sync account_id={account_id}")

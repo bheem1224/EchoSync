@@ -175,6 +175,41 @@ class _AccountsSDKFacade:
         service_id = db.get_or_create_service_id(plugin_id_str)
         return db.ensure_account(service_id=service_id, account_id=account_id, account_name=account_name, display_name=display_name, user_id=user_id)
 
+    def upsert_account(self, account_name: str = None, display_name: str = None, user_id: str = None, account_email: str = None, is_active: bool = None, is_authenticated: bool = None, account_id: int = None) -> int:
+        from database.config_database import get_config_database
+        db = get_config_database()
+        
+        import inspect
+        frame = inspect.currentframe()
+        caller_mod = ''
+        while frame:
+            mod = frame.f_globals.get('__name__', '')
+            if mod and not mod.startswith('core.nexus_framework'):
+                caller_mod = mod
+                break
+            frame = frame.f_back
+        
+        plugin_id_str = ""
+        if caller_mod.startswith('plugins.'):
+            parts = caller_mod.split('.')
+            plugin_id_str = f"{parts[1]}.{parts[2]}" if len(parts) >= 3 else parts[1]
+        elif caller_mod.startswith('core.providers.'):
+            plugin_id_str = caller_mod.split('.')[2]
+        else:
+            plugin_id_str = caller_mod
+
+        service_id = db.get_or_create_service_id(plugin_id_str)
+        return db.upsert_account(
+            service_id=service_id,
+            account_name=account_name,
+            display_name=display_name,
+            user_id=user_id,
+            account_email=account_email,
+            is_active=is_active,
+            is_authenticated=is_authenticated,
+            account_id=account_id
+        )
+
     def mark_account_authenticated(self, account_id: int):
         from database.config_database import get_config_database
         get_config_database().mark_account_authenticated(account_id)
