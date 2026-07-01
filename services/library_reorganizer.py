@@ -45,101 +45,103 @@ class LibraryReorganizerService:
                 if progress_callback:
                     progress_callback(index + 1, total_tracks, "Moving files...")
 
-                if not track.file_path or not os.path.exists(track.file_path):
-                    logger.warning(f"Skipping track {track.id}: file missing at {track.file_path}")
-                    continue
+                for media in track.media_files:
+                    if not media.file_path or not os.path.exists(media.file_path):
+                        logger.warning(f"Skipping media {media.id} for track {track.id}: file missing at {media.file_path}")
+                        continue
 
-                raw_artist = track.artist.name if track.artist else "Unknown Artist"
-                raw_album = track.album.title if track.album else "Unknown Album"
+                    raw_artist = track.artist.name if track.artist else "Unknown Artist"
+                    raw_album = track.album.title if track.album else "Unknown Album"
 
-                # ----------------------------------------------------
-                # Quarantine Check: Missing core metadata
-                # ----------------------------------------------------
-                if raw_artist.lower() == "unknown artist" or raw_album.lower() == "unknown album":
-                    quarantine_dir = Path("/data/downloads/poor_metadata")
-                    os.makedirs(quarantine_dir, exist_ok=True)
-                    target_path = quarantine_dir / os.path.basename(track.file_path)
+                    # ----------------------------------------------------
+                    # Quarantine Check: Missing core metadata
+                    # ----------------------------------------------------
+                    if raw_artist.lower() == "unknown artist" or raw_album.lower() == "unknown album":
+                        quarantine_dir = Path("/data/downloads/poor_metadata")
+                        os.makedirs(quarantine_dir, exist_ok=True)
+                        target_path = quarantine_dir / os.path.basename(media.file_path)
 
-                    shutil.move(track.file_path, target_path)
-                    logger.warning(f"Ejected track {track.id} to quarantine staging due to missing tags: {track.file_path}")
+                        shutil.move(media.file_path, target_path)
+                        logger.warning(f"Ejected media {media.id} to quarantine staging due to missing tags: {media.file_path}")
 
-                    session.delete(track)
-                    continue
+                        session.delete(media)
+                        continue
 
-                # Prepare tokens
-                raw_artist = track.artist.name if track.artist else "Unknown Artist"
-                primary_artist = extract_primary_artist(raw_artist)
-                artist = self._sanitize(primary_artist)
+                    # Prepare tokens
+                    raw_artist = track.artist.name if track.artist else "Unknown Artist"
+                    primary_artist = extract_primary_artist(raw_artist)
+                    artist = self._sanitize(primary_artist)
 
-                album = self._sanitize(track.album.title if track.album else "Unknown Album")
-                title = self._sanitize(track.title or Path(track.file_path).stem)
+                    album = self._sanitize(track.album.title if track.album else "Unknown Album")
+                    title = self._sanitize(track.title or Path(media.file_path).stem)
 
-                track_num = track.track_number
-                track_padded = "00"
-                if track_num is not None:
+                    track_num = track.track_number
+                    track_padded = "00"
+                    if track_num is not None:
+                        try:
+                            _t = str(track_num).split('/')[0].strip()
+                            track_padded = f"{int(_t):02d}"
+                        except ValueError:
+                            track_padded = "00"
+
+                    year_str = str(track.album.release_date)[:4] if track.album and track.album.release_date else "0000"
+                    
+                    ext = Path(media.file_path).suffix.lower().lstrip('.')
+
+                    # Replace tokens
+                    new_name = template.replace("{Artist}", artist)\
+                                       .replace("{Album}", album)\
+                                       .replace("{Track}", track_padded)\
+                                       .replace("{Title}", title)\
+                                       .replace("{Year}", year_str)\
+                                       .replace("{Format}", ext)\
+                                       .replace("{ext}", ext)
+
+                    rel_path = Path(new_name)
+                    ideal_absolute_path = self.library_root / rel_path
+
+                    current_path = Path(media.file_path)
+                    if current_path.resolve() == ideal_absolute_path.resolve():
+                        continue
+
+                    # The Move & Collision Handle
+                    dest_path = ideal_absolute_path
+                    parent = dest_path.parent
+                    parent.mkdir(parents=True, exist_ok=True)
+
+                    collision_occurred = False
+                    if dest_path.exists() and dest_path.resolve() != current_path.resolve():
+                        collision_occurred = True
+                        counter = 1
+                        stem = dest_path.stem
+                        ext_with_dot = dest_path.suffix
+
+                        while dest_path.exists() and dest_path.resolve() != current_path.resolve():
+                            dest_path = parent / f"{stem} ({counter}){ext_with_dot}"
+                            counter += 1
+
                     try:
-                        _t = str(track_num).split('/')[0].strip()
-                        track_padded = f"{int(_t):02d}"
-                    except ValueError:
-                        track_padded = "00"
+                        shutil.move(str(current_path), str(dest_path))
+                        logger.info(f"Reorganized: {current_path} -> {dest_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to move {current_path} to {dest_path}: {e}")
+                        continue
 
-                year_str = str(track.album.release_date)[:4] if track.album and track.album.release_date else "0000"
-                
-                ext = Path(track.file_path).suffix.lower().lstrip('.')
+                    # Database Update
+                    media.file_path = str(dest_path)
+                    session.add(media)
 
-                # Replace tokens
-                new_name = template.replace("{Artist}", artist)\
-                                   .replace("{Album}", album)\
-                                   .replace("{Track}", track_padded)\
-                                   .replace("{Title}", title)\
-                                   .replace("{Year}", year_str)\
-                                   .replace("{Format}", ext)\
-                                   .replace("{ext}", ext)
+                    if collision_occurred:
+                        event_bus.publish("duplicate_file_staged", {
+                            "track_id": track.id,
+                            "media_id": media.id,
+                            "file_path": str(dest_path),
+                            "original_path": str(current_path),
+                            "reason": "Collision during library reorganization."
+                        })
 
-                rel_path = Path(new_name)
-                ideal_absolute_path = self.library_root / rel_path
-
-                current_path = Path(track.file_path)
-                if current_path.resolve() == ideal_absolute_path.resolve():
-                    continue
-
-                # The Move & Collision Handle
-                dest_path = ideal_absolute_path
-                parent = dest_path.parent
-                parent.mkdir(parents=True, exist_ok=True)
-
-                collision_occurred = False
-                if dest_path.exists() and dest_path.resolve() != current_path.resolve():
-                    collision_occurred = True
-                    counter = 1
-                    stem = dest_path.stem
-                    ext_with_dot = dest_path.suffix
-
-                    while dest_path.exists() and dest_path.resolve() != current_path.resolve():
-                        dest_path = parent / f"{stem} ({counter}){ext_with_dot}"
-                        counter += 1
-
-                try:
-                    shutil.move(str(current_path), str(dest_path))
-                    logger.info(f"Reorganized: {current_path} -> {dest_path}")
-                except Exception as e:
-                    logger.error(f"Failed to move {current_path} to {dest_path}: {e}")
-                    continue
-
-                # Database Update
-                track.file_path = str(dest_path)
-                session.add(track)
-
-                if collision_occurred:
-                    event_bus.publish("duplicate_file_staged", {
-                        "track_id": track.id,
-                        "file_path": str(dest_path),
-                        "original_path": str(current_path),
-                        "reason": "Collision during library reorganization."
-                    })
-
-                # Cleanup old directory
-                self._cleanup_empty_directories(current_path.parent)
+                    # Cleanup old directory
+                    self._cleanup_empty_directories(current_path.parent)
 
     def _cleanup_empty_directories(self, directory: Path):
         """Recursively remove empty directories."""

@@ -6,6 +6,7 @@ from collections import defaultdict
 from typing import List, Dict, Optional, Tuple, Callable, Iterable
 from datetime import date, datetime
 import time
+from pathlib import Path
 
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import sessionmaker, Session, selectinload
@@ -480,6 +481,12 @@ class LibraryManager:
             if not media_data.file_path:
                 continue
 
+            if media_data.file_path and not media_data.file_path.startswith("virtual://"):
+                try:
+                    media_data.file_path = Path(media_data.file_path).resolve().as_posix()
+                except Exception:
+                    pass
+
             stmt = select(LocalMedia).where(LocalMedia.file_path == media_data.file_path)
             media_row = session.execute(stmt).scalar_one_or_none()
 
@@ -522,7 +529,17 @@ class LibraryManager:
             primary_media = track.get_best_media()
 
         if not primary_media and track_data.identifiers:
-            virtual_path = f"virtual://{track_data.sync_id or track.sync_id}"
+            plugin_id = ""
+            for source, pid in track_data.identifiers.items():
+                if source and pid and source != 'acoustid_id':
+                    plugin_id = f"{source}/{pid}"
+                    break
+            
+            if plugin_id:
+                virtual_path = f"virtual://{plugin_id}"
+            else:
+                virtual_path = f"virtual://{track_data.sync_id or track.sync_id}"
+
             stmt = select(LocalMedia).where(LocalMedia.file_path == virtual_path)
             media_row = session.execute(stmt).scalar_one_or_none()
             if media_row is None:

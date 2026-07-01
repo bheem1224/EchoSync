@@ -111,9 +111,13 @@ class DatabaseUpdateWorker:
                     
                     if total_remote_tracks > 0:
                         from database.music_database import Track, ExternalIdentifier, LocalMedia
+                        from sqlalchemy import or_
                         with db.session_scope() as session:
-                            total_local_tracks = session.query(Track).join(LocalMedia).join(ExternalIdentifier).filter(
-                                ExternalIdentifier.plugin_source == self.server_type
+                            total_local_tracks = session.query(Track).join(LocalMedia).outerjoin(ExternalIdentifier).filter(
+                                or_(
+                                    ExternalIdentifier.plugin_source == self.server_type,
+                                    ExternalIdentifier.plugin_source.is_(None)
+                                )
                             ).count()
                         
                         discrepancy = abs(total_remote_tracks - total_local_tracks)

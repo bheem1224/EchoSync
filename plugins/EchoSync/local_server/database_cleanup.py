@@ -5,7 +5,7 @@ import logging
 from collections import defaultdict
 from core.tiered_logger import get_logger
 from core.job_queue import register_job
-from database.music_database import get_database, Track, Album, Artist
+from database.music_database import get_database, Track, Album, Artist, LocalMedia
 
 logger = get_logger("jobs.database_cleanup")
 
@@ -29,48 +29,54 @@ class DatabaseCleanupJob(BaseJob):
         
         with db.session_scope() as session:
             # ==========================================
-            # Phase 1: Broken Path Eviction
+            # Phase 0: Physical Layer Sweep (LocalMedia)
             # ==========================================
-            self.update_progress(0, 100, "Phase 1: Evicting broken paths...")
+            self.update_progress(0, 100, "Phase 0: Evicting missing physical media...")
             
-            tracks = session.query(Track).filter(Track.file_path.isnot(None), Track.file_path != '').all()
-            deleted_broken_count = 0
-            
-            for track in tracks:
-                if not os.path.exists(track.file_path):
-                    session.delete(track)
-                    deleted_broken_count += 1
-            
-            session.commit()
-            logger.info(f"[Phase 1] Evicted {deleted_broken_count} tracks pointing to missing physical files.")
+            missing_media = []
+            all_media = session.query(LocalMedia).all()
+            for media in all_media:
+                if not media.file_path or not os.path.exists(media.file_path):
+                    missing_media.append(media)
+                    session.delete(media)
+            session.flush()
+            logger.info(f"[Phase 0] Evicted {len(missing_media)} LocalMedia records pointing to missing physical files.")
 
             # ==========================================
-            # Phase 2: Same-File Row Flattening
+            # Phase 1: Orphaned Track Purge
             # ==========================================
-            self.update_progress(33, 100, "Phase 2: Flattening redundant file paths...")
+            self.update_progress(20, 100, "Phase 1: Evicting tracks without media...")
             
-            # Fetch remaining tracks after Phase 1
-            remaining_tracks = session.query(Track).filter(Track.file_path.isnot(None), Track.file_path != '').all()
+            empty_tracks = session.query(Track).filter(~Track.media_files.any()).all()
+            deleted_track_count = len(empty_tracks)
+            for track in empty_tracks:
+                session.delete(track)
+            
+            session.commit()
+            logger.info(f"[Phase 1] Purged {deleted_track_count} Tracks missing physical media.")
+
+            # ==========================================
+            # Phase 2: Same-File Row Flattening (Optional cleanup)
+            # ==========================================
+            self.update_progress(40, 100, "Phase 2: Flattening redundant file paths...")
+            
+            # Group LocalMedia by path and delete redundancies to prevent multi-track collisions
             path_groups = defaultdict(list)
-            
-            for track in remaining_tracks:
-                path_groups[track.file_path].append(track)
+            all_media = session.query(LocalMedia).filter(LocalMedia.file_path.isnot(None), LocalMedia.file_path != '').all()
+            for media in all_media:
+                path_groups[media.file_path].append(media)
                 
             flattened_duplicate_count = 0
-            
             for file_path, group in path_groups.items():
                 if len(group) > 1:
-                    # Sort the group by ID so the lowest ID (earliest created) is kept
-                    group.sort(key=lambda t: t.id)
-                    master_track = group[0]
-                    redundant_tracks = group[1:]
-                    
-                    for duplicate in redundant_tracks:
+                    group.sort(key=lambda m: m.id)
+                    redundant_media = group[1:]
+                    for duplicate in redundant_media:
                         session.delete(duplicate)
                         flattened_duplicate_count += 1
                         
             session.commit()
-            logger.info(f"[Phase 2] Deduplicated {flattened_duplicate_count} redundant track rows pointing to the same file path.")
+            logger.info(f"[Phase 2] Deduplicated {flattened_duplicate_count} redundant media rows pointing to the same file path.")
 
             # ==========================================
             # Phase 3: Structural Orphan Purge
