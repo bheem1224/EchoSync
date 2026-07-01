@@ -160,6 +160,7 @@ class JellyfinClient(MediaServerProvider):
         supports_library_scan=True,
         supports_streaming=False,
         supports_downloads=False,
+        supports_metrics=True,
     )
 
     def create_playlist(self, name: str, tracks: list) -> bool:

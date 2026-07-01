@@ -121,9 +121,25 @@ def get_suggestion_accounts():
         requested_account_id = request.args.get('account_id', type=int)
         requested_user_id = request.args.get('user_id')
 
-        # Get all active Plex accounts (managed accounts)
-        plex_service_id = config_db.get_or_create_service_id('plex')
-        accounts = config_db.get_accounts(service_id=plex_service_id, is_active=True)
+        # Get all services that support playlist read/write and metrics capabilities dynamically
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_SDK import PlaylistSupport
+        
+        target_service_ids = []
+        for p_id in PluginRegistry.list_plugins():
+            plugin_cls = PluginRegistry.get_plugin_class(p_id)
+            if plugin_cls and hasattr(plugin_cls, 'capabilities'):
+                caps = plugin_cls.capabilities
+                if (getattr(caps, 'supports_playlists', None) == PlaylistSupport.READ_WRITE and 
+                    getattr(caps, 'supports_metrics', False)):
+                    service_id = config_db.get_service_id(p_id)
+                    if service_id:
+                        target_service_ids.append(service_id)
+
+        accounts = []
+        for service_id in target_service_ids:
+            accounts.extend(config_db.get_accounts(service_id=service_id, is_active=True))
+
         scoped_account, scope_source = _resolve_scope_account(
             accounts,
             requested_account_id=requested_account_id,
@@ -222,12 +238,8 @@ def get_pending_suggestions(account_id: int):
         music_db = get_music_database()
         
         # Verify account exists
-        plex_service_id = config_db.get_or_create_service_id('plex')
-        account = None
-        for acc in config_db.get_accounts(service_id=plex_service_id):
-            if acc['id'] == account_id:
-                account = acc
-                break
+        accounts = config_db.get_accounts()
+        account = next((acc for acc in accounts if acc['id'] == account_id), None)
         
         if not account:
             return jsonify({'error': 'Account not found'}), 404

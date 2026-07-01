@@ -1251,6 +1251,7 @@ class ProviderCapabilities:
     fingerprint_algorithms: list = None
     supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
     supports_batching: bool = False        # Batch requests support
+    supports_metrics: bool = False         # Supports ratings, listen counts, listening metrics
 
     def to_enum_list(self) -> List['Capability']:
         """Adapter pattern to translate ProviderCapabilities dataclass back to legacy Enums."""

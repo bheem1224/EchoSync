@@ -347,9 +347,20 @@ def get_all_system_accounts():
 
         # 1. Get all music service accounts
         all_accounts = []
+        from core.nexus_framework.plugin_SDK import PlaylistSupport
         for plugin in plugins:
             plugin_name_lower = plugin['name'].lower()
-            if plugin_name_lower == 'plex' or plugin['category'] != 'plugin':
+            
+            # Skip the active media server's own accounts to prevent self-mapping
+            if plugin_name_lower == active_media_server_name:
+                continue
+
+            plugin_cls = PluginRegistry.get_plugin_class(plugin['plugin_id'])
+            if not plugin_cls or not hasattr(plugin_cls, 'capabilities'):
+                continue
+
+            caps = plugin_cls.capabilities
+            if getattr(caps, 'supports_playlists', PlaylistSupport.NONE) not in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
                 continue
 
             service_id = config_db.get_or_create_service_id(plugin['plugin_id'])
