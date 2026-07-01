@@ -443,14 +443,10 @@ class RetroactiveEnhancer:
             logger.warning(f"Failed to convert search result to track: {e}")
             return None
 
-
     def _sanitize(self, filename: str) -> str:
         """Sanitize filename components."""
         import re
         return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename).strip()
-
-def get_metadata_enhancer():
-    return MetadataEnhancerService.get_instance()
 
     def enhance_library_metadata(self, batch_size=50) -> None:
         """Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
