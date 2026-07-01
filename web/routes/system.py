@@ -367,39 +367,40 @@ def get_all_system_accounts():
         media_users = []
         media_service_id = config_db.get_or_create_service_id(active_servers[0]) if active_servers else None
         if active_media_server_name == 'plex' and media_service_id:
-            from plugins.plex.client import PlexClient
-            try:
-                client = PlexClient()
-                if client.ensure_connection() and client.server:
-                    myplex = client.server.myPlexAccount()
-                    # Ensure admin exists in config.db so it has a relational ID
-                    admin_id = config_db.upsert_account(
-                        service_id=media_service_id,
-                        user_id=str(myplex.id),
-                        account_name=myplex.username,
-                        display_name=myplex.title or myplex.username
-                    )
-                    media_users.append({
-                        'id': admin_id,
-                        'name': myplex.title or myplex.username,
-                        'is_admin': True,
-                        'linked_account_ids': []
-                    })
-                    for user in myplex.users():
-                        u_id = config_db.upsert_account(
+            PlexClient = PluginRegistry.get_plugin_class(active_servers[0])
+            if PlexClient:
+                try:
+                    client = PlexClient()
+                    if client.ensure_connection() and client.server:
+                        myplex = client.server.myPlexAccount()
+                        # Ensure admin exists in config.db so it has a relational ID
+                        admin_id = config_db.upsert_account(
                             service_id=media_service_id,
-                            user_id=str(user.id),
-                            account_name=user.username,
-                            display_name=user.title or user.username
+                            user_id=str(myplex.id),
+                            account_name=myplex.username,
+                            display_name=myplex.title or myplex.username
                         )
                         media_users.append({
-                            'id': u_id,
-                            'name': user.title or user.username,
-                            'is_admin': False,
+                            'id': admin_id,
+                            'name': myplex.title or myplex.username,
+                            'is_admin': True,
                             'linked_account_ids': []
                         })
-            except Exception as e:
-                logger.warning(f"Failed to fetch Plex users: {e}")
+                        for user in myplex.users():
+                            u_id = config_db.upsert_account(
+                                service_id=media_service_id,
+                                user_id=str(user.id),
+                                account_name=user.username,
+                                display_name=user.title or user.username
+                            )
+                            media_users.append({
+                                'id': u_id,
+                                'name': user.title or user.username,
+                                'is_admin': False,
+                                'linked_account_ids': []
+                            })
+                except Exception as e:
+                    logger.warning(f"Failed to fetch Plex users: {e}")
 
         # 3. Load existing stateful mappings from config.db
         for user in media_users:
