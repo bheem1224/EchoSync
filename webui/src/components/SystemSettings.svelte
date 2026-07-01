@@ -73,6 +73,7 @@
       if (health && health.data && health.data.library) {
         libraryStats = {
           totalTracks: health.data.library.total_tracks !== undefined ? String(health.data.library.total_tracks) : libraryStats.totalTracks,
+          totalFiles: health.data.library.total_files !== undefined ? String(health.data.library.total_files) : libraryStats.totalFiles,
           totalAlbums: health.data.library.total_albums !== undefined ? String(health.data.library.total_albums) : libraryStats.totalAlbums,
           storageUsed: health.data.library.storage_used || libraryStats.storageUsed
         };

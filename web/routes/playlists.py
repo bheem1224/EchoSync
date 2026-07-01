@@ -439,9 +439,12 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
 
         try:
             logger.info(f"Fetching tracks for playlist: {playlist_name} (id: {playlist_id})")
-            # force_refresh=True: the UI is explicitly requesting this playlist, so we
-            # bypass the background-job cache limit and always serve current data.
-            source_tracks = source_provider.get_playlist_tracks(playlist_id, force_refresh=True)
+            import inspect
+            sig = inspect.signature(source_provider.get_playlist_tracks)
+            if 'force_refresh' in sig.parameters:
+                source_tracks = source_provider.get_playlist_tracks(playlist_id, force_refresh=True)
+            else:
+                source_tracks = source_provider.get_playlist_tracks(playlist_id)
 
             for source_track in source_tracks:
                 track_title = source_track.title

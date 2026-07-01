@@ -335,32 +335,37 @@ def get_all_system_accounts():
     from web.services.plugin_registry import list_plugins
     try:
         config_db = get_config_database()
-        from core.nexus_framework.plugin_loader import PluginRegistry
         active_servers = PluginRegistry.get_active_services_by_type('media_server')
-        active_media_server = active_servers[0].split('.')[-1] if active_servers else 'plex'
+        plugins = list_plugins()
+        
+        active_media_server_name = 'plex'
+        if active_servers:
+            db_name = config_db.get_service_name(active_servers[0])
+            if db_name:
+                active_media_server_name = db_name.lower()
 
         # 1. Get all music service accounts
         all_accounts = []
-        plugins = list_plugins()
         for plugin in plugins:
-            if plugin['id'] == 'plex' or plugin['category'] != 'plugin':
+            plugin_name_lower = plugin['name'].lower()
+            if plugin_name_lower == 'plex' or plugin['category'] != 'plugin':
                 continue
 
-            service_id = config_db.get_or_create_service_id(plugin['id'])
+            service_id = config_db.get_or_create_service_id(plugin['plugin_id'])
             accounts = config_db.get_accounts(service_id=service_id)
             for acc in accounts:
                 all_accounts.append({
                     'id': acc.get('id'),
                     'name': acc.get('display_name') or acc.get('account_name'),
-                    'service': plugin['id'],
-                    'label': f"{acc.get('display_name') or acc.get('account_name')} ({plugin['id'].title()})",
-                    'color': '#1DB954' if plugin['id'] == 'spotify' else '#00E5FF' if plugin['id'] == 'tidal' else '#5b21b6'
+                    'service': plugin_name_lower,
+                    'label': f"{acc.get('display_name') or acc.get('account_name')} ({plugin['name']})",
+                    'color': '#1DB954' if plugin_name_lower == 'spotify' else '#00E5FF' if plugin_name_lower == 'tidal' else '#5b21b6'
                 })
 
         # 2. Get media server users and ensure they have Account records in config.db
         media_users = []
-        media_service_id = config_db.get_or_create_service_id(active_media_server)
-        if active_media_server == 'plex':
+        media_service_id = config_db.get_or_create_service_id(active_servers[0]) if active_servers else None
+        if active_media_server_name == 'plex' and media_service_id:
             from plugins.plex.client import PlexClient
             try:
                 client = PlexClient()
