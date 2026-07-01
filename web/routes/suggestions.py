@@ -61,7 +61,7 @@ def _calculate_top_genres_for_user(work_session, music_session, user_id: int, li
         row.sync_id
         for row in work_session.query(UserRating.sync_id)
         .filter(
-            UserRating.user_id == user_id,
+            UserRating.account_id == user_id,
             UserRating.rating.isnot(None),
             UserRating.rating >= 4.0,
         )
@@ -162,13 +162,13 @@ def get_suggestion_accounts():
                 with working_db.session_scope() as work_session:
                     with music_db.session_scope() as music_session:
                         user = work_session.query(Account).filter(
-                            Account.provider_identifier == account.get('user_id')
+                            Account.remote_account_id == str(account.get('user_id'))
                         ).first() if account.get('user_id') else None
                     
                         if user:
                             # Count approved tracks for this user (high ratings: 4.0+)
                             high_ratings = work_session.query(UserRating).filter(
-                                UserRating.user_id == user.id,
+                                UserRating.account_id == user.id,
                                 UserRating.rating >= 4.0
                             ).count()
                             total_suggestions = high_ratings

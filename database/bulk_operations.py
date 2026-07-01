@@ -21,6 +21,26 @@ logger = get_logger("bulk_operations")
 BATCH_SIZE = 2000  # Commit every N tracks (tuned for SQLite WAL throughput)
 
 
+def _canonicalize_path(file_path: str) -> str:
+    """Produce a deterministic canonical form for a file path.
+
+    This prevents duplicate LocalMedia rows caused by the same file being
+    reported with different path representations by different providers
+    (e.g. local scanner vs Plex vs resolved symlinks).
+
+    Rules applied:
+      1. Resolve to absolute path (follows symlinks).
+      2. Convert to POSIX style (forward slashes).
+      3. Strip trailing slashes.
+    """
+    if not file_path or file_path.startswith("virtual://"):
+        return file_path
+    try:
+        return Path(file_path).resolve().as_posix()
+    except Exception:
+        return file_path
+
+
 class LibraryManager:
     """
     SQLAlchemy 2.0 based bulk importer for EchosyncTrack objects.
@@ -481,11 +501,10 @@ class LibraryManager:
             if not media_data.file_path:
                 continue
 
-            if media_data.file_path and not media_data.file_path.startswith("virtual://"):
-                try:
-                    media_data.file_path = Path(media_data.file_path).resolve().as_posix()
-                except Exception:
-                    pass
+            # Canonicalize the path so that different representations of the
+            # same physical file (symlinks, trailing slashes, Plex vs local
+            # scanner) always produce the same LocalMedia row.
+            media_data.file_path = _canonicalize_path(media_data.file_path)
 
             stmt = select(LocalMedia).where(LocalMedia.file_path == media_data.file_path)
             media_row = session.execute(stmt).scalar_one_or_none()
@@ -528,29 +547,41 @@ class LibraryManager:
         if not primary_media and track.media_files:
             primary_media = track.get_best_media()
 
+        # Only create a virtual media row if the track has NO real media at all.
+        # This prevents phantom virtual:// entries from inflating file/storage counts
+        # when the track already has physical files attached from a prior scan.
         if not primary_media and track_data.identifiers:
-            plugin_id = ""
-            for source, pid in track_data.identifiers.items():
-                if source and pid and source != 'acoustid_id':
-                    plugin_id = f"{source}/{pid}"
-                    break
-            
-            if plugin_id:
-                virtual_path = f"virtual://{plugin_id}"
+            # Check if the track already has any real (non-virtual) media
+            has_real_media = any(
+                m for m in track.media_files
+                if m.file_path and not m.file_path.startswith("virtual://")
+            )
+            if has_real_media:
+                # Use the best existing real media as the primary for linking identifiers
+                primary_media = track.get_best_media()
             else:
-                virtual_path = f"virtual://{track_data.sync_id or track.sync_id}"
+                plugin_id = ""
+                for source, pid in track_data.identifiers.items():
+                    if source and pid and source != 'acoustid_id':
+                        plugin_id = f"{source}/{pid}"
+                        break
+                
+                if plugin_id:
+                    virtual_path = f"virtual://{plugin_id}"
+                else:
+                    virtual_path = f"virtual://{track_data.sync_id or track.sync_id}"
 
-            stmt = select(LocalMedia).where(LocalMedia.file_path == virtual_path)
-            media_row = session.execute(stmt).scalar_one_or_none()
-            if media_row is None:
-                m_id = generate_nanoid(size=8)
-                media_row = LocalMedia(
-                    track=track,
-                    media_id=m_id,
-                    file_path=virtual_path,
-                )
-                session.add(media_row)
-            primary_media = media_row
+                stmt = select(LocalMedia).where(LocalMedia.file_path == virtual_path)
+                media_row = session.execute(stmt).scalar_one_or_none()
+                if media_row is None:
+                    m_id = generate_nanoid(size=8)
+                    media_row = LocalMedia(
+                        track=track,
+                        media_id=m_id,
+                        file_path=virtual_path,
+                    )
+                    session.add(media_row)
+                primary_media = media_row
 
         # Link identifiers (Only if we have a primary_media to attach it to)
         if primary_media:
@@ -604,6 +635,37 @@ class LibraryManager:
         else:
             if getattr(track_data, 'identifiers', None) or getattr(track_data, 'fingerprint', None):
                 logger.warning(f"Could not link identifiers or fingerprint for track '{track.title}' because no media file was associated.")
+
+        # --- Post-upsert deduplication ---
+        # If the track now has multiple LocalMedia rows pointing to the same
+        # canonical path (caused by prior runs with non-canonical paths), merge
+        # them by keeping the row with the lowest id and deleting the rest.
+        try:
+            session.flush()  # ensure all pending media rows have IDs
+            path_groups: Dict[str, list] = defaultdict(list)
+            for m in track.media_files:
+                canon = _canonicalize_path(m.file_path) if m.file_path else m.file_path
+                path_groups[canon].append(m)
+
+            for canon_path, group in path_groups.items():
+                if len(group) <= 1:
+                    continue
+                # Keep the row with the lowest id (oldest)
+                group.sort(key=lambda m: m.id)
+                keeper = group[0]
+                for dup in group[1:]:
+                    # Re-point any ExternalIdentifiers and AudioFingerprints
+                    for ext in list(dup.external_identifiers):
+                        ext.media_id = keeper.media_id
+                    for fp in list(dup.audio_fingerprints):
+                        fp.media_id = keeper.media_id
+                    session.delete(dup)
+                    logger.info(
+                        "Dedup: removed duplicate LocalMedia id=%s for track '%s' (path=%s, kept id=%s)",
+                        dup.id, track.title, canon_path, keeper.id,
+                    )
+        except Exception as dedup_err:
+            logger.warning("Post-upsert dedup failed for track '%s': %s", track.title, dedup_err)
 
         return track, is_new
 

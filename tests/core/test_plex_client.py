@@ -70,26 +70,24 @@ def test_import_managed_users_upserts_admin_and_managed(monkeypatch):
     server.myPlexAccount.return_value = myplex_account
     client.server = server
 
-    fake_storage = MagicMock()
-    fake_storage.get_account_token.return_value = {'access_token': 'encrypted-token'}
-    fake_storage.upsert_account.side_effect = [7, 8]
-    fake_storage.list_accounts.return_value = [
+    client.accounts = MagicMock()
+    client.accounts.upsert_account.side_effect = [7, 8]
+    client.accounts.get_all.return_value = [
         {'id': 7, 'display_name': 'admin', 'user_id': 'admin-uuid'},
         {'id': 8, 'display_name': 'Kiddo', 'user_id': 'managed-1'},
     ]
 
-    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
-
     accounts = client.import_managed_users()
 
     assert [account['id'] for account in accounts] == [7, 8]
-    assert fake_storage.upsert_account.call_count == 2
-    admin_call = fake_storage.upsert_account.call_args_list[0].kwargs
-    managed_call = fake_storage.upsert_account.call_args_list[1].kwargs
+    assert client.accounts.upsert_account.call_count == 2
+    admin_call = client.accounts.upsert_account.call_args_list[0].kwargs
+    managed_call = client.accounts.upsert_account.call_args_list[1].kwargs
     assert admin_call['account_id'] == 7
     assert admin_call['user_id'] == 'admin-uuid'
     assert managed_call['user_id'] == 'managed-1'
     assert managed_call['is_authenticated'] is False
+    assert managed_call['is_active'] is True
 
 
 def test_add_tracks_to_managed_playlist_uses_exact_target_user_id(monkeypatch):
@@ -237,11 +235,10 @@ def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
         play_count=3,
     )
 
-    fake_storage = MagicMock()
-    fake_storage.list_accounts.return_value = [
+    client.accounts = MagicMock()
+    client.accounts.get_all.return_value = [
         {'id': 8, 'display_name': 'Kiddo', 'user_id': '42'}  # matches managed_user.id
     ]
-    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
 
     # Add type track so the interaction is included
     mock_history_item = MagicMock()
@@ -369,11 +366,10 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
         rating=None,
     )
 
-    fake_storage = MagicMock()
-    fake_storage.list_accounts.return_value = [
+    client.accounts = MagicMock()
+    client.accounts.get_all.return_value = [
         {'id': 8, 'display_name': 'Kiddo', 'user_id': '42'}  # matches managed_user.id
     ]
-    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
 
     interactions = client.fetch_user_history(account_id=8, limit=10)
 

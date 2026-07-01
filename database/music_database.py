@@ -634,15 +634,46 @@ class MusicDatabase:
             return session.query(Track).count()
 
     def count_files(self) -> int:
-        """Return total physical media files stored."""
+        """Return total physical media files stored.
+
+        Excludes ``virtual://`` placeholder paths and deduplicates by
+        ``file_path`` (case-insensitively) so that the count matches the real
+        number of files on disk.
+        """
+        from sqlalchemy import func as sqla_func
         with self.session_scope() as session:
-            return session.query(LocalMedia).count()
+            result = session.query(
+                sqla_func.count(sqla_func.distinct(sqla_func.lower(LocalMedia.file_path)))
+            ).filter(
+                LocalMedia.file_path.isnot(None),
+                LocalMedia.file_path != '',
+                ~LocalMedia.file_path.startswith('virtual://'),
+            ).scalar()
+            return int(result or 0)
 
     def get_total_storage_used(self) -> int:
-        """Return total size of all tracks in bytes."""
-        from sqlalchemy import func
+        """Return total size of all *unique* physical media files in bytes.
+
+        Groups by ``file_path`` (case-insensitively) and takes the
+        ``MAX(file_size_bytes)`` per path so that duplicate LocalMedia rows
+        don't inflate the total. Virtual placeholder paths are excluded.
+        """
+        from sqlalchemy import func as sqla_func
         with self.session_scope() as session:
-            result = session.query(func.sum(LocalMedia.file_size_bytes)).scalar()
+            # Sub-query: one row per distinct file_path with the best size
+            subq = (
+                session.query(
+                    sqla_func.max(LocalMedia.file_size_bytes).label('best_size')
+                )
+                .filter(
+                    LocalMedia.file_path.isnot(None),
+                    LocalMedia.file_path != '',
+                    ~LocalMedia.file_path.startswith('virtual://'),
+                )
+                .group_by(sqla_func.lower(LocalMedia.file_path))
+                .subquery()
+            )
+            result = session.query(sqla_func.sum(subq.c.best_size)).scalar()
             return int(result or 0)
 
     def get_library_hierarchy(self) -> List[Dict]:

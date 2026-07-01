@@ -1342,7 +1342,7 @@ class PlexClient(MediaServerProvider):
                 account_name=username or display_name,
                 display_name=display_name,
                 user_id=str(user_id) if user_id is not None else None,
-                is_active=False,
+                is_active=True,
                 is_authenticated=False,
             )
             if managed_account_id:

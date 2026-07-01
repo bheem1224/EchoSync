@@ -3,9 +3,10 @@
 import os
 import logging
 from collections import defaultdict
+from sqlalchemy import delete, update
 from core.tiered_logger import get_logger
 from core.job_queue import register_job
-from database.music_database import get_database, Track, Album, Artist, LocalMedia
+from database.music_database import get_database, Track, Album, Artist, LocalMedia, ExternalIdentifier, AudioFingerprint
 
 logger = get_logger("jobs.database_cleanup")
 
@@ -16,6 +17,23 @@ except ImportError:
     class BaseJob:
         def update_progress(self, current: int, total: int, status: str = ""):
             pass
+
+from pathlib import Path
+
+def _canonicalize_path(file_path: str) -> str:
+    """Produce a deterministic canonical form for a file path.
+
+    This prevents duplicate LocalMedia rows caused by different representations
+    of the same physical file (e.g. symlinks, casing, trailing slashes, or
+    different mount prefixes).
+    """
+    if not file_path or file_path.startswith("virtual://"):
+        return file_path
+    try:
+        return Path(file_path).resolve().as_posix()
+    except Exception:
+        return file_path
+
 
 class DatabaseCleanupJob(BaseJob):
     """
@@ -36,7 +54,9 @@ class DatabaseCleanupJob(BaseJob):
             missing_media = []
             all_media = session.query(LocalMedia).all()
             for media in all_media:
-                if not media.file_path or not os.path.exists(media.file_path):
+                exists = os.path.exists(media.file_path) if media.file_path else False
+                print(f"DEBUG PHASE 0: path={media.file_path} exists={exists}")
+                if not media.file_path or not exists:
                     missing_media.append(media)
                     session.delete(media)
             session.flush()
@@ -60,23 +80,43 @@ class DatabaseCleanupJob(BaseJob):
             # ==========================================
             self.update_progress(40, 100, "Phase 2: Flattening redundant file paths...")
             
-            # Group LocalMedia by path and delete redundancies to prevent multi-track collisions
+            # Group LocalMedia by canonical path and delete redundancies to prevent multi-track collisions
             path_groups = defaultdict(list)
             all_media = session.query(LocalMedia).filter(LocalMedia.file_path.isnot(None), LocalMedia.file_path != '').all()
             for media in all_media:
-                path_groups[media.file_path].append(media)
+                canon = _canonicalize_path(media.file_path)
+                path_groups[canon].append(media)
                 
             flattened_duplicate_count = 0
             for file_path, group in path_groups.items():
                 if len(group) > 1:
                     group.sort(key=lambda m: m.id)
+                    keeper = group[0]
                     redundant_media = group[1:]
                     for duplicate in redundant_media:
-                        session.delete(duplicate)
+                        # Move identifiers and fingerprints to keeper via raw SQL
+                        session.execute(
+                            update(ExternalIdentifier)
+                            .where(ExternalIdentifier.media_id == duplicate.media_id)
+                            .values(media_id=keeper.media_id)
+                        )
+                        session.execute(
+                            update(AudioFingerprint)
+                            .where(AudioFingerprint.media_id == duplicate.media_id)
+                            .values(media_id=keeper.media_id)
+                        )
+                        # Delete the duplicate media row
+                        session.execute(
+                            delete(LocalMedia)
+                            .where(LocalMedia.id == duplicate.id)
+                        )
                         flattened_duplicate_count += 1
-                        
+            
+            # Flush updates to DB and expire loaded collections to force reload
+            session.flush()
+            session.expire_all()
             session.commit()
-            logger.info(f"[Phase 2] Deduplicated {flattened_duplicate_count} redundant media rows pointing to the same file path.")
+            logger.info(f"[Phase 2] Deduplicated {flattened_duplicate_count} redundant media rows pointing to the same canonical path.")
 
             # ==========================================
             # Phase 3: Structural Orphan Purge
