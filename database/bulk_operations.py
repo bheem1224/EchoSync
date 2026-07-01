@@ -585,9 +585,16 @@ class LibraryManager:
 
         # Link identifiers (Only if we have a primary_media to attach it to)
         if primary_media:
+            album_artist_keys = {
+                'musicbrainz_release_id', 'musicbrainz_albumid', 'musicbrainz_artistid',
+                'musicbrainz_release_group_id', 'musicbrainz_albumartistid', 'mb_release_id'
+            }
             for source, item_id in track_data.identifiers.items():
                 if not source or not item_id or source == 'acoustid_id':
                     continue
+
+                if source in album_artist_keys:
+                    continue  # Skip. These belong on the Album/Artist models, not LocalMedia.
 
                 if not isinstance(item_id, str):
                     item_id = str(item_id)

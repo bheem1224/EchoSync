@@ -204,3 +204,39 @@ def test_statistics_queries_deduplicate_and_exclude_virtual(tmp_path):
 
     # get_total_storage_used should be 10MB
     assert db.get_total_storage_used() == 10 * 1024 * 1024
+
+
+def test_album_artist_identifiers_ignored_in_external_identifiers(tmp_path):
+    db, manager = _make_manager(str(tmp_path))
+
+    test_file = tmp_path / "song.mp3"
+    test_file.touch()
+    path_str = str(test_file)
+
+    # Ingest a track containing track MBID, plus album/artist identifiers in `identifiers` dictionary
+    media1 = EchosyncMedia(file_path=path_str, file_size_bytes=1000)
+    t1 = EchosyncTrack(
+        raw_title="Scope Test Song",
+        artist_name="Test Artist",
+        album_title="Test Album",
+        media=[media1],
+        identifiers={
+            "musicbrainz_id": "track-mbid-123",            # Should be accepted (track level)
+            "plex": "plex-track-456",                      # Should be accepted (track level)
+            "musicbrainz_release_id": "album-mbid-789",    # Should be ignored (album level)
+            "musicbrainz_artistid": "artist-mbid-000",     # Should be ignored (artist level)
+        }
+    )
+    manager.bulk_import([t1])
+
+    # Verify that only the track level external identifiers were created
+    with db.session_scope() as session:
+        all_ext = session.query(ExternalIdentifier).all()
+        # Should only have "musicbrainz_id" and "plex"
+        sources = {ext.plugin_source for ext in all_ext}
+        assert "musicbrainz_id" in sources
+        assert "plex" in sources
+        assert "musicbrainz_release_id" not in sources
+        assert "musicbrainz_artistid" not in sources
+        assert len(all_ext) == 2
+
