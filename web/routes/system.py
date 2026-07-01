@@ -445,13 +445,10 @@ def map_system_accounts():
         # user_id here is the relational Account.id for the media user
         source_account_id = payload.get('user_id')
         account_ids = [int(aid) for aid in payload.get('account_ids', [])]
-        from core.nexus_framework.plugin_loader import PluginRegistry
-        active_servers = PluginRegistry.get_active_services_by_type('media_server')
-        active_media_server = active_servers[0].split('.')[-1] if active_servers else 'plex'
-
         if source_account_id is None:
             return jsonify({'error': 'user_id (Account ID) is required'}), 400
 
+        from database.config_database import get_config_database
         config_db = get_config_database()
 
         # Clear existing mappings for this account
