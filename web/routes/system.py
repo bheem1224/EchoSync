@@ -335,6 +335,7 @@ def get_all_system_accounts():
     from web.services.plugin_registry import list_plugins
     try:
         config_db = get_config_database()
+        from core.nexus_framework.plugin_loader import PluginRegistry
         active_servers = PluginRegistry.get_active_services_by_type('media_server')
         plugins = list_plugins()
         
