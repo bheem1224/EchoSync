@@ -101,7 +101,7 @@ def save_settings():
                 account_id = sdk.accounts.ensure_account(account_name=f"plex_user_{int(time.time())}")
 
             sdk.accounts.save_token(
-                account_id=account_id, access_token=encrypt_string(token), refresh_token=None, expires_at=None)
+                account_id=account_id, access_token=token, refresh_token=None, expires_at=None)
             logger.info(f"Plex token saved to SQLite account {account_id}")
 
             try:
@@ -317,7 +317,7 @@ def poll_oauth(session_id: str):
             # Encrypt and save token to account_tokens
             try:
                 sdk.accounts.save_token(
-                    account_id=account_id, access_token=encrypt_string(auth_token), refresh_token=None, expires_at=None)
+                    account_id=account_id, access_token=auth_token, refresh_token=None, expires_at=None)
                 sdk.accounts.mark_account_authenticated(account_id)
                 sdk.accounts.toggle_account_active(account_id, True)
                 logger.info(f"Plex OAuth completed and token securely saved for account: {account_name}")
