@@ -629,6 +629,11 @@ class MusicDatabase:
             return session.query(Album).count()
 
     def count_tracks(self) -> int:
+        """Return total tracks stored."""
+        with self.session_scope() as session:
+            return session.query(Track).count()
+
+    def count_files(self) -> int:
         """Return total physical media files stored."""
         with self.session_scope() as session:
             return session.query(LocalMedia).count()

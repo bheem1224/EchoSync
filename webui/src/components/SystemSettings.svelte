@@ -185,7 +185,10 @@
             </svg>
             Total Tracks
           </div>
-          <div class="text-xl font-semibold">{libraryStats.totalTracks}</div>
+          <div class="flex flex-col">
+            <span class="text-xl font-semibold">{libraryStats.totalTracks || 0}</span>
+            <span class="text-xs text-gray-500 mt-0.5">{libraryStats.totalFiles || 0} files</span>
+          </div>
         </div>
 
         <div class="bg-gray-900/60 rounded-lg border border-gray-700/40 p-3">

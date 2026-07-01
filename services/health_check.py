@@ -148,6 +148,7 @@ def get_system_health() -> Dict[str, Any]:
         from database.music_database import get_database
         db = get_database()
         tracks = db.count_tracks()
+        files = db.count_files()
         albums = db.count_albums()
         storage_bytes = db.get_total_storage_used()
         
@@ -164,6 +165,7 @@ def get_system_health() -> Dict[str, Any]:
 
         library_data = {
             "total_tracks": tracks,
+            "total_files": files,
             "total_albums": albums,
             "storage_used": storage_str
         }
