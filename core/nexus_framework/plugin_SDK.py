@@ -888,12 +888,10 @@ class PluginBase(ABC):
         """
         raise NotImplementedError("This provider does not implement handle_oauth_callback")
 
-    @abstractmethod
     def authenticate(self, **kwargs) -> bool:
         """Authenticate the provider (OAuth, API key, etc.)."""
         pass
 
-    @abstractmethod
     def search(
         self,
         query: str,
@@ -915,7 +913,6 @@ class PluginBase(ABC):
         """
         pass
 
-    @abstractmethod
     def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         """Fetch a single track by ID. Must return EchosyncTrack object."""
         pass
@@ -928,22 +925,18 @@ class PluginBase(ABC):
         """Fetch metadata for multiple recordings/tracks at once."""
         return {}
 
-    @abstractmethod
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a single album by ID."""
         pass
 
-    @abstractmethod
     def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a single artist by ID."""
         pass
 
-    @abstractmethod
     def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Fetch playlists for a user (if supported)."""
         pass
 
-    @abstractmethod
     def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
         """Fetch tracks for a playlist. Must return List[EchosyncTrack]."""
         pass
@@ -976,12 +969,10 @@ class PluginBase(ABC):
         """
         raise NotImplementedError(f"remove_tracks_from_playlist not implemented for {self.name} provider")
 
-    @abstractmethod
     def is_configured(self) -> bool:
         """Return True if provider is configured and ready to use."""
         pass
 
-    @abstractmethod
     def get_logo_url(self) -> str:
         """Return a URL or path to the provider's logo/icon."""
         pass
@@ -1217,11 +1208,9 @@ class SyncServiceProvider(PluginBase):
     """
     Interface for sync service providers (Spotify, Tidal).
     """
-    @abstractmethod
     def get_user_playlists(self, user_id: Optional[str] = None) -> List[Any]:
         pass
 
-    @abstractmethod
     def get_playlist_tracks(self, playlist_id: str) -> List[Any]:
         pass
 
@@ -1315,15 +1304,12 @@ class DownloaderProvider(PluginBase):
     """
     Interface for downloader-style providers (Soulseek/slskd).
     """
-    @abstractmethod
     def search(self, query: str, limit: int = 10) -> List[Any]:
         pass
 
-    @abstractmethod
     def download(self, username: str, filename: str, file_size: int = 0) -> Optional[str]:
         pass
 
-    @abstractmethod
     def get_download_status(self, download_id: str) -> Optional[Dict[str, Any]]:
         pass
 
@@ -1341,19 +1327,15 @@ class MediaServerProvider(PluginBase):
             'error': None
         }
 
-    @abstractmethod
     def get_library_stats(self) -> Dict[str, int]:
         pass
 
-    @abstractmethod
     def get_all_artists(self) -> List[Any]:
         pass
 
-    @abstractmethod
     def get_all_albums(self) -> List[Any]:
         pass
 
-    @abstractmethod
     def get_all_tracks(self) -> List[Any]:
         pass
 
@@ -1376,7 +1358,6 @@ class MediaServerProvider(PluginBase):
             self._scan_state['error'] = str(e)
             return False
 
-    @abstractmethod
     def _trigger_scan_api(self, path: Optional[str] = None) -> bool:
         """
         Server-specific: Trigger scan on the media server API.
@@ -1400,7 +1381,6 @@ class MediaServerProvider(PluginBase):
             self._scan_state['error'] = str(e)
             return self._scan_state.copy()
 
-    @abstractmethod
     def _get_scan_status_api(self) -> Dict[str, Any]:
         """
         Server-specific: Poll scan status from the media server API.
@@ -1408,7 +1388,6 @@ class MediaServerProvider(PluginBase):
         """
         pass
 
-    @abstractmethod
     def get_content_changes_since(self, last_update: Optional[Any] = None) -> Any:
         """
         Get content changes since the last update timestamp.

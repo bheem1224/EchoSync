@@ -524,7 +524,9 @@ class PluginLoader:
             conn.close()
 
         # Startup Garbage Collection Sweep
-        if plugins_dir.exists():
+        if os.getenv("DEV_MODE", "").lower() == "true":
+            logger.info("[system] - DEV_MODE is active. Skipping plugin folder garbage collection.")
+        elif plugins_dir.exists():
             for author_item in list(plugins_dir.iterdir()):
                 if not author_item.is_dir() or author_item.name.startswith('_') or author_item.name.lower() == 'system':
                     continue
