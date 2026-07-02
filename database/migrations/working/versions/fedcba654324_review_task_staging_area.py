@@ -43,9 +43,12 @@ def upgrade() -> None:
                 except Exception:
                     pass
             
-            title = detected_metadata.get("title") or detected_metadata.get("raw_title") or "Unknown Title"
-            artist = detected_metadata.get("artist") or detected_metadata.get("artist_name") or "Unknown Artist"
-            album = detected_metadata.get("album") or detected_metadata.get("album_title") or "Unknown Album"
+            # Force None or falsy to empty dict
+            detected = detected_metadata or {}
+            
+            title = detected.get("title") or detected.get("raw_title") or "Unknown Title"
+            artist = detected.get("artist") or detected.get("artist_name") or "Unknown Artist"
+            album = detected.get("album") or detected.get("album_title") or "Unknown Album"
             
             track_dict = {
                 "sync_id": None,
@@ -53,27 +56,27 @@ def upgrade() -> None:
                 "title": title,
                 "display_title": title,
                 "artist": artist,
-                "album_artist": detected_metadata.get("album_artist"),
+                "album_artist": detected.get("album_artist"),
                 "album_title": album,
-                "edition": detected_metadata.get("edition"),
-                "sort_title": detected_metadata.get("sort_title"),
-                "artist_sort_name": detected_metadata.get("artist_sort_name"),
-                "album_sort_title": detected_metadata.get("album_sort_title"),
-                "album_type": detected_metadata.get("album_type"),
-                "album_release_group_id": detected_metadata.get("album_release_group_id"),
-                "duration_ms": detected_metadata.get("duration") or detected_metadata.get("duration_ms"),
-                "track_number": detected_metadata.get("track_number"),
-                "disc_number": detected_metadata.get("disc_number"),
-                "release_year": detected_metadata.get("year") or detected_metadata.get("release_year"),
-                "version": detected_metadata.get("version"),
+                "edition": detected.get("edition"),
+                "sort_title": detected.get("sort_title"),
+                "artist_sort_name": detected.get("artist_sort_name"),
+                "album_sort_title": detected.get("album_sort_title"),
+                "album_type": detected.get("album_type"),
+                "album_release_group_id": detected.get("album_release_group_id"),
+                "duration_ms": detected.get("duration") or detected.get("duration_ms"),
+                "track_number": detected.get("track_number"),
+                "disc_number": detected.get("disc_number"),
+                "release_year": detected.get("year") or detected.get("release_year"),
+                "version": detected.get("version"),
                 "added_at": None,
                 "media": [],
-                "mbid": detected_metadata.get("musicbrainz_id") or detected_metadata.get("mbid"),
-                "isrc": detected_metadata.get("isrc"),
-                "acoustid": detected_metadata.get("acoustid_id") or detected_metadata.get("acoustid"),
-                "mb_release_id": detected_metadata.get("mb_release_id"),
+                "mbid": detected.get("musicbrainz_id") or detected.get("mbid"),
+                "isrc": detected.get("isrc"),
+                "acoustid": detected.get("acoustid_id") or detected.get("acoustid"),
+                "mb_release_id": detected.get("mb_release_id"),
                 "original_release_date": None,
-                "fingerprint": detected_metadata.get("fingerprint"),
+                "fingerprint": detected.get("fingerprint"),
                 "quality_tags": None,
                 "is_compilation": None,
                 "identifiers": {},
