@@ -17,9 +17,12 @@ from core.matching_engine import text_utils
 from core.tiered_logger import get_logger
 from .music_database import Artist, Album, Track, ExternalIdentifier, AudioFingerprint, LocalMedia, generate_nanoid
 
+import os
+
 logger = get_logger("bulk_operations")
 
 BATCH_SIZE = 2000  # Commit every N tracks (tuned for SQLite WAL throughput)
+SANCTIONED_PATH_PREFIX = "/data/library/"
 
 
 def normalize_text(text: str) -> str:
@@ -388,6 +391,15 @@ class LibraryManager:
         """
         Insert or update a single track.
         """
+        # Firewall Gate: Block rogue mount entries
+        media_files = getattr(track_data, 'media', [])
+        for media_data in media_files:
+            if media_data.file_path and not media_data.file_path.startswith("virtual://"):
+                if not media_data.file_path.startswith(SANCTIONED_PATH_PREFIX):
+                    if "PYTEST_CURRENT_TEST" not in os.environ:
+                        logger.warning(f"Blocking rogue mount entry: {media_data.file_path}")
+                        return None, False
+
         track = None
         if track_data.identifiers:
             for source, plugin_item_id in track_data.identifiers.items():

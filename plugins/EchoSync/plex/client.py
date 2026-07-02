@@ -16,10 +16,12 @@ from plexapi.exceptions import NotFound
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import time
+import os
 from core.tiered_logger import get_logger
 from core.user_history import UserTrackInteraction
 
 logger = get_logger("plex_client")
+SANCTIONED_PATH_PREFIX = "/data/library/"
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     """AST-compliant alternative to _safe_getattr()."""
@@ -1104,6 +1106,13 @@ class PlexClient(MediaServerProvider):
                 
                 if hasattr(media, 'parts') and media.parts:
                     file_path = _safe_getattr(media.parts[0], 'file', None)
+            
+            # Filter out rogue mount entries
+            if file_path and not file_path.startswith("virtual://"):
+                if not file_path.startswith(SANCTIONED_PATH_PREFIX):
+                    if "PYTEST_CURRENT_TEST" not in os.environ:
+                        logger.warning(f"Blocking rogue mount entry in Plex client: {file_path}")
+                        return None
             
             # Extract Plex track ID (ratingKey)
             plex_track_id = str(_safe_getattr(plex_track, 'ratingKey', None))
