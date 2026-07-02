@@ -264,24 +264,39 @@ def ignore_task():
 
 @bp.get("/isrc/<string:isrc>")
 def lookup_isrc(isrc: str):
-    """Resolve track metadata from an ISRC code using a Spotify → iTunes → MusicBrainz waterfall.
+    """Resolve track metadata from an ISRC code using a capability-based plugin lookup."""
+    from core.enums import Capability
+    from core.nexus_framework.plugin_loader import get_plugin_by_capability
 
-    Returns the best available metadata hit and lists every tier that was tried.
-    """
-    from services.isrc_lookup_service import fetch_metadata_by_isrc
+    provider = get_plugin_by_capability(Capability.FETCH_BY_ISRC)
+    if not provider:
+        return jsonify({"error": "No plugin available for ISRC lookups"}), 503
 
     try:
-        data = fetch_metadata_by_isrc(isrc)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        from services.isrc_lookup_service import _normalise_isrc
+        canonical = _normalise_isrc(isrc)
+        if canonical is None:
+            return jsonify({"error": f"Invalid ISRC format: {isrc}"}), 400
+
+        track = provider.search_by_isrc(canonical)
+        if not track:
+            return jsonify({"isrc": canonical, "result": None, "tried": [getattr(provider, "name", repr(provider))]}), 404
+
+        from services.isrc_lookup_service import _track_to_dict
+        from core.matching_engine.echo_sync_track import EchosyncTrack
+        if isinstance(track, EchosyncTrack):
+            result = _track_to_dict(track, getattr(provider, "name", "plugin"))
+        else:
+            result = track
+
+        return jsonify({
+            "isrc": canonical,
+            "result": result,
+            "tried": [getattr(provider, "name", repr(provider))]
+        }), 200
     except Exception as exc:
-        logger.error("ISRC lookup endpoint error: %s", exc)
-        return jsonify({"error": "Internal lookup error"}), 500
-
-    if data["result"] is None:
-        return jsonify({"isrc": data["isrc"], "result": None, "tried": data["tried"]}), 404
-
-    return jsonify(data), 200
+        logger.error("ISRC lookup error via plugin %s: %s", getattr(provider, "name", "plugin"), exc)
+        return jsonify({"error": "ISRC lookup execution failed"}), 500
 
 
 @bp.get("/cover-art")

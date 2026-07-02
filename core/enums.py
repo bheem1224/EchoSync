@@ -10,3 +10,4 @@ class Capability(Enum):
     TAG_FILES = auto()            # Can write metadata tags to local audio files
     STREAM_AUDIO = auto()         # Can stream / play back audio locally
     SYNC_LIBRARY = auto()         # Can sync a full media-server library
+    FETCH_BY_ISRC = auto()        # Can resolve track metadata by ISRC code

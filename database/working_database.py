@@ -144,6 +144,7 @@ class ReviewTask(WorkingBase):
 
     @detected_metadata.setter
     def detected_metadata(self, val: Optional[dict]):
+        from sqlalchemy.orm.attributes import flag_modified
         if val is None:
             self.track_data = {}
             return
@@ -161,6 +162,13 @@ class ReviewTask(WorkingBase):
         self.track_data["acoustid"] = val.get("acoustid_id") or val.get("acoustid")
         self.track_data["mb_release_id"] = val.get("mb_release_id")
         self.track_data["fingerprint"] = val.get("fingerprint")
+        
+        # Copy custom/extra keys to ensure they are not lost
+        for k, v in val.items():
+            if k not in ["title", "raw_title", "artist", "artist_name", "album", "album_title", "year", "release_year", "track_number", "disc_number", "musicbrainz_id", "mbid", "isrc", "acoustid_id", "acoustid", "mb_release_id", "fingerprint"]:
+                self.track_data[k] = v
+                
+        flag_modified(self, "track_data")
 
     @property
     def media_id(self) -> str:
