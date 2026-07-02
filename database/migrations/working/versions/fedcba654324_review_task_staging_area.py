@@ -1,7 +1,7 @@
 """review task staging area
 
 Revision ID: fedcba654324
-Revises: fedcba654323
+Revises: 22ff0c33fcfc
 Create Date: 2026-07-02 14:00:00.000000
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'fedcba654324'
-down_revision: Union[str, None] = 'fedcba654323'
+down_revision: Union[str, None] = '22ff0c33fcfc'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
