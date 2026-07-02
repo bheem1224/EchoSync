@@ -12,6 +12,19 @@ from core.tiered_logger import get_logger
 logger = get_logger("metadata_route")
 bp = Blueprint("metadata", __name__, url_prefix="/api/metadata")
 
+def _get_media_file_path(media_id: str) -> str:
+    if not media_id:
+        return ""
+    from database.music_database import get_database, LocalMedia
+    db = get_database()
+    try:
+        with db.session_scope() as session:
+            media = session.query(LocalMedia).filter(LocalMedia.media_id == media_id).first()
+            return media.file_path if media else ""
+    except Exception as exc:
+        logger.error(f"Failed to lookup media path for {media_id}: {exc}")
+    return ""
+
 def _get_plugin(capability: Capability):
     """Get the first available plugin with the given capability."""
     from core.nexus_framework.plugin_loader import get_plugin_by_capability
@@ -83,10 +96,11 @@ def get_queue():
                 raise e
 
             for task in tasks:
+                media_path = _get_media_file_path(task.media_id)
                 queue.append({
                     "id": task.id,
-                    "file_path": task.file_path,
-                    "filename": Path(task.file_path).name,
+                    "file_path": media_path,
+                    "filename": Path(media_path).name if media_path else "",
                     "detected_metadata": task.detected_metadata,
                     "confidence_score": task.confidence_score,
                     "created_at": task.created_at.isoformat() if task.created_at else None
@@ -107,18 +121,19 @@ def get_queue_item(task_id: int):
             if not task or task.status != 'pending':
                 return jsonify({"error": "Task not found"}), 404
 
-            file_path = Path(task.file_path)
-            source_metadata = _extract_source_metadata(file_path) if file_path.exists() else None
+            media_path = _get_media_file_path(task.media_id)
+            file_path = Path(media_path) if media_path else Path("")
+            source_metadata = _extract_source_metadata(file_path) if file_path and file_path.exists() else None
 
             item = {
                 "id": task.id,
-                "file_path": task.file_path,
-                "filename": file_path.name,
+                "file_path": media_path,
+                "filename": file_path.name if media_path else "",
                 "detected_metadata": task.detected_metadata,
                 "confidence_score": task.confidence_score,
                 "created_at": task.created_at.isoformat() if task.created_at else None,
                 "source_metadata": source_metadata,
-                "file_exists": file_path.exists(),
+                "file_exists": file_path.exists() if media_path else False,
             }
             return jsonify({"item": item}), 200
     except Exception as e:
@@ -135,7 +150,10 @@ def stream_queue_audio(task_id: int):
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task or task.status != 'pending':
                 return jsonify({"error": "Task not found"}), 404
-            file_path = Path(task.file_path)
+            media_path = _get_media_file_path(task.media_id)
+            if not media_path:
+                return jsonify({"error": "Media path not found"}), 404
+            file_path = Path(media_path)
 
         if not file_path.exists() or not file_path.is_file():
             return jsonify({"error": "File no longer exists"}), 404
@@ -170,7 +188,10 @@ def approve_match():
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
                 return jsonify({"error": "Task not found"}), 404
-            file_path = Path(task.file_path)
+            media_path = _get_media_file_path(task.media_id)
+            if not media_path:
+                return jsonify({"error": "Media path not found"}), 404
+            file_path = Path(media_path)
 
         # Close session before calling enhancer to avoid nested session issues with SQLite
 

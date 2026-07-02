@@ -310,6 +310,18 @@ class EchosyncTrack:
             else:
                 self.sort_title = self.title
 
+    @property
+    def artist(self) -> str:
+        return self.artist_name
+
+    @property
+    def album(self) -> str:
+        return self.album_title
+
+    @property
+    def year(self) -> Optional[int]:
+        return self.release_year
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage."""
         return {

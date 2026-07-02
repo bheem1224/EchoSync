@@ -22,6 +22,19 @@ from services.metadata_enhancer import get_metadata_enhancer, MetadataEnhancerSe
 logger = get_logger("metadata_review_route")
 bp = Blueprint("metadata_review", __name__, url_prefix="/api")
 
+def _get_media_file_path(media_id: str) -> Optional[str]:
+    if not media_id:
+        return None
+    from database.music_database import LocalMedia
+    db = get_database()
+    try:
+        with db.session_scope() as session:
+            media = session.query(LocalMedia).filter(LocalMedia.media_id == media_id).first()
+            return media.file_path if media else None
+    except Exception as exc:
+        logger.error(f"Failed to lookup media path for {media_id}: {exc}")
+    return None
+
 _PARSER_FALLBACK_CONFIDENCE = 0.35
 _LOW_CONFIDENCE_THRESHOLD = 0.6
 
@@ -58,7 +71,10 @@ def _normalize_detected_metadata(value: object) -> Optional[Dict[str, Any]]:
 def _resolve_task_file(task: ReviewTask) -> Optional[Path]:
     from core.settings import config_manager
     try:
-        resolved = Path(task.file_path).expanduser().resolve(strict=True)
+        media_path = _get_media_file_path(task.media_id)
+        if not media_path:
+            return None
+        resolved = Path(media_path).expanduser().resolve(strict=True)
     except Exception:
         return None
 
@@ -112,7 +128,8 @@ def _read_current_metadata(task: ReviewTask) -> Dict[str, Any]:
             
         return clean_metadata
     except Exception as exc:
-        logger.debug(f"Failed to read current metadata for {task.file_path}: {exc}")
+        media_path = _get_media_file_path(task.media_id)
+        logger.debug(f"Failed to read current metadata for {media_path}: {exc}")
     return {}
 
 
@@ -122,9 +139,11 @@ def _serialize_task(
     current_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     normalized = detected_metadata if detected_metadata is not None else _normalize_detected_metadata(getattr(task, "detected_metadata", None))
+    media_path = _get_media_file_path(task.media_id)
     return {
         "id": task.id,
-        "file_path": task.file_path,
+        "file_path": media_path,
+        "media_id": task.media_id,
         "detected_metadata": normalized,
         "current_metadata": current_metadata if current_metadata is not None else _read_current_metadata(task),
         "confidence_score": task.confidence_score,
@@ -254,6 +273,12 @@ def _build_track_from_metadata(file_path: Path, metadata: Dict[str, Any]):
         if len(date_value) >= 4 and date_value[:4].isdigit():
             release_year = int(date_value[:4])
 
+    from core.matching_engine.echo_sync_track import EchosyncMedia
+    media_item = EchosyncMedia(
+        file_path=str(file_path),
+        file_format=file_path.suffix.lower().lstrip("."),
+        bitrate=_coerce_int(metadata.get("bitrate") or metadata.get("bitrate_kbps")),
+    )
     track = EchosyncTrack(
         raw_title=title,
         artist_name=artist,
@@ -265,9 +290,7 @@ def _build_track_from_metadata(file_path: Path, metadata: Dict[str, Any]):
         release_year=release_year,
         track_number=_coerce_int(metadata.get("track_number")),
         disc_number=_coerce_int(metadata.get("disc_number")),
-        bitrate=_coerce_int(metadata.get("bitrate") or metadata.get("bitrate_kbps")),
-        file_format=file_path.suffix.lower().lstrip("."),
-        file_path=str(file_path),
+        media=[media_item],
         identifiers={source: str(provider_id)} if provider_id else {},
     )
     return track
@@ -385,7 +408,10 @@ def _process_approval_background(task_id: int, final_metadata: Dict[str, Any]):
             if not task:
                 return
 
-            file_path = Path(task.file_path)
+            media_path = _get_media_file_path(task.media_id)
+            if not media_path:
+                return
+            file_path = Path(media_path)
             if not file_path.exists() or not file_path.is_file():
                 return
 
@@ -405,7 +431,7 @@ def _process_approval_background(task_id: int, final_metadata: Dict[str, Any]):
 @bp.post("/review-queue/<int:task_id>/approve")
 @require_auth
 def approve_review_queue_item(task_id: int):
-    """Approve a review task: write tags, import file, mark approved."""
+    """Approve a review task: write tags, relocate file, import file, mark approved."""
     payload = request.get_json(silent=True)
     final_metadata = _extract_payload_metadata(payload)
 
@@ -419,22 +445,91 @@ def approve_review_queue_item(task_id: int):
             if not task:
                 return jsonify({"error": "Task not found"}), 404
 
-            file_path = Path(task.file_path)
+            media_path = _get_media_file_path(task.media_id)
+            if not media_path:
+                return jsonify({"error": "Media path not found"}), 404
+
+            file_path = Path(media_path)
             if not file_path.exists() or not file_path.is_file():
                 return jsonify({"error": "File does not exist"}), 404
 
             from core.job_queue import job_queue
             def _background_approval_task():
                 try:
-                    # 1. Tag the physical file
-                    enhancer = get_metadata_enhancer()
-                    enhancer.tag_file(file_path, final_metadata)
+                    import shutil
+                    from database.bulk_operations import _canonicalize_path
+                    from database.music_database import LocalMedia
+                    from core.file_handling.post_processor import PostProcessor
 
-                    # 2. Community Contribution (AcoustID)
-                    # Safety gate: keep auto-submission OFF unless explicitly enabled.
-                    # This remains disabled by default while contribution flow is tested.
-                    # Preferences are stored under the 'metadata_enhancement' config key
-                    # (set by /api/settings/preferences in system.py).
+                    # 1. Resolve task details in fresh working DB session
+                    working_db = get_working_database()
+                    media_id = None
+                    with working_db.session_scope() as w_session:
+                        task_row = w_session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+                        if not task_row:
+                            logger.error(f"Task {task_id} not found in working DB")
+                            return
+                        media_id = task_row.media_id
+
+                    if not media_id:
+                        logger.error(f"Task {task_id} has no media_id")
+                        return
+
+                    # 2. Lookup original file path in music database
+                    music_db = get_database()
+                    original_file_path = None
+                    with music_db.session_scope() as m_session:
+                        media_row = m_session.query(LocalMedia).filter(LocalMedia.media_id == media_id).first()
+                        if media_row:
+                            original_file_path = media_row.file_path
+
+                    if not original_file_path:
+                        logger.error(f"Media {media_id} has no file path in music DB")
+                        return
+
+                    file_path_obj = Path(original_file_path)
+                    if not file_path_obj.exists() or not file_path_obj.is_file():
+                        logger.error(f"Physical file does not exist: {original_file_path}")
+                        return
+
+                    # 3. Tag the physical file
+                    enhancer = get_metadata_enhancer()
+                    enhancer.tag_file(file_path_obj, final_metadata)
+
+                    # 4. Calculate target relocation path using naming pattern
+                    library_dir = config_manager.get('storage.library_dir') or config_manager.get('library_dir') or "./library"
+                    pattern = config_manager.get("auto_import.file_organization_pattern") or "{Artist}/{Album}/{Title}{ext}"
+                    if "{ext}" not in pattern:
+                        pattern += "{ext}"
+
+                    dummy_track = EchosyncTrack(
+                        raw_title=final_metadata.get("title") or file_path_obj.stem,
+                        artist_name=final_metadata.get("artist") or "Unknown Artist",
+                        album_title=final_metadata.get("album") or "Unknown Album",
+                        release_year=_coerce_int(final_metadata.get("year")),
+                        track_number=_coerce_int(final_metadata.get("track_number")),
+                        disc_number=_coerce_int(final_metadata.get("disc_number")),
+                    )
+                    post_processor = PostProcessor()
+                    new_rel = post_processor._generate_path_from_pattern(file_path_obj, dummy_track, pattern)
+                    if new_rel:
+                        destination_path = Path(library_dir).resolve() / new_rel
+                    else:
+                        destination_path = file_path_obj
+
+                    # Handle duplicates if destination already exists
+                    if destination_path.exists() and destination_path != file_path_obj:
+                        destination_path = post_processor._get_unique_filename(destination_path)
+
+                    canonical_target_path = _canonicalize_path(str(destination_path))
+
+                    # 5. Relocate file physically if path changes
+                    if destination_path != file_path_obj:
+                        destination_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(file_path_obj), str(destination_path))
+                        logger.info(f"Relocated file: {file_path_obj} -> {destination_path}")
+
+                    # 6. Community Contribution (AcoustID)
                     contribute_metadata_pref = bool(config_manager.get("metadata_enhancement.contribute_metadata", True))
                     auto_submit_enabled = bool(
                         config_manager.get("metadata_enhancement.enable_acoustid_auto_submission", False)
@@ -444,10 +539,8 @@ def approve_review_queue_item(task_id: int):
                     musicbrainz_id = str(final_metadata.get("musicbrainz_id") or "").strip()
 
                     if contribute_metadata and acoustid_fingerprint and musicbrainz_id:
-                        duration_seconds = _normalize_duration_seconds(final_metadata, file_path)
+                        duration_seconds = _normalize_duration_seconds(final_metadata, destination_path)
                         if duration_seconds and duration_seconds > 0:
-                            # We are ALREADY safely inside a background task! 
-                            # We can just call this directly without a rogue threading.Thread.
                             _submit_acoustid_contribution_async(
                                 fingerprint=acoustid_fingerprint,
                                 duration=duration_seconds,
@@ -456,11 +549,27 @@ def approve_review_queue_item(task_id: int):
                         else:
                             logger.debug("Skipping AcoustID contribution: duration unavailable")
 
-                    # 3. Import the file into the database
-                    imported_count = _import_single_file(file_path, final_metadata)
+                    # 7. Update the LocalMedia record's file_path in music_library.db first
+                    with music_db.session_scope() as m_session:
+                        media_row = m_session.query(LocalMedia).filter(LocalMedia.media_id == media_id).first()
+                        if media_row:
+                            media_row.file_path = canonical_target_path
+                            m_session.commit()
+
+                    # 8. Import the file (using destination_path)
+                    _import_single_file(destination_path, final_metadata)
+
+                    # 9. Deletion of the ReviewTask from working.db
+                    with working_db.session_scope() as w_session:
+                        task_row = w_session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+                        if task_row:
+                            w_session.delete(task_row)
+                            w_session.commit()
+                            logger.info(f"Successfully deleted review task {task_id}")
+
                 except Exception as e:
-                    logger.error(f"Background approval failed: {e}")
-                    
+                    logger.error(f"Background approval failed: {e}", exc_info=True)
+
             # Register and run the task as a one-off background job
             job_name = f"approve_metadata_{task_id}"
             job_queue.register_job(job_name, _background_approval_task, interval_seconds=None)
@@ -475,6 +584,7 @@ def approve_review_queue_item(task_id: int):
             ), 202
     except Exception as e:
         logger.error(f"Failed to approve review task {task_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to approve review task"}), 500
 
 
 @bp.get("/review-queue/<int:task_id>/stream")
@@ -692,7 +802,7 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
             current = _normalize_detected_metadata(task.detected_metadata) or {}
             artist = str(payload.get("artist") or current.get("artist") or "").strip()
             title = str(payload.get("title") or current.get("title") or "").strip()
-            task_file_path = task.file_path
+            task_file_path = _get_media_file_path(task.media_id)
 
         if (not artist or not title) and task_file_path:
             guessed = _best_effort_path_parse(Path(task_file_path))
