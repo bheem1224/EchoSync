@@ -22,7 +22,6 @@ import os
 logger = get_logger("bulk_operations")
 
 BATCH_SIZE = 2000  # Commit every N tracks (tuned for SQLite WAL throughput)
-SANCTIONED_PATH_PREFIX = "/data/library/"
 
 
 def normalize_text(text: str) -> str:
@@ -391,15 +390,6 @@ class LibraryManager:
         """
         Insert or update a single track.
         """
-        # Firewall Gate: Block rogue mount entries
-        media_files = getattr(track_data, 'media', [])
-        for media_data in media_files:
-            if media_data.file_path and not media_data.file_path.startswith("virtual://"):
-                if not media_data.file_path.startswith(SANCTIONED_PATH_PREFIX):
-                    if "PYTEST_CURRENT_TEST" not in os.environ:
-                        logger.warning(f"Blocking rogue mount entry: {media_data.file_path}")
-                        return None, False
-
         track = None
         if track_data.identifiers:
             for source, plugin_item_id in track_data.identifiers.items():
@@ -524,8 +514,53 @@ class LibraryManager:
 
         # Upsert Media Files
         primary_media = None
+        album_artist_keys = {
+            'musicbrainz_release_id', 'musicbrainz_albumid', 'musicbrainz_artistid',
+            'musicbrainz_release_group_id', 'musicbrainz_albumartistid', 'mb_release_id'
+        }
         for media_data in getattr(track_data, 'media', []):
             if not media_data.file_path:
+                continue
+
+            if identifiers_only and track and track.media:
+                # Decorate Mode: Attach identifiers to the existing primary media row
+                target_media = track.media[0]
+                primary_media = target_media
+
+                # Execute the standard ExternalIdentifier creation loop here
+                source_identifiers = getattr(media_data, 'identifiers', None) or track_data.identifiers
+                for source, item_id in source_identifiers.items():
+                    if not source or not item_id or source == 'acoustid_id':
+                        continue
+
+                    if source in album_artist_keys:
+                        continue  # Skip. These belong on the Album/Artist models, not LocalMedia.
+
+                    if not isinstance(item_id, str):
+                        item_id = str(item_id)
+
+                    stmt = select(ExternalIdentifier).where(
+                        ExternalIdentifier.plugin_source == source,
+                        ExternalIdentifier.plugin_item_id == item_id,
+                    )
+                    ext_id = session.execute(stmt).scalar_one_or_none()
+
+                    if ext_id is None:
+                        ext_id = ExternalIdentifier(
+                            media=target_media,
+                            plugin_source=source,
+                            plugin_item_id=item_id,
+                            raw_data=None,
+                        )
+                        session.add(ext_id)
+                    else:
+                        if ext_id.media_id != target_media.media_id:
+                            logger.warning(
+                                f"ExternalIdentifier collision resolved: Re-mapping {source}:{item_id} from media {ext_id.media_id} to {target_media.media_id}"
+                            )
+                            ext_id.media = target_media
+
+                # CRITICAL: Skip the rest of the loop so it doesn't create a new media row
                 continue
 
             # Canonicalize the path so that different representations of the

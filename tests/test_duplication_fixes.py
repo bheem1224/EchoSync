@@ -292,3 +292,83 @@ def test_unicode_nfc_normalization(tmp_path):
     assert db.count_files() == 1
 
 
+def test_cjk_hooks_bypassed_during_ingestion():
+    from plugins.EchoSync.cjk_language_pack import _on_pre_normalize_text
+    
+    # 1. Normal context: should perform Traditional -> Simplified CJK normalization
+    res_normal = _on_pre_normalize_text("長風謠")
+    assert res_normal == "长风谣"
+    
+    # 2. Simulated bulk_operations context: should bypass and return unmutated Traditional Chinese
+    # We compile a wrapper function with a custom filename containing "bulk_operations" to mock the call stack.
+    code_str = """
+def run_in_bulk_operations(func, arg):
+    return func(arg)
+"""
+    globs = {}
+    exec(compile(code_str, "C:/some/path/to/bulk_operations.py", "exec"), globs)
+    run_in_bulk_operations = globs["run_in_bulk_operations"]
+    
+    res_ingestion = run_in_bulk_operations(_on_pre_normalize_text, "長風謠")
+    assert res_ingestion == "長風謠"
+
+
+def test_decorate_mode_safely_decorates_identifiers(tmp_path):
+    db, manager = _make_manager(str(tmp_path))
+
+    # 1. Normal import of a track with its local media file
+    media1 = EchosyncMedia(file_path="/data/library/artist/album/song.mp3", file_size_bytes=1000)
+    t1 = EchosyncTrack(
+        raw_title="Song Title",
+        artist_name="Artist Name",
+        album_title="Album Title",
+        media=[media1],
+        identifiers={"plex": "plex_id_111"}
+    )
+    manager.bulk_import([t1])
+
+    from database.bulk_operations import _canonicalize_path
+    expected_path = _canonicalize_path("/data/library/artist/album/song.mp3")
+
+    assert db.count_tracks() == 1
+    assert db.count_files() == 1
+
+    with db.session_scope() as session:
+        lm = session.query(LocalMedia).first()
+        assert lm.file_path == expected_path
+        assert len(lm.external_identifiers) == 1
+        assert lm.external_identifiers[0].plugin_source == "plex"
+        assert lm.external_identifiers[0].plugin_item_id == "plex_id_111"
+
+    # 2. Re-import in Decorate Mode (identifiers_only=True) with a different media path and new identifiers
+    media_remote = EchosyncMedia(file_path="spotify://track/456", file_size_bytes=1000)
+    t2 = EchosyncTrack(
+        raw_title="Song Title",
+        artist_name="Artist Name",
+        album_title="Album Title",
+        media=[media_remote],
+        identifiers={"plex": "plex_id_111", "spotify": "spotify_id_999"}
+    )
+    
+    # We call bulk_import with identifiers_only=True
+    # To pass identifiers_only=True to bulk_import:
+    # Let's check bulk_import's signature. Does it take identifiers_only?
+    # Yes: bulk_import(self, tracks: List[EchosyncTrack], delete_orphans: bool = False, identifiers_only: bool = False)
+    manager.bulk_import([t2], identifiers_only=True)
+
+    # 3. Assertions
+    # Count of files must still be exactly 1 (no new media row created for spotify://track/456)
+    assert db.count_tracks() == 1
+    assert db.count_files() == 1
+
+    with db.session_scope() as session:
+        lm = session.query(LocalMedia).first()
+        assert lm.file_path == expected_path # Still pointing to local
+        
+        # Should have both plex and spotify identifiers attached to it!
+        sources = {eid.plugin_source: eid.plugin_item_id for eid in lm.external_identifiers}
+        assert sources == {"plex": "plex_id_111", "spotify": "spotify_id_999"}
+
+
+
+

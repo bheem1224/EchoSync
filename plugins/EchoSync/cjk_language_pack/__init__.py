@@ -273,6 +273,21 @@ def _on_pre_provider_search(
 
 # ── Hook 2: pre_normalize_text (Score / Reduce) ────────────────────────────────
 
+def _is_ingestion_or_sync() -> bool:
+    """Return True if the current call stack is within database_update, bulk_import, or PlexClient syncing."""
+    try:
+        import sys
+        frame = sys._getframe(2)
+        while frame:
+            filename = frame.f_code.co_filename.replace("\\", "/")
+            if "bulk_operations" in filename or "database_update_worker" in filename or "plex/client" in filename:
+                return True
+            frame = frame.f_back
+    except Exception:
+        pass
+    return False
+
+
 def _on_pre_normalize_text(text: str) -> str:
     """
     Pre-process *text* for the WeightedMatchingEngine's comparison pipeline.
@@ -303,6 +318,9 @@ def _on_pre_normalize_text(text: str) -> str:
            serve candidate *retrieval* — not scoring.
     """
     if not isinstance(text, str):
+        return text
+
+    if _is_ingestion_or_sync():
         return text
 
     # ── Step 1: series → canonical artist remap ───────────────────────────
@@ -573,6 +591,9 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
     if plugin_context is None:
         return raw_title
     if not isinstance(raw_title, str):
+        return raw_title
+
+    if _is_ingestion_or_sync():
         return raw_title
 
     # ── CJK bracket extraction (《》 【】 etc.) ─────────────────────────────
