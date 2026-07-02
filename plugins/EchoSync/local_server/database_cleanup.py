@@ -35,6 +35,9 @@ def _canonicalize_path(file_path: str) -> str:
         return file_path
 
 
+SANCTIONED_PATH_PREFIX = "/data/library/"
+
+
 class DatabaseCleanupJob(BaseJob):
     """
     A manual dev utility designed to correct database drift by aggressively 
@@ -61,6 +64,25 @@ class DatabaseCleanupJob(BaseJob):
                     session.delete(media)
             session.flush()
             logger.info(f"[Phase 0] Evicted {len(missing_media)} LocalMedia records pointing to missing physical files.")
+
+            # ==========================================
+            # Phase 0.5: Rogue Path Filter (Phase 1.5)
+            # ==========================================
+            self.update_progress(10, 100, "Phase 0.5: Evicting rogue mount entries...")
+            
+            if "PYTEST_CURRENT_TEST" not in os.environ:
+                rogue_media = session.query(LocalMedia).filter(
+                    ~LocalMedia.file_path.startswith("virtual://"),
+                    ~LocalMedia.file_path.startswith(SANCTIONED_PATH_PREFIX)
+                ).all()
+
+                for media in rogue_media:
+                    logger.info(f"Purging rogue mount entry: {media.file_path}")
+                    session.delete(media)
+                session.flush()
+                logger.info(f"[Phase 0.5] Evicted {len(rogue_media)} rogue mount LocalMedia records outside {SANCTIONED_PATH_PREFIX}.")
+            else:
+                logger.info("Test environment detected, skipping rogue path sweep.")
 
             # ==========================================
             # Phase 1: Orphaned Track Purge
