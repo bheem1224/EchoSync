@@ -118,7 +118,7 @@ class DatabaseUpdateWorker:
                                     ExternalIdentifier.plugin_source == self.server_type,
                                     ExternalIdentifier.plugin_source.is_(None)
                                 )
-                            ).count()
+                            ).distinct().count()
                         
                         discrepancy = abs(total_remote_tracks - total_local_tracks)
                         if discrepancy > 0:

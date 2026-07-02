@@ -2,6 +2,7 @@
 Bulk import operations using SQLAlchemy 2.0 and LibraryManager.
 Efficiently ingests EchosyncTrack objects into the database with caching.
 """
+import unicodedata
 from collections import defaultdict
 from typing import List, Dict, Optional, Tuple, Callable, Iterable
 from datetime import date, datetime
@@ -21,6 +22,12 @@ logger = get_logger("bulk_operations")
 BATCH_SIZE = 2000  # Commit every N tracks (tuned for SQLite WAL throughput)
 
 
+def normalize_text(text: str) -> str:
+    if not text:
+        return text
+    return unicodedata.normalize('NFC', text).strip()
+
+
 def _canonicalize_path(file_path: str) -> str:
     """Produce a deterministic canonical form for a file path.
 
@@ -36,9 +43,10 @@ def _canonicalize_path(file_path: str) -> str:
     if not file_path or file_path.startswith("virtual://"):
         return file_path
     try:
-        return Path(file_path).resolve().as_posix()
+        canon = Path(file_path).resolve().as_posix()
+        return normalize_text(canon)
     except Exception:
-        return file_path
+        return normalize_text(file_path)
 
 
 class LibraryManager:
@@ -80,7 +88,9 @@ class LibraryManager:
         if not artist_name:
             raise ValueError("Artist name is required")
 
-        norm_name = self._normalize_name(artist_name)
+        artist_name = normalize_text(artist_name)
+        sort_name = normalize_text(sort_name)
+        norm_name = normalize_text(self._normalize_name(artist_name))
 
         # Check cache first
         if norm_name in self.artist_cache:
@@ -150,7 +160,9 @@ class LibraryManager:
         if not album_title:
             return None
 
-        norm_title = self._normalize_name(album_title)
+        album_title = normalize_text(album_title)
+        album_type = normalize_text(album_type)
+        norm_title = normalize_text(self._normalize_name(album_title))
         cache_key = (norm_title, artist.id)
 
         # Check cache first
@@ -277,13 +289,15 @@ class LibraryManager:
         """
         Fallback: find track by file_path OR (title + artist + album + track_number).
         """
+        title = normalize_text(title)
         if file_path:
-            stmt = select(Track).join(LocalMedia).where(LocalMedia.file_path == file_path)
+            norm_fp = normalize_text(file_path)
+            stmt = select(Track).join(LocalMedia).where(func.lower(LocalMedia.file_path) == func.lower(norm_fp))
             track = session.execute(stmt).scalar_one_or_none()
             if track:
                 return track
 
-        norm_title = text_utils.normalize_title(title)
+        norm_title = normalize_text(text_utils.normalize_title(title))
         conditions = [
             Track.normalized_title == norm_title,
             Track.artist_id == artist_id,
@@ -346,14 +360,15 @@ class LibraryManager:
         media_files = getattr(track_data, 'media', [])
         primary_file_path = media_files[0].file_path if media_files else None
         if primary_file_path:
-            stmt = select(Track.id).join(LocalMedia).where(LocalMedia.file_path == primary_file_path)
+            norm_pf = normalize_text(primary_file_path)
+            stmt = select(Track.id).join(LocalMedia).where(func.lower(LocalMedia.file_path) == func.lower(norm_pf))
             if session.execute(stmt).first() is not None:
                 return True
 
         # 3. Check by normalized title + artist name (JOIN avoids needing an artist_id)
         if track_data.title and track_data.artist_name:
-            norm_title = text_utils.normalize_title(track_data.title)
-            norm_artist = self._normalize_name(track_data.artist_name)
+            norm_title = normalize_text(text_utils.normalize_title(track_data.title))
+            norm_artist = normalize_text(self._normalize_name(track_data.artist_name))
             stmt = (
                 select(Track.id)
                 .join(Artist, Track.artist_id == Artist.id)
@@ -423,10 +438,10 @@ class LibraryManager:
 
             norm_title = text_utils.normalize_title(track_data.title)
             track = Track(
-                title=track_data.title,
-                normalized_title=norm_title,
-                sort_title=track_data.sort_title,
-                edition=track_data.edition,
+                title=normalize_text(track_data.title),
+                normalized_title=normalize_text(norm_title),
+                sort_title=normalize_text(track_data.sort_title),
+                edition=normalize_text(track_data.edition),
                 artist=artist,
                 album=album,
                 duration=track_data.duration,
@@ -443,16 +458,16 @@ class LibraryManager:
         else:
             old_title = track.title
             if not identifiers_only:
-                track.title = track_data.title
+                track.title = normalize_text(track_data.title)
             if album and track.album_id != album.id:
                 track.album = album
             if track.artist_id != artist.id:
                 track.artist = artist
 
             if track_data.sort_title is not None:
-                track.sort_title = track_data.sort_title
+                track.sort_title = normalize_text(track_data.sort_title)
             if track_data.edition is not None:
-                track.edition = track_data.edition
+                track.edition = normalize_text(track_data.edition)
             else:
                 if track.edition and old_title != track_data.title:
                     edition_lower = track.edition.lower()
@@ -505,8 +520,9 @@ class LibraryManager:
             # same physical file (symlinks, trailing slashes, Plex vs local
             # scanner) always produce the same LocalMedia row.
             media_data.file_path = _canonicalize_path(media_data.file_path)
+            normalized_path = normalize_text(media_data.file_path)
 
-            stmt = select(LocalMedia).where(LocalMedia.file_path == media_data.file_path)
+            stmt = select(LocalMedia).where(func.lower(LocalMedia.file_path) == func.lower(normalized_path))
             media_row = session.execute(stmt).scalar_one_or_none()
 
             if media_row is None:
@@ -517,7 +533,7 @@ class LibraryManager:
                 media_row = LocalMedia(
                     track=track,
                     media_id=m_id,
-                    file_path=media_data.file_path,
+                    file_path=normalized_path,
                     file_format=media_data.file_format,
                     bitrate=media_data.bitrate,
                     sample_rate=media_data.sample_rate,

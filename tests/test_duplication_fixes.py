@@ -240,3 +240,55 @@ def test_album_artist_identifiers_ignored_in_external_identifiers(tmp_path):
         assert "musicbrainz_artistid" not in sources
         assert len(all_ext) == 2
 
+
+def test_unicode_nfc_normalization(tmp_path):
+    db, manager = _make_manager(str(tmp_path))
+
+    # NFC (Café) vs NFD (Cafe + combining acute accent)
+    title_nfc = "Caf\u00e9"
+    title_nfd = "Cafe\u0301"
+
+    # Create temporary file with NFD casing/path naming
+    test_file = tmp_path / f"song_{title_nfd}.mp3"
+    test_file.touch()
+    path_nfd = str(test_file)
+
+    media1 = EchosyncMedia(file_path=path_nfd, file_size_bytes=1000)
+    t1 = EchosyncTrack(
+        raw_title=title_nfd,
+        artist_name="Artist " + title_nfd,
+        album_title="Album " + title_nfd,
+        media=[media1]
+    )
+
+    # Ingest the NFD track
+    manager.bulk_import([t1])
+
+    # 1. Assert stored title, artist, album and paths are NFC normalized
+    with db.session_scope() as session:
+        track = session.query(Track).first()
+        assert track.title == title_nfc
+        assert track.artist.name == "Artist " + title_nfc
+        assert track.album.title == "Album " + title_nfc
+        
+        # Path should be NFC normalized
+        media_row = session.query(LocalMedia).first()
+        assert title_nfc in media_row.file_path
+        assert title_nfd not in media_row.file_path
+
+    # 2. Ingest again using NFC raw values to verify it matches case-insensitively and unicode-insensitively
+    path_nfc = path_nfd.replace(title_nfd, title_nfc)
+    media2 = EchosyncMedia(file_path=path_nfc, file_size_bytes=1000)
+    t2 = EchosyncTrack(
+        raw_title=title_nfc,
+        artist_name="Artist " + title_nfc,
+        album_title="Album " + title_nfc,
+        media=[media2]
+    )
+    manager.bulk_import([t2])
+
+    # Should still only be 1 track and 1 LocalMedia in the DB
+    assert db.count_tracks() == 1
+    assert db.count_files() == 1
+
+
