@@ -1,5 +1,4 @@
 import pytest
-pytestmark = pytest.mark.skip(reason='Plugin logic decoupled from core')
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -37,7 +36,11 @@ def test_review_queue_includes_current_metadata(monkeypatch, mock_work_db, tmp_p
         'album': 'Current Album',
     }
 
-    monkeypatch.setattr(metadata_review.config_manager, 'get_library_dir', lambda: tmp_path.resolve())
+    def mock_get(key, default=None):
+        if 'library_dir' in key or 'download_dir' in key:
+            return str(tmp_path)
+        return default
+    monkeypatch.setattr(metadata_review.config_manager, 'get', mock_get)
     monkeypatch.setattr(metadata_review, 'get_working_database', lambda: mock_work_db)
     monkeypatch.setattr(metadata_review, 'get_metadata_enhancer', lambda: enhancer)
 
@@ -168,9 +171,13 @@ def test_acoustid_lookup_returns_acoustid_id_without_mbid(monkeypatch, mock_work
             return None
         return None
 
-    monkeypatch.setattr(metadata_review.config_manager, 'get_library_dir', lambda: tmp_path.resolve())
+    def mock_get(key, default=None):
+        if 'library_dir' in key or 'download_dir' in key:
+            return str(tmp_path)
+        return default
+    monkeypatch.setattr(metadata_review.config_manager, 'get', mock_get)
     monkeypatch.setattr(metadata_review, 'get_working_database', lambda: mock_work_db)
-    monkeypatch.setattr(metadata_review, 'get_provider', fake_get_provider)
+    monkeypatch.setattr(metadata_review, 'get_plugin_by_capability', fake_get_provider)
     monkeypatch.setattr(metadata_review.FingerprintGenerator, 'generate_with_duration', staticmethod(lambda _path: ('fake-fingerprint', 180)))
     monkeypatch.setattr(metadata_review, 'get_metadata_enhancer', lambda: FakeEnhancer())
 

@@ -366,31 +366,96 @@ class RetroactiveEnhancer:
             logger.warning("tag_file: failed to write tags for %s: %s", file_path.name, exc)
             raise
 
-    def create_or_update_review_task(self, file_path: str, decision: str, match_data: dict = None) -> None:
+    def create_or_update_review_task(self, file_path: Any, decision: Any = None, match_data: Any = None, confidence_score: float = 0.0, status: str = 'pending') -> None:
         try:
+            file_path_str = str(file_path)
+            
+            # Positional argument compatibility normalization
+            if isinstance(decision, dict) and (isinstance(match_data, (float, int)) or match_data is None):
+                confidence_score = float(match_data) if match_data is not None else 1.0
+                match_data = decision
+                decision = "Approved match"
+                
+            if not confidence_score and isinstance(match_data, (float, int)):
+                confidence_score = float(match_data)
+                match_data = None
+
+            # 1. Check if the task already exists by file_path
             db = get_working_database()
             with db.session_scope() as session:
-                existing = session.query(ReviewTask).filter(ReviewTask.media_id == file_path).first()
+                existing = session.query(ReviewTask).filter(ReviewTask.file_path == file_path_str).first()
+                
+                # 2. Get/Create EchosyncTrack
+                from core.matching_engine.track_parser import parse_file
+                from core.matching_engine.echo_sync_track import EchosyncTrack
+                
+                track = None
+                if os.path.exists(file_path_str) and os.path.isfile(file_path_str):
+                    try:
+                        track = parse_file(file_path_str, generate_fingerprint=True)
+                    except Exception as parse_err:
+                        logger.warning(f"Failed to parse file {file_path_str} for review task: {parse_err}")
+                
+                if not track:
+                    track = EchosyncTrack(
+                        raw_title=os.path.basename(file_path_str),
+                        artist_name="Unknown Artist",
+                        album_title="Unknown Album"
+                    )
+                
+                # 3. Merge incoming match_data (metadata suggestion) if present
+                if isinstance(match_data, dict):
+                    if match_data.get("title"):
+                        track.raw_title = match_data["title"]
+                        track.title = match_data["title"]
+                        track.display_title = match_data["title"]
+                    if match_data.get("artist"):
+                        track.artist_name = match_data["artist"]
+                    if match_data.get("album"):
+                        track.album_title = match_data["album"]
+                    if match_data.get("year"):
+                        try:
+                            track.release_year = int(match_data["year"])
+                        except Exception:
+                            pass
+                    if match_data.get("track_number"):
+                        try:
+                            track.track_number = int(match_data["track_number"])
+                        except Exception:
+                            pass
+                    if match_data.get("disc_number"):
+                        try:
+                            track.disc_number = int(match_data["disc_number"])
+                        except Exception:
+                            pass
+                    if match_data.get("musicbrainz_id"):
+                        track.musicbrainz_id = match_data["musicbrainz_id"]
+                    if match_data.get("isrc"):
+                        track.isrc = match_data["isrc"]
+                    if match_data.get("duration"):
+                        try:
+                            track.duration = int(match_data["duration"])
+                        except Exception:
+                            pass
+
+                track_dict = track.to_dict()
+                
                 if existing:
-                    existing.detected_metadata = match_data
-                    existing.status = 'pending'
-                    # We can use confidence_score column to store the decision string or add a comment/log.
-                    # Since decision is a string and the table has confidence_score (Float), 
-                    # we should probably just rely on logs for 'decision' if there is no string column,
-                    # or if the user added one, but let's just log it.
-                    logger.info(f"Review task decision for {file_path}: {decision}")
+                    existing.track_data = track_dict
+                    existing.status = status
+                    existing.confidence_score = confidence_score
                     existing.created_at = datetime.datetime.now(datetime.UTC)
                 else:
                     task = ReviewTask(
-                        media_id=file_path,
-                        status='pending',
-                        detected_metadata=match_data,
-                        confidence_score=0.0
+                        file_path=file_path_str,
+                        status=status,
+                        track_data=track_dict,
+                        confidence_score=confidence_score
                     )
                     session.add(task)
-            logger.info(f"Review Task pending: {file_path}")
+            logger.info(f"Review Task pending/updated: {file_path_str} (status={status})")
         except Exception as e:
-            logger.error(f"Failed to update review task: {e}")
+            logger.error(f"Failed to update review task: {e}", exc_info=True)
 
     def approve_match(self, file_path: Path, metadata: Dict[str, Any]):
         """

@@ -113,9 +113,9 @@ class ReviewTask(WorkingBase):
     __tablename__ = "review_tasks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    media_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    file_path: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    track_data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     status: Mapped[str] = mapped_column(String, default="pending", nullable=False)  # pending, approved, ignored
-    detected_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
     confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_checked_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime())
@@ -123,6 +123,52 @@ class ReviewTask(WorkingBase):
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
+
+    @property
+    def detected_metadata(self) -> Optional[dict]:
+        if not self.track_data:
+            return None
+        return {
+            "title": self.track_data.get("title") or self.track_data.get("raw_title"),
+            "artist": self.track_data.get("artist"),
+            "album": self.track_data.get("album_title") or self.track_data.get("album"),
+            "year": self.track_data.get("release_year") or self.track_data.get("year"),
+            "track_number": self.track_data.get("track_number"),
+            "disc_number": self.track_data.get("disc_number"),
+            "musicbrainz_id": self.track_data.get("mbid") or self.track_data.get("musicbrainz_id"),
+            "isrc": self.track_data.get("isrc"),
+            "acoustid_id": self.track_data.get("acoustid") or self.track_data.get("acoustid_id"),
+            "mb_release_id": self.track_data.get("mb_release_id"),
+            "fingerprint": self.track_data.get("fingerprint"),
+        }
+
+    @detected_metadata.setter
+    def detected_metadata(self, val: Optional[dict]):
+        if val is None:
+            self.track_data = {}
+            return
+        if not self.track_data:
+            self.track_data = {}
+        self.track_data["title"] = val.get("title")
+        self.track_data["raw_title"] = val.get("title") or val.get("raw_title")
+        self.track_data["artist"] = val.get("artist") or val.get("artist_name")
+        self.track_data["album_title"] = val.get("album") or val.get("album_title")
+        self.track_data["release_year"] = val.get("year") or val.get("release_year")
+        self.track_data["track_number"] = val.get("track_number")
+        self.track_data["disc_number"] = val.get("disc_number")
+        self.track_data["mbid"] = val.get("musicbrainz_id") or val.get("mbid")
+        self.track_data["isrc"] = val.get("isrc")
+        self.track_data["acoustid"] = val.get("acoustid_id") or val.get("acoustid")
+        self.track_data["mb_release_id"] = val.get("mb_release_id")
+        self.track_data["fingerprint"] = val.get("fingerprint")
+
+    @property
+    def media_id(self) -> str:
+        return self.file_path
+
+    @media_id.setter
+    def media_id(self, val: str):
+        self.file_path = val
 
 
 class DownloadQueue(WorkingBase):

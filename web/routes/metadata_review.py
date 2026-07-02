@@ -25,6 +25,8 @@ bp = Blueprint("metadata_review", __name__, url_prefix="/api")
 def _get_media_file_path(media_id: str) -> Optional[str]:
     if not media_id:
         return None
+    if "/" in media_id or "\\" in media_id or media_id.startswith("virtual://"):
+        return media_id
     from database.music_database import LocalMedia
     db = get_database()
     try:
@@ -71,7 +73,7 @@ def _normalize_detected_metadata(value: object) -> Optional[Dict[str, Any]]:
 def _resolve_task_file(task: ReviewTask) -> Optional[Path]:
     from core.settings import config_manager
     try:
-        media_path = _get_media_file_path(task.media_id)
+        media_path = task.file_path
         if not media_path:
             return None
         resolved = Path(media_path).expanduser().resolve(strict=True)
@@ -128,7 +130,7 @@ def _read_current_metadata(task: ReviewTask) -> Dict[str, Any]:
             
         return clean_metadata
     except Exception as exc:
-        media_path = _get_media_file_path(task.media_id)
+        media_path = task.file_path
         logger.debug(f"Failed to read current metadata for {media_path}: {exc}")
     return {}
 
@@ -138,13 +140,25 @@ def _serialize_task(
     detected_metadata: Optional[Dict[str, Any]] = None,
     current_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    normalized = detected_metadata if detected_metadata is not None else _normalize_detected_metadata(getattr(task, "detected_metadata", None))
-    media_path = _get_media_file_path(task.media_id)
+    track_data = task.track_data or {}
+    detected = detected_metadata if detected_metadata is not None else {
+        "title": track_data.get("title") or track_data.get("raw_title"),
+        "artist": track_data.get("artist"),
+        "album": track_data.get("album_title") or track_data.get("album"),
+        "year": track_data.get("release_year") or track_data.get("year"),
+        "track_number": track_data.get("track_number"),
+        "disc_number": track_data.get("disc_number"),
+        "musicbrainz_id": track_data.get("mbid") or track_data.get("musicbrainz_id"),
+        "isrc": track_data.get("isrc"),
+        "acoustid_id": track_data.get("acoustid") or track_data.get("acoustid_id"),
+        "mb_release_id": track_data.get("mb_release_id"),
+        "fingerprint": track_data.get("fingerprint"),
+    }
     return {
         "id": task.id,
-        "file_path": media_path,
-        "media_id": task.media_id,
-        "detected_metadata": normalized,
+        "file_path": task.file_path,
+        "media_id": task.file_path,
+        "detected_metadata": detected,
         "current_metadata": current_metadata if current_metadata is not None else _read_current_metadata(task),
         "confidence_score": task.confidence_score,
         "created_at": task.created_at.isoformat() if task.created_at else None,
@@ -375,13 +389,16 @@ def get_review_queue():
         return jsonify({"error": "Failed to fetch review queue"}), 500
 
 
+@bp.patch("/review-queue/<int:task_id>/save")
 @bp.put("/review-queue/<int:task_id>")
 @require_auth
 def update_review_queue_item(task_id: int):
-    """Update detected metadata JSON for a review task."""
+    """Update track_data JSON blob or save progress incrementally for a review task."""
     payload = request.get_json(silent=True)
-    metadata = _extract_payload_metadata(payload)
+    if not payload:
+        return jsonify({"error": "Missing JSON payload"}), 400
 
+    metadata = payload.get("metadata") or payload.get("track_data") or payload
     if not isinstance(metadata, dict):
         return jsonify({"error": "Invalid metadata payload"}), 400
 
@@ -392,7 +409,16 @@ def update_review_queue_item(task_id: int):
             if not task:
                 return jsonify({"error": "Task not found"}), 404
 
-            task.detected_metadata = metadata
+            # Update/Merge into track_data blob incrementally
+            if not task.track_data:
+                task.track_data = {}
+            for k, v in metadata.items():
+                task.track_data[k] = v
+
+            # Standardize properties through detected_metadata setter (backward compatibility)
+            if any(k in metadata for k in ["title", "artist", "album", "year", "musicbrainz_id"]):
+                task.detected_metadata = metadata
+
             return jsonify({"success": True, "id": task.id}), 200
     except Exception as e:
         logger.error(f"Failed to update review task {task_id}: {e}", exc_info=True)
@@ -408,7 +434,7 @@ def _process_approval_background(task_id: int, final_metadata: Dict[str, Any]):
             if not task:
                 return
 
-            media_path = _get_media_file_path(task.media_id)
+            media_path = task.file_path
             if not media_path:
                 return
             file_path = Path(media_path)
@@ -445,11 +471,10 @@ def approve_review_queue_item(task_id: int):
             if not task:
                 return jsonify({"error": "Task not found"}), 404
 
-            media_path = _get_media_file_path(task.media_id)
-            if not media_path:
-                return jsonify({"error": "Media path not found"}), 404
+            if not task.file_path:
+                return jsonify({"error": "File path not found"}), 404
 
-            file_path = Path(media_path)
+            file_path = Path(task.file_path)
             if not file_path.exists() or not file_path.is_file():
                 return jsonify({"error": "File does not exist"}), 404
 
@@ -460,58 +485,96 @@ def approve_review_queue_item(task_id: int):
                     from database.bulk_operations import _canonicalize_path
                     from database.music_database import LocalMedia
                     from core.file_handling.post_processor import PostProcessor
+                    from core.matching_engine.echo_sync_track import EchosyncTrack
 
                     # 1. Resolve task details in fresh working DB session
                     working_db = get_working_database()
-                    media_id = None
+                    file_path_str = None
+                    track_dict = None
                     with working_db.session_scope() as w_session:
                         task_row = w_session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
                         if not task_row:
                             logger.error(f"Task {task_id} not found in working DB")
                             return
-                        media_id = task_row.media_id
+                        file_path_str = task_row.file_path
+                        track_dict = task_row.track_data or {}
+                        if not track_dict and task_row.detected_metadata:
+                            track_dict = task_row.detected_metadata
 
-                    if not media_id:
-                        logger.error(f"Task {task_id} has no media_id")
+                    if not file_path_str:
+                        logger.error(f"Task {task_id} has no file_path")
                         return
 
-                    # 2. Lookup original file path in music database
-                    music_db = get_database()
-                    original_file_path = None
-                    with music_db.session_scope() as m_session:
-                        media_row = m_session.query(LocalMedia).filter(LocalMedia.media_id == media_id).first()
-                        if media_row:
-                            original_file_path = media_row.file_path
-
-                    if not original_file_path:
-                        logger.error(f"Media {media_id} has no file path in music DB")
-                        return
-
-                    file_path_obj = Path(original_file_path)
+                    file_path_obj = Path(file_path_str)
                     if not file_path_obj.exists() or not file_path_obj.is_file():
-                        logger.error(f"Physical file does not exist: {original_file_path}")
+                        logger.error(f"Physical file does not exist: {file_path_str}")
                         return
 
-                    # 3. Tag the physical file
-                    enhancer = get_metadata_enhancer()
-                    enhancer.tag_file(file_path_obj, final_metadata)
+                    # Construct EchosyncTrack object from staging track_data
+                    staged_track = EchosyncTrack.from_dict(track_dict)
 
-                    # 4. Calculate target relocation path using naming pattern
+                    # Update staged_track properties with any modifications from final_metadata
+                    if final_metadata:
+                        if final_metadata.get("title"):
+                            staged_track.raw_title = final_metadata["title"]
+                            staged_track.title = final_metadata["title"]
+                            staged_track.display_title = final_metadata["title"]
+                        if final_metadata.get("artist"):
+                            staged_track.artist_name = final_metadata["artist"]
+                        if final_metadata.get("album"):
+                            staged_track.album_title = final_metadata["album"]
+                        if final_metadata.get("year"):
+                            try:
+                                staged_track.release_year = int(final_metadata["year"])
+                            except Exception:
+                                pass
+                        if final_metadata.get("track_number"):
+                            try:
+                                staged_track.track_number = int(final_metadata["track_number"])
+                            except Exception:
+                                pass
+                        if final_metadata.get("disc_number"):
+                            try:
+                                staged_track.disc_number = int(final_metadata["disc_number"])
+                            except Exception:
+                                pass
+                        if final_metadata.get("musicbrainz_id"):
+                            staged_track.musicbrainz_id = final_metadata["musicbrainz_id"]
+                        if final_metadata.get("isrc"):
+                            staged_track.isrc = final_metadata["isrc"]
+                        if final_metadata.get("duration"):
+                            try:
+                                staged_track.duration = int(final_metadata["duration"])
+                            except Exception:
+                                pass
+
+                    # Merge the finalized metadata back to dict for tagging
+                    metadata_to_tag = {
+                        "title": staged_track.title,
+                        "artist": staged_track.artist_name,
+                        "album": staged_track.album_title,
+                        "year": str(staged_track.release_year) if staged_track.release_year else None,
+                        "track_number": str(staged_track.track_number) if staged_track.track_number else None,
+                        "disc_number": str(staged_track.disc_number) if staged_track.disc_number else None,
+                        "musicbrainz_id": staged_track.musicbrainz_id,
+                        "isrc": staged_track.isrc,
+                        "acoustid_id": staged_track.acoustid_id,
+                        "mb_release_id": staged_track.mb_release_id,
+                        "fingerprint": staged_track.fingerprint,
+                    }
+
+                    # 2. Tag the physical file
+                    enhancer = get_metadata_enhancer()
+                    enhancer.tag_file(file_path_obj, metadata_to_tag)
+
+                    # 3. Calculate target relocation path using naming pattern
                     library_dir = config_manager.get('storage.library_dir') or config_manager.get('library_dir') or "./library"
                     pattern = config_manager.get("auto_import.file_organization_pattern") or "{Artist}/{Album}/{Title}{ext}"
                     if "{ext}" not in pattern:
                         pattern += "{ext}"
 
-                    dummy_track = EchosyncTrack(
-                        raw_title=final_metadata.get("title") or file_path_obj.stem,
-                        artist_name=final_metadata.get("artist") or "Unknown Artist",
-                        album_title=final_metadata.get("album") or "Unknown Album",
-                        release_year=_coerce_int(final_metadata.get("year")),
-                        track_number=_coerce_int(final_metadata.get("track_number")),
-                        disc_number=_coerce_int(final_metadata.get("disc_number")),
-                    )
                     post_processor = PostProcessor()
-                    new_rel = post_processor._generate_path_from_pattern(file_path_obj, dummy_track, pattern)
+                    new_rel = post_processor._generate_path_from_pattern(file_path_obj, staged_track, pattern)
                     if new_rel:
                         destination_path = Path(library_dir).resolve() / new_rel
                     else:
@@ -523,43 +586,34 @@ def approve_review_queue_item(task_id: int):
 
                     canonical_target_path = _canonicalize_path(str(destination_path))
 
-                    # 5. Relocate file physically if path changes
+                    # 4. Relocate file physically if path changes
                     if destination_path != file_path_obj:
                         destination_path.parent.mkdir(parents=True, exist_ok=True)
                         shutil.move(str(file_path_obj), str(destination_path))
                         logger.info(f"Relocated file: {file_path_obj} -> {destination_path}")
 
-                    # 6. Community Contribution (AcoustID)
+                    # 5. Community Contribution (AcoustID)
                     contribute_metadata_pref = bool(config_manager.get("metadata_enhancement.contribute_metadata", True))
                     auto_submit_enabled = bool(
                         config_manager.get("metadata_enhancement.enable_acoustid_auto_submission", False)
                     )
                     contribute_metadata = contribute_metadata_pref and auto_submit_enabled
-                    acoustid_fingerprint = str(final_metadata.get("acoustid_fingerprint") or "").strip()
-                    musicbrainz_id = str(final_metadata.get("musicbrainz_id") or "").strip()
+                    acoustid_fingerprint = str(staged_track.fingerprint or "").strip()
+                    musicbrainz_id = str(staged_track.musicbrainz_id or "").strip()
 
                     if contribute_metadata and acoustid_fingerprint and musicbrainz_id:
-                        duration_seconds = _normalize_duration_seconds(final_metadata, destination_path)
+                        duration_seconds = _normalize_duration_seconds(metadata_to_tag, destination_path)
                         if duration_seconds and duration_seconds > 0:
                             _submit_acoustid_contribution_async(
                                 fingerprint=acoustid_fingerprint,
                                 duration=duration_seconds,
                                 mbid=musicbrainz_id
                             )
-                        else:
-                            logger.debug("Skipping AcoustID contribution: duration unavailable")
 
-                    # 7. Update the LocalMedia record's file_path in music_library.db first
-                    with music_db.session_scope() as m_session:
-                        media_row = m_session.query(LocalMedia).filter(LocalMedia.media_id == media_id).first()
-                        if media_row:
-                            media_row.file_path = canonical_target_path
-                            m_session.commit()
+                    # 6. Create the final LocalMedia and Track rows in music_library.db (atomic import)
+                    _import_single_file(destination_path, metadata_to_tag)
 
-                    # 8. Import the file (using destination_path)
-                    _import_single_file(destination_path, final_metadata)
-
-                    # 9. Deletion of the ReviewTask from working.db
+                    # 7. Deletion of the ReviewTask from working.db
                     with working_db.session_scope() as w_session:
                         task_row = w_session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
                         if task_row:
@@ -802,7 +856,7 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
             current = _normalize_detected_metadata(task.detected_metadata) or {}
             artist = str(payload.get("artist") or current.get("artist") or "").strip()
             title = str(payload.get("title") or current.get("title") or "").strip()
-            task_file_path = _get_media_file_path(task.media_id)
+            task_file_path = task.file_path
 
         if (not artist or not title) and task_file_path:
             guessed = _best_effort_path_parse(Path(task_file_path))
