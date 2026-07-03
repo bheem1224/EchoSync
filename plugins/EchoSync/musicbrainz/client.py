@@ -196,30 +196,94 @@ class MusicBrainzClient(PluginBase):
         return tracks
 
     @plugin_cache(ttl_seconds=604800)
-    def search_metadata(self, query: str = "", limit: int = 10, track: Optional[EchosyncTrack] = None) -> Any:
-        """Compatibility search API used by metadata_enhancer fallback logic.
+    def _search_metadata_query(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Cached helper for string queries to maintain legacy query caching."""
+        query = str(query or "").strip()
+        if not query:
+            return []
 
-        Returns lightweight recording dictionaries so the enhancer can run
-        weighted matching and then call get_metadata() on the winning MBID.
-        """
-        if track is not None:
-            # When track is provided, perform search and return enriched EchosyncTrack
-            search_query = f'artist:"{track.artist_name}" AND recording:"{track.title}"'
-            results = self.search_metadata(query=search_query, limit=1)
-            if results:
-                top = results[0]
-                if isinstance(top, dict):
-                    mbid = top.get("recording_id") or top.get("mbid")
-                    if mbid:
-                        fetched = self.get_track(mbid)
-                        if isinstance(fetched, EchosyncTrack):
-                            track.title = fetched.title or track.title
-                            track.artist_name = fetched.artist_name or track.artist_name
-                            track.album_title = fetched.album_title or track.album_title
-                            track.musicbrainz_id = fetched.musicbrainz_id or track.musicbrainz_id
-                            track.isrc = fetched.isrc or track.isrc
-                            return track
-            return track
+        safe_limit = max(1, min(int(limit or 10), 100))
+        try:
+            response = self.http.get(
+                f"{self.api_base}/recording",
+                params={
+                    "fmt": "json",
+                    "query": query,
+                    "limit": safe_limit,
+                },
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    "MusicBrainz search_metadata failed (status=%s, query=%s)",
+                    response.status_code,
+                    query,
+                )
+                return []
+
+            payload = response.json() or {}
+            recordings = payload.get("recordings", []) or []
+            results: List[Dict[str, Any]] = []
+
+            for recording in recordings:
+                mbid = str(recording.get("id") or "").strip()
+                if not mbid:
+                    continue
+
+                artist_credit = recording.get("artist-credit") or []
+                artist_parts: List[str] = []
+                for entry in artist_credit:
+                    if isinstance(entry, dict):
+                        artist_parts.append(str(entry.get("name") or ""))
+                        artist_parts.append(str(entry.get("joinphrase") or ""))
+                artist_name = "".join(artist_parts).strip()
+
+                releases = recording.get("releases") or []
+                album_title = ""
+                if releases:
+                    album_title = str((releases[0] or {}).get("title") or "").strip()
+
+                isrc_values = recording.get("isrcs") or []
+                duration_ms = recording.get("length")
+                try:
+                    duration_ms = int(duration_ms) if duration_ms is not None else None
+                except Exception:
+                    duration_ms = None
+
+                results.append(
+                    {
+                        "title": str(recording.get("title") or "").strip(),
+                        "artist": artist_name,
+                        "album": album_title,
+                        "duration": duration_ms,
+                        "isrc": str(isrc_values[0]).strip() if isrc_values else None,
+                        "mbid": mbid,
+                    }
+                )
+
+            return results
+        except Exception as exc:
+            logger.warning(f"MusicBrainz search_metadata exception for '{query}': {exc}")
+            return []
+
+    def search_metadata(self, track: Any, limit: int = 10) -> Any:
+        """Centralized metadata search. Supports both new EchosyncTrack contract and legacy string queries."""
+        if isinstance(track, str):
+            return self._search_metadata_query(track, limit=limit)
+
+        artist = getattr(track, 'artist_name', getattr(track, 'artist', '')) or ''
+        title = getattr(track, 'title', getattr(track, 'raw_title', '')) or ''
+        
+        search_query = f'artist:"{artist}" AND recording:"{title}"'
+        results = self._search_metadata_query(query=search_query, limit=1)
+        if results:
+            top = results[0]
+            if isinstance(top, dict):
+                mbid = top.get("recording_id") or top.get("mbid")
+                if mbid:
+                    fetched = self.get_track(mbid)
+                    if isinstance(fetched, EchosyncTrack):
+                        return fetched
+        return None
 
         query = str(query or "").strip()
         if not query:

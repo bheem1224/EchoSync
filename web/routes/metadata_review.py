@@ -224,55 +224,13 @@ def _musicbrainz_text_search(metadata_provider, track: EchosyncTrack) -> Optiona
     if hasattr(metadata_provider, "search_metadata"):
         try:
             # Assume search_metadata can now take EchosyncTrack (per architecture directives)
-            # or we pass query explicitly, but we adapt it here
             enriched_track = metadata_provider.search_metadata(track=track)
             if isinstance(enriched_track, EchosyncTrack):
-                # Only return if it actually found something (has an mbid), else fallback
                 if enriched_track.musicbrainz_id:
                     return enriched_track
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Error calling search_metadata directly with track", exc_info=True)
 
-    # Fallback if search_metadata(track=) fails or returns None/Dict
-    query = f'artist:"{artist}" AND recording:"{title}"'
-
-    if hasattr(metadata_provider, "search_metadata"):
-        try:
-            results = metadata_provider.search_metadata(query, limit=5) or []
-        except Exception:
-            results = []
-
-        if results:
-            top = results[0]
-            if isinstance(top, dict):
-                mbid = top.get("mbid") or top.get("recording_id")
-                if mbid and hasattr(metadata_provider, "get_track"):
-                    try:
-                        enriched = metadata_provider.get_track(mbid)
-                        if isinstance(enriched, EchosyncTrack):
-                            # merge it
-                            track.title = enriched.title or track.title
-                            track.artist_name = enriched.artist_name or track.artist_name
-                            track.album_title = enriched.album_title or track.album_title
-                            track.musicbrainz_id = enriched.musicbrainz_id or track.musicbrainz_id
-                            track.isrc = enriched.isrc or track.isrc
-                            return track
-                    except Exception:
-                        pass
-
-                # if get_track didn't return an object, or doesn't exist, try get_metadata
-                if mbid and hasattr(metadata_provider, "get_metadata"):
-                    try:
-                        fetched = metadata_provider.get_metadata(mbid)
-                        if isinstance(fetched, dict):
-                            track.title = fetched.get("title") or track.title
-                            track.artist_name = fetched.get("artist") or track.artist_name
-                            track.album_title = fetched.get("album") or track.album_title
-                            track.musicbrainz_id = fetched.get("recording_id") or track.musicbrainz_id
-                            track.isrc = fetched.get("isrc") or track.isrc
-                            return track
-                    except Exception:
-                        pass
     return None
 
     # Fallback to direct MusicBrainz WS/2 query using provider HTTP client.
