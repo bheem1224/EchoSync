@@ -877,21 +877,8 @@ class PluginLoader:
                         except Exception as path_e:
                             logger.warning(f"Failed to parse path for {py_file}: {path_e}")
 
-                    try:
-                        from database.config_database import get_config_database
-                        db_conf = get_config_database()
-                        conn = db_conf._open_connection()
-                        try:
-                            c = conn.cursor()
-                            c.execute(
-                                "UPDATE services SET loaded_modules = ? WHERE plugin_id = ?",
-                                (json.dumps(list(plugin_modules)), plugin_id)
-                            )
-                            conn.commit()
-                        finally:
-                            conn.close()
-                    except Exception as db_e:
-                        logger.warning(f"Failed to persist dynamically tracked loaded modules in database for plugin ID {plugin_id}: {db_e}")
+                    # Retain tracked modules in memory to consolidate with imported sys.modules later
+                    pass
                 except Exception as e:
                     logger.error("An error occurred during framework execution.")
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
@@ -989,14 +976,16 @@ class PluginLoader:
                         self.loaded_blueprints.append(blueprint)
 
 
-                # Persist loaded_modules to DB
+                # Persist combined loaded_modules to DB (Single-Shot Write)
                 try:
-                    loaded_mods = [m for m in sys.modules.keys() if m.startswith(module_path)]
+                    loaded_mods = set(m for m in sys.modules.keys() if m.startswith(module_path))
+                    if 'plugin_modules' in locals() or 'plugin_modules' in globals():
+                        loaded_mods.update(plugin_modules)
                     from database.config_database import get_config_database
                     db = get_config_database()
                     conn = db._open_connection()
                     try:
-                        conn.execute("UPDATE services SET loaded_modules = ? WHERE plugin_id = ?", (json.dumps(loaded_mods), plugin_id))
+                        conn.execute("UPDATE services SET loaded_modules = ? WHERE plugin_id = ?", (json.dumps(list(loaded_mods)), plugin_id))
                         conn.commit()
                     finally:
                         conn.close()

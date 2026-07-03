@@ -108,6 +108,37 @@ class SafeRotatingFileHandler(RotatingFileHandler):
             print(f"CRITICAL: Cannot open log file {self.baseFilename}: {e}", file=sys.stderr)
             self.stream = None
 
+# --- Centralized Redaction Filter ---
+
+class RedactionFilter(logging.Filter):
+    """Filter to redact OAuth tokens and secrets from log records before writing."""
+    def filter(self, record):
+        if not record.msg:
+            return True
+        try:
+            if record.args:
+                msg = record.msg % record.args
+                record.args = ()
+            else:
+                msg = str(record.msg)
+            
+            # 1. Quoted values: 'key': 'value' or "key": "value"
+            msg = re.sub(
+                r'(?i)(["\']?(?:access_token|refresh_token|client_secret|password)["\']?\s*[:=]\s*)(["\'])(.*?)\2',
+                r"\1\2[REDACTED]\2",
+                msg
+            )
+            # 2. Unquoted values: key=value
+            msg = re.sub(
+                r'(?i)(["\']?(?:access_token|refresh_token|client_secret|password)["\']?\s*[:=]\s*)([^"\'\s,{}]+)',
+                r"\1[REDACTED]",
+                msg
+            )
+            record.msg = msg
+        except Exception:
+            pass
+        return True
+
 # --- Formatters ---
 
 class SafeFormatter(logging.Formatter):
@@ -253,10 +284,14 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
     if root_logger.handlers:
         root_logger.handlers.clear()
 
+    # Instantiate centralized redaction filter
+    redaction_filter = RedactionFilter()
+
     # --- Console Handler ---
     console_handler = logging.StreamHandler(sys.stdout)
     console_level = getattr(logging, level.upper(), logging.INFO)
     console_handler.setLevel(console_level)
+    console_handler.addFilter(redaction_filter)
 
     # Force UTF-8 encoding for Windows compatibility
     if hasattr(console_handler.stream, 'reconfigure'):
@@ -286,6 +321,7 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
                 encoding='utf-8'
             )
             handler.setLevel(level)
+            handler.addFilter(redaction_filter)
             formatter = SafeFormatter(
                 fmt='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
             )
@@ -314,6 +350,7 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
                     encoding="utf-8",
                 )
                 legacy_handler.setLevel(logging.DEBUG)
+                legacy_handler.addFilter(redaction_filter)
                 legacy_handler.setFormatter(
                     SafeFormatter(
                         fmt="%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"

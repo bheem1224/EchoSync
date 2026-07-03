@@ -21,7 +21,7 @@ def _is_fatal_connection_error(exc: Exception) -> bool:
 class _DBWriter:
     def __init__(self, db_path: str):
         self.db_path = db_path
-        self._tasks: "queue.Queue[tuple]" = queue.Queue()
+        self._tasks: "queue.Queue[tuple]" = queue.Queue(maxsize=1000)
         self._stop = threading.Event()
         self._thread = self._make_thread()
         self._thread.start()
@@ -113,7 +113,17 @@ class _DBWriter:
     def enqueue(self, fn: Callable[[sqlite3.Cursor], Any], wait: bool = True, timeout: Optional[float] = None):
         self._ensure_alive()
         result_q: Optional[queue.Queue] = queue.Queue() if wait else None
-        self._tasks.put((fn, result_q))
+        try:
+            self._tasks.put((fn, result_q), timeout=2.0)
+        except queue.Full:
+            _engine_logger.critical(
+                f"[DBWriter] Queue is full! Dropping configuration update to prevent MemoryError. "
+                f"The database disk may be locked or too slow. DB: {self.db_path}"
+            )
+            if wait:
+                raise TimeoutError("Database writer queue is full. Task dropped.")
+            return None
+            
         if not wait:
             return None
         try:
