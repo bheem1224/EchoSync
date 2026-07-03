@@ -539,6 +539,17 @@ class PluginLoader:
                     if str(plugin_item.resolve()) in active_db_paths:
                         has_active_children = True
                     elif plugin_item.is_dir():
+                        # check manifest for dev_mode shield
+                        manifest_file = plugin_item / "manifest.json"
+                        if manifest_file.exists():
+                            try:
+                                import json
+                                manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                                if manifest_data.get("dev_mode") is True:
+                                    logger.info(f"[system] - Plugin '{plugin_item.name}' is in dev_mode. Bypassing garbage collection.")
+                                    has_active_children = True
+                            except Exception:
+                                pass
                         
                         # check children like beta
                         for sub_item in plugin_item.iterdir():

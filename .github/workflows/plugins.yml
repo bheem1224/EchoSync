@@ -167,6 +167,12 @@ jobs:
             fi
 
             cd "$DIR"
+            
+            # Strip dev_mode key from manifest before packaging
+            if [ -f "manifest.json" ]; then
+              jq 'del(.dev_mode)' manifest.json > tmp.json && mv tmp.json manifest.json
+            fi
+
             if [ "$BUILD_TYPE" = "stable" ]; then
               mkdir -p "releases"
               DYNAMIC_ZIP_NAME="v${NEW_VERSION}.zip"
