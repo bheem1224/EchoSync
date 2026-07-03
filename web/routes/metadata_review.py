@@ -214,10 +214,15 @@ def _merge_metadata(base: Optional[Dict[str, Any]], update: Optional[Dict[str, A
     return merged
 
 
-def _musicbrainz_text_search(metadata_provider, track: EchosyncTrack) -> Optional[EchosyncTrack]:
+def _musicbrainz_text_search(metadata_provider, track: Any) -> Optional[EchosyncTrack]:
     # Ensure artist and title are available, otherwise return None
-    artist = track.artist_name
-    title = track.title
+    if isinstance(track, dict) or hasattr(track, 'get'):
+        artist = track.get('artist_name') or track.get('artist')
+        title = track.get('title') or track.get('raw_title')
+    else:
+        artist = getattr(track, 'artist_name', getattr(track, 'artist', None))
+        title = getattr(track, 'title', getattr(track, 'raw_title', None))
+
     if not artist or not title:
         return None
 
