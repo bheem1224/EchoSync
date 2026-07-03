@@ -214,10 +214,26 @@ def _merge_metadata(base: Optional[Dict[str, Any]], update: Optional[Dict[str, A
     return merged
 
 
-def _musicbrainz_text_search(metadata_provider, artist: str, title: str) -> Optional[Dict[str, Any]]:
+def _musicbrainz_text_search(metadata_provider, track: EchosyncTrack) -> Optional[EchosyncTrack]:
+    # Ensure artist and title are available, otherwise return None
+    artist = track.artist_name
+    title = track.title
+    if not artist or not title:
+        return None
+
+    if hasattr(metadata_provider, "search_metadata"):
+        try:
+            # Assume search_metadata can now take EchosyncTrack (per architecture directives)
+            # or we pass query explicitly, but we adapt it here
+            enriched_track = metadata_provider.search_metadata(track=track)
+            if isinstance(enriched_track, EchosyncTrack):
+                return enriched_track
+        except Exception:
+            pass
+
+    # Fallback if search_metadata(track=) fails or returns None/Dict
     query = f'artist:"{artist}" AND recording:"{title}"'
 
-    # Preferred provider-native search method if available.
     if hasattr(metadata_provider, "search_metadata"):
         try:
             results = metadata_provider.search_metadata(query, limit=5) or []
@@ -226,15 +242,29 @@ def _musicbrainz_text_search(metadata_provider, artist: str, title: str) -> Opti
 
         if results:
             top = results[0]
-            mbid = top.get("mbid")
-            if mbid and hasattr(metadata_provider, "get_metadata"):
+            mbid = top.get("mbid") or top.get("recording_id")
+            if mbid and hasattr(metadata_provider, "get_track"):
                 try:
-                    metadata = metadata_provider.get_metadata(mbid)
-                    if isinstance(metadata, dict):
-                        return metadata
+                    enriched = metadata_provider.get_track(mbid)
+                    if isinstance(enriched, EchosyncTrack):
+                        return enriched
                 except Exception:
                     pass
-            return top if isinstance(top, dict) else None
+
+            # if get_track didn't return an object, or doesn't exist, try get_metadata
+            if mbid and hasattr(metadata_provider, "get_metadata"):
+                try:
+                    fetched = metadata_provider.get_metadata(mbid)
+                    if isinstance(fetched, dict):
+                        track.title = fetched.get("title") or track.title
+                        track.artist_name = fetched.get("artist") or track.artist_name
+                        track.album_title = fetched.get("album") or track.album_title
+                        track.musicbrainz_id = fetched.get("recording_id") or track.musicbrainz_id
+                        track.isrc = fetched.get("isrc") or track.isrc
+                        return track
+                except Exception:
+                    pass
+    return None
 
     # Fallback to direct MusicBrainz WS/2 query using provider HTTP client.
     try:
@@ -763,13 +793,13 @@ def lookup_review_queue_item_acoustid(task_id: int):
 
             duration_int = int(duration)
 
-            # ── Step 2: persist the raw fingerprint NOW, before any API call ────
-            # This ensures it is always available for submission even if the
-            # AcoustID lookup returns no match (track not yet in their DB).
-            merged = _normalize_detected_metadata(task.detected_metadata) or {}
-            merged["acoustid_fingerprint"] = fingerprint
-            merged["acoustid_fingerprint_duration"] = duration_int
-            task.detected_metadata = merged
+            from sqlalchemy.orm.attributes import flag_modified
+            # ── Step 2: Hydrate track and persist raw fingerprint NOW, before API call ────
+            track_obj = EchosyncTrack.from_dict(task.track_data or {})
+            track_obj.fingerprint = fingerprint
+
+            task.track_data = track_obj.to_dict()
+            flag_modified(task, "track_data")
 
             # ── Step 3: query AcoustID API ───────────────────────────────────────
             acoustid_id: Optional[str] = None
@@ -797,34 +827,41 @@ def lookup_review_queue_item_acoustid(task_id: int):
                     f"AcoustID scan for task {task_id}: no match in database. "
                     "Fingerprint stored for submission."
                 )
-                merged["source"] = "acoustid_no_match"
-                task.detected_metadata = merged
+
+                track_obj.identifiers["source"] = "acoustid_no_match"
+                task.track_data = track_obj.to_dict()
+                flag_modified(task, "track_data")
                 return jsonify({
                     "success": True,
                     "acoustid_match": False,
                     "acoustid_fingerprint": fingerprint,
                     "acoustid_fingerprint_duration": duration_int,
-                    "task": _serialize_task(task, detected_metadata=merged),
+                    "task": _serialize_task(task),
                 }), 200
 
             # ── Step 5: match found → enrich metadata ────────────────────────────
             if acoustid_id:
-                merged["acoustid_id"] = acoustid_id
-            merged["source"] = "acoustid_lookup"
+                track_obj.acoustid_id = acoustid_id
+
+            track_obj.identifiers["source"] = "acoustid_lookup"
 
             if mbids:
-                merged["musicbrainz_id"] = mbids[0]
-                merged["recording_id"] = mbids[0]
+                track_obj.musicbrainz_id = mbids[0]
 
             if mbids and metadata_provider and hasattr(metadata_provider, "get_metadata"):
                 try:
                     fetched = metadata_provider.get_metadata(mbids[0])
                     if isinstance(fetched, dict):
-                        merged = _merge_metadata(merged, fetched)
+                        # merge primitive dictionary into the hydrated object manually
+                        track_obj.title = fetched.get("title") or track_obj.title
+                        track_obj.artist_name = fetched.get("artist") or track_obj.artist_name
+                        track_obj.album_title = fetched.get("album") or track_obj.album_title
+                        track_obj.isrc = fetched.get("isrc") or track_obj.isrc
                 except Exception as lookup_error:
                     logger.warning(f"AcoustID metadata enrichment failed for task {task_id}: {lookup_error}")
 
-            task.detected_metadata = merged
+            task.track_data = track_obj.to_dict()
+            flag_modified(task, "track_data")
             confidence_floor = 0.9 if mbids else 0.6
             task.confidence_score = max(float(task.confidence_score or 0.0), confidence_floor)
 
@@ -870,24 +907,33 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
         if not metadata_provider:
             return jsonify({"error": "No metadata provider configured"}), 503
 
-        found = _musicbrainz_text_search(metadata_provider, artist=artist, title=title)
-        if not found:
-            return jsonify({"error": "No MusicBrainz match found"}), 404
-
+        from sqlalchemy.orm.attributes import flag_modified
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
                 return jsonify({"error": "Task not found"}), 404
 
-            current = _normalize_detected_metadata(task.detected_metadata) or {}
-            merged = _merge_metadata(current, found)
-            merged["source"] = "musicbrainz_text_lookup"
-            task.detected_metadata = merged
+            track_obj = EchosyncTrack.from_dict(task.track_data or {})
+
+            # fallback if artist/title wasn't already in track_data but is passed in payload
+            if not track_obj.artist_name or track_obj.artist_name == "Unknown Artist":
+                track_obj.artist_name = artist
+            if not track_obj.title or track_obj.title == "Unknown Title":
+                track_obj.title = title
+            track_obj.raw_title = track_obj.title
+
+            found_track = _musicbrainz_text_search(metadata_provider, track_obj)
+            if not found_track:
+                return jsonify({"error": "No MusicBrainz match found"}), 404
+
+            found_track.identifiers["source"] = "musicbrainz_text_lookup"
+            task.track_data = found_track.to_dict()
+            flag_modified(task, "track_data")
             task.confidence_score = max(float(task.confidence_score or 0.0), 0.85)
 
             return jsonify({
                 "success": True,
-                "task": _serialize_task(task, detected_metadata=merged),
+                "task": _serialize_task(task),
             }), 200
     except Exception as e:
         logger.error(f"Failed musicbrainz lookup for review task {task_id}: {e}", exc_info=True)

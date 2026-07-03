@@ -50,6 +50,7 @@ class MusicBrainzClient(PluginBase):
         supports_streaming=False,
         supports_downloads=False,
         supports_metadata_fetch=True,
+        supports_isrc_lookup=True,
         supports_batching=True,
     )
 
@@ -194,12 +195,29 @@ class MusicBrainzClient(PluginBase):
         return tracks
 
     @plugin_cache(ttl_seconds=604800)
-    def search_metadata(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def search_metadata(self, query: str = "", limit: int = 10, track: Optional[EchosyncTrack] = None) -> Any:
         """Compatibility search API used by metadata_enhancer fallback logic.
 
         Returns lightweight recording dictionaries so the enhancer can run
         weighted matching and then call get_metadata() on the winning MBID.
         """
+        if track is not None:
+            # When track is provided, perform search and return enriched EchosyncTrack
+            search_query = f'artist:"{track.artist_name}" AND recording:"{track.title}"'
+            results = self.search_metadata(query=search_query, limit=1)
+            if results:
+                mbid = results[0].get("recording_id") or results[0].get("mbid")
+                if mbid:
+                    fetched = self.get_track(mbid)
+                    if fetched:
+                        track.title = fetched.title or track.title
+                        track.artist_name = fetched.artist_name or track.artist_name
+                        track.album_title = fetched.album_title or track.album_title
+                        track.musicbrainz_id = fetched.musicbrainz_id or track.musicbrainz_id
+                        track.isrc = fetched.isrc or track.isrc
+                        return track
+            return None
+
         query = str(query or "").strip()
         if not query:
             return []
