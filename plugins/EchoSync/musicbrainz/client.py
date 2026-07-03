@@ -38,6 +38,7 @@ class MusicBrainzClient(PluginBase):
     supports_isrc_lookup = True
     metadata_quality_score = 95
     service_type = "metadata"
+
     capabilities = ProviderCapabilities(
         name="EchoSync.musicbrainz",
         supports_playlists=PlaylistSupport.NONE,
@@ -206,17 +207,19 @@ class MusicBrainzClient(PluginBase):
             search_query = f'artist:"{track.artist_name}" AND recording:"{track.title}"'
             results = self.search_metadata(query=search_query, limit=1)
             if results:
-                mbid = results[0].get("recording_id") or results[0].get("mbid")
-                if mbid:
-                    fetched = self.get_track(mbid)
-                    if fetched:
-                        track.title = fetched.title or track.title
-                        track.artist_name = fetched.artist_name or track.artist_name
-                        track.album_title = fetched.album_title or track.album_title
-                        track.musicbrainz_id = fetched.musicbrainz_id or track.musicbrainz_id
-                        track.isrc = fetched.isrc or track.isrc
-                        return track
-            return None
+                top = results[0]
+                if isinstance(top, dict):
+                    mbid = top.get("recording_id") or top.get("mbid")
+                    if mbid:
+                        fetched = self.get_track(mbid)
+                        if isinstance(fetched, EchosyncTrack):
+                            track.title = fetched.title or track.title
+                            track.artist_name = fetched.artist_name or track.artist_name
+                            track.album_title = fetched.album_title or track.album_title
+                            track.musicbrainz_id = fetched.musicbrainz_id or track.musicbrainz_id
+                            track.isrc = fetched.isrc or track.isrc
+                            return track
+            return track
 
         query = str(query or "").strip()
         if not query:

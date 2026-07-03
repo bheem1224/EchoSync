@@ -1116,6 +1116,19 @@ class PluginRegistry:
 
             # Check if class has capabilities attribute and if it contains the capability
             caps = getattr(plugin_cls, 'capabilities', None)
+
+            # Since capabilities can be a property on the class, we may get a property object back.
+            if isinstance(caps, property):
+                try:
+                    # Instantiate to evaluate property if needed
+                    instance = cls.create_instance(p_id)
+                    if instance:
+                        caps = getattr(instance, 'capabilities', None)
+                except Exception as e:
+                    import logging
+                    logging.getLogger().error("Error getting capabilities property: " + str(e))
+                    caps = None
+
             # Normalize None -> empty iterable to avoid TypeError when doing 'in' checks
             if caps is None:
                 caps = []
@@ -1132,10 +1145,22 @@ class PluginRegistry:
 
             if contains:
                 try:
-                    plugins.append(cls.create_instance(p_id))
+                    # Reuse instance if we already created it
+                    if 'instance' in locals() and instance:
+                        plugins.append(instance)
+                    else:
+                        try:
+                            inst = cls.create_instance(p_id)
+                        except ValueError:
+                            # if it's an ad-hoc added plugin like in tests
+                            if isinstance(p_id, str) and p_id in cls._plugins:
+                                inst = cls._plugins[p_id]()
+                            else:
+                                inst = None
+                        if inst:
+                            plugins.append(inst)
                 except Exception as e:
                     logger.error("An error occurred during framework execution.")
-                    logger.debug(f"Raw exception data: {e}", exc_info=True)
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
         return plugins
 
