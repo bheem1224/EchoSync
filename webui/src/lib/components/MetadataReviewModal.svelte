@@ -419,7 +419,7 @@
     >
       <div class="px-5 py-4 border-b border-slate-800 flex items-start justify-between gap-4">
         <div>
-          <p class="text-xs uppercase tracking-wide text-cyan-300/80 font-semibold">Picard-style Review</p>
+          <p class="text-xs uppercase tracking-wide text-cyan-300/80 font-semibold">Metadata Editor</p>
           <h3 class="text-xl font-bold">Edit Metadata</h3>
           <p class="text-xs text-slate-400 mt-1">Task #{task?.id} - {getFilename(task?.file_path)}</p>
         </div>

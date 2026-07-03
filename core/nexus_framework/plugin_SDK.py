@@ -1239,6 +1239,7 @@ class ProviderCapabilities:
     supports_fingerprinting: bool = False  # Audio fingerprinting (AcoustID)
     fingerprint_algorithms: list = None
     supports_metadata_fetch: bool = False  # Metadata fetching (MusicBrainz)
+    supports_isrc_lookup: bool = False
     supports_batching: bool = False        # Batch requests support
     supports_metrics: bool = False         # Supports ratings, listen counts, listening metrics
 
@@ -1249,6 +1250,8 @@ class ProviderCapabilities:
             caps.append(Capability.RESOLVE_FINGERPRINT)
         if getattr(self, 'supports_metadata_fetch', False):
             caps.append(Capability.FETCH_METADATA)
+        if getattr(self, 'supports_isrc_lookup', False):
+            caps.append(Capability.FETCH_BY_ISRC)
         return caps
 
 class PlaylistSupport(Enum):
