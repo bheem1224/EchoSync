@@ -1245,6 +1245,7 @@ class ProviderCapabilities:
 
     def to_enum_list(self) -> List['Capability']:
         """Adapter pattern to translate ProviderCapabilities dataclass back to legacy Enums."""
+        from core.enums import Capability
         caps = []
         if getattr(self, 'supports_fingerprinting', False):
             caps.append(Capability.RESOLVE_FINGERPRINT)
