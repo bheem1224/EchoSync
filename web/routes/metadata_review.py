@@ -11,6 +11,7 @@ from flask import Blueprint, jsonify, request, send_file
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.enums import Capability
 from core.nexus_framework.plugin_loader import get_plugin_by_capability
+from core.nexus_framework import plugin_loader
 from core.matching_engine.track_parser import TrackParser
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.settings import config_manager
@@ -891,7 +892,7 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
             logger.debug("[MusicBrainz Route] Aborted: Artist and title are required but could not be resolved")
             return jsonify({"error": "artist and title are required"}), 400
 
-        metadata_provider = get_plugin_by_capability(Capability.FETCH_METADATA)
+        metadata_provider = plugin_loader.get_plugin("EchoSync.musicbrainz")
         logger.debug(f"[MusicBrainz Route] Resolved metadata provider: {getattr(metadata_provider, 'name', type(metadata_provider).__name__) if metadata_provider else None}")
         if not metadata_provider:
             logger.error("[MusicBrainz Route] No metadata provider configured")
