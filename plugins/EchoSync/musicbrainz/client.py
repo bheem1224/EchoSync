@@ -18,6 +18,8 @@ from core.matching_engine.echo_sync_track import EchosyncTrack
 from .models import PluginMusicbrainzCache
 from core.nexus_framework.plugin_SDK import sdk
 from core.tiered_logger import get_logger
+from core.matching_engine.text_utils import normalize_title, normalize_artist
+from core.matching_engine.track_parser import TrackParser
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     """AST-compliant alternative to getattr()."""
@@ -281,10 +283,47 @@ class MusicBrainzClient(PluginBase):
         else:
             artist = getattr(track, 'artist_name', getattr(track, 'artist', '')) or ''
             title = getattr(track, 'title', getattr(track, 'raw_title', '')) or ''
-        
-        search_query = f'artist:"{artist}" AND recording:"{title}"'
-        logger.debug(f"[MusicBrainz Client] track parsed to artist='{artist}', title='{title}'. Constructed Lucene search_query: '{search_query}'")
+
+        # 1. Sanitize track number prefixes from title
+        import re
+        track_num_match = re.match(r'^(?:(?P<disc>\d+)[.-])?(?P<track>\d{1,2})[\s.-]+', title)
+        if track_num_match:
+            title = title[track_num_match.end():].strip()
+
+        # 2. Check if title contains filename-like structures, parse it structurally if so
+        if " - " in title or re.search(r'\.(mp3|flac|m4a|aac|ogg|wav|wma)$', title, re.IGNORECASE):
+            parser = TrackParser()
+            parsed = parser.parse_filename(title)
+            if parsed:
+                title = parsed.title or title
+                if parsed.artist_name and not parsed.artist_name.isdigit() and parsed.artist_name != "Unknown Artist":
+                    artist = parsed.artist_name
+
+        # 3. Clean and sanitize strings through core text normalizers
+        clean_title = normalize_title(title)
+        clean_artist = normalize_artist(artist)
+
+        search_query = f'artist:"{clean_artist}" AND recording:"{clean_title}"'
+        logger.debug(f"[MusicBrainz Client] Sanitized title='{clean_title}', artist='{clean_artist}'. Constructed strict search_query: '{search_query}'")
         results = self._search_metadata_query(query=search_query, limit=1)
+
+        # Fallback 1: Strip parenthetical/bracketed phrases from the title and search again
+        if not results:
+            fallback_title = re.sub(r'[\(\[\{].*?[\)\]\}]', '', clean_title).strip()
+            fallback_title = re.sub(r'\s+', ' ', fallback_title)
+            if fallback_title and fallback_title != clean_title:
+                logger.debug(f"[MusicBrainz Client] Strict query returned 0 results. Trying Fallback 1 (stripped brackets): title='{fallback_title}'")
+                fallback_query = f'artist:"{clean_artist}" AND recording:"{fallback_title}"'
+                results = self._search_metadata_query(query=fallback_query, limit=1)
+
+        # Fallback 2: Search for clean_title (or fallback_title if stripped) alone with artist as loose parameter
+        if not results:
+            loose_title = re.sub(r'[\(\[\{].*?[\)\]\}]', '', clean_title).strip() or clean_title
+            loose_title = re.sub(r'\s+', ' ', loose_title)
+            logger.debug(f"[MusicBrainz Client] Fallback 1 failed or skipped. Trying Fallback 2 (loose artist): title='{loose_title}', artist='{clean_artist}'")
+            fallback_query = f'recording:"{loose_title}" AND artist:{clean_artist}'
+            results = self._search_metadata_query(query=fallback_query, limit=1)
+
         if results:
             top = results[0]
             logger.debug(f"[MusicBrainz Client] Top result found: {top}")
@@ -297,7 +336,7 @@ class MusicBrainzClient(PluginBase):
                     if isinstance(fetched, EchosyncTrack):
                         return fetched
         else:
-            logger.debug("[MusicBrainz Client] No search results returned from _search_metadata_query")
+            logger.debug("[MusicBrainz Client] No search results returned from _search_metadata_query after all fallback attempts")
         return None
 
 

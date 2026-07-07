@@ -311,6 +311,20 @@
         artist: (proposedMetadata.artist || '').trim(),
         title: (proposedMetadata.title || '').trim()
       });
+      
+      const isOk = response && (response.status >= 200 && response.status < 300);
+      if (!isOk) {
+        const status = response?.status;
+        if (status === 404) {
+          feedback.addToast('No match found on MusicBrainz.', 'error');
+        } else if (status === 500 || status === 503) {
+          feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+        } else {
+          feedback.addToast('MusicBrainz lookup returned no metadata', 'error');
+        }
+        return;
+      }
+
       const updatedMetadata = getLookupMetadata(response);
       if (updatedMetadata) {
         applyMetadataUpdate(updatedMetadata);
@@ -320,7 +334,14 @@
       }
     } catch (error) {
       console.error('MusicBrainz lookup failed:', error);
-      feedback.addToast('MusicBrainz lookup failed', 'error');
+      const status = error?.response?.status;
+      if (status === 404) {
+        feedback.addToast('No match found on MusicBrainz.', 'error');
+      } else if (status === 500 || status === 503) {
+        feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+      } else {
+        feedback.addToast('MusicBrainz lookup failed', 'error');
+      }
     } finally {
       musicbrainzLookupLoading = false;
     }
@@ -334,6 +355,20 @@
     acoustidLookupLoading = true;
     try {
       const response = await apiClient.post(`/review-queue/${task.id}/lookup/acoustid`);
+      
+      const isOk = response && (response.status >= 200 && response.status < 300);
+      if (!isOk) {
+        const status = response?.status;
+        if (status === 404) {
+          feedback.addToast('No match found on AcoustID.', 'error');
+        } else if (status === 500 || status === 503) {
+          feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+        } else {
+          feedback.addToast('AcoustID scan returned no metadata', 'error');
+        }
+        return;
+      }
+
       const updatedMetadata = getLookupMetadata(response);
       if (updatedMetadata) {
         applyMetadataUpdate(updatedMetadata);
@@ -348,7 +383,14 @@
       }
     } catch (error) {
       console.error('AcoustID lookup failed:', error);
-      feedback.addToast('AcoustID lookup failed', 'error');
+      const status = error?.response?.status;
+      if (status === 404) {
+        feedback.addToast('No match found on AcoustID.', 'error');
+      } else if (status === 500 || status === 503) {
+        feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+      } else {
+        feedback.addToast('AcoustID lookup failed', 'error');
+      }
     } finally {
       acoustidLookupLoading = false;
     }
@@ -366,6 +408,22 @@
     isrcLookupLoading = true;
     try {
       const response = await apiClient.get(`/metadata/isrc/${encodeURIComponent(isrc)}`);
+      
+      const isOk = response && (response.status >= 200 && response.status < 300);
+      if (!isOk) {
+        const status = response?.status;
+        if (status === 404) {
+          feedback.addToast('No match found on ISRC Provider.', 'error');
+        } else if (status === 500 || status === 503) {
+          feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+        } else if (status === 400) {
+          feedback.addToast('Invalid ISRC format — expected 12 alphanumeric characters', 'error');
+        } else {
+          feedback.addToast(`No results found for ISRC ${isrc}`, 'error');
+        }
+        return;
+      }
+
       const result = response?.data?.result;
       if (result) {
         // Remap ISRC-response field names to the keys applyMetadataUpdate understands.
@@ -386,7 +444,9 @@
       if (status === 400) {
         feedback.addToast('Invalid ISRC format — expected 12 alphanumeric characters', 'error');
       } else if (status === 404) {
-        feedback.addToast(`No provider matched ISRC ${isrc}`, 'error');
+        feedback.addToast('No match found on ISRC Provider.', 'error');
+      } else if (status === 500 || status === 503) {
+        feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
       } else {
         feedback.addToast('ISRC lookup failed', 'error');
       }
