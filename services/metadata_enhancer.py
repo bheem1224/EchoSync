@@ -834,22 +834,17 @@ class RetroactiveEnhancer:
 
 
 
-class MetadataEnhancerService:
+class MetadataEnhancerService(RetroactiveEnhancer):
     _instance = None
 
     def __init__(self):
-        pass
+        super().__init__()
 
     @classmethod
     def get_instance(cls):
         if cls._instance is None:
             cls._instance = MetadataEnhancerService()
         return cls._instance
-
-    def _get_plugin(self, capability: Capability):
-        """Get the first available plugin with the given capability."""
-        from core.nexus_framework.plugin_loader import get_plugin_by_capability
-        return get_plugin_by_capability(capability)
 
 def get_metadata_enhancer():
     return MetadataEnhancerService.get_instance()

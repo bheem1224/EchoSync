@@ -204,6 +204,7 @@ class MusicBrainzClient(PluginBase):
 
         safe_limit = max(1, min(int(limit or 10), 100))
         try:
+            logger.debug(f"[MusicBrainz Client] Sending search query to MusicBrainz: query='{query}', limit={safe_limit}")
             response = self.http.get(
                 f"{self.api_base}/recording",
                 params={
@@ -212,6 +213,7 @@ class MusicBrainzClient(PluginBase):
                     "limit": safe_limit,
                 },
             )
+            logger.debug(f"[MusicBrainz Client] Received response: status={response.status_code}")
             if response.status_code != 200:
                 logger.warning(
                     "MusicBrainz search_metadata failed (status=%s, query=%s)",
@@ -222,6 +224,7 @@ class MusicBrainzClient(PluginBase):
 
             payload = response.json() or {}
             recordings = payload.get("recordings", []) or []
+            logger.debug(f"[MusicBrainz Client] Found {len(recordings)} recordings in response payload")
             results: List[Dict[str, Any]] = []
 
             for recording in recordings:
@@ -267,7 +270,9 @@ class MusicBrainzClient(PluginBase):
 
     def search_metadata(self, track: Any, limit: int = 10) -> Any:
         """Centralized metadata search. Supports both new EchosyncTrack contract and legacy string queries."""
+        logger.debug(f"[MusicBrainz Client] search_metadata called with track={track}")
         if isinstance(track, str):
+            logger.debug(f"[MusicBrainz Client] track is a string, calling _search_metadata_query('{track}')")
             return self._search_metadata_query(track, limit=limit)
 
         if isinstance(track, dict) or hasattr(track, 'get'):
@@ -278,15 +283,21 @@ class MusicBrainzClient(PluginBase):
             title = getattr(track, 'title', getattr(track, 'raw_title', '')) or ''
         
         search_query = f'artist:"{artist}" AND recording:"{title}"'
+        logger.debug(f"[MusicBrainz Client] track parsed to artist='{artist}', title='{title}'. Constructed Lucene search_query: '{search_query}'")
         results = self._search_metadata_query(query=search_query, limit=1)
         if results:
             top = results[0]
+            logger.debug(f"[MusicBrainz Client] Top result found: {top}")
             if isinstance(top, dict):
                 mbid = top.get("recording_id") or top.get("mbid")
                 if mbid:
+                    logger.debug(f"[MusicBrainz Client] Fetching track details for mbid: '{mbid}'")
                     fetched = self.get_track(mbid)
+                    logger.debug(f"[MusicBrainz Client] Fetched track: {fetched}")
                     if isinstance(fetched, EchosyncTrack):
                         return fetched
+        else:
+            logger.debug("[MusicBrainz Client] No search results returned from _search_metadata_query")
         return None
 
 
@@ -611,14 +622,18 @@ class MusicBrainzClient(PluginBase):
             return None
 
         try:
+            logger.debug(f"[MusicBrainz Client] Fetching detailed metadata for mbid='{mbid}' via GET {self.api_base}/recording/{mbid}")
             response = self.http.get(
                 f"{self.api_base}/recording/{mbid}",
                 params={"fmt": "json", "inc": "artists+releases+isrcs+media"},
             )
+            logger.debug(f"[MusicBrainz Client] get_metadata response: status={response.status_code}")
             if response.status_code != 200:
+                logger.warning(f"MusicBrainz get_metadata failed for mbid={mbid}: status={response.status_code}")
                 return None
 
             data = response.json() or {}
+            logger.debug(f"[MusicBrainz Client] get_metadata response JSON: {data}")
             result = {
                 "title": data.get("title"),
                 "recording_id": data.get("id"),
@@ -848,10 +863,12 @@ class MusicBrainzClient(PluginBase):
         return self.get_artist_tracks(query)[:limit]
 
     def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
+        logger.debug(f"[MusicBrainz Client] get_track called for track_id={track_id}")
         metadata = self.get_metadata(track_id)
         if not metadata:
+            logger.debug(f"[MusicBrainz Client] No metadata returned for track_id={track_id}")
             return None
-        return self.create_echo_sync_track(
+        track_obj = self.create_echo_sync_track(
             title=metadata.get("title") or "",
             artist=metadata.get("artist") or "",
             album=metadata.get("album") or "Unknown Album",
@@ -860,6 +877,8 @@ class MusicBrainzClient(PluginBase):
             provider_id=metadata.get("recording_id"),
             source=self.name,
         )
+        logger.debug(f"[MusicBrainz Client] Created EchosyncTrack object: {track_obj.to_dict() if track_obj else None}")
+        return track_obj
 
     def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
         return None

@@ -223,19 +223,29 @@ def _musicbrainz_text_search(metadata_provider, track: Any) -> Optional[Echosync
         artist = getattr(track, 'artist_name', getattr(track, 'artist', None))
         title = getattr(track, 'title', getattr(track, 'raw_title', None))
 
+    logger.debug(f"[MusicBrainz Search] Starting text search: artist='{artist}', title='{title}'")
     if not artist or not title:
+        logger.debug("[MusicBrainz Search] Missing artist or title, search aborted")
         return None
 
     if hasattr(metadata_provider, "search_metadata"):
         try:
+            logger.debug(f"[MusicBrainz Search] Calling search_metadata on provider '{getattr(metadata_provider, 'name', type(metadata_provider).__name__)}' with track={track}")
             # Assume search_metadata can now take EchosyncTrack (per architecture directives)
             enriched_track = metadata_provider.search_metadata(track=track)
+            logger.debug(f"[MusicBrainz Search] search_metadata returned: {enriched_track}")
             if isinstance(enriched_track, EchosyncTrack):
                 if enriched_track.musicbrainz_id:
+                    logger.debug(f"[MusicBrainz Search] Found valid EchosyncTrack with musicbrainz_id: '{enriched_track.musicbrainz_id}'")
                     return enriched_track
+                else:
+                    logger.debug("[MusicBrainz Search] enriched_track has empty musicbrainz_id")
+            else:
+                logger.debug(f"[MusicBrainz Search] enriched_track is not EchosyncTrack instance (type: {type(enriched_track).__name__})")
         except Exception as e:
             logger.error("Error calling search_metadata directly with track", exc_info=True)
 
+    logger.debug("[MusicBrainz Search] Returning None (search failed or not implemented)")
     return None
 
     # Fallback to direct MusicBrainz WS/2 query using provider HTTP client.
@@ -854,12 +864,14 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
     from flask import request
 
     payload = request.get_json(silent=True) or {}
+    logger.debug(f"[MusicBrainz Route] POST request received for task_id={task_id}, payload={payload}")
 
     db = get_working_database()
     try:
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
+                logger.debug(f"[MusicBrainz Route] Task {task_id} not found in database")
                 return jsonify({"error": "Task not found"}), 404
 
             current = _normalize_detected_metadata(task.detected_metadata) or {}
@@ -867,22 +879,29 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
             title = str(payload.get("title") or current.get("title") or "").strip()
             task_file_path = task.file_path
 
+        logger.debug(f"[MusicBrainz Route] Extracted initial search info: artist='{artist}', title='{title}', file_path='{task_file_path}'")
+
         if (not artist or not title) and task_file_path:
             guessed = _best_effort_path_parse(Path(task_file_path))
             artist = artist or str((guessed or {}).get("artist") or "").strip()
             title = title or str((guessed or {}).get("title") or "").strip()
+            logger.debug(f"[MusicBrainz Route] Attempted path parse: artist='{artist}', title='{title}'")
 
         if not artist or not title:
+            logger.debug("[MusicBrainz Route] Aborted: Artist and title are required but could not be resolved")
             return jsonify({"error": "artist and title are required"}), 400
 
         metadata_provider = get_plugin_by_capability(Capability.FETCH_METADATA)
+        logger.debug(f"[MusicBrainz Route] Resolved metadata provider: {getattr(metadata_provider, 'name', type(metadata_provider).__name__) if metadata_provider else None}")
         if not metadata_provider:
+            logger.error("[MusicBrainz Route] No metadata provider configured")
             return jsonify({"error": "No metadata provider configured"}), 503
 
         from sqlalchemy.orm.attributes import flag_modified
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
+                logger.debug(f"[MusicBrainz Route] Task {task_id} not found in database in second session check")
                 return jsonify({"error": "Task not found"}), 404
 
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
@@ -894,15 +913,20 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
                 track_obj.title = title
             track_obj.raw_title = track_obj.title
 
+            logger.debug(f"[MusicBrainz Route] Prepared EchosyncTrack for text search: {track_obj.to_dict()}")
+
             found_track = _musicbrainz_text_search(metadata_provider, track_obj)
             if not found_track:
+                logger.debug("[MusicBrainz Route] No MusicBrainz match found")
                 return jsonify({"error": "No MusicBrainz match found"}), 404
 
+            logger.debug(f"[MusicBrainz Route] MusicBrainz match found: {found_track.to_dict()}")
             found_track.identifiers["source"] = "musicbrainz_text_lookup"
             task.track_data = found_track.to_dict()
             flag_modified(task, "track_data")
             task.confidence_score = max(float(task.confidence_score or 0.0), 0.85)
 
+            logger.debug(f"[MusicBrainz Route] Successfully updated task {task_id} with MusicBrainz data")
             return jsonify({
                 "success": True,
                 "task": _serialize_task(task),
