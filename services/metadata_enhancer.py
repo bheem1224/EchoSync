@@ -358,7 +358,8 @@ class RetroactiveEnhancer:
                 from core.matching_engine.echo_sync_track import EchosyncTrack
                 
                 track = None
-                if os.path.exists(file_path_str) and os.path.isfile(file_path_str):
+                from core.file_handling import check_file_exists
+                if check_file_exists(file_path_str):
                     try:
                         track = parse_file(file_path_str, generate_fingerprint=True)
                     except Exception as parse_err:
@@ -366,7 +367,7 @@ class RetroactiveEnhancer:
                 
                 if not track:
                     track = EchosyncTrack(
-                        raw_title=os.path.basename(file_path_str),
+                        raw_title=Path(file_path_str).name,
                         artist_name="Unknown Artist",
                         album_title="Unknown Album"
                     )

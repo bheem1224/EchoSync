@@ -10,7 +10,7 @@ Module layout
 """
 
 from .jail import SecurityError, file_jail, lock_manager
-from .base_io import safe_move, safe_delete, resolve_path
+from .base_io import safe_move, safe_delete, resolve_path, check_file_exists
 from .tagging_io import read_tags, write_tags
 from .local_io import LocalFileHandler
 
@@ -24,6 +24,7 @@ __all__ = [
     'safe_move',
     'safe_delete',
     'resolve_path',
+    'check_file_exists',
     'read_tags',
     'write_tags',
 ]

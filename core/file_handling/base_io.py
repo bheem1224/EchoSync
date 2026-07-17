@@ -167,3 +167,18 @@ def safe_write_text(path: Union[str, Path], content: str, encoding: str = 'utf-8
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content, encoding=encoding)
         logger.debug("safe_write_text: %s (%d chars)", resolved, len(content))
+
+
+def check_file_exists(path: Union[str, Path]) -> bool:
+    """
+    Check if a file exists and is a file under the jail directory.
+    - Resolves path mappings
+    - Checks jail constraints
+    """
+    try:
+        resolved = resolve_path(path)
+        file_jail.validate(resolved)
+        return resolved.exists() and resolved.is_file()
+    except Exception as e:
+        logger.warning(f"check_file_exists validation failed or file not found for {path}: {e}")
+        return False

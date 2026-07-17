@@ -45,6 +45,7 @@ class ScheduledJob:
     tags: List[str] = field(default_factory=list, compare=False)
     plugin: Optional[str] = field(default=None, compare=False)
     manual_next_run: Optional[float] = field(default=None, compare=False)
+    params: Optional[Dict[str, Any]] = field(default=None, compare=False)
 
     def __post_init__(self):
         # sort_index ensures heapq stability even if next_run ties
@@ -93,6 +94,7 @@ class JobQueue:
         """
         job.last_finished = finished_at
         job.running = False
+        job.params = None
         self._is_running[job.name] = False
         self._active_threads.pop(job.name, None)
 
@@ -274,7 +276,7 @@ class JobQueue:
                 heapq.heappush(self._heap, job)
                 logger.info(f"Scheduled immediate run for '{name}'")
 
-    def execute_job_now(self, name: str) -> bool:
+    def execute_job_now(self, name: str, params: Optional[Dict[str, Any]] = None) -> bool:
         """Execute a job immediately in a background thread without affecting its scheduled interval.
         
         This is useful for manual UI triggers that should not reset the APScheduler interval.
@@ -291,13 +293,16 @@ class JobQueue:
                 logger.warning(f"Job '{name}' is already running, skipping duplicate execution")
                 return False
             
+            if params is not None:
+                job.params = params
+
         is_heavy = getattr(job, 'plugin', None) is not None or "sync" in job.name or "scan" in job.name
         self._is_running[name] = True
         
         if is_heavy:
             p = multiprocessing.Process(
                 target=_multiprocess_worker_target,
-                args=(job.name, job.plugin, None),
+                args=(job.name, job.plugin, None, params),
                 daemon=True
             )
             with self._lock:
@@ -316,7 +321,7 @@ class JobQueue:
         else:
             def thread_worker():
                 try:
-                    _execute_job_logic(job)
+                    _execute_job_logic(job, params=params)
                 finally:
                     with self._lock:
                         self._finalize_job_after_run(job, time.time())
@@ -413,6 +418,7 @@ class JobQueue:
                     "last_success": job.last_success,
                     "tags": job.tags,
                     "plugin": job.plugin,
+                    "params": job.params if hasattr(job, "params") else None,
                 })
             return result
 
@@ -435,6 +441,7 @@ class JobQueue:
                         "last_success": job.last_success,
                         "tags": job.tags,
                         "plugin": job.plugin,
+                        "params": job.params if hasattr(job, "params") else None,
                     })
             return result
 
@@ -541,7 +548,7 @@ class JobQueue:
             t.start()
 
 
-def _multiprocess_worker_target(job_name: str, plugin_id: Optional[str], owner_plugin_id: Optional[str]):
+def _multiprocess_worker_target(job_name: str, plugin_id: Optional[str], owner_plugin_id: Optional[str], params: Optional[Dict[str, Any]] = None):
     """Top-level function for multiprocessing worker target (fix for pickling errors)."""
     try:
         from core.job_queue import job_queue
@@ -571,12 +578,12 @@ def _multiprocess_worker_target(job_name: str, plugin_id: Optional[str], owner_p
             except Exception:
                 pass
 
-        _execute_job_logic(job)
+        _execute_job_logic(job, params=params)
     except Exception as e:
         import logging
         logging.getLogger("job_worker").error(f"Fatal error in multiprocess worker for {job_name}: {e}")
 
-def _execute_job_logic(job: ScheduledJob):
+def _execute_job_logic(job: ScheduledJob, params: Optional[Dict[str, Any]] = None):
     """Core logic for executing a job, shared between threads and processes."""
     from core.tiered_logger import get_logger
     logger = get_logger("job_queue")
@@ -591,10 +598,17 @@ def _execute_job_logic(job: ScheduledJob):
             
             job.running = True
             job.last_started = time.time()
+            if params is not None:
+                job.params = params
             
             try:
                 # Execute the actual function
-                job.func()
+                import inspect
+                sig = inspect.signature(job.func)
+                if len(sig.parameters) > 0:
+                    job.func(params=params)
+                else:
+                    job.func()
             except Exception as e:
                 # 1. Log the failure happens automatically in the outer except block, but we must force rollback
                 logger.error(f"Job failed: {e}")

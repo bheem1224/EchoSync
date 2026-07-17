@@ -30,7 +30,7 @@ import os
 import threading
 from datetime import timedelta
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from watchdog.events import FileSystemEventHandler, FileSystemEvent  # type: ignore[import-untyped]
 from watchdog.observers import Observer  # type: ignore[import-untyped]
@@ -149,7 +149,7 @@ class AutoImportService:
             max_retries=3
         )
 
-    def scan_and_process(self):
+    def scan_and_process(self, params: Optional[Dict[str, Any]] = None):
         """Scan download directory for audio files and process them."""
         if not self._scan_lock.acquire(blocking=False):
             logger.info("Auto-import scan skipped: Another scan/process is already running.")
@@ -190,7 +190,7 @@ class AutoImportService:
                         logger.debug(f"File matches audio extension: {path.suffix}")
 
                         # Check if file is ignored via DB check (avoids loading all ignored files into memory)
-                        if self._is_path_ignored(str(path)):
+                        if self._is_path_ignored(str(path), params=params):
                             logger.debug(f"File is ignored in review queue, skipping: {path}")
                             continue
 
@@ -209,7 +209,7 @@ class AutoImportService:
         finally:
             self._scan_lock.release()
 
-    def _is_path_ignored(self, file_path: str) -> bool:
+    def _is_path_ignored(self, file_path: str, params: Optional[Dict[str, Any]] = None) -> bool:
         """Check if a file should be skipped by the scanner.
 
         Returns True for:
@@ -233,22 +233,25 @@ class AutoImportService:
                     return True
 
                 if task.status == 'pending':
-                    # Use updated_at if available (column added in migration
-                    # a1b2c3d4e5f6), otherwise fall back to created_at so the
-                    # guard works even on databases that haven't been migrated
-                    # yet (e.g. in CI / test environments running without a
-                    # live Alembic upgrade).
-                    last_attempt = getattr(task, 'updated_at', None) or task.created_at
-                    if last_attempt is not None:
-                        from time_utils import utc_now
-                        age = utc_now() - last_attempt
-                        if age < _REVIEW_QUEUE_BACKOFF:
-                            logger.debug(
-                                "Skipping pending review item (%.1fh old, backoff=48h): %s",
-                                age.total_seconds() / 3600,
-                                file_path,
-                            )
-                            return True
+                    if params and params.get("force_scan"):
+                        logger.info("[system] - Force scan enabled: Bypassing cooldown queue.")
+                    else:
+                        # Use updated_at if available (column added in migration
+                        # a1b2c3d4e5f6), otherwise fall back to created_at so the
+                        # guard works even on databases that haven't been migrated
+                        # yet (e.g. in CI / test environments running without a
+                        # live Alembic upgrade).
+                        last_attempt = getattr(task, 'updated_at', None) or task.created_at
+                        if last_attempt is not None:
+                            from time_utils import utc_now
+                            age = utc_now() - last_attempt
+                            if age < _REVIEW_QUEUE_BACKOFF:
+                                logger.debug(
+                                    "Skipping pending review item (%.1fh old, backoff=48h): %s",
+                                    age.total_seconds() / 3600,
+                                    file_path,
+                                )
+                                return True
 
                 return False
         except Exception as e:

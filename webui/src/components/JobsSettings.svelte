@@ -8,6 +8,8 @@
   let refreshInterval;
   let editingInterval = null;
   let newInterval = '';
+  let showAutoImportSettings = false;
+  let forceScan = false;
 
   // Category definitions
   const categories = {
@@ -111,7 +113,11 @@
 
   async function runJob(jobName) {
     try {
-      await apiClient.post('/jobs/run', { name: jobName });
+      const payload = { name: jobName, job_name: jobName };
+      if (jobName === 'auto_import_scan' && forceScan) {
+        payload.params = { force_scan: true };
+      }
+      await apiClient.post('/jobs/run', payload);
       feedback.addToast(`Job "${jobName}" started`, 'success');
       await loadJobs(); // Refresh to show updated status
     } catch (error) {
@@ -203,6 +209,9 @@
                   <div class="job-info">
                     <div class="job-name">
                       {job.name}
+                      {#if job.params && job.params.force_scan}
+                        <span class="status-badge force-scan">Force Scan</span>
+                      {/if}
                       {#if job.running}
                         <span class="status-badge running">Running</span>
                       {:else if !job.enabled}
@@ -291,17 +300,54 @@
                         </button>
                       </div>
                     {:else}
-                      <button
-                        class="btn-action active:scale-95 transition-all duration-200"
-                        on:click={() => runJob(job.name)}
-                        disabled={job.running}
-                        title={job.running ? 'Job is already running' : 'Run now'}
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                        </svg>
-                        {job.running ? 'Running...' : 'Run'}
-                      </button>
+                      {#if job.name === 'auto_import_scan'}
+                        <div style="position: relative; display: flex; align-items: center; gap: 4px;">
+                          <button
+                            class="btn-action active:scale-95 transition-all duration-200"
+                            on:click={() => runJob(job.name)}
+                            disabled={job.running}
+                            title={job.running ? 'Job is already running' : 'Run now'}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                            </svg>
+                            {job.running ? 'Running...' : 'Run'}
+                          </button>
+                          
+                          <button
+                            class="btn-action btn-cog active:scale-95 transition-all duration-200"
+                            on:click={() => showAutoImportSettings = !showAutoImportSettings}
+                            title="Job parameters"
+                            style="padding: 6px;"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <circle cx="12" cy="12" r="3"></circle>
+                              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                            </svg>
+                          </button>
+                          
+                          {#if showAutoImportSettings}
+                            <div class="job-settings-dropdown">
+                              <label class="dropdown-item">
+                                <input type="checkbox" bind:checked={forceScan} style="cursor: pointer;" />
+                                <span>Bypass Cooldown Queue (Force Scan)</span>
+                              </label>
+                            </div>
+                          {/if}
+                        </div>
+                      {#else}
+                        <button
+                          class="btn-action active:scale-95 transition-all duration-200"
+                          on:click={() => runJob(job.name)}
+                          disabled={job.running}
+                          title={job.running ? 'Job is already running' : 'Run now'}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                          </svg>
+                          {job.running ? 'Running...' : 'Run'}
+                        </button>
+                      {/if}
                       
                       {#if job.interval_seconds}
                         <button
@@ -644,5 +690,38 @@
       width: 100%;
       justify-content: flex-end;
     }
+  }
+
+  .status-badge.force-scan {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+  }
+
+  .job-settings-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 8px;
+    background: #1e293b;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    z-index: 10;
+    min-width: 260px;
+  }
+
+  .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .dropdown-item input[type="checkbox"] {
+    accent-color: #06b6d4;
   }
 </style>

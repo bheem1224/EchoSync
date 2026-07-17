@@ -69,7 +69,8 @@ def jobs_summary():
 def run_job():
     """Trigger immediate execution of a job."""
     payload = request.get_json(silent=True) or {}
-    job_name = payload.get("name") or request.args.get("job_id") or request.args.get("name") or request.args.get("job_name")
+    job_name = payload.get("job_name") or payload.get("name") or request.args.get("job_id") or request.args.get("name") or request.args.get("job_name")
+    params = payload.get("params") or {}
     
     if not job_name:
         return Response(json.dumps({"error": "job name required"}), status=400, mimetype="application/json")
@@ -94,7 +95,7 @@ def run_job():
                 "started_at": job.get("last_started"),
             }), status=409, mimetype="application/json")
         
-        if not job_queue.execute_job_now(job_name):
+        if not job_queue.execute_job_now(job_name, params=params):
             return Response(
                 json.dumps({
                     "error": f"job '{job_name}' could not be executed",
@@ -103,10 +104,25 @@ def run_job():
                 status=409,
                 mimetype="application/json",
             )
-        logger.info(f"Job triggered: {job_name}")
+        logger.info(f"Job triggered: {job_name} with params={params}")
         return Response(json.dumps({"accepted": True, "job": job_name}), status=200, mimetype="application/json")
     except Exception as e:
         logger.error(f"Error triggering job {job_name}: {e}")
+        return Response(json.dumps({"error": str(e)}), status=500, mimetype="application/json")
+
+
+@bp.get("/<job_name>")
+@bp.get("/<job_name>/")
+def get_job(job_name):
+    """Return status of a specific job by name/id."""
+    try:
+        items = jq_list_jobs()
+        job = next((j for j in items if j.get("name") == job_name), None)
+        if not job:
+            return Response(json.dumps({"error": f"job '{job_name}' not found"}), status=404, mimetype="application/json")
+        return Response(json.dumps(job), status=200, mimetype="application/json")
+    except Exception as e:
+        logger.error(f"Error fetching job {job_name}: {e}")
         return Response(json.dumps({"error": str(e)}), status=500, mimetype="application/json")
 
 
