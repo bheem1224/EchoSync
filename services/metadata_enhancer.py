@@ -162,39 +162,26 @@ class RetroactiveEnhancer:
         confidence = 0.0
 
         try:
-            # Step 0: Read file tags first — cheapest check, no CPU fingerprinting, no network.
-            try:
-                tags = _tagging_read(file_path)
-                tag_mbid = tags.get('musicbrainz_id') or tags.get('recording_id')
-                if tag_mbid and metadata_provider:
-                    logger.info(f"Step 0 (File Tags): Found MBID {tag_mbid} in tags for {file_path.name}")
-                    try:
-                        metadata = metadata_provider.get_metadata(tag_mbid)
-                        if metadata:
-                            return metadata, 0.99
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch metadata for tag MBID {tag_mbid}: {e}")
-                        # fall through to fingerprint
-            except Exception as e:
-                logger.warning(f"Failed to read tags for {file_path.name}: {e}")
-
-            # Step A: Fingerprint via AcoustID
+            # Step A: Try AcoustID fingerprint lookup first
             try:
                 fingerprint = FingerprintGenerator.generate(str(file_path))
-                # read_tags returns duration in ms
-                duration_ms = _tagging_read(file_path).get("duration")
-                duration_sec = int(duration_ms / 1000) if duration_ms else None
+                # Invoke local_metadata to get duration safely via authorized wrapper
+                from core.nexus_framework.plugin_loader import plugin_loader
+                local_metadata_plugin = plugin_loader.get_plugin("EchoSync.local_metadata")
+                duration_sec = None
+                track_obj = None
+                if local_metadata_plugin:
+                    track_obj = local_metadata_plugin.get_track_from_file(str(file_path))
+                    if track_obj and track_obj.duration:
+                        duration_sec = int(track_obj.duration / 1000)
 
                 if fingerprint and duration_sec and fingerprint_provider:
-                    # Clean debug output showing what's being sent to AcoustID
                     logger.debug(
                         f"→ AcoustID Lookup: {file_path.name}\n"
                         f"  Duration: {duration_sec}s | Fingerprint: {len(fingerprint)} chars"
                     )
-
                     try:
                         mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration_sec))
-
                         if mbids and metadata_provider:
                             mbid = mbids[0]
                             logger.info(f"✓ AcoustID identified: {file_path.name} → MBID: {mbid}")
@@ -206,87 +193,68 @@ class RetroactiveEnhancer:
                                     return metadata, confidence
                             except Exception as e:
                                 logger.warning(f"Failed to fetch metadata for MBID {mbid}: {e}")
-                                # Continue to fallback search
                         else:
                             logger.debug(f"✗ No MBID found from AcoustID for {file_path.name}")
                     except Exception as e:
                         logger.warning(f"AcoustID fingerprint resolution failed: {e}")
-                        # Continue to fallback search
             except Exception as e:
-                logger.warning(f"Fingerprint generation or provider error: {e}")
-                # Continue to fallback search
+                logger.warning(f"AcoustID check failed: {e}")
 
-            # Fallback: Search by filename with matching engine
-            if metadata_provider:
-                logger.debug(f"Attempting fallback filename search for {file_path.name}")
-                try:
-                    # Extract metadata from filename
-                    raw_query = file_path.stem.replace('_', ' ').replace('-', ' ')
-                    query = hook_manager.apply_filters('pre_normalize_text', raw_query)
+            # Step B: If AcoustID fails, invoke the EchoSync.local_metadata plugin (already read tags above if track_obj is present)
+            from core.nexus_framework.plugin_loader import plugin_loader
+            local_metadata_plugin = plugin_loader.get_plugin("EchoSync.local_metadata")
+            if not track_obj and local_metadata_plugin:
+                track_obj = local_metadata_plugin.get_track_from_file(str(file_path))
 
-                    # Get duration for matching
-                    duration_ms = _tagging_read(file_path).get("duration")
+            # Step C: If tags are found, construct the EchoSyncTrack object and pass to lookup
+            if track_obj:
+                # Fast path: Check if tags contain an embedded MBID
+                if track_obj.musicbrainz_id and metadata_provider:
+                    logger.info(f"Found MBID {track_obj.musicbrainz_id} in local_metadata tags for {file_path.name}")
+                    try:
+                        metadata = metadata_provider.get_metadata(track_obj.musicbrainz_id)
+                        if metadata:
+                            return metadata, 0.99
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch metadata for tag MBID {track_obj.musicbrainz_id}: {e}")
 
-                    # Search MusicBrainz
-                    results = metadata_provider.search_metadata(query, limit=10)
+                if track_obj.title and track_obj.artist_name and metadata_provider:
+                    logger.debug(f"Attempting search fallback using local_metadata tags for {file_path.name}")
+                    try:
+                        results = metadata_provider.search_metadata(track_obj, limit=10)
+                        if results:
+                            candidate_tracks = []
+                            for result in results:
+                                candidate = self._search_result_to_track(result)
+                                if candidate:
+                                    candidate_tracks.append((candidate, result.get('mbid') or result.get('recording_id')))
 
-                    if results:
-                        # Convert file to EchosyncTrack for matching
-                        file_track = self._filename_to_track(file_path, duration_ms)
+                            if candidate_tracks:
+                                engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
+                                matcher = engine_cls(PROFILE_EXACT_SYNC)
+                                best_score = 0.0
+                                best_mbid = None
 
-                        # Convert search results to EchosyncTracks
-                        candidate_tracks = []
-                        for result in results:
-                            candidate = self._search_result_to_track(result)
-                            if candidate:
-                                candidate_tracks.append((candidate, result.get('mbid')))
+                                for candidate, mbid in candidate_tracks:
+                                    match_result = matcher.calculate_match(track_obj, candidate)
+                                    score = match_result.confidence_score if match_result else 0.0
+                                    if score > best_score:
+                                        best_score = score
+                                        best_mbid = mbid
 
-                        if candidate_tracks:
-                            # Use matching engine with EXACT_SYNC profile
-                            engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
-                            matcher = engine_cls(PROFILE_EXACT_SYNC)
-                            best_score = 0.0
-                            best_mbid = None
-
-                            logger.debug(f"Comparing {len(candidate_tracks)} candidates for: {file_path.name}")
-
-                            for idx, (candidate, mbid) in enumerate(candidate_tracks, 1):
-                                match_result = matcher.calculate_match(file_track, candidate)
-                                score = match_result.confidence_score
-
-                                # Clean comparison log in debug mode
-                                logger.debug(
-                                    f"  [{idx}/{len(candidate_tracks)}] Score: {score:5.1f}% | "
-                                    f"{candidate.title} - {candidate.artist_name} | "
-                                    f"Duration: {candidate.duration}ms vs {file_track.duration}ms"
-                                )
-
-                                if score > best_score:
-                                    best_score = score
-                                    best_mbid = mbid
-
-                            # Check if best match passes threshold (85%)
-                            if best_score >= 85.0 and best_mbid:
-                                logger.info(f"✓ Matched '{file_path.name}' (score: {best_score:.1f}%)")
-                                try:
+                                if best_score >= 85.0 and best_mbid:
+                                    logger.info(f"✓ Matched '{file_path.name}' via local_metadata text search (score: {best_score:.1f}%)")
                                     metadata = metadata_provider.get_metadata(best_mbid)
                                     if metadata:
-                                        confidence = best_score / 100.0
-                                        logger.info(f"  → Result: {metadata.get('title')} by {metadata.get('artist')}")
-                                        return metadata, confidence
-                                except Exception as e:
-                                    logger.warning(f"Failed to fetch metadata for matched MBID {best_mbid}: {e}")
-                            else:
-                                logger.debug(f"✗ Best match score {best_score:.1f}% below threshold (85%) for '{file_path.name}'")
-                    else:
-                        logger.debug(f"No search results for filename query: '{query}'")
-                except Exception as e:
-                    logger.warning(f"Fallback filename search failed: {e}", exc_info=True)
+                                        return metadata, best_score / 100.0
+                        else:
+                            logger.debug(f"No search results for fallback query using local_metadata")
+                    except Exception as e:
+                        logger.warning(f"Fallback search using local_metadata failed: {e}", exc_info=True)
 
-            # If we get here, all identification methods failed
-            if metadata is None:
-                logger.warning(f"All metadata identification methods failed for {file_path.name}. File will be queued for manual review.")
-                return None, 0.0
+            # Step D: If no tags are found or search failed, halt execution. Do not guess.
+            logger.warning(f"All metadata identification methods failed for {file_path.name}. File will be queued for manual review.")
+            return None, 0.0
 
         except Exception as e:
             logger.error(f"Unexpected error identifying {file_path}: {e}", exc_info=True)

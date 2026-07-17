@@ -49,12 +49,22 @@
     comments: ''
   };
 
+  function normalizeUnknown(val) {
+    if (!val || typeof val !== 'string') return '';
+    const lower = val.trim().toLowerCase();
+    if (lower === 'unknown artist' || lower === 'unknown title' || lower === 'unknown album') {
+      return '';
+    }
+    return val;
+  }
+
   $: if (task?.id && task.id !== initializedTaskId) {
     const proposed = task?.detected_metadata || {};
+    
     proposedMetadata = {
-      title: proposed.title || '',
-      artist: proposed.artist || '',
-      album: proposed.album || '',
+      title: normalizeUnknown(proposed.title) || normalizeUnknown(proposed.raw_title) || '',
+      artist: normalizeUnknown(proposed.artist) || normalizeUnknown(proposed.artist_name) || '',
+      album: normalizeUnknown(proposed.album) || normalizeUnknown(proposed.album_title) || '',
       year: proposed.year || '',
       track_number: proposed.track_number || '',
       disc_number: proposed.disc_number || '',
@@ -97,6 +107,12 @@
     task?.raw_metadata ||
     task?.existing_metadata ||
     {};
+
+  $: noTagsWarning = task?.detected_metadata && 
+    !normalizeUnknown(task.detected_metadata.title) && 
+    !normalizeUnknown(task.detected_metadata.artist) && 
+    !normalizeUnknown(task.detected_metadata.raw_title) && 
+    !normalizeUnknown(task.detected_metadata.artist_name);
 
   $: streamUrl = task?.id ? `/api/review-queue/${task.id}/stream` : '';
   $: coverUrl = task?.current_metadata?._has_embedded_cover ? `/api/review-queue/${task.id}/cover` : '';
@@ -556,6 +572,14 @@
 
           <section class="rounded-xl border border-cyan-700/40 bg-cyan-950/10 p-4">
             <h4 class="text-sm font-semibold text-cyan-200 mb-3">Proposed Metadata (Editable)</h4>
+            
+            {#if noTagsWarning}
+              <div class="mb-4 px-3 py-2 rounded border border-amber-500/50 bg-amber-950/30 text-amber-200 text-sm flex items-start gap-2">
+                <span class="mt-0.5">⚠️</span>
+                <span>No embedded tags found. Manual entry required.</span>
+              </div>
+            {/if}
+
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label class="sm:col-span-2">
                 <span class="block text-xs text-slate-400 mb-1">Title</span>

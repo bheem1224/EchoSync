@@ -166,34 +166,6 @@ def _serialize_task(
     }
 
 
-def _best_effort_path_parse(file_path: Path) -> Optional[Dict[str, Any]]:
-    parser = TrackParser()
-
-    # Prefer concrete filename parse, then progressively richer fallbacks.
-    candidates = [
-        file_path.name,
-        file_path.stem,
-        f"{file_path.parent.name} - {file_path.stem}",
-    ]
-
-    for candidate in candidates:
-        track = parser.parse_filename(candidate)
-        if not track:
-            continue
-
-        parsed: Dict[str, Any] = {
-            "title": track.title,
-            "artist": track.artist_name,
-            "album": track.album_title or file_path.parent.name,
-            "track_number": track.track_number,
-            "disc_number": track.disc_number,
-            "year": track.release_year,
-            "source": "path_parser",
-        }
-        return {k: v for k, v in parsed.items() if v not in (None, "")}
-
-    return None
-
 
 def _is_missing_or_low_confidence(metadata: Optional[Dict[str, Any]], confidence_score: float) -> bool:
     if not metadata:
@@ -380,14 +352,6 @@ def get_review_queue():
                 detected_metadata = _normalize_detected_metadata(getattr(task, "detected_metadata", None))
                 current_metadata = _read_current_metadata(task)
                 resolved_file = _resolve_task_file(task)
-
-                if _is_missing_or_low_confidence(detected_metadata, float(task.confidence_score or 0.0)):
-                    parsed_guess = _best_effort_path_parse(resolved_file) if resolved_file else None
-                    if parsed_guess:
-                        detected_metadata = _merge_metadata(detected_metadata, parsed_guess)
-                        task.detected_metadata = detected_metadata
-                        if float(task.confidence_score or 0.0) < _PARSER_FALLBACK_CONFIDENCE:
-                            task.confidence_score = _PARSER_FALLBACK_CONFIDENCE
 
                 serialized_tasks.append(
                     _serialize_task(task, detected_metadata=detected_metadata, current_metadata=current_metadata)
@@ -883,13 +847,69 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
         logger.debug(f"[MusicBrainz Route] Extracted initial search info: artist='{artist}', title='{title}', file_path='{task_file_path}'")
 
         if (not artist or not title) and task_file_path:
-            guessed = _best_effort_path_parse(Path(task_file_path))
-            artist = artist or str((guessed or {}).get("artist") or "").strip()
-            title = title or str((guessed or {}).get("title") or "").strip()
-            logger.debug(f"[MusicBrainz Route] Attempted path parse: artist='{artist}', title='{title}'")
+            mbid = None
+            
+            # Step A: Try AcoustID
+            try:
+                fingerprint, duration = FingerprintGenerator.generate_with_duration(str(task_file_path))
+                if fingerprint and duration:
+                    fingerprint_provider = get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
+                    if fingerprint_provider:
+                        mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration)) or []
+                        if mbids:
+                            mbid = mbids[0]
+            except Exception as e:
+                logger.debug(f"[MusicBrainz Route] AcoustID pre-lookup check failed: {e}")
+                
+            # Step B: If AcoustID fails, invoke the EchoSync.local_metadata plugin
+            track_obj = None
+            if not mbid:
+                local_metadata_plugin = plugin_loader.get_plugin("EchoSync.local_metadata")
+                if local_metadata_plugin:
+                    track_obj = local_metadata_plugin.get_track_from_file(str(task_file_path))
+            
+            # Step C: If tags/AcoustID are found, construct/search
+            if mbid:
+                logger.info(f"[MusicBrainz Route] AcoustID pre-lookup succeeded. MBID: {mbid}")
+                metadata_provider = plugin_loader.get_plugin("EchoSync.musicbrainz")
+                if metadata_provider:
+                    found_track = metadata_provider.get_track(mbid)
+                    if found_track:
+                        found_track.identifiers["source"] = "acoustid_pre_lookup"
+                        from sqlalchemy.orm.attributes import flag_modified
+                        with db.session_scope() as session:
+                            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+                            task.track_data = found_track.to_dict()
+                            flag_modified(task, "track_data")
+                            task.confidence_score = max(float(task.confidence_score or 0.0), 0.95)
+                            return jsonify({
+                                "success": True,
+                                "task": _serialize_task(task),
+                            }), 200
+            elif track_obj and track_obj.title and track_obj.artist_name:
+                artist = track_obj.artist_name
+                title = track_obj.title
+                logger.debug(f"[MusicBrainz Route] EchoSync.local_metadata read tags: artist='{artist}', title='{title}'")
+            else:
+                # Step D: If no tags are found, halt execution
+                logger.debug("[MusicBrainz Route] No tags found, halting execution. Returning minimal EchoSyncTrack payload.")
+                empty_track = EchosyncTrack(
+                    raw_title="Unknown Title",
+                    artist_name="Unknown Artist",
+                    album_title=""
+                )
+                from sqlalchemy.orm.attributes import flag_modified
+                with db.session_scope() as session:
+                    task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+                    task.track_data = empty_track.to_dict()
+                    flag_modified(task, "track_data")
+                    return jsonify({
+                        "success": False,
+                        "error": "No physical tags found and AcoustID match failed",
+                        "task": _serialize_task(task, detected_metadata=empty_track.to_dict()),
+                    }), 200
 
         if not artist or not title:
-            logger.debug("[MusicBrainz Route] Aborted: Artist and title are required but could not be resolved")
             return jsonify({"error": "artist and title are required"}), 400
 
         metadata_provider = plugin_loader.get_plugin("EchoSync.musicbrainz")

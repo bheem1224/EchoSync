@@ -95,8 +95,7 @@ class LocalServerProvider(PluginBase):
                     title = path.stem if hasattr(path, 'stem') else os.path.splitext(os.path.basename(str(path)))[0]
 
                 if not artist or not artist.strip():
-                    # Fallback to the parent folder name
-                    artist = path.parent.name if hasattr(path, 'parent') else os.path.basename(os.path.dirname(str(path)))
+                    artist = "Unknown Artist"
 
                 return self.create_echo_sync_track(
                     title=title,

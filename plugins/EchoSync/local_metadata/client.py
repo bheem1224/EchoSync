@@ -94,3 +94,43 @@ class LocalMetadataProvider(PluginBase):
 
     def get_logo_url(self) -> str:
         return ""
+
+    def get_track_from_file(self, file_path: str) -> Optional[EchosyncTrack]:
+        """Read physical tags of an audio file and return an EchosyncTrack."""
+        from core.file_handling.tagging_io import read_tags
+        from pathlib import Path
+        try:
+            tags = read_tags(Path(file_path))
+            if not tags:
+                return None
+            
+            title = tags.get('title')
+            artist = tags.get('artist')
+            
+            # Require at least title or artist to consider tags present
+            if not title and not artist:
+                return None
+                
+            return self.create_echo_sync_track(
+                title=title or 'Unknown Title',
+                artist=artist or 'Unknown Artist',
+                album=tags.get('album') or '',
+                duration_ms=tags.get('duration'),
+                isrc=tags.get('isrc'),
+                musicbrainz_id=tags.get('musicbrainz_id') or tags.get('recording_id'),
+                mb_release_id=tags.get('release_id') or tags.get('musicbrainz_albumid'),
+                acoustid_id=tags.get('acoustid_id') or tags.get('acoustid id'),
+                year=tags.get('year') or tags.get('date'),
+                track_number=tags.get('track_number') or tags.get('tracknumber'),
+                disc_number=tags.get('disc_number') or tags.get('discnumber'),
+                bitrate=tags.get('bitrate_kbps') or tags.get('bitrate'),
+                sample_rate=tags.get('sample_rate_hz') or tags.get('sample_rate'),
+                bit_depth=tags.get('bit_depth'),
+                file_format=tags.get('file_format'),
+                file_path=file_path,
+                source="EchoSync.local_metadata"
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Error reading tags via local_metadata for {file_path}: {e}")
+            return None
