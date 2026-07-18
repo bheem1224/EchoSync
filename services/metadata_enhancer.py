@@ -162,51 +162,16 @@ class RetroactiveEnhancer:
         confidence = 0.0
 
         try:
-            # Step A: Try AcoustID fingerprint lookup first
-            try:
-                fingerprint = FingerprintGenerator.generate(str(file_path))
-                # Invoke local_metadata to get duration safely via authorized wrapper
-                from core.nexus_framework.plugin_loader import plugin_loader
-                local_metadata_plugin = plugin_loader.get_plugin("EchoSync.local_metadata")
-                duration_sec = None
-                track_obj = None
-                if local_metadata_plugin:
-                    track_obj = local_metadata_plugin.get_track_from_file(str(file_path))
-                    if track_obj and track_obj.duration:
-                        duration_sec = int(track_obj.duration / 1000)
-
-                if fingerprint and duration_sec and fingerprint_provider:
-                    logger.debug(
-                        f"→ AcoustID Lookup: {file_path.name}\n"
-                        f"  Duration: {duration_sec}s | Fingerprint: {len(fingerprint)} chars"
-                    )
-                    try:
-                        mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration_sec))
-                        if mbids and metadata_provider:
-                            mbid = mbids[0]
-                            logger.info(f"✓ AcoustID identified: {file_path.name} → MBID: {mbid}")
-                            try:
-                                metadata = metadata_provider.get_metadata(mbid)
-                                if metadata:
-                                    confidence = 0.95
-                                    logger.info(f"  ✓ Metadata fetched: {metadata.get('title')} by {metadata.get('artist')}")
-                                    return metadata, confidence
-                            except Exception as e:
-                                logger.warning(f"Failed to fetch metadata for MBID {mbid}: {e}")
-                        else:
-                            logger.debug(f"✗ No MBID found from AcoustID for {file_path.name}")
-                    except Exception as e:
-                        logger.warning(f"AcoustID fingerprint resolution failed: {e}")
-            except Exception as e:
-                logger.warning(f"AcoustID check failed: {e}")
-
-            # Step B: If AcoustID fails, invoke the EchoSync.local_metadata plugin (already read tags above if track_obj is present)
+            # Priority 1: Native file tags (parsed via core.file_handling.tagging_io)
             from core.nexus_framework.plugin_loader import plugin_loader
             local_metadata_plugin = plugin_loader.get_plugin("EchoSync.local_metadata")
-            if not track_obj and local_metadata_plugin:
-                track_obj = local_metadata_plugin.get_track_from_file(str(file_path))
+            track_obj = None
+            if local_metadata_plugin:
+                try:
+                    track_obj = local_metadata_plugin.get_track_from_file(str(file_path))
+                except Exception as e:
+                    logger.warning(f"Failed to read native tags for {file_path.name}: {e}")
 
-            # Step C: If tags are found, construct the EchoSyncTrack object and pass to lookup
             if track_obj:
                 # Fast path: Check if tags contain an embedded MBID
                 if track_obj.musicbrainz_id and metadata_provider:
@@ -230,6 +195,8 @@ class RetroactiveEnhancer:
                                     candidate_tracks.append((candidate, result.get('mbid') or result.get('recording_id')))
 
                             if candidate_tracks:
+                                from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
+                                from core.matching_engine.matching_engine import WeightedMatchingEngine
                                 engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
                                 matcher = engine_cls(PROFILE_EXACT_SYNC)
                                 best_score = 0.0
@@ -252,6 +219,44 @@ class RetroactiveEnhancer:
                     except Exception as e:
                         logger.warning(f"Fallback search using local_metadata failed: {e}", exc_info=True)
 
+            # Priority 2: AcoustID fingerprinting matches (if native tags are missing or search failed)
+            if not metadata:
+                try:
+                    fingerprint = FingerprintGenerator.generate(str(file_path))
+                    duration_sec = None
+                    if track_obj and track_obj.duration:
+                        duration_sec = int(track_obj.duration / 1000)
+                    else:
+                        raw_tags = _tagging_read(file_path)
+                        duration_ms = raw_tags.get("duration")
+                        if duration_ms:
+                            duration_sec = int(duration_ms / 1000)
+
+                    if fingerprint and duration_sec and fingerprint_provider:
+                        logger.debug(
+                            f"→ AcoustID Lookup: {file_path.name}\n"
+                            f"  Duration: {duration_sec}s | Fingerprint: {len(fingerprint)} chars"
+                        )
+                        try:
+                            mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration_sec))
+                            if mbids and metadata_provider:
+                                mbid = mbids[0]
+                                logger.info(f"✓ AcoustID identified: {file_path.name} → MBID: {mbid}")
+                                try:
+                                    metadata = metadata_provider.get_metadata(mbid)
+                                    if metadata:
+                                        confidence = 0.95
+                                        logger.info(f"  ✓ Metadata fetched: {metadata.get('title')} by {metadata.get('artist')}")
+                                        return metadata, confidence
+                                except Exception as e:
+                                    logger.warning(f"Failed to fetch metadata for MBID {mbid}: {e}")
+                            else:
+                                logger.debug(f"✗ No MBID found from AcoustID for {file_path.name}")
+                        except Exception as e:
+                            logger.warning(f"AcoustID fingerprint resolution failed: {e}")
+                except Exception as e:
+                    logger.warning(f"AcoustID check failed: {e}")
+
             # Step D: If no tags are found or search failed, halt execution. Do not guess.
             logger.warning(f"All metadata identification methods failed for {file_path.name}. File will be queued for manual review.")
             return None, 0.0
@@ -264,23 +269,14 @@ class RetroactiveEnhancer:
 
     def identify_batch(self, file_paths: list[str]) -> dict:
         results = {}
-        fingerprint_provider = self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm='chromaprint')
-        metadata_provider = self._get_plugin(Capability.FETCH_METADATA)
-
         for path_str in file_paths:
             metadata = None
+            confidence = 0.0
             try:
-                fingerprint = FingerprintGenerator.generate(path_str)
-                if fingerprint and fingerprint_provider:
-                    duration_ms = _tagging_read(Path(path_str)).get("duration", 0)
-                    duration_sec = int(duration_ms / 1000) if duration_ms else 0
-                    mbids = fingerprint_provider.resolve_fingerprint(fingerprint, duration_sec)
-                    if mbids and metadata_provider:
-                        mbid = mbids[0]
-                        metadata = metadata_provider.get_metadata(mbid)
+                metadata, confidence = self.identify_file(Path(path_str))
             except Exception as e:
                 logger.error(f"Error identifying {path_str}: {e}")
-            results[path_str] = metadata
+            results[path_str] = (metadata, confidence)
 
         return results
 
@@ -354,23 +350,34 @@ class RetroactiveEnhancer:
                 existing = session.query(ReviewTask).filter(ReviewTask.file_path == file_path_str).first()
                 
                 # 2. Get/Create EchosyncTrack
-                from core.matching_engine.track_parser import parse_file
                 from core.matching_engine.echo_sync_track import EchosyncTrack
+                from core.nexus_framework.plugin_loader import plugin_loader
+                from core.matching_engine.fingerprinting import FingerprintGenerator
                 
                 track = None
-                from core.file_handling import check_file_exists
-                if check_file_exists(file_path_str):
+                local_metadata_plugin = plugin_loader.get_plugin("EchoSync.local_metadata")
+                if local_metadata_plugin:
                     try:
-                        track = parse_file(file_path_str, generate_fingerprint=True)
+                        track = local_metadata_plugin.get_track_from_file(file_path_str)
                     except Exception as parse_err:
-                        logger.warning(f"Failed to parse file {file_path_str} for review task: {parse_err}")
+                        logger.warning(f"Failed to get track from file via local_metadata: {parse_err}")
                 
                 if not track:
                     track = EchosyncTrack(
-                        raw_title=Path(file_path_str).name,
-                        artist_name="Unknown Artist",
-                        album_title="Unknown Album"
+                        raw_title="",
+                        artist_name="",
+                        album_title=""
                     )
+
+                from core.file_handling import check_file_exists
+                if check_file_exists(file_path_str) and not track.fingerprint:
+                    try:
+                        fingerprint = FingerprintGenerator.generate(file_path_str)
+                        if fingerprint:
+                            track.fingerprint = fingerprint
+                            track.fingerprint_confidence = 1.0
+                    except Exception as fp_err:
+                        logger.warning(f"Failed to generate fingerprint for review task: {fp_err}")
                 
                 # 3. Merge incoming match_data (metadata suggestion) if present
                 if isinstance(match_data, dict):

@@ -109,6 +109,10 @@ class AcoustIDProvider(PluginBase):
         if duration > 10000:
             logger.debug(f"AcoustID duration abnormally high ({duration}), assuming milliseconds and converting to seconds.")
             duration = int(duration / 1000)
+
+        if duration <= 0:
+            logger.warning("[system] - Aborting AcoustID lookup: Invalid track duration (0s) detected.")
+            return {"acoustid_id": None, "mbids": [], "score": None}
         payload = {
             'client': api_key,
             'meta': 'recordingids',

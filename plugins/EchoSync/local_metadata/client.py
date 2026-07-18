@@ -112,8 +112,8 @@ class LocalMetadataProvider(PluginBase):
                 return None
                 
             return self.create_echo_sync_track(
-                title=title or 'Unknown Title',
-                artist=artist or 'Unknown Artist',
+                title=title or '',
+                artist=artist or '',
                 album=tags.get('album') or '',
                 duration_ms=tags.get('duration'),
                 isrc=tags.get('isrc'),

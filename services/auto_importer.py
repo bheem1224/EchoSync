@@ -179,6 +179,7 @@ class AutoImportService:
             logger.debug(f"Starting scan of download directory: {download_dir}")
             supported_exts = {'.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape', '.wav', '.dsd', '.dsf', '.dff'}
             files_to_process = []
+            stats = {"found": 0, "imported": 0, "pending_review": 0, "failed": 0}
 
             for root, dirs, files in os.walk(download_dir):
                 logger.debug(f"Scanning directory: {root}")
@@ -200,12 +201,19 @@ class AutoImportService:
                                 continue
                         logger.debug(f"File not in ignored queue, adding: {path}")
                         files_to_process.append(path)
+                        stats["found"] += 1
 
             if files_to_process:
                 logger.info(f"Found {len(files_to_process)} new files to process")
-                self.process_batch(files_to_process)
+                batch_stats = self.process_batch(files_to_process)
+                if batch_stats:
+                    stats["imported"] += batch_stats.get("imported", 0)
+                    stats["pending_review"] += batch_stats.get("pending_review", 0)
+                    stats["failed"] += batch_stats.get("failed", 0)
             else:
                 logger.info(f"Auto-import scan completed: No new files found in {download_dir}")
+                
+            logger.info(f"[system] - Auto-import complete. Found: {stats['found']} | Imported: {stats['imported']} | Pending Review: {stats['pending_review']} | Failed: {stats['failed']}")
         finally:
             self._scan_lock.release()
 
@@ -277,6 +285,8 @@ class AutoImportService:
         meta_config = config_manager.get('metadata_enhancement') or {}
         auto_import = meta_config.get('auto_import', False)
         confidence_threshold = meta_config.get('confidence_threshold', 90) / 100.0
+        
+        batch_stats = {"imported": 0, "pending_review": 0, "failed": 0}
 
         # Purge stale completion markers in one pass.
         now = time.time()
@@ -322,96 +332,33 @@ class AutoImportService:
 
             # ── Phase 3: per-file decision logic (Chunked Concurrency) ─────────
             import asyncio
-            from core.matching_engine.track_parser import parse_file
-            from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-            from core.matching_engine.matching_engine import WeightedMatchingEngine
-            from core.matching_engine.scoring_profile import PROFILE_AUTO_IMPORT_STRICT
 
             CHUNK_SIZE = 50
             for chunk_start in range(0, len(dir_files), CHUNK_SIZE):
                 chunk_files = dir_files[chunk_start:chunk_start + CHUNK_SIZE]
 
-                # Step A: Identify which files need strict fallback
-                fallback_needed = []
-                for file_path in chunk_files:
-                    metadata = batch_results.get(str(file_path))
-                    confidence = 0.95 if metadata else 0.0
-                    if (metadata is None or confidence < confidence_threshold) and auto_import:
-                        fallback_needed.append(file_path)
-
-                # Step B: Parse local files concurrently (though parse_file is sync, we just do it sequentially for now)
-                local_tracks = {}
-                for file_path in fallback_needed:
-                    track = parse_file(str(file_path), generate_fingerprint=True)
-                    if track and track.artist_name and track.raw_title:
-                        local_tracks[file_path] = track
-
-                # Step C: Dispatch Async MusicBrainz Searches
-                mb_client = PluginRegistry.get_plugin("musicbrainz")
-
-                async def fetch_fallbacks(tracks_dict):
-                    if not mb_client:
-                        return {fp: [] for fp in tracks_dict}
-
-                    paths = list(tracks_dict.keys())
-                    tasks = [
-                        mb_client.search_recording_strict(
-                            artist=tracks_dict[fp].artist_name,
-                            title=tracks_dict[fp].raw_title,
-                            immediate=False
-                        ) for fp in paths
-                    ]
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                    return {fp: (res if not isinstance(res, Exception) else []) for fp, res in zip(paths, results)}
-
-                mb_results_dict = asyncio.run(fetch_fallbacks(local_tracks)) if local_tracks else {}
-
                 # Step D: Process Results and Finalize
                 for file_path in chunk_files:
-                    metadata = batch_results.get(str(file_path))
-                    confidence = 0.95 if metadata else 0.0
+                    res = batch_results.get(str(file_path))
+                    metadata, confidence = res if res else (None, 0.0)
                     file_key = str(file_path)
                     try:
-                        if file_path in local_tracks:
-                            local_track = local_tracks[file_path]
-                            mb_results = mb_results_dict.get(file_path, [])
-
-                            if mb_results:
-                                top_mb_track = mb_results[0]
-                                engine = WeightedMatchingEngine(PROFILE_AUTO_IMPORT_STRICT)
-                                match_result = engine.calculate_match(local_track, top_mb_track)
-                                score = match_result.confidence_score if match_result else 0.0
-
-                                logger.info(f"Strict fallback score for {file_path.name}: {score:.2f}")
-
-                                if score >= PROFILE_AUTO_IMPORT_STRICT.SUBMIT_THRESHOLD:
-                                    logger.info(f"High confidence strict match ({score:.2f}). Auto-importing and queueing fingerprint submission.")
-                                    metadata = {
-                                        "title": top_mb_track.raw_title or top_mb_track.title,
-                                        "artist": top_mb_track.artist_name,
-                                        "album": top_mb_track.album_name,
-                                        "musicbrainz_id": top_mb_track.musicbrainz_id,
-                                        "isrc": top_mb_track.isrc,
-                                        "duration": top_mb_track.duration,
-                                    }
-                                    confidence = score
-                                else:
-                                    metadata = None
-
                         # Finally Decide
                         if metadata and confidence >= confidence_threshold:
                             if auto_import:
                                 self.finalize_import(file_path, metadata)
+                                batch_stats["imported"] += 1
                             else:
                                 logger.info(f"Match found but auto_import is False for {file_path}")
                                 self.enhancer.create_or_update_review_task(
                                     str(file_path), "Match found but auto_import is False", match_data=metadata
                                 )
+                                batch_stats["pending_review"] += 1
                         else:
                             self.enhancer.create_or_update_review_task(
                                 str(file_path), "No confident match found", match_data=metadata
                             )
+                            batch_stats["pending_review"] += 1
 
                     except Exception as e:
                         logger.error(f"Error processing decision for {file_path}: {e}", exc_info=True)
@@ -419,8 +366,10 @@ class AutoImportService:
                             self.enhancer.create_or_update_review_task(
                                 str(file_path), f"Error processing decision: {e}", match_data=None
                             )
+                            batch_stats["pending_review"] += 1
                         except Exception as e2:
                             logger.error(f"Failed to create review task for {file_path}: {e2}")
+                            batch_stats["failed"] += 1
                     finally:
                         self._recently_completed[file_key] = time.time()
                         with self._processing_lock:
@@ -432,6 +381,8 @@ class AutoImportService:
                 # Cleanup empty directories.
         for f in files:
             self._cleanup_empty_directories(f.parent)
+            
+        return batch_stats
 
     def finalize_import(self, file_path: Path, metadata: Dict[str, Any]):
         """

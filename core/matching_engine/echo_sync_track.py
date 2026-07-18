@@ -175,6 +175,19 @@ class EchosyncTrack:
         """
         Auto-clean and normalize data upon instantiation.
         """
+        # Path-detection validation warning
+        for field_name, value in [
+            ("artist", self.artist_name),
+            ("album_artist", self.album_artist),
+            ("title", self.raw_title),
+            ("album_title", self.album_title)
+        ]:
+            if value and ("/" in str(value) or "\\" in str(value)):
+                from core.tiered_logger import get_logger
+                get_logger("core.models").warning(
+                    f"[core.models] - Suspicious metadata detected: Field '{field_name}' contains a file path ('{value}')."
+                )
+
         # 0a. Normalize Unicode character variants on raw string fields so that
         #     EVERY EchosyncTrack — whether built from a streaming provider or
         #     directly from a raw DB row — carries consistent characters before
