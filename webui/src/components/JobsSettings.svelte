@@ -335,7 +335,7 @@
                             </div>
                           {/if}
                         </div>
-                      {#else}
+                      {:else}
                         <button
                           class="btn-action active:scale-95 transition-all duration-200"
                           on:click={() => runJob(job.name)}
