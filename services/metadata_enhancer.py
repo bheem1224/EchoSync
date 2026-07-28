@@ -446,24 +446,7 @@ class RetroactiveEnhancer:
         auto_importer = get_auto_importer()
         auto_importer.finalize_import(file_path, metadata)
 
-    def _filename_to_track(self, file_path: Path, duration_ms: Optional[int]) -> EchosyncTrack:
-        """Convert filename to EchosyncTrack for matching using provider_base helper."""
-        from core.matching_engine.track_parser import TrackParser
-        from core.nexus_framework.plugin_SDK import PluginBase
 
-        # Use TrackParser to extract artist/title from filename
-        parser = TrackParser()
-        parsed = parser.parse_filename(file_path.stem)
-
-        # Use the standard factory method from PluginBase
-        return PluginBase.create_echo_sync_track(
-            title=(parsed.title if parsed else None) or file_path.stem,
-            artist=(parsed.artist_name if parsed else None) or 'Unknown Artist',
-            album=(parsed.album_title if parsed else None) or '',
-            duration_ms=duration_ms,
-            provider_id=str(file_path),
-            source='local_file'
-        )
 
     def _search_result_to_track(self, result: Dict[str, Any]) -> Optional[EchosyncTrack]:
         """Convert MusicBrainz search result to EchosyncTrack using provider_base helper."""
