@@ -311,6 +311,7 @@ def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist,
         FROM tracks t
         JOIN artists a ON t.artist_id = a.id
         LEFT JOIN albums al ON t.album_id = al.id
+        JOIN local_media lm ON t.id = lm.track_id
         WHERE ({base_where}{exp_where})
         ORDER BY
             (LOWER(a.name) = LOWER(:artist_exact)) DESC,
@@ -390,6 +391,7 @@ def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_
         FROM tracks t
         JOIN artists a ON t.artist_id = a.id
         LEFT JOIN albums al ON t.album_id = al.id
+        JOIN local_media lm ON t.id = lm.track_id
         WHERE ({base_where}{exp_where})
           AND t.duration IS NOT NULL
           AND t.duration BETWEEN :duration_min AND :duration_max
@@ -790,6 +792,8 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                             source_track.artist_name, _py_best_name,
                                             _src_py, _py_best_score,
                                         )
+                                except ImportError:
+                                    logger.debug("CJK language pack not installed; skipping Pinyin fallback for artist name.")
                                 except Exception as _py_exc:
                                     logger.debug("Pinyin artist fallback error: %s", _py_exc)
                             # ── End Pinyin fallback ────────────────────────────────────────────

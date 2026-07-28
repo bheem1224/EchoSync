@@ -182,29 +182,33 @@ class EchosyncTrack:
             ("title", self.raw_title),
             ("album_title", self.album_title)
         ]:
-            if value and ("/" in str(value) or "\\" in str(value)):
-                from core.tiered_logger import get_logger
-                get_logger("core.models").warning(
-                    f"[core.models] - Suspicious metadata detected: Field '{field_name}' contains a file path ('{value}')."
-                )
+            if value:
+                val_str = str(value).strip()
+                is_suspicious = False
+                if "\\" in val_str or re.match(r'^[a-zA-Z]:[/\\]', val_str):
+                    is_suspicious = True
+                elif val_str.startswith("/") or val_str.endswith("/"):
+                    is_suspicious = True
+                elif re.search(r'\.(mp3|flac|m4a|aac|wav|ogg|wma|opus|aiff|alac)$', val_str, re.IGNORECASE):
+                    is_suspicious = True
+                elif "/" in val_str:
+                    for m in re.finditer(r'/', val_str):
+                        idx = m.start()
+                        before = val_str[idx - 1] if idx > 0 else ''
+                        after = val_str[idx + 1] if idx < len(val_str) - 1 else ''
+                        if not ((before.isalnum() or before.isspace()) and (after.isalnum() or after.isspace())):
+                            is_suspicious = True
+                            break
 
-        # 0a. Normalize Unicode character variants on raw string fields so that
-        #     EVERY EchosyncTrack — whether built from a streaming provider or
-        #     directly from a raw DB row — carries consistent characters before
-        #     any regex, fuzzy-matching, or SQL search runs on them.
-        #     (e.g. smart apostrophe ' U+2019 → plain ' U+0027, em-dash → hyphen)
-        from core.matching_engine.text_utils import normalize_chars
-        if self.raw_title:
-            self.raw_title = normalize_chars(self.raw_title)
-        if self.artist_name:
-            self.artist_name = normalize_chars(self.artist_name)
-        if self.album_title:
-            self.album_title = normalize_chars(self.album_title)
+                if is_suspicious:
+                    from core.tiered_logger import get_logger
+                    get_logger("core.models").warning(
+                        f"[core.models] - Suspicious metadata detected: Field '{field_name}' contains a file path ('{value}')."
+                    )
 
         # 0b. Fire pre_normalize_title hook so plugins (e.g. CJK Language Pack) can
         #     extract contextual signals (e.g. drama / series names inside CJK brackets)
         #     into plugin_context BEFORE the subsequent cleaning strips those brackets.
-        #     The hook runs after normalize_chars so Unicode variants are already unified.
         from core.hook_manager import hook_manager as _hm
         _hm.apply_filters('pre_normalize_title', self.raw_title, plugin_context=self.plugin_context)
 
