@@ -280,19 +280,11 @@ def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist,
             f" WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) LIKE LOWER(:{param})))"
         )
 
-    # Artist-anchored conditions — identical semantics to the original Tier 1 SQL
-    # but the title side now also searches sort_title and aliases.
+    # Broad Funnel: match title/aliases loosely, completely ignoring artist and duration filters in WHERE.
     base_where = (
-        f"(LOWER(a.name) = LOWER(:artist_exact) AND {_am('title_pattern')})\n"
-        f"        OR (LOWER(a.name) LIKE LOWER(:artist_pattern) AND LOWER(t.title) = LOWER(:title_exact))\n"
-        f"        OR (LOWER(a.name) LIKE LOWER(:artist_pattern) AND {_am('title_pattern')})\n"
-        f"        OR (LOWER(a.name) LIKE LOWER(:artist_pattern) AND {_am('base_title_pattern')})\n"
-        f"        OR (LOWER(a.name) = LOWER(:artist_exact) AND {_am('base_title_pattern')})\n"
-        f"        OR (LOWER(a.name) = LOWER(:artist_exact)\n"
-        f"            AND LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39)))"
-        f" LIKE LOWER(:title_norm_pattern))\n"
-        f"        OR (LOWER(a.name) LIKE LOWER(:artist_pattern)\n"
-        f"            AND LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39)))"
+        f"{_am('title_pattern')}\n"
+        f"        OR {_am('base_title_pattern')}\n"
+        f"        OR (LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39)))"
         f" LIKE LOWER(:title_norm_pattern))"
     )
 
@@ -355,20 +347,16 @@ def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_
 
     params = {
         "title_exact":  search_title,
+        "title_pattern": f"%{search_title}%",
         "duration":     track_duration,
-        "duration_min": duration_min,
-        "duration_max": duration_max,
     }
 
-    # Base title-exact conditions (original Tier 2) plus alias equality match.
+    # Base title-exact conditions (original Tier 2) replaced with broad funnel LIKE/alias checks.
     base_where = (
-        "LOWER(t.title) = LOWER(:title_exact)\n"
-        "        OR LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39)))"
-        " = LOWER(:title_exact)\n"
-        "        OR LOWER(t.title)"
-        " = LOWER(REPLACE(REPLACE(:title_exact, char(8217), char(39)), char(8216), char(39)))\n"
+        "LOWER(t.title) LIKE LOWER(:title_pattern)\n"
+        "        OR (t.sort_title IS NOT NULL AND LOWER(t.sort_title) LIKE LOWER(:title_pattern))\n"
         "        OR EXISTS (SELECT 1 FROM track_aliases ta_x\n"
-        "                   WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) = LOWER(:title_exact))"
+        "                   WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) LIKE LOWER(:title_pattern))"
     )
 
     # Expanded terms use LIKE — transliterations need fuzzy title matching.
@@ -393,8 +381,6 @@ def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_
         LEFT JOIN albums al ON t.album_id = al.id
         JOIN local_media lm ON t.id = lm.track_id
         WHERE ({base_where}{exp_where})
-          AND t.duration IS NOT NULL
-          AND t.duration BETWEEN :duration_min AND :duration_max
         ORDER BY ABS(t.duration - :duration) ASC
         LIMIT 10
     """)
