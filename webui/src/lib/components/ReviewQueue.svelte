@@ -106,25 +106,13 @@
   }
 
   async function handleModalApprove(e) {
-      const { proposedMetadata, item } = e.detail || {};
+      const { item } = e.detail || {};
       if (!item) return;
       const taskId = item.id;
 
-      setRowState(taskId, 'approving');
-      try {
-          const payload = { ...item.proposed_metadata, ...proposedMetadata };
-          // Save draft first just in case
-          await apiClient.put(`/review-queue/${taskId}`, payload);
-          // Then approve
-          await apiClient.post(`/review-queue/${taskId}/approve`);
-
-          tasks = tasks.filter(t => t.id !== taskId);
-          clearRowState(taskId);
-          closeReviewModal();
-      } catch (err) {
-          console.error('Failed to approve task:', err);
-          clearRowState(taskId);
-      }
+      tasks = tasks.filter(t => t.id !== taskId);
+      clearRowState(taskId);
+      closeReviewModal();
   }
 
   async function loadQueue() {
