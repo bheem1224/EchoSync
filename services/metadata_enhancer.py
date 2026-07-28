@@ -163,8 +163,8 @@ class RetroactiveEnhancer:
 
         try:
             # Priority 1: Native file tags (parsed via core.file_handling.tagging_io)
-            from core.nexus_framework.plugin_loader import plugin_loader
-            local_metadata_plugin = plugin_loader.get_plugin("EchoSync.local_metadata")
+            from core.nexus_framework.plugin_loader import PluginRegistry
+            local_metadata_plugin = PluginRegistry.get_plugin("EchoSync.local_metadata")
             track_obj = None
             if local_metadata_plugin:
                 try:
@@ -351,11 +351,11 @@ class RetroactiveEnhancer:
                 
                 # 2. Get/Create EchosyncTrack
                 from core.matching_engine.echo_sync_track import EchosyncTrack
-                from core.nexus_framework.plugin_loader import plugin_loader
+                from core.nexus_framework.plugin_loader import PluginRegistry
                 from core.matching_engine.fingerprinting import FingerprintGenerator
                 
                 track = None
-                local_metadata_plugin = plugin_loader.get_plugin("EchoSync.local_metadata")
+                local_metadata_plugin = PluginRegistry.get_plugin("EchoSync.local_metadata")
                 if local_metadata_plugin:
                     try:
                         track = local_metadata_plugin.get_track_from_file(file_path_str)
