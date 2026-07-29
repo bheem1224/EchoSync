@@ -33,50 +33,28 @@ def _get_plugin(capability: Capability):
 
 def _extract_source_metadata(file_path: Path):
     """Extract best-effort source metadata from local file tags/audio headers."""
-    metadata = {
-        "title": None,
-        "artist": None,
-        "album": None,
-        "duration_seconds": None,
-        "bitrate_kbps": None,
-        "sample_rate_hz": None,
-        "channels": None,
-        "file_format": file_path.suffix.lower().lstrip('.'),
-    }
+    from core.file_handling.audio_inspector import inspect_audio_file
 
     try:
-        import mutagen
-    except Exception:
-        return metadata
-
-    try:
-        audio = mutagen.File(str(file_path), easy=True)
-        if not audio:
-            return metadata
-
-        tags = getattr(audio, "tags", None) or {}
-        metadata["title"] = (tags.get("title") or [None])[0]
-        metadata["artist"] = (tags.get("artist") or [None])[0]
-        metadata["album"] = (tags.get("album") or [None])[0]
-
-        info = getattr(audio, "info", None)
-        if info:
-            length = getattr(info, "length", None)
-            bitrate = getattr(info, "bitrate", None)
-            sample_rate = getattr(info, "sample_rate", None)
-            channels = getattr(info, "channels", None)
-            if length is not None:
-                metadata["duration_seconds"] = int(length)
-            if bitrate is not None:
-                metadata["bitrate_kbps"] = int(bitrate / 1000)
-            if sample_rate is not None:
-                metadata["sample_rate_hz"] = int(sample_rate)
-            if channels is not None:
-                metadata["channels"] = int(channels)
+        result = inspect_audio_file(file_path)
+        return {
+            "title":          result.title,
+            "artist":         result.artist,
+            "album":          result.album,
+            "duration_seconds": (result.duration_ms // 1000) if result.duration_ms else None,
+            "bitrate_kbps":   result.bitrate_kbps,
+            "sample_rate_hz": result.sample_rate_hz,
+            "channels":       result.channels,
+            "file_format":    result.file_format or file_path.suffix.lower().lstrip('.'),
+        }
     except Exception as e:
-        logger.debug(f"Failed to extract source metadata for {file_path}: {e}")
-
-    return metadata
+        logger.debug("Failed to extract source metadata for %s: %s", file_path, e)
+        return {
+            "title": None, "artist": None, "album": None,
+            "duration_seconds": None, "bitrate_kbps": None,
+            "sample_rate_hz": None, "channels": None,
+            "file_format": file_path.suffix.lower().lstrip('.'),
+        }
 
 @bp.get("/queue")
 def get_queue():

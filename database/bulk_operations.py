@@ -447,8 +447,8 @@ class LibraryManager:
                 artist=artist,
                 album=album,
                 duration=track_data.duration,
-                track_number=track_data.track_number,
-                disc_number=track_data.disc_number,
+                track_number=text_utils.parse_int_safe(track_data.track_number),
+                disc_number=text_utils.parse_int_safe(track_data.disc_number),
                 musicbrainz_id=track_data.musicbrainz_id,
                 isrc=track_data.isrc,
                 sync_id=track_data.sync_id,
@@ -489,9 +489,9 @@ class LibraryManager:
             if track_data.duration is not None:
                 track.duration = track_data.duration
             if track_data.track_number is not None:
-                track.track_number = track_data.track_number
+                track.track_number = text_utils.parse_int_safe(track_data.track_number)
             if track_data.disc_number is not None:
-                track.disc_number = track_data.disc_number
+                track.disc_number = text_utils.parse_int_safe(track_data.disc_number)
             if track_data.added_at is not None:
                 track.added_at = track_data.added_at
             if track_data.musicbrainz_id is not None:
@@ -918,12 +918,7 @@ class LibraryManager:
                         continue
 
                     if not track_data.artist_name or not track_data.artist_name.strip():
-                        failed_count += 1
-                        logger.warning(
-                            "Skipping track %s due to missing artist: title='%s'",
-                            idx + 1, track_data.title,
-                        )
-                        continue
+                        track_data.artist_name = "Unknown Artist"
 
                     if (idx + 1) % 100 == 0 or idx == 0:
                         logger.debug(

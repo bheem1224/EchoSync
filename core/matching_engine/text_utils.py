@@ -544,3 +544,26 @@ def generate_deterministic_id(artist: Optional[str], title: Optional[str]) -> st
     # Format string matching the cache_manager requirement
     raw_id = f"{safe_artist}|{safe_title}"
     return base64.b64encode(raw_id.encode('utf-8')).decode('utf-8')
+
+
+def parse_int_safe(val: Any) -> Optional[int]:
+    """Parse integer safely from strings like '2/9', '02', tuples, floats, or invalid text."""
+    if val is None or val == "":
+        return None
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return int(val)
+    if isinstance(val, (list, tuple)):
+        if len(val) > 0:
+            return parse_int_safe(val[0])
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    if "/" in s:
+        s = s.split("/", 1)[0].strip()
+    try:
+        return int(s)
+    except (ValueError, TypeError):
+        return None

@@ -1119,11 +1119,13 @@ class PluginBase(ABC):
             return None
         
         if not normalized_artist or not normalized_artist.strip():
-            logger.warning(f"Skipping track creation - normalized artist is empty (original: '{artist_str}', title: '{normalized_title}')")
-            return None
+            artist_str = "Unknown Artist"
+            normalized_artist = "unknown artist"
         
         # Parse duration
         parsed_duration = text_utils.parse_duration_to_ms(duration_ms)
+        parsed_track_number = text_utils.parse_int_safe(track_number)
+        parsed_disc_number = text_utils.parse_int_safe(disc_number)
         
         # Build identifiers list for ExternalIdentifiers table
         identifiers = []
@@ -1142,8 +1144,8 @@ class PluginBase(ABC):
             album_title=album_str,
             edition=edition,
             duration=parsed_duration,
-            track_number=track_number,
-            disc_number=disc_number,
+            track_number=parsed_track_number,
+            disc_number=parsed_disc_number,
             release_year=year,
             musicbrainz_id=musicbrainz_id,
             isrc=isrc,
