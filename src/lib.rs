@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use walkdir::WalkDir;
 use lofty::probe::Probe;
-use lofty::file::AudioFile;
+use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::tag::{Accessor, TagExt, ItemKey};
 use rusqlite::{Connection, Result as SqlResult};
 use std::time::Duration;
@@ -138,9 +138,9 @@ fn scan_directory<'py>(
                 let mut isrc = None;
 
                 if let Some(t) = tag {
-                    title = t.title().map(|s| s.into_owned());
-                    artist_name = t.artist().map(|s| s.into_owned());
-                    album_title = t.album().map(|s| s.into_owned());
+                    title = t.title().as_deref().map(|s| s.to_string());
+                    artist_name = t.artist().as_deref().map(|s| s.to_string());
+                    album_title = t.album().as_deref().map(|s| s.to_string());
                     track_number = t.track().unwrap_or(0);
                     disc_number = t.disk().unwrap_or(1);
 
