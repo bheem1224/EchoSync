@@ -909,97 +909,102 @@ class LibraryManager:
                     time.sleep(0)
 
                 try:
-                    if not track_data.title or not track_data.title.strip():
-                        failed_count += 1
-                        logger.warning(
-                            "Skipping track %s due to missing title: artist='%s' album='%s'",
-                            idx + 1, track_data.artist_name, track_data.album_title,
-                        )
-                        continue
-
-                    if not track_data.artist_name or not track_data.artist_name.strip():
-                        track_data.artist_name = "Unknown Artist"
-
-                    if (idx + 1) % 100 == 0 or idx == 0:
-                        logger.debug(
-                            "Processing track %s: title='%s' artist='%s' album='%s'",
-                            idx + 1, track_data.title, track_data.artist_name, track_data.album_title,
-                        )
-
-                    # ORPHAN GUARD: When identifiers_only=True, check if the
-                    # track exists locally BEFORE creating Artist/Album rows.
-                    # Without this gate, _get_or_create_artist and
-                    # _get_or_create_album would flush new rows that become
-                    # orphans when _upsert_track later returns None.
-                    if identifiers_only and not self._track_exists_locally(session, track_data, _prefetched_ids=prefetched_ids):
-                        logger.debug(
-                            "identifiers_only skip: no local match for '%s' by '%s'",
-                            track_data.title, track_data.artist_name,
-                        )
-                        continue
-
-                    artist = self._get_or_create_artist(
-                        session,
-                        track_data.artist_name,
-                        sort_name=track_data.artist_sort_name
-                    )
-                    if artist and artist.id:
-                        seen_artist_ids.add(artist.id)
-
-                    album_artist_str = track_data.album_artist
-                    if not album_artist_str or not album_artist_str.strip():
-                        album_artist_str = track_data.artist_name
-
-                    album_artist_entity = self._get_or_create_artist(
-                        session,
-                        album_artist_str,
-                        # sort_name for the album artist is not strictly defined in EchosyncTrack,
-                        # but we can try falling back to artist_sort_name or leave it None.
-                    )
-
-                    album = self._get_or_create_album(
-                        session,
-                        track_data.album_title,
-                        album_artist_entity,
-                        track_data.release_year,
-                        album_type=track_data.album_type,
-                        release_group_id=track_data.album_release_group_id,
-                        mb_release_id=track_data.mb_release_id,
-                        original_release_date=track_data.original_release_date
-                    )
-                    if album and album.id:
-                        seen_album_ids.add(album.id)
-
-                    track, is_new = self._upsert_track(session, track_data, artist, album, identifiers_only=identifiers_only)
-
-                    if track is None:
-                        # Skip if identifiers_only=True and no matching track is found
-                        continue
-
-                    for media_item in getattr(track_data, "media", []):
-                        if media_item.file_path:
-                            observed_file_paths.add(media_item.file_path)
-
-                    for source, item_id in (track_data.identifiers or {}).items():
-                        if not source or item_id is None:
+                    with session.begin_nested():
+                        if not track_data.title or not track_data.title.strip():
+                            failed_count += 1
+                            logger.warning(
+                                "Skipping track %s due to missing title: artist='%s' album='%s'",
+                                idx + 1, track_data.artist_name, track_data.album_title,
+                            )
                             continue
-                        if not isinstance(item_id, str):
-                            item_id = str(item_id)
-                        observed_identifiers[source].add(item_id)
-
-                    if is_new:
-                        imported_count += 1
-                    else:
-                        updated_count += 1
-
+    
+                        if not track_data.artist_name or not track_data.artist_name.strip():
+                            track_data.artist_name = "Unknown Artist"
+    
+                        if (idx + 1) % 100 == 0 or idx == 0:
+                            logger.debug(
+                                "Processing track %s: title='%s' artist='%s' album='%s'",
+                                idx + 1, track_data.title, track_data.artist_name, track_data.album_title,
+                            )
+    
+                        # ORPHAN GUARD: When identifiers_only=True, check if the
+                        # track exists locally BEFORE creating Artist/Album rows.
+                        # Without this gate, _get_or_create_artist and
+                        # _get_or_create_album would flush new rows that become
+                        # orphans when _upsert_track later returns None.
+                        if identifiers_only and not self._track_exists_locally(session, track_data, _prefetched_ids=prefetched_ids):
+                            logger.debug(
+                                "identifiers_only skip: no local match for '%s' by '%s'",
+                                track_data.title, track_data.artist_name,
+                            )
+                            continue
+    
+                        artist = self._get_or_create_artist(
+                            session,
+                            track_data.artist_name,
+                            sort_name=track_data.artist_sort_name
+                        )
+                        if artist and artist.id:
+                            seen_artist_ids.add(artist.id)
+    
+                        album_artist_str = track_data.album_artist
+                        if not album_artist_str or not album_artist_str.strip():
+                            album_artist_str = track_data.artist_name
+    
+                        album_artist_entity = self._get_or_create_artist(
+                            session,
+                            album_artist_str,
+                            # sort_name for the album artist is not strictly defined in EchosyncTrack,
+                            # but we can try falling back to artist_sort_name or leave it None.
+                        )
+    
+                        album = self._get_or_create_album(
+                            session,
+                            track_data.album_title,
+                            album_artist_entity,
+                            track_data.release_year,
+                            album_type=track_data.album_type,
+                            release_group_id=track_data.album_release_group_id,
+                            mb_release_id=track_data.mb_release_id,
+                            original_release_date=track_data.original_release_date
+                        )
+                        if album and album.id:
+                            seen_album_ids.add(album.id)
+    
+                        track, is_new = self._upsert_track(session, track_data, artist, album, identifiers_only=identifiers_only)
+    
+                        if track is None:
+                            # Skip if identifiers_only=True and no matching track is found
+                            continue
+    
+                        for media_item in getattr(track_data, "media", []):
+                            if media_item.file_path:
+                                observed_file_paths.add(media_item.file_path)
+    
+                        for source, item_id in (track_data.identifiers or {}).items():
+                            if not source or item_id is None:
+                                continue
+                            if not isinstance(item_id, str):
+                                item_id = str(item_id)
+                            observed_identifiers[source].add(item_id)
+    
+                        if is_new:
+                            imported_count += 1
+                        else:
+                            updated_count += 1
+    
                 except Exception as e:
                     failed_count += 1
                     logger.error(f"Failed to import track '{track_data.title}': {e}", exc_info=True)
                     continue
 
                 if (idx + 1) % BATCH_SIZE == 0:
-                    session.commit()
-                    logger.info(f"Batch committed: {idx + 1} tracks processed")
+                    try:
+                        session.commit()
+                        logger.info(f"Batch committed: {idx + 1} tracks processed")
+                    except Exception as e:
+                        logger.error(f"Failed to commit batch at {idx + 1} tracks: {e}")
+                        session.rollback()
 
                 if progress_callback and (((idx + 1) % 25 == 0) or ((idx + 1) % BATCH_SIZE == 0)):
                     try:
@@ -1015,7 +1020,11 @@ class LibraryManager:
                     except Exception:
                         pass
 
-            session.commit()
+            try:
+                session.commit()
+            except Exception as e:
+                logger.error(f"Failed to commit final batch: {e}")
+                session.rollback()
 
             deleted_count = self._delete_missing_tracks(session, observed_identifiers)
             if source_name == "EchoSync.Local Server" and not identifiers_only:
@@ -1024,7 +1033,11 @@ class LibraryManager:
                     deleted_count += local_deleted
                     
             if deleted_count:
-                session.commit()
+                try:
+                    session.commit()
+                except Exception as e:
+                    logger.error(f"Failed to commit deleted tracks: {e}")
+                    session.rollback()
 
             total_processed = imported_count + updated_count
             logger.info(
