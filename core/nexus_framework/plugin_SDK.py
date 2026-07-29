@@ -261,11 +261,27 @@ class _FileSDKFacade:
             
         # Physical soft delete
         try:
-            p = Path(file_path)
+            p = Path(file_path).resolve()
             if not p.exists(): return False
             
             # Find root mount. For simplicity, we assume music_dir
-            music_dir = Path(config_manager.get('music_dir', ''))
+            music_dir_setting = config_manager.get('music_dir', '')
+            if music_dir_setting:
+                music_dir = Path(music_dir_setting).resolve()
+                try:
+                    if not p.is_relative_to(music_dir):
+                        from core.tiered_logger import get_logger
+                        logger = get_logger("plugin_SDK")
+                        logger.error(f"Security violation: Attempted soft delete outside music_dir: {p}")
+                        return False
+                except AttributeError:
+                    if not str(p).startswith(str(music_dir)):
+                        from core.tiered_logger import get_logger
+                        logger = get_logger("plugin_SDK")
+                        logger.error(f"Security violation: Attempted soft delete outside music_dir: {p}")
+                        return False
+            else:
+                music_dir = p.parent
             
             # Create hidden trash if needed
             trash_dir = music_dir / ".trash"

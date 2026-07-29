@@ -99,10 +99,15 @@ class BackupManager:
         try:
             # 1. Extract
             with zipfile.ZipFile(zip_path, 'r') as zipf:
-                # Security: Zip Slip Check
+                resolved_staging = staging_dir.resolve()
                 for zi in zipf.infolist():
-                    if '..' in zi.filename or zi.filename.startswith('/'):
-                        raise ValueError(f"Malicious path in backup archive: {zi.filename}")
+                    target_path = (staging_dir / zi.filename).resolve()
+                    try:
+                        if not target_path.is_relative_to(resolved_staging):
+                            raise ValueError(f"Malicious path in backup archive: {zi.filename}")
+                    except AttributeError:
+                        if not str(target_path).startswith(str(resolved_staging)):
+                            raise ValueError(f"Malicious path in backup archive: {zi.filename}")
                 zipf.extractall(staging_dir)
             
             # 2. Close connections

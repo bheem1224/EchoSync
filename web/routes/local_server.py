@@ -62,11 +62,10 @@ def stream_audio():
         if ext in _TRANSCODE_FORMATS:
             logger.info(f"Transcoding {ext} → FLAC for {requested_path.name}")
 
-            # The validated path is passed as a list arg — no shell expansion,
-            # no command-injection risk regardless of characters in the filename.
+            safe_path = str(requested_path.resolve())
             ffmpeg_cmd = [
                 "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-i", str(requested_path),
+                "-i", safe_path,
                 "-c:a", "flac", "-f", "flac", "pipe:1",
             ]
 
@@ -75,6 +74,7 @@ def stream_audio():
                     ffmpeg_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    shell=False,
                 )
                 try:
                     while True:

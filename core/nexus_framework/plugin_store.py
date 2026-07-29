@@ -552,11 +552,18 @@ class PluginStore:
 
                 # Task 2: Artifact Extraction (Direct Root Level)
                 with zipfile.ZipFile(tmp_zip_path, 'r') as z:
-                    # Security: Zip Slip Check
+                    # Robust Path Traversal Guard for POSIX and Windows
+                    resolved_tmp_dir = tmp_dir.resolve()
                     for zi in z.infolist():
-                        if '..' in zi.filename or zi.filename.startswith('/'):
-                            logger.error(f"Malicious path in artifact: {zi.filename}")
-                            return False
+                        target_path = (tmp_dir / zi.filename).resolve()
+                        try:
+                            if not target_path.is_relative_to(resolved_tmp_dir):
+                                logger.error(f"Malicious path traversal in artifact: {zi.filename}")
+                                return False
+                        except AttributeError:
+                            if not str(target_path).startswith(str(resolved_tmp_dir)):
+                                logger.error(f"Malicious path traversal in artifact: {zi.filename}")
+                                return False
                     
                     z.extractall(tmp_dir)
 
