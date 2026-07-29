@@ -367,35 +367,15 @@ def normalize_album(album: Optional[str]) -> str:
 
 
 def parse_duration_to_ms(duration: Optional[int]) -> Optional[int]:
-    """
-    Parse duration to milliseconds.
-    
-    Args:
-        duration: Duration value (could be ms, seconds, or microseconds depending on source)
-        
-    Returns:
-        Duration in milliseconds, or None if invalid
-    """
-    if not duration:
+    if not duration or duration <= 0:
         return None
-    
-    if duration < 0:
-        return None
-    
-    # Microsecond detection: unusually large or ends strictly in 000000
-    if duration > 36000000 or (duration > 0 and duration % 1000000 == 0):
-        duration = duration // 1000
-    
-    # If duration looks like it's in seconds (< 3600 seconds = 1 hour max)
-    # Spotify uses ms, Plex uses ms, but some providers might use seconds
-    # Heuristic: if value is < 3600000ms (1 hour), assume it's correct
-    if duration < 3600000:
-        # Could be either. Check if < 3600 (1 hour in seconds)
-        if duration < 3600:
-            # Likely seconds, convert to ms
-            return duration * 1000
-    
-    return duration
+    # If value is in seconds (< 10 hours in seconds)
+    if duration < 36000:
+        return int(duration * 1000)
+    # If value is in microseconds (> 10 hours in ms)
+    if duration > 36000000:
+        return int(duration / 1000)
+    return int(duration)
 
 
 def extract_version_info(title: Optional[str]) -> Tuple[str, Optional[str]]:

@@ -74,7 +74,7 @@ class LocalServerProvider(PluginBase):
                 duration_ms = tags.get('duration_ms')
                 if duration_ms is None and tags.get('duration') is not None:
                      try:
-                         duration_ms = int(float(tags.get('duration')) * 1000)
+                         duration_ms = int(float(tags.get('duration')))
                      except (ValueError, TypeError):
                          pass
 

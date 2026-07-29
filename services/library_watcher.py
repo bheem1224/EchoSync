@@ -181,7 +181,7 @@ def _process_new_file(path: Path) -> None:
             raw_duration = tags.get("duration")
             if raw_duration is not None:
                 try:
-                    raw_duration = int(float(raw_duration) * 1000)
+                    raw_duration = int(float(raw_duration))
                 except (ValueError, TypeError):
                     raw_duration = None
         if raw_duration is not None:
