@@ -763,6 +763,83 @@ class LibraryManager:
         session.execute(delete(Track).where(Track.id.in_(list(deleted_track_ids))))
         return len(deleted_track_ids)
 
+
+    def promote_virtual_track(self, working_session, library_session, virtual_track_id: int):
+        """
+        Promotes a track from the VirtualTrackCache (working.db) to the canonical music graph (library.db).
+        Used when a physical file is acquired for a virtual entry.
+        """
+        try:
+            # 1. Fetch from VirtualTrackCache
+            virtual_track = working_session.get(VirtualTrackCache, virtual_track_id)
+            if not virtual_track:
+                logger.error(f"Cannot promote virtual track {virtual_track_id}: not found in working.db")
+                return None
+
+            # 2. Get or create artist and album in library.db
+            artist = self._get_or_create_artist(library_session, virtual_track.artist_name)
+
+            album = None
+            if virtual_track.album_title:
+                # Use artist as album_artist fallback
+                album = self._get_or_create_album(
+                    library_session,
+                    title=virtual_track.album_title,
+                    album_artist=artist,
+                    release_year=None
+                )
+
+            # 3. Create canonical Track
+            from core.matching_engine.text_utils import normalize_text, create_search_vector
+
+            track = Track(
+                title=virtual_track.title,
+                normalized_title=normalize_text(virtual_track.title),
+                duration=virtual_track.duration_ms / 1000.0,
+                track_number=virtual_track.track_number,
+                disc_number=virtual_track.disc_number,
+                isrc=virtual_track.isrc,
+                artist_id=artist.id,
+                album_id=album.id if album else None
+            )
+
+            track.search_vector = create_search_vector(
+                track.title,
+                artist.name,
+                album.title if album else None
+            )
+
+            library_session.add(track)
+            library_session.flush() # Get track ID
+
+            # 4. Insert LocalMedia for the new physical path
+            ext_id = ExternalIdentifier(
+                plugin_source="virtual_cache",
+                plugin_item_id=virtual_track.external_uri,
+                provider_id=virtual_track.provider_id
+            )
+
+            media = LocalMedia(
+                track_id=track.id,
+                file_path=f"virtual://{virtual_track.external_uri}",
+            )
+            media.external_identifiers.append(ext_id)
+            library_session.add(media)
+
+            library_session.commit()
+
+            # 5. Delete from VirtualTrackCache
+            working_session.delete(virtual_track)
+            working_session.commit()
+
+            logger.info(f"Promoted virtual track '{track.title}' to canonical library.")
+            return track
+
+        except Exception as e:
+            working_session.rollback()
+            library_session.rollback()
+            logger.error(f"Failed to promote virtual track {virtual_track_id}: {e}", exc_info=True)
+            return None
     def _delete_missing_local_tracks(self, session: Session, observed_file_paths: set[str]) -> int:
         """Remove tracks that have a local file path but were not observed during scan."""
         from core.settings import config_manager
