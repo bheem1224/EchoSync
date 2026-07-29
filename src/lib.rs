@@ -4,13 +4,67 @@ use walkdir::WalkDir;
 use lofty::probe::Probe;
 use lofty::file::AudioFile;
 use lofty::tag::{Accessor, TagExt, ItemKey};
+use rusqlite::{Connection, Result as SqlResult};
+use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Scan a directory and flush metadata batches to a Python callback.
+/// Thread-safe cancellation token shared across Python/Rust FFI boundary.
+#[pyclass]
+#[derive(Clone)]
+pub struct CancellationToken {
+    is_cancelled: Arc<AtomicBool>,
+}
+
+#[pymethods]
+impl CancellationToken {
+    #[new]
+    pub fn new() -> Self {
+        CancellationToken {
+            is_cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.is_cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.is_cancelled.load(Ordering::SeqCst)
+    }
+}
+
+/// Open a SQLite connection with a strict 5000ms busy timeout.
+pub fn open_db_connection(db_path: &str) -> SqlResult<Connection> {
+    let conn = Connection::open(db_path)?;
+    conn.busy_timeout(Duration::from_millis(5000))?;
+    Ok(conn)
+}
+
+/// Scan a directory and flush metadata batches to a Python callback, respecting CancellationToken.
 #[pyfunction]
-fn scan_directory<'py>(py: Python<'py>, path: &str, callback: PyObject, batch_size: usize) -> PyResult<()> {
+#[pyo3(signature = (path, callback, batch_size, cancel_token=None))]
+fn scan_directory<'py>(
+    py: Python<'py>,
+    path: &str,
+    callback: PyObject,
+    batch_size: usize,
+    cancel_token: Option<&CancellationToken>,
+) -> PyResult<()> {
     let mut batch = Vec::new();
 
     for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+        if let Some(token) = cancel_token {
+            if token.is_cancelled() {
+                if !batch.is_empty() {
+                    let py_list = PyList::new_bound(py, &batch);
+                    let _ = callback.call1(py, (py_list,));
+                    batch.clear();
+                }
+                return Ok(());
+            }
+        }
+
         let path = entry.path();
         if path.is_file() {
             // Attempt to parse audio file
@@ -96,6 +150,7 @@ fn scan_directory<'py>(py: Python<'py>, path: &str, callback: PyObject, batch_si
 /// A Python module implemented in Rust.
 #[pymodule]
 fn echosync_core<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
+    m.add_class::<CancellationToken>()?;
     m.add_function(wrap_pyfunction!(scan_directory, m)?)?;
     Ok(())
 }

@@ -43,6 +43,7 @@ class DatabaseUpdateWorker:
         self.identifiers_only = identifiers_only
         self.scan_directory_path = scan_directory_path
         self.should_stop = False
+        self.cancel_token = echosync_core.CancellationToken() if echosync_core and hasattr(echosync_core, "CancellationToken") else None
 
         # Statistics tracking
         self.processed_artists = 0
@@ -114,8 +115,8 @@ class DatabaseUpdateWorker:
                             source_name=self.server_type
                         )
 
-                    # Scan directory using Rust PyO3 engine with callback batching
-                    echosync_core.scan_directory(self.scan_directory_path, flush_batch, 1000)
+                    # Scan directory using Rust PyO3 engine with callback batching and cancel token
+                    echosync_core.scan_directory(self.scan_directory_path, flush_batch, 1000, self.cancel_token)
 
                     scan_time = time.time() - start_time
                     logger.info(f"Rust core completed scanning {total_scanned} files in {scan_time:.3f}s")
@@ -152,10 +153,17 @@ class DatabaseUpdateWorker:
             logger.info("Database update worker finished")
 
     def start(self):
-        from core.job_queue import job_queue
+        from core.job_queue import job_queue, TaskCategory
         job_name = f"db_update_worker_{self.server_type}_{id(self)}"
         self._job_name = job_name
-        job_queue.register_job(name=job_name, func=self.run, interval_seconds=None, tags=["system", "database"])
+        job_queue.register_job(
+            name=job_name,
+            func=self.run,
+            interval_seconds=None,
+            category=TaskCategory.DATABASE_WRITE_HEAVY,
+            cancel_token=self.cancel_token,
+            tags=["system", "database"]
+        )
         job_queue.execute_job_now(job_name)
         logger.info(f"DatabaseUpdateWorker queued via job_queue for {self.server_type}")
 

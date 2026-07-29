@@ -363,6 +363,11 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     # ensure foreign keys are enforced
     cursor.execute("PRAGMA foreign_keys=ON")
+    # allocate ~64MB cache
+    try:
+        cursor.execute("PRAGMA cache_size=-64000")
+    except Exception:
+        pass
     # give other connections a bit longer before raising "database is locked" (MUST be before WAL)
     try:
         cursor.execute("PRAGMA busy_timeout=5000")
@@ -406,7 +411,7 @@ class MusicDatabase:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
             engine_url = f"sqlite:///{self.database_path}"
 
-        connect_args = {"check_same_thread": False} if engine_url.startswith("sqlite") else {}
+        connect_args = {"timeout": 5.0, "check_same_thread": False} if engine_url.startswith("sqlite") else {}
 
         self.engine = create_engine(
             engine_url,

@@ -952,3 +952,33 @@ def kill_job(job_name):
     except Exception as e:
         logger.error(f"Error killing job: {e}")
         return jsonify({'error': 'Failed to kill job'}), 500
+
+
+@bp.post('/v1/system/queue/cancel')
+@require_auth
+def cancel_queue_job():
+    """Cancel a running or scheduled job in the task manager using the new CancellationToken API."""
+    try:
+        from core.job_queue import job_queue
+        
+        data = request.get_json()
+        if not data or 'job_name' not in data:
+            return jsonify({"status": "error", "message": "job_name is required in JSON payload"}), 400
+            
+        job_name = data['job_name']
+        
+        success = job_queue.cancel_job(job_name)
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": f"Cancellation requested for {job_name}"
+            }), 200
+        else:
+            return jsonify({
+                "status": "error", 
+                "message": f"Job {job_name} not found or not cancellable"
+            }), 404
+            
+    except Exception as e:
+        logger.error(f"Error in cancel_queue_job: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": "Internal server error during cancellation"}), 500
