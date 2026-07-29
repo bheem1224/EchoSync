@@ -636,7 +636,7 @@ class MusicDatabase:
     def count_files(self) -> int:
         """Return total physical media files stored.
 
-        Excludes ``virtual://`` placeholder paths and deduplicates by
+        Deduplicates by
         ``file_path`` (case-insensitively) so that the count matches the real
         number of files on disk.
         """
@@ -647,7 +647,6 @@ class MusicDatabase:
             ).filter(
                 LocalMedia.file_path.isnot(None),
                 LocalMedia.file_path != '',
-                ~LocalMedia.file_path.startswith('virtual://'),
             ).scalar()
             return int(result or 0)
 
@@ -668,7 +667,6 @@ class MusicDatabase:
                 .filter(
                     LocalMedia.file_path.isnot(None),
                     LocalMedia.file_path != '',
-                    ~LocalMedia.file_path.startswith('virtual://'),
                 )
                 .group_by(sqla_func.lower(LocalMedia.file_path))
                 .subquery()

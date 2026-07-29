@@ -307,6 +307,30 @@ class SuggestionBlacklist(WorkingBase):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 
+
+
+class VirtualTrackCache(WorkingBase):
+    __tablename__ = "virtual_track_cache"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    artist_name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    album_title: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    track_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    disc_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    isrc: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+
+    # Virtual instance mapping
+    external_uri: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    provider_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+
+    raw_metadata: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+
 class PluginStateKVS(WorkingBase):
     __tablename__ = "plugin_state_kvs"
 
@@ -488,6 +512,7 @@ __all__ = [
     "PlaybackHistory",
     "SuggestionStagingQueue",
     "SuggestionBlacklist",
+    "VirtualTrackCache",
     "PluginStateKVS",
     "PluginDatabaseFactory",
     "WorkingDatabase",
