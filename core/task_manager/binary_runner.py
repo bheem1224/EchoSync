@@ -3,30 +3,45 @@ import threading
 from typing import List, Optional, Tuple
 
 from core.tiered_logger import get_logger
+from core.task_manager.models import OwnerType, ProcessOwner
+from core.task_manager.supervisor import supervisor
 
 logger = get_logger("binary_runner")
 
+
 class CoreBinaryRunner:
     """
-    A managed wrapper around subprocess.run that enforces a timeout
+    A managed wrapper around subprocess.run that enforces a timeout,
+    registers the active process PID with the ProcessSupervisor,
     and automatically pipes stdout/stderr to the tiered_logger.
-    To be used by privileged plugins to safely execute binaries.
+    To be used by privileged plugins and core to safely execute binaries.
     """
 
     @classmethod
-    def run_binary(cls, cmd_list: List[str], timeout: float = 30.0, cwd: Optional[str] = None) -> Tuple[int, str, str]:
+    def run_binary(
+        cls,
+        cmd_list: List[str],
+        timeout: float = 30.0,
+        cwd: Optional[str] = None,
+        owner_id: str = "core.binary_runner",
+        owner_type: OwnerType = OwnerType.CORE,
+    ) -> Tuple[int, str, str]:
         """
         Executes a binary and returns its exit code, stdout, and stderr.
+        Registers process PID with supervisor during execution.
 
         Args:
             cmd_list: The command and its arguments.
             timeout: The maximum execution time in seconds.
             cwd: Optional working directory.
+            owner_id: Identifier of the component running the process.
+            owner_type: Type of owner (CORE, PLUGIN, SYSTEM_JOB).
 
         Returns:
             Tuple of (returncode, stdout, stderr).
         """
         logger.info(f"Running binary: {' '.join(cmd_list)}")
+        reg_id = None
         try:
             process = subprocess.Popen(
                 cmd_list,
@@ -35,6 +50,16 @@ class CoreBinaryRunner:
                 text=True,
                 cwd=cwd
             )
+
+            # Automatically register process PID with supervisor
+            owner_info = ProcessOwner(
+                owner_id=owner_id,
+                owner_type=owner_type,
+                pid=process.pid,
+                task_name=cmd_list[0] if cmd_list else "unknown_binary",
+                metadata={"cmd": cmd_list, "cwd": cwd}
+            )
+            reg_id = supervisor.register_process(owner_info)
 
             stdout_lines = []
             stderr_lines = []
@@ -72,3 +97,6 @@ class CoreBinaryRunner:
         except Exception as e:
             logger.exception(f"Failed to execute binary: {' '.join(cmd_list)}")
             return -1, "", str(e)
+        finally:
+            if reg_id:
+                supervisor.unregister_process(reg_id)

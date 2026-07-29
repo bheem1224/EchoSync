@@ -1,6 +1,6 @@
 """
 Centralized Task Manager & Supervision Subsystem for EchoSync.
-Provides task queue management, health checks, background service orchestration, and process tracking.
+Provides task queue management, health checks, background service orchestration, process tracking, and plugin lifecycle state management.
 """
 
 from core.task_manager.task_queue import (
@@ -29,6 +29,14 @@ from core.task_manager.health_service import get_system_health
 from core.task_manager.binary_runner import CoreBinaryRunner
 from core.task_manager.backend_services import start_services, backend_main
 from core.task_manager.system_jobs import register_all_system_jobs
+from core.task_manager.models import (
+    OwnerType,
+    PluginLifecycleState,
+    ProcessOwner,
+    PluginStatus,
+)
+from core.task_manager.supervisor import ProcessSupervisor, supervisor
+from core.task_manager.plugin_state import PluginStateManager, plugin_state_manager
 
 __all__ = [
     "TaskCategory",
@@ -54,4 +62,12 @@ __all__ = [
     "start_services",
     "backend_main",
     "register_all_system_jobs",
+    "OwnerType",
+    "PluginLifecycleState",
+    "ProcessOwner",
+    "PluginStatus",
+    "ProcessSupervisor",
+    "supervisor",
+    "PluginStateManager",
+    "plugin_state_manager",
 ]
