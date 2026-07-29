@@ -546,8 +546,93 @@ def generate_deterministic_id(artist: Optional[str], title: Optional[str]) -> st
     return base64.b64encode(raw_id.encode('utf-8')).decode('utf-8')
 
 
+_ARTIST_SPLIT_PATTERN = re.compile(
+    r'\s*(?:;|,|/|&|\bfeat\b\.?|\bft\b\.?|\bfeaturing\b|\bwith\b)\s*',
+    flags=re.IGNORECASE
+)
+_YEAR_RE = re.compile(r'\b(19\d\d|20\d\d)\b')
+_PREFIX_STRIP_RE = re.compile(r'^(?:cd|disc|track|trk|t|d)\s*#?\s*', flags=re.IGNORECASE)
+
+
+def sanitize_string(val: Any) -> Optional[str]:
+    """
+    Safely extract and sanitize string values (e.g. from Mutagen/tags).
+    Handles bytes (UTF-8, CP1252, Latin-1 fallback), list/tuple unpacks,
+    mojibake repair, and whitespace stripping.
+    """
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple)):
+        if not val:
+            return None
+        val = val[0]
+    if isinstance(val, bytes):
+        try:
+            val = val.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                val = val.decode("cp1252")
+            except UnicodeDecodeError:
+                val = val.decode("latin-1", errors="replace")
+    elif not isinstance(val, str):
+        val = str(val)
+
+    # Repair common mojibake sequences (e.g. UTF-8 bytes mis-decoded as Latin-1/CP1252)
+    if any(c in val for c in ("Ã", "Â", "Å", "Ã¢")):
+        try:
+            redecoded = val.encode("latin-1").decode("utf-8")
+            if redecoded and len(redecoded) <= len(val):
+                val = redecoded
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+
+    s = val.strip()
+    return s if s else None
+
+
+def parse_year_safe(val: Any) -> Optional[str]:
+    """
+    Safely extract the first 4-digit year sequence (1900-2099) from date strings like
+    '2021-05-14', '2004/01/01', 'ISO 8601 1999', 'TYER: 1985', or ints/lists.
+    Returns 4-digit string year, or None if invalid.
+    """
+    if val is None:
+        return None
+    s = sanitize_string(val)
+    if not s:
+        return None
+    match = _YEAR_RE.search(s)
+    if match:
+        return match.group(1)
+    return None
+
+
+def split_artists(artist: Optional[str]) -> list[str]:
+    """
+    Tokenize a multi-artist string separated by ';', ',', '/', '&', 'feat.', 'ft.', 'featuring', or 'with'.
+    Returns a list of unique, non-empty artist name strings preserving original casing.
+    """
+    if not artist:
+        return []
+    artist_clean = sanitize_string(artist)
+    if not artist_clean:
+        return []
+    tokens = [t.strip() for t in _ARTIST_SPLIT_PATTERN.split(artist_clean) if t.strip()]
+    seen = set()
+    res = []
+    for t in tokens:
+        t_lower = t.lower()
+        if t_lower not in seen:
+            seen.add(t_lower)
+            res.append(t)
+    return res
+
+
 def parse_int_safe(val: Any) -> Optional[int]:
-    """Parse integer safely from strings like '2/9', '02', tuples, floats, or invalid text."""
+    """
+    Parse integer safely from strings like '2/9', '02', 'CD 1', 'Disc 2', 'Trk 05',
+    tuples, floats, or invalid text. Strips non-digit prefixes and slash notation.
+    """
     if val is None or val == "":
         return None
     if isinstance(val, int):
@@ -561,9 +646,16 @@ def parse_int_safe(val: Any) -> Optional[int]:
     s = str(val).strip()
     if not s:
         return None
+    # Strip non-digit prefixes like CD, Disc, Trk, Track, T, D
+    s = _PREFIX_STRIP_RE.sub('', s).strip()
     if "/" in s:
         s = s.split("/", 1)[0].strip()
-    try:
-        return int(s)
-    except (ValueError, TypeError):
-        return None
+    if "-" in s and not s.startswith("-"):
+        s = s.split("-", 1)[0].strip()
+    m = re.match(r'^(\d+)', s)
+    if m:
+        try:
+            return int(m.group(1))
+        except (ValueError, TypeError):
+            return None
+    return None

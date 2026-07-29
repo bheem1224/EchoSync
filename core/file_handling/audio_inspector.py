@@ -62,6 +62,27 @@ GENERIC_ARTIST_NAMES: frozenset[str] = frozenset({
     "",
 })
 
+# Malformed/raw RIFF chunk tokens found in corrupt WAV headers.
+RAW_RIFF_TOKENS: frozenset[str] = frozenset({
+    "INAM", "IART", "IPRD", "ICMT", "IGNR", "ICRD", "ITRK", "ISFT", "ICOP", "IENG", "ISRJ"
+})
+
+
+def _is_corrupt_riff_tag(value: Optional[str]) -> bool:
+    """
+    Check if a metadata value is a malformed RIFF container tag string.
+
+    Returns True if value starts with 'RIFFINFO_' or matches raw RIFF chunk tokens.
+    """
+    if not value or not isinstance(value, str):
+        return False
+    val_clean = value.strip()
+    if val_clean.startswith("RIFFINFO_"):
+        return True
+    if val_clean in RAW_RIFF_TOKENS:
+        return True
+    return False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Result dataclass
@@ -164,7 +185,7 @@ def _resolve_artist(
         return (val or "").strip()
 
     def _is_useful(val: str) -> bool:
-        return bool(val) and val.lower() not in GENERIC_ARTIST_NAMES
+        return bool(val) and val.lower() not in GENERIC_ARTIST_NAMES and not _is_corrupt_riff_tag(val)
 
     # Tier 1 — TPE1 / ARTIST
     t1 = _clean(tpe1)
@@ -274,18 +295,30 @@ def inspect_audio_file(file_path: Path) -> InspectedAudio:
         logger.warning("Tag read failed for '%s': %s", file_path.name, exc)
 
     # ── Scalar string fields ───────────────────────────────────────────────
-    result.title  = tags.get("title") or file_path.stem or None
-    result.album  = tags.get("album") or None
-    result.year   = str(tags.get("year") or tags.get("date") or "").strip() or None
+    raw_title = text_utils.sanitize_string(tags.get("title"))
+    if _is_corrupt_riff_tag(raw_title):
+        logger.warning("Corrupt RIFF title tag ('%s') in '%s', falling back to filename", raw_title, file_path.name)
+        raw_title = None
+
+    raw_album = text_utils.sanitize_string(tags.get("album"))
+    if _is_corrupt_riff_tag(raw_album):
+        logger.warning("Corrupt RIFF album tag ('%s') in '%s', discarding", raw_album, file_path.name)
+        raw_album = None
+
+    result.title = raw_title or file_path.stem or None
+    result.album = raw_album or None
+    result.year  = text_utils.parse_year_safe(
+        tags.get("year") or tags.get("date") or tags.get("tyer") or tags.get("tdrc")
+    )
 
     # ── IDs ───────────────────────────────────────────────────────────────
-    result.musicbrainz_id = (
-        tags.get("musicbrainz_id") or tags.get("recording_id") or None
+    result.musicbrainz_id = text_utils.sanitize_string(
+        tags.get("musicbrainz_id") or tags.get("recording_id")
     )
-    result.isrc        = tags.get("isrc") or None
-    result.acoustid_id = tags.get("acoustid_id") or None
-    result.release_id  = (
-        tags.get("release_id") or tags.get("musicbrainz_albumid") or None
+    result.isrc        = text_utils.sanitize_string(tags.get("isrc"))
+    result.acoustid_id = text_utils.sanitize_string(tags.get("acoustid_id"))
+    result.release_id  = text_utils.sanitize_string(
+        tags.get("release_id") or tags.get("musicbrainz_albumid")
     )
 
     # ── Technical metadata ────────────────────────────────────────────────
@@ -304,18 +337,24 @@ def inspect_audio_file(file_path: Path) -> InspectedAudio:
 
     # ── Track / disc numbers ──────────────────────────────────────────────
     result.track_number = text_utils.parse_int_safe(
-        tags.get("track_number") or tags.get("tracknumber")
+        tags.get("track_number") or tags.get("tracknumber") or tags.get("trck")
     )
     result.disc_number = text_utils.parse_int_safe(
-        tags.get("disc_number") or tags.get("discnumber")
+        tags.get("disc_number") or tags.get("discnumber") or tags.get("tpos")
     )
 
     # ── Album artist (raw, before hierarchy resolution) ────────────────────
-    raw_album_artist = (tags.get("album_artist") or "").strip() or None
+    raw_album_artist = text_utils.sanitize_string(tags.get("album_artist"))
+    if _is_corrupt_riff_tag(raw_album_artist):
+        logger.warning("Corrupt RIFF album_artist tag ('%s') in '%s', discarding", raw_album_artist, file_path.name)
+        raw_album_artist = None
     result.album_artist = raw_album_artist
 
     # ── Artist hierarchy resolution ───────────────────────────────────────
-    tpe1 = tags.get("artist") or tags.get("artist_name") or None
+    tpe1 = text_utils.sanitize_string(tags.get("artist") or tags.get("artist_name"))
+    if _is_corrupt_riff_tag(tpe1):
+        logger.warning("Corrupt RIFF artist tag ('%s') in '%s', discarding for artist hierarchy resolution", tpe1, file_path.name)
+        tpe1 = None
     result.artist, result.artist_source = _resolve_artist(tpe1, raw_album_artist, file_path)
 
     return result
