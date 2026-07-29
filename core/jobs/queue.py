@@ -334,5 +334,79 @@ class JobQueue:
             with self._lock:
                 self._finalize_job_after_run(job, time.time())
 
+    def _execute_job(self, job: ScheduledJob):
+        """Alias for _execute_wrapper for test suite compatibility."""
+        self._execute_wrapper(job)
+
+    def kill_job(self, name: str) -> bool:
+        """Alias for cancel_job for backward compatibility."""
+        return self.cancel_job(name)
+
+    def list_jobs(self) -> List[Dict[str, Any]]:
+        """Return a list of all registered jobs as dictionaries."""
+        with self._lock:
+            return [job.to_dict() for job in self._jobs.values()]
+
 
 job_queue = JobQueue()
+
+
+def list_jobs() -> List[Dict[str, Any]]:
+    """Top-level helper function to return all registered jobs as dictionaries."""
+    return job_queue.list_jobs()
+
+
+def update_job_interval(name: str, interval_seconds: float) -> bool:
+    """Top-level helper function to update job interval."""
+    with job_queue._lock:
+        job = job_queue._jobs.get(name)
+        if not job:
+            return False
+        job.interval_seconds = interval_seconds
+        return True
+
+
+def start_job_queue() -> None:
+    """Top-level helper function to start global job_queue."""
+    job_queue.start()
+
+
+def stop_job_queue(timeout: float = 5.0) -> None:
+    """Top-level helper function to stop global job_queue."""
+    job_queue.stop(timeout=timeout)
+
+
+def register_job(
+    name: str,
+    func: Callable[[], Any],
+    interval_seconds: Optional[float] = None,
+    start_after: float = 0.0,
+    enabled: bool = True,
+    category: TaskCategory = TaskCategory.GENERAL,
+    cancel_token: Optional[Any] = None,
+    max_retries: int = 0,
+    backoff_base: float = 5.0,
+    backoff_factor: float = 2.0,
+    tags: Optional[List[str]] = None,
+    plugin: Optional[str] = None,
+) -> None:
+    """Top-level helper function to register a job on the global job_queue."""
+    job_queue.register_job(
+        name=name,
+        func=func,
+        interval_seconds=interval_seconds,
+        start_after=start_after,
+        enabled=enabled,
+        category=category,
+        cancel_token=cancel_token,
+        max_retries=max_retries,
+        backoff_base=backoff_base,
+        backoff_factor=backoff_factor,
+        tags=tags,
+        plugin=plugin,
+    )
+
+
+def unregister_job(name: str) -> bool:
+    """Top-level helper function to unregister/cancel a job on global job_queue."""
+    return job_queue.cancel_job(name)

@@ -7,6 +7,12 @@ from core.jobs.queue import (
     ScheduledJob,
     JobQueue,
     job_queue,
+    list_jobs,
+    update_job_interval,
+    start_job_queue,
+    stop_job_queue,
+    register_job,
+    unregister_job,
 )
 
 __all__ = [
@@ -15,4 +21,10 @@ __all__ = [
     "ScheduledJob",
     "JobQueue",
     "job_queue",
+    "list_jobs",
+    "update_job_interval",
+    "start_job_queue",
+    "stop_job_queue",
+    "register_job",
+    "unregister_job",
 ]
