@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
 
 import threading
+import time
 from typing import Optional, Dict
 from database import MusicDatabase, LibraryManager
+from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger
-from core.settings import config_manager
+from core.scan_state import scan_state_manager
 import logging
+
+# Import the new compiled Rust engine
+try:
+    import echosync_core
+except ImportError as e:
+    echosync_core = None
+    logging.getLogger("database_update_worker").critical(f"Failed to import echosync_core Rust engine: {e}")
 
 logger = get_logger("database_update_worker")
 
@@ -13,11 +22,7 @@ logger = get_logger("database_update_worker")
 class DatabaseUpdateWorker:
     """
     Worker for updating Echosync database with media server library data.
-    Syncs all tracks from media client into the database using bulk operations.
-
-    The ``run()`` method is a plain synchronous callable — it can be invoked
-    directly by the JobQueue worker pool (blocking) or dispatched into a
-    background thread via ``start()`` for fire-and-forget HTTP route use.
+    Now acts as a lightweight orchestrator delegating heavy lifting to the echosync_core Rust engine.
     """
 
     def __init__(
@@ -27,7 +32,8 @@ class DatabaseUpdateWorker:
         full_refresh: bool = False,
         server_type: str = "generic",
         force_sequential: bool = False,
-        identifiers_only: bool = False
+        identifiers_only: bool = False,
+        scan_directory_path: Optional[str] = None
     ):
         self.media_client = media_client
         self.server_type = server_type
@@ -35,7 +41,9 @@ class DatabaseUpdateWorker:
         self.full_refresh = full_refresh
         self.force_sequential = force_sequential
         self.identifiers_only = identifiers_only
+        self.scan_directory_path = scan_directory_path
         self.should_stop = False
+        self.cancel_token = echosync_core.CancellationToken() if echosync_core and hasattr(echosync_core, "CancellationToken") else None
 
         # Statistics tracking
         self.processed_artists = 0
@@ -45,9 +53,7 @@ class DatabaseUpdateWorker:
         self.failed_operations = 0
         self.total_tracks = 0
 
-        # Thread reference populated by start(); callers that need is_alive() check this.
         self.thread: Optional[threading.Thread] = None
-
         logger.info(f"DatabaseUpdateWorker initialized for {server_type} ({('full' if full_refresh else 'incremental')} mode)")
 
     def run(self):
@@ -56,79 +62,89 @@ class DatabaseUpdateWorker:
         try:
             db = MusicDatabase(self.database_path)
             library_manager = LibraryManager(db.session_factory)
-            logger.debug("Database path resolved to %s", db.database_path)
-            
-            logger.debug(f"Fetching library from {self.server_type}...")
-            
-            # OPTIMIZATION: Use a generator to stream tracks instead of dumping all to a list
-            all_tracks_generator = self.media_client.get_all_tracks()
-            
-            logger.debug("Beginning streaming bulk import via LibraryManager")
             
             def _on_progress(progress: Dict[str, int]):
                 try:
-                    # Update worker stats live
+                    failed = progress.get("failed", 0)
+                    if failed > self.failed_operations:
+                        for _ in range(failed - self.failed_operations):
+                            scan_state_manager.add_error()
                     self.processed_tracks = progress.get("processed", self.processed_tracks)
                     self.successful_operations = progress.get("imported", 0) + progress.get("updated", 0)
                     self.failed_operations = progress.get("failed", 0)
-                    # Optional: track artists/albums if provided
                     self.processed_artists = progress.get("artists", self.processed_artists)
                     self.processed_albums = progress.get("albums", self.processed_albums)
-
                 except Exception:
                     pass
 
-            imported_count = library_manager.bulk_import(all_tracks_generator, progress_callback=_on_progress, identifiers_only=self.identifiers_only, source_name=self.server_type)
-            
-            logger.info(f"Successfully imported {imported_count} tracks from {self.server_type}")
-            logger.debug(
-                "Bulk import finished for %s: imported=%s",
-                self.server_type,
-                imported_count,
-            )
-            self.processed_tracks = imported_count
-            self.successful_operations = imported_count
+            # --- RUST HIGH-PERFORMANCE SCANNING PATH ---
+            if self.server_type == "EchoSync.Local Server" and self.scan_directory_path and echosync_core:
+                logger.info(f"Delegating local directory scan to Rust core: {self.scan_directory_path}")
+                scan_state_manager.start_scan(batch_size=1000)
+                start_time = time.time()
+                try:
+                    total_scanned = 0
 
-            # --- Backfill missing provider identifiers ---
-            try:
-                if self.server_type != "EchoSync.Local Server":
-                    backfill_count = library_manager.backfill_plugin_identifiers(self.server_type)
-                    if backfill_count:
-                        logger.info(
-                            "Backfill: linked %d missing '%s' identifier(s) to existing tracks.",
-                            backfill_count, self.server_type,
-                        )
-            except Exception as bf_err:
-                logger.warning(
-                    "Backfill of provider identifiers failed (non-fatal): %s", bf_err, exc_info=True
-                )
-            
-            # --- Discrepancy Warning ---
-            try:
-                if hasattr(self.media_client, 'get_library_stats'):
-                    stats = self.media_client.get_library_stats()
-                    total_remote_tracks = stats.get('total_tracks', 0)
-                    
-                    if total_remote_tracks > 0:
-                        from database.music_database import Track, ExternalIdentifier, LocalMedia
-                        from sqlalchemy import or_
-                        with db.session_scope() as session:
-                            total_local_tracks = session.query(Track).join(LocalMedia).outerjoin(ExternalIdentifier).filter(
-                                or_(
-                                    ExternalIdentifier.plugin_source == self.server_type,
-                                    ExternalIdentifier.plugin_source.is_(None)
+                    def flush_batch(batch_dicts):
+                        nonlocal total_scanned
+                        count = len(batch_dicts)
+                        total_scanned += count
+                        scan_state_manager.add_processed(count)
+
+                        def _track_generator():
+                            for raw in batch_dicts:
+                                yield EchosyncTrack(
+                                    title=raw.get("title") or "Unknown Title",
+                                    artist_name=raw.get("artist_name") or "Unknown Artist",
+                                    album_title=raw.get("album_title"),
+                                    duration=raw.get("duration_ms") or 0, # CRITICAL: direct integer mapping
+                                    track_number=raw.get("track_number") or 0,
+                                    disc_number=raw.get("disc_number") or 1,
+                                    bitrate=raw.get("bitrate") or 0,
+                                    file_path=raw.get("file_path"),
+                                    file_format=raw.get("file_format"),
+                                    file_size_bytes=raw.get("file_size_bytes") or 0,
+                                    isrc=raw.get("isrc")
                                 )
-                            ).distinct().count()
-                        
-                        discrepancy = abs(total_remote_tracks - total_local_tracks)
-                        if discrepancy > 0:
-                            msg = f"Discrepancy Warning: {discrepancy} tracks differ between remote ({total_remote_tracks}) and local ({total_local_tracks}). Possible path misalignment or orphaned records."
-                            logger.warning(msg)
-                            if not hasattr(self, 'warnings'):
-                                self.warnings = []
-                            self.warnings.append(msg)
-            except Exception as e:
-                logger.error(f"Error checking track discrepancy: {e}")
+
+                        # Ingest the batched DTOs immediately
+                        library_manager.bulk_import(
+                            _track_generator(),
+                            progress_callback=_on_progress,
+                            identifiers_only=self.identifiers_only,
+                            source_name=self.server_type
+                        )
+
+                    # Scan directory using Rust PyO3 engine with callback batching and cancel token
+                    echosync_core.scan_directory(self.scan_directory_path, flush_batch, 1000, self.cancel_token)
+
+                    scan_time = time.time() - start_time
+                    logger.info(f"Rust core completed scanning {total_scanned} files in {scan_time:.3f}s")
+
+                    self.processed_tracks = total_scanned
+                    self.successful_operations = total_scanned
+                    scan_state_manager.complete_scan()
+
+                except Exception as rust_err:
+                    scan_state_manager.set_error(str(rust_err))
+                    logger.error(f"Rust scanner panicked or failed: {rust_err}", exc_info=True)
+                    return
+
+            # --- LEGACY REMOTE MEDIA CLIENT PATH ---
+            else:
+                logger.debug(f"Fetching library from {self.server_type} via media_client...")
+                all_tracks_generator = self.media_client.get_all_tracks()
+
+                imported_count = library_manager.bulk_import(
+                    all_tracks_generator,
+                    progress_callback=_on_progress,
+                    identifiers_only=self.identifiers_only,
+                    source_name=self.server_type
+                )
+
+                logger.info(f"Successfully imported {imported_count} tracks from {self.server_type}")
+                self.processed_tracks = imported_count
+                self.successful_operations = imported_count
 
         except Exception as e:
             logger.error(f"Error in DatabaseUpdateWorker: {e}", exc_info=True)
@@ -137,24 +153,22 @@ class DatabaseUpdateWorker:
             logger.info("Database update worker finished")
 
     def start(self):
-        """Dispatch run() via the centralized job queue for fire-and-forget use (e.g. HTTP routes).
-
-        Uses the shared JobQueue worker pool rather than a raw daemon thread so the
-        job is visible in the scheduler and benefits from the pool's lifecycle management.
-        """
-        from core.job_queue import job_queue
+        from core.job_queue import job_queue, TaskCategory
         job_name = f"db_update_worker_{self.server_type}_{id(self)}"
-        # Expose the job name so get_database_update_status() can query the
-        # job queue's _is_running flag for accurate concurrency detection.
         self._job_name = job_name
-        job_queue.register_job(name=job_name, func=self.run, interval_seconds=None, tags=["system", "database"])
+        job_queue.register_job(
+            name=job_name,
+            func=self.run,
+            interval_seconds=None,
+            category=TaskCategory.DATABASE_WRITE_HEAVY,
+            cancel_token=self.cancel_token,
+            tags=["system", "database"]
+        )
         job_queue.execute_job_now(job_name)
         logger.info(f"DatabaseUpdateWorker queued via job_queue for {self.server_type}")
 
     def stop(self):
-        """Signal the worker to stop processing."""
         self.should_stop = True
-        logger.info("Stop signal sent to database update worker")
 
 
 class DatabaseStatsWorker:
@@ -163,9 +177,7 @@ class DatabaseStatsWorker:
         self.db = MusicDatabase()
 
     def collect_stats(self):
-        """Collect database statistics."""
         try:
-            # Use MusicDatabase methods which handle sessions correctly
             artist_count = self.db.count_artists()
             album_count = self.db.count_albums()
             track_count = self.db.count_tracks()

@@ -1,4 +1,10 @@
 from flask import Blueprint, jsonify, request, send_file
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+import asyncio
+import json
+import time
+from core.scan_state import scan_state_manager
 from web.services.library_service import LibraryAdapter
 from services.media_manager import MediaManagerService
 from core.settings import config_manager
@@ -421,3 +427,53 @@ def delete_track_endpoint(track_id):
     except Exception as e:
         logger.error(f"Error deleting track {track_id}: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+
+
+# FastAPI Router for SSE (as requested by user directives)
+router = APIRouter()
+
+@router.get("/scan/stream")
+async def stream_scan_progress():
+    """
+    SSE endpoint streaming the live progress of the Rust local ingestion scanner.
+    """
+    async def event_generator():
+        try:
+            last_status = None
+            last_processed = -1
+
+            while True:
+                payload = scan_state_manager.get_state_payload()
+                status = payload.get("status")
+                processed = payload.get("tracks_processed", 0)
+
+                # Yield only if status changed or processed tracks changed
+                if status != last_status or processed != last_processed:
+                    # Determine event type based on schemas
+                    if status == "scanning":
+                        event_type = "scan_progress"
+                    elif status == "complete":
+                        event_type = "scan_complete"
+                    elif status == "failed":
+                        event_type = "scan_error"
+                    else:
+                        event_type = "scan_idle"
+
+                    # Format as SSE
+                    yield f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+
+                    last_status = status
+                    last_processed = processed
+
+                    if status in ("complete", "failed", "idle"):
+                        break
+
+                await asyncio.sleep(0.5)
+        except (asyncio.CancelledError, GeneratorExit):
+            logger.debug("SSE stream client disconnected cleanly (library scan).")
+        except Exception as e:
+            logger.error(f"SSE stream error: {e}", exc_info=True)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
