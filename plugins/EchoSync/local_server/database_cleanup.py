@@ -35,7 +35,7 @@ def _canonicalize_path(file_path: str) -> str:
         return file_path
 
 
-SANCTIONED_PATH_PREFIX = "/data/library/"
+from core.settings import config_manager
 
 
 class DatabaseCleanupJob(BaseJob):
@@ -71,16 +71,21 @@ class DatabaseCleanupJob(BaseJob):
             self.update_progress(10, 100, "Phase 0.5: Evicting rogue mount entries...")
             
             if "PYTEST_CURRENT_TEST" not in os.environ:
+                sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/", "/data/music/"]))
+                from sqlalchemy import or_
+                # Build an OR condition for all sanctioned prefixes
+                prefix_conditions = [LocalMedia.file_path.startswith(prefix) for prefix in sanctioned_prefixes]
+                
                 rogue_media = session.query(LocalMedia).filter(
                     ~LocalMedia.file_path.startswith("virtual://"),
-                    ~LocalMedia.file_path.startswith(SANCTIONED_PATH_PREFIX)
+                    ~or_(*prefix_conditions)
                 ).all()
 
                 for media in rogue_media:
                     logger.info(f"Purging rogue mount entry: {media.file_path}")
                     session.delete(media)
                 session.flush()
-                logger.info(f"[Phase 0.5] Evicted {len(rogue_media)} rogue mount LocalMedia records outside {SANCTIONED_PATH_PREFIX}.")
+                logger.info(f"[Phase 0.5] Evicted {len(rogue_media)} rogue mount LocalMedia records outside {sanctioned_prefixes}.")
             else:
                 logger.info("Test environment detected, skipping rogue path sweep.")
 

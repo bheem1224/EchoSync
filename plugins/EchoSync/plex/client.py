@@ -21,7 +21,7 @@ from core.tiered_logger import get_logger
 from core.user_history import UserTrackInteraction
 
 logger = get_logger("plex_client")
-SANCTIONED_PATH_PREFIX = "/data/library/"
+from core.settings import config_manager
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     """AST-compliant alternative to _safe_getattr()."""
@@ -1109,10 +1109,11 @@ class PlexClient(MediaServerProvider):
             
             # Filter out rogue mount entries
             if file_path and not file_path.startswith("virtual://"):
-                if not file_path.startswith(SANCTIONED_PATH_PREFIX):
+                sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/", "/data/music/"]))
+                if not file_path.startswith(sanctioned_prefixes):
                     if "PYTEST_CURRENT_TEST" not in os.environ:
-                        logger.warning(f"Blocking rogue mount entry in Plex client: {file_path}")
-                        return None
+                        logger.warning(f"Blocking rogue mount entry in Plex client: {file_path}. Expected one of {sanctioned_prefixes}")
+                    return None
             
             # Extract Plex track ID (ratingKey)
             plex_track_id = str(_safe_getattr(plex_track, 'ratingKey', None))
