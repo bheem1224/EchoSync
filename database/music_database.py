@@ -643,7 +643,7 @@ class MusicDatabase:
 
         Deduplicates by
         ``file_path`` (case-insensitively) so that the count matches the real
-        number of files on disk.
+        number of files on disk. Virtual placeholder paths are excluded.
         """
         from sqlalchemy import func as sqla_func
         with self.session_scope() as session:
@@ -652,6 +652,7 @@ class MusicDatabase:
             ).filter(
                 LocalMedia.file_path.isnot(None),
                 LocalMedia.file_path != '',
+                ~LocalMedia.file_path.like('virtual://%')
             ).scalar()
             return int(result or 0)
 
@@ -672,6 +673,7 @@ class MusicDatabase:
                 .filter(
                     LocalMedia.file_path.isnot(None),
                     LocalMedia.file_path != '',
+                    ~LocalMedia.file_path.like('virtual://%')
                 )
                 .group_by(sqla_func.lower(LocalMedia.file_path))
                 .subquery()

@@ -360,7 +360,7 @@ def cancel_database_update():
             _job_name = getattr(_db_update_worker, '_job_name', None)
             if _job_name:
                 try:
-                    from core.job_queue import job_queue
+                    from core.task_manager import job_queue
                     is_running = job_queue._is_running.get(_job_name, False)
                 except Exception:
                     pass
@@ -371,7 +371,7 @@ def cancel_database_update():
             # Stop the worker and kill job
             _db_update_worker.stop()
             if _job_name:
-                from core.job_queue import job_queue
+                from core.task_manager import job_queue
                 job_queue.kill_job(_job_name)
             
             logger.info("Database update cancelled by user")
