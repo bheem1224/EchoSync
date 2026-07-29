@@ -822,12 +822,12 @@ class LibraryManager:
 
         session = self.session_factory()
         
-        if source_name == "EchoSync.local_server":
+        if source_name == "EchoSync.Local Server":
             try:
-                session.execute(delete(ExternalIdentifier).where(ExternalIdentifier.plugin_source == "EchoSync.local_server"))
+                session.execute(delete(ExternalIdentifier).where(ExternalIdentifier.plugin_source == "EchoSync.Local Server"))
                 session.execute(delete(ExternalIdentifier).where(ExternalIdentifier.plugin_source == "acoustid_id"))
                 session.commit()
-                logger.info("Purged legacy EchoSync.local_server and duplicate acoustid_id external identifiers")
+                logger.info("Purged legacy EchoSync.Local Server and duplicate acoustid_id external identifiers")
             except Exception as e:
                 session.rollback()
                 logger.error(f"Failed to purge legacy local/acoustid identifiers: {e}")
@@ -1018,7 +1018,7 @@ class LibraryManager:
             session.commit()
 
             deleted_count = self._delete_missing_tracks(session, observed_identifiers)
-            if source_name == "EchoSync.local_server" and not identifiers_only:
+            if source_name == "EchoSync.Local Server" and not identifiers_only:
                 local_deleted = self._delete_missing_local_tracks(session, observed_file_paths)
                 if local_deleted > 0:
                     deleted_count += local_deleted
