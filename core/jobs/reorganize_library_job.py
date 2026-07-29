@@ -4,7 +4,7 @@ from typing import Optional
 from core.tiered_logger import get_logger
 from services.library_reorganizer import LibraryReorganizerService
 from core.event_bus import event_bus
-from core.job_queue import register_job
+from core.task_manager.task_queue import register_job
 
 logger = get_logger("jobs.reorganize_library")
 
