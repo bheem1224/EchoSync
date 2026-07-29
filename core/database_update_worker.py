@@ -61,46 +61,6 @@ class DatabaseUpdateWorker:
             db = MusicDatabase(self.database_path)
             library_manager = LibraryManager(db.session_factory)
             
-            # --- RUST HIGH-PERFORMANCE SCANNING PATH ---
-            if self.server_type == "EchoSync.Local Server" and self.scan_directory_path and echosync_core:
-                logger.info(f"Delegating local directory scan to Rust core: {self.scan_directory_path}")
-                start_time = time.time()
-                try:
-                    # Scan directory using Rust PyO3 engine
-                    # Returns List[dict] exactly matching ORM schema
-                    raw_payloads = echosync_core.scan_directory(self.scan_directory_path)
-                    scan_time = time.time() - start_time
-                    logger.info(f"Rust core scanned {len(raw_payloads)} files in {scan_time:.3f}s")
-
-                    # Convert raw dicts to EchosyncTrack DTOs expected by LibraryManager
-                    # This is zero-validation, just dict wrapping
-                    def _track_generator():
-                        for raw in raw_payloads:
-                            yield EchosyncTrack(
-                                title=raw.get("title") or "Unknown Title",
-                                artist_name=raw.get("artist_name") or "Unknown Artist",
-                                album_title=raw.get("album_title"),
-                                duration=raw.get("duration_ms", 0) / 1000.0, # EchosyncTrack expects seconds
-                                track_number=raw.get("track_number", 0),
-                                disc_number=raw.get("disc_number", 1),
-                                bitrate=raw.get("bitrate", 0),
-                                file_path=raw.get("file_path"),
-                                file_format=raw.get("file_format"),
-                                file_size_bytes=raw.get("file_size_bytes", 0),
-                                isrc=raw.get("isrc")
-                            )
-
-                    all_tracks_generator = _track_generator()
-
-                except Exception as rust_err:
-                    logger.error(f"Rust scanner panicked or failed: {rust_err}", exc_info=True)
-                    return
-            
-            # --- LEGACY REMOTE MEDIA CLIENT PATH ---
-            else:
-                logger.debug(f"Fetching library from {self.server_type} via media_client...")
-                all_tracks_generator = self.media_client.get_all_tracks()
-
             def _on_progress(progress: Dict[str, int]):
                 try:
                     self.processed_tracks = progress.get("processed", self.processed_tracks)
@@ -111,17 +71,69 @@ class DatabaseUpdateWorker:
                 except Exception:
                     pass
 
-            # Ingest to database
-            imported_count = library_manager.bulk_import(
-                all_tracks_generator,
-                progress_callback=_on_progress,
-                identifiers_only=self.identifiers_only,
-                source_name=self.server_type
-            )
-            
-            logger.info(f"Successfully imported {imported_count} tracks from {self.server_type}")
-            self.processed_tracks = imported_count
-            self.successful_operations = imported_count
+            # --- RUST HIGH-PERFORMANCE SCANNING PATH ---
+            if self.server_type == "EchoSync.Local Server" and self.scan_directory_path and echosync_core:
+                logger.info(f"Delegating local directory scan to Rust core: {self.scan_directory_path}")
+                start_time = time.time()
+                try:
+                    total_scanned = 0
+
+                    def flush_batch(batch_dicts):
+                        nonlocal total_scanned
+                        total_scanned += len(batch_dicts)
+
+                        def _track_generator():
+                            for raw in batch_dicts:
+                                yield EchosyncTrack(
+                                    title=raw.get("title") or "Unknown Title",
+                                    artist_name=raw.get("artist_name") or "Unknown Artist",
+                                    album_title=raw.get("album_title"),
+                                    duration=raw.get("duration_ms") or 0, # CRITICAL: direct integer mapping
+                                    track_number=raw.get("track_number") or 0,
+                                    disc_number=raw.get("disc_number") or 1,
+                                    bitrate=raw.get("bitrate") or 0,
+                                    file_path=raw.get("file_path"),
+                                    file_format=raw.get("file_format"),
+                                    file_size_bytes=raw.get("file_size_bytes") or 0,
+                                    isrc=raw.get("isrc")
+                                )
+
+                        # Ingest the batched DTOs immediately
+                        library_manager.bulk_import(
+                            _track_generator(),
+                            progress_callback=_on_progress,
+                            identifiers_only=self.identifiers_only,
+                            source_name=self.server_type
+                        )
+
+                    # Scan directory using Rust PyO3 engine with callback batching
+                    echosync_core.scan_directory(self.scan_directory_path, flush_batch, 1000)
+
+                    scan_time = time.time() - start_time
+                    logger.info(f"Rust core completed scanning {total_scanned} files in {scan_time:.3f}s")
+
+                    self.processed_tracks = total_scanned
+                    self.successful_operations = total_scanned
+
+                except Exception as rust_err:
+                    logger.error(f"Rust scanner panicked or failed: {rust_err}", exc_info=True)
+                    return
+
+            # --- LEGACY REMOTE MEDIA CLIENT PATH ---
+            else:
+                logger.debug(f"Fetching library from {self.server_type} via media_client...")
+                all_tracks_generator = self.media_client.get_all_tracks()
+
+                imported_count = library_manager.bulk_import(
+                    all_tracks_generator,
+                    progress_callback=_on_progress,
+                    identifiers_only=self.identifiers_only,
+                    source_name=self.server_type
+                )
+
+                logger.info(f"Successfully imported {imported_count} tracks from {self.server_type}")
+                self.processed_tracks = imported_count
+                self.successful_operations = imported_count
 
         except Exception as e:
             logger.error(f"Error in DatabaseUpdateWorker: {e}", exc_info=True)

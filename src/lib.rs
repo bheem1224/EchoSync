@@ -1,14 +1,14 @@
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 use walkdir::WalkDir;
 use lofty::probe::Probe;
 use lofty::file::AudioFile;
 use lofty::tag::{Accessor, TagExt, ItemKey};
 
-/// Scan a directory and return metadata as a list of raw Python dictionaries.
+/// Scan a directory and flush metadata batches to a Python callback.
 #[pyfunction]
-fn scan_directory<'py>(py: Python<'py>, path: &str) -> PyResult<Vec<Bound<'py, PyDict>>> {
-    let mut results = Vec::new();
+fn scan_directory<'py>(py: Python<'py>, path: &str, callback: PyObject, batch_size: usize) -> PyResult<()> {
+    let mut batch = Vec::new();
 
     for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
@@ -74,11 +74,23 @@ fn scan_directory<'py>(py: Python<'py>, path: &str) -> PyResult<Vec<Bound<'py, P
                 .unwrap_or(0);
             dict.set_item("file_size_bytes", file_size_bytes)?;
 
-            results.push(dict);
+            batch.push(dict);
+
+            if batch.len() >= batch_size {
+                let py_list = PyList::new_bound(py, &batch);
+                callback.call1(py, (py_list,))?;
+                batch.clear();
+            }
         }
     }
 
-    Ok(results)
+    if !batch.is_empty() {
+        let py_list = PyList::new_bound(py, &batch);
+        callback.call1(py, (py_list,))?;
+        batch.clear();
+    }
+
+    Ok(())
 }
 
 /// A Python module implemented in Rust.
