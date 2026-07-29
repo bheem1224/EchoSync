@@ -356,10 +356,14 @@ class PluginLoader:
         # 2. Kill Workers
         try:
             from core.job_queue import job_queue
+            from core.task_manager import supervisor, plugin_state_manager, PluginLifecycleState
             job_queue.kill_jobs_by_plugin(plugin_id)
+            supervisor.terminate_owner_processes(str(plugin_id))
+            supervisor.terminate_owner_processes(clean_ns)
+            plugin_state_manager.set_state(str(plugin_id), PluginLifecycleState.INITIALIZING, "Hot reload initiated")
+            plugin_state_manager.set_state(clean_ns, PluginLifecycleState.INITIALIZING, "Hot reload initiated")
         except Exception as e:
             logger.warning("Failed to kill workers for the target plugin.")
-            logger.debug(f"Raw exception data: {e}", exc_info=True)
             logger.debug(f"Raw exception data: {e}", exc_info=True)
 
         # 3. Purge Memory (Strict DB-Driven Unload)
@@ -395,10 +399,20 @@ class PluginLoader:
             )
             if success is False:
                 raise Exception(f"Live-swap failed to load module for {plugin_id}")
+            from core.task_manager import plugin_state_manager, PluginLifecycleState
+            plugin_state_manager.set_state(str(plugin_id), PluginLifecycleState.READY, "Hot reload successful")
+            plugin_state_manager.set_state(clean_ns, PluginLifecycleState.READY, "Hot reload successful")
             logger.info(f"✅ Successfully live-swapped: {plugin_id}")
         except Exception as e:
+            try:
+                from core.task_manager import supervisor, plugin_state_manager, PluginLifecycleState
+                supervisor.terminate_owner_processes(str(plugin_id))
+                supervisor.terminate_owner_processes(clean_ns)
+                plugin_state_manager.set_state(str(plugin_id), PluginLifecycleState.ERROR, f"Hot reload failed: {e}")
+                plugin_state_manager.set_state(clean_ns, PluginLifecycleState.ERROR, f"Hot reload failed: {e}")
+            except Exception:
+                pass
             logger.error("An error occurred during framework execution.")
-            logger.debug(f"Raw exception data: {e}", exc_info=True)
             logger.debug(f"Raw exception data: {e}", exc_info=True)
             raise
 
@@ -1354,6 +1368,7 @@ class PluginRegistry:
 
     @classmethod
     def disable_plugin(cls, plugin_id: int) -> bool:
+        orig_id = str(plugin_id)
         if isinstance(plugin_id, str):
             if plugin_id.isdigit():
                 plugin_id = int(plugin_id)
@@ -1362,7 +1377,23 @@ class PluginRegistry:
         
         if plugin_id in cls._plugins:
             cls._disabled_plugins.add(plugin_id)
-            logger.info(f"Plugin ID '{plugin_id}' disabled. Restart required to unload.")
+            try:
+                from core.task_manager import supervisor, plugin_state_manager, PluginLifecycleState
+                plugin_cls = cls._plugins.get(plugin_id)
+                plugin_name = getattr(plugin_cls, 'name', None) if plugin_cls else None
+                
+                supervisor.terminate_owner_processes(orig_id)
+                supervisor.terminate_owner_processes(str(plugin_id))
+                if plugin_name:
+                    supervisor.terminate_owner_processes(plugin_name)
+                    plugin_state_manager.set_state(plugin_name, PluginLifecycleState.UNCONFIGURED, "Plugin disabled")
+                
+                plugin_state_manager.set_state(orig_id, PluginLifecycleState.UNCONFIGURED, "Plugin disabled")
+                plugin_state_manager.set_state(str(plugin_id), PluginLifecycleState.UNCONFIGURED, "Plugin disabled")
+            except Exception as e:
+                logger.error(f"Error terminating processes/updating state for disabled plugin {plugin_id}: {e}")
+
+            logger.info(f"Plugin ID '{plugin_id}' disabled.")
             return True
         return False
 

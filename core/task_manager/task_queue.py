@@ -122,10 +122,24 @@ class JobQueue:
 
     def can_execute(self, job: ScheduledJob) -> bool:
         """
-        Evaluate job against currently running jobs for collision avoidance.
+        Evaluate job against currently running jobs for collision avoidance and capability gating.
+        Rule: If job.plugin is set, evaluate plugin_state_manager.can_accept_work(job.plugin).
         Rule: If a DATABASE_WRITE_HEAVY task is running, new DATABASE_WRITE_HEAVY tasks are blocked.
         """
         with self._lock:
+            if job.plugin:
+                from core.task_manager.plugin_state import plugin_state_manager
+                if not plugin_state_manager.can_accept_work(job.plugin):
+                    if job.state != TaskState.PENDING_BLOCKED:
+                        status = plugin_state_manager.get_state(job.plugin)
+                        logger.warning(
+                            f"Job '{job.name}' blocked from execution: plugin '{job.plugin}' cannot accept work "
+                            f"(state: {status.state.value})"
+                        )
+                    job.state = TaskState.PENDING_BLOCKED
+                    job.next_run = time.time() + 10.0
+                    return False
+
             if job.category == TaskCategory.DATABASE_WRITE_HEAVY:
                 if self.is_db_write_heavy_running():
                     job.state = TaskState.PENDING_BLOCKED
@@ -317,6 +331,24 @@ class JobQueue:
     def _execute_wrapper(self, job: ScheduledJob):
         started_at = time.time()
         job.last_started = started_at
+        reg_id = None
+        try:
+            import os
+            from core.task_manager.supervisor import supervisor
+            from core.task_manager.models import ProcessOwner, OwnerType
+            owner_id = job.plugin if job.plugin else "core.system_job"
+            owner_type = OwnerType.PLUGIN if job.plugin else OwnerType.SYSTEM_JOB
+            owner = ProcessOwner(
+                owner_id=owner_id,
+                owner_type=owner_type,
+                pid=os.getpid(),
+                thread_id=threading.get_ident(),
+                task_name=job.name
+            )
+            reg_id = supervisor.register_process(owner)
+        except Exception:
+            pass
+
         try:
             if job.params:
                 job.func(**job.params)
@@ -330,6 +362,12 @@ class JobQueue:
             job.last_error_time = time.time()
             logger.error(f"Job {job.name} failed: {e}", exc_info=True)
         finally:
+            if reg_id:
+                try:
+                    from core.task_manager.supervisor import supervisor
+                    supervisor.unregister_process(reg_id)
+                except Exception:
+                    pass
             self._release_worker_resources()
             with self._lock:
                 self._finalize_job_after_run(job, time.time())
