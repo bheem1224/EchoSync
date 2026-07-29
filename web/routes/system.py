@@ -979,6 +979,33 @@ def cancel_queue_job():
                 "message": f"Job {job_name} not found or not cancellable"
             }), 404
             
+            
     except Exception as e:
         logger.error(f"Error in cancel_queue_job: {e}", exc_info=True)
         return jsonify({"status": "error", "message": "Internal server error during cancellation"}), 500
+
+
+@bp.get('/v1/system/queue/stream')
+@require_auth
+def stream_queue_progress():
+    """SSE endpoint streaming the live status of the job queue."""
+    def event_generator():
+        try:
+            from core.job_queue import job_queue
+            import time
+            import json
+            
+            last_state = None
+            while True:
+                state = job_queue.get_queue_state()
+                state_str = json.dumps(state, sort_keys=True)
+                if state_str != last_state:
+                    yield f"event: queue_update\ndata: {state_str}\n\n"
+                    last_state = state_str
+                time.sleep(1.0)
+        except GeneratorExit:
+            logger.debug("SSE stream client disconnected cleanly (system queue).")
+        except Exception as e:
+            logger.error(f"SSE stream error (queue): {e}", exc_info=True)
+
+    return Response(event_generator(), mimetype="text/event-stream")

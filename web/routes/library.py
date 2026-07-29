@@ -471,8 +471,9 @@ async def stream_scan_progress():
                         break
 
                 await asyncio.sleep(0.5)
-        except asyncio.CancelledError:
-            # Client disconnected cleanly
-            pass
+        except (asyncio.CancelledError, GeneratorExit):
+            logger.debug("SSE stream client disconnected cleanly (library scan).")
+        except Exception as e:
+            logger.error(f"SSE stream error: {e}", exc_info=True)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
