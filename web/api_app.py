@@ -84,6 +84,7 @@ def create_app(testing: bool = False) -> Flask:
     # Configure sensitive logging filter for Werkzeug
     werkzeug_logger = logging.getLogger('werkzeug')
     werkzeug_logger.addFilter(SensitiveRequestFilter())
+    werkzeug_logger.setLevel(logging.WARNING)
 
     dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
 
