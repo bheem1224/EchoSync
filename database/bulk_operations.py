@@ -784,29 +784,23 @@ class LibraryManager:
                 # Use artist as album_artist fallback
                 album = self._get_or_create_album(
                     library_session,
-                    title=virtual_track.album_title,
-                    album_artist=artist,
+                    album_title=virtual_track.album_title,
+                    artist=artist,
                     release_year=None
                 )
 
             # 3. Create canonical Track
-            from core.matching_engine.text_utils import normalize_text, create_search_vector
+            from core.matching_engine.text_utils import normalize_text
 
             track = Track(
                 title=virtual_track.title,
                 normalized_title=normalize_text(virtual_track.title),
-                duration=virtual_track.duration_ms / 1000.0,
+                duration=virtual_track.duration_ms,
                 track_number=virtual_track.track_number,
                 disc_number=virtual_track.disc_number,
                 isrc=virtual_track.isrc,
                 artist_id=artist.id,
                 album_id=album.id if album else None
-            )
-
-            track.search_vector = create_search_vector(
-                track.title,
-                artist.name,
-                album.title if album else None
             )
 
             library_session.add(track)
@@ -816,7 +810,7 @@ class LibraryManager:
             ext_id = ExternalIdentifier(
                 plugin_source="virtual_cache",
                 plugin_item_id=virtual_track.external_uri,
-                provider_id=virtual_track.provider_id
+                raw_data={"provider_id": virtual_track.provider_id}
             )
 
             media = LocalMedia(
