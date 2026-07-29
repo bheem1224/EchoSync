@@ -51,7 +51,7 @@ artist_bubble_snapshots.json
 
 # Documentation
 *.md
-README.md
+!README.md
 headless.md
 multi-server-database-plan.md
 server-source.md

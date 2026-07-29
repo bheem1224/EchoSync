@@ -30,7 +30,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Copy backend dependency files and Rust source
-COPY pyproject.toml uv.lock .python-version Cargo.toml ./
+COPY pyproject.toml uv.lock .python-version Cargo.toml README.md ./
 COPY src/ ./src/
 
 ENV UV_PYTHON_DOWNLOADS="never"
