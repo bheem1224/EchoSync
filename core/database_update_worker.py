@@ -6,6 +6,7 @@ from typing import Optional, Dict
 from database import MusicDatabase, LibraryManager
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger
+from core.scan_state import scan_state_manager
 import logging
 
 # Import the new compiled Rust engine
@@ -63,6 +64,10 @@ class DatabaseUpdateWorker:
             
             def _on_progress(progress: Dict[str, int]):
                 try:
+                    failed = progress.get("failed", 0)
+                    if failed > self.failed_operations:
+                        for _ in range(failed - self.failed_operations):
+                            scan_state_manager.add_error()
                     self.processed_tracks = progress.get("processed", self.processed_tracks)
                     self.successful_operations = progress.get("imported", 0) + progress.get("updated", 0)
                     self.failed_operations = progress.get("failed", 0)
@@ -74,13 +79,16 @@ class DatabaseUpdateWorker:
             # --- RUST HIGH-PERFORMANCE SCANNING PATH ---
             if self.server_type == "EchoSync.Local Server" and self.scan_directory_path and echosync_core:
                 logger.info(f"Delegating local directory scan to Rust core: {self.scan_directory_path}")
+                scan_state_manager.start_scan(batch_size=1000)
                 start_time = time.time()
                 try:
                     total_scanned = 0
 
                     def flush_batch(batch_dicts):
                         nonlocal total_scanned
-                        total_scanned += len(batch_dicts)
+                        count = len(batch_dicts)
+                        total_scanned += count
+                        scan_state_manager.add_processed(count)
 
                         def _track_generator():
                             for raw in batch_dicts:
@@ -114,8 +122,10 @@ class DatabaseUpdateWorker:
 
                     self.processed_tracks = total_scanned
                     self.successful_operations = total_scanned
+                    scan_state_manager.complete_scan()
 
                 except Exception as rust_err:
+                    scan_state_manager.set_error(str(rust_err))
                     logger.error(f"Rust scanner panicked or failed: {rust_err}", exc_info=True)
                     return
 
