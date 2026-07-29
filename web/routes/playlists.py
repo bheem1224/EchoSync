@@ -580,11 +580,12 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             if version_match:
                                 edition_candidate = version_match.group(0)
 
+                        from core.matching_engine.text_utils import parse_duration_to_ms
                         candidate_track = EchosyncTrack(
                             raw_title=raw_title_candidate,
                             artist_name=candidate_row[4],
                             album_title=candidate_row[7] or "",
-                            duration=candidate_row[2] if candidate_row[2] else 0,
+                            duration=parse_duration_to_ms(candidate_row[2]) if candidate_row[2] else 0,
                             edition=edition_candidate,
                         )
                         # Populate candidate plugin_context so scoring_modifier can

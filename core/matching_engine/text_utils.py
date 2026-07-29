@@ -371,7 +371,7 @@ def parse_duration_to_ms(duration: Optional[int]) -> Optional[int]:
     Parse duration to milliseconds.
     
     Args:
-        duration: Duration value (could be ms or seconds depending on source)
+        duration: Duration value (could be ms, seconds, or microseconds depending on source)
         
     Returns:
         Duration in milliseconds, or None if invalid
@@ -381,6 +381,10 @@ def parse_duration_to_ms(duration: Optional[int]) -> Optional[int]:
     
     if duration < 0:
         return None
+    
+    # Microsecond detection: unusually large or ends strictly in 000000
+    if duration > 36000000 or (duration > 0 and duration % 1000000 == 0):
+        duration = duration // 1000
     
     # If duration looks like it's in seconds (< 3600 seconds = 1 hour max)
     # Spotify uses ms, Plex uses ms, but some providers might use seconds
