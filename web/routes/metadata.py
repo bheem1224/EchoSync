@@ -291,7 +291,18 @@ def get_cover_art():
     if not file_path_str:
         return jsonify({"error": "Missing path"}), 400
 
-    file_path = Path(file_path_str)
+    from core.settings import config_manager
+    _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir') or config_manager.get('data_dir') or '.'
+    allowed_root = Path(_lib).resolve()
+
+    try:
+        resolved_path = Path(file_path_str).resolve()
+        if not resolved_path.is_relative_to(allowed_root):
+            return jsonify({"error": "Security violation: Access denied"}), 403
+    except Exception:
+        return jsonify({"error": "Invalid path"}), 400
+
+    file_path = resolved_path
     if not file_path.exists() or not file_path.is_file():
         return jsonify({"error": "File not found"}), 404
 

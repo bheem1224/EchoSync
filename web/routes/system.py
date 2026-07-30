@@ -711,22 +711,23 @@ def browse_filesystem():
                     base = allowed_roots.get('data') or os.getcwd()
                     req_path = os.path.abspath(os.path.join(base, requested))
 
-        # Ensure requested path lies within one of the allowed roots, unless browsing root
         matched_root = None
+        req_p = Path(req_path).resolve()
         if req_path == os.path.abspath(os.sep):
             # browsing top-level root; use root key 'root'
             matched_root = ('root', req_path)
-        elif os.path.isabs(req_path) and os.path.exists(req_path) and os.path.isdir(req_path):
-            # Allow browsing absolute host paths (useful when running on the host/Windows)
-            matched_root = ('host', req_path)
         else:
             for key, root_path in allowed_roots.items():
                 try:
-                    if os.path.commonpath([req_path, root_path]) == root_path:
-                        matched_root = (key, root_path)
+                    r_p = Path(root_path).resolve()
+                    if req_p == r_p or req_p.is_relative_to(r_p):
+                        matched_root = (key, str(r_p))
                         break
                 except Exception:
                     continue
+            if not matched_root and os.path.isabs(req_path) and os.path.exists(req_path) and os.path.isdir(req_path):
+                # Allow browsing absolute host paths (useful when running on host)
+                matched_root = ('host', req_path)
 
         if not matched_root:
             return jsonify({'error': 'Path not allowed'}), 403
