@@ -327,9 +327,9 @@ class ListenBrainzMetadataProvider(PluginBase):
                 old_ids = [row[0] for row in cursor.fetchall()]
                 
                 if old_ids:
-                    placeholders = ','.join('?' * len(old_ids))
-                    cursor.execute(f"DELETE FROM listenbrainz_tracks WHERE playlist_id IN ({placeholders})", old_ids)
-                    cursor.execute(f"DELETE FROM listenbrainz_playlists WHERE id IN ({placeholders})", old_ids)
+                    placeholders = ','.join('?' for _ in old_ids)
+                    cursor.execute(f"DELETE FROM listenbrainz_tracks WHERE playlist_id IN ({placeholders})", tuple(old_ids))
+                    cursor.execute(f"DELETE FROM listenbrainz_playlists WHERE id IN ({placeholders})", tuple(old_ids))
                     logger.info(f"🗑️ Removed {len(old_ids)} old {playlist_type} playlists")
             
             except Exception as e:
