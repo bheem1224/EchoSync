@@ -820,18 +820,22 @@ class PluginStore:
                 if requirements_file.exists():
                     logger.info(f"Found requirements.txt for {plugin_id}, installing into micro-venv")
                     micro_venv_dir = target_dir / "micro-venv"
-                    import subprocess
                     try:
-                        # Use uv pip install --target to isolate dependencies
-                        subprocess.run(
-                            ["uv", "pip", "install", "--target", str(micro_venv_dir), "-r", str(requirements_file)],
-                            check=True,
-                            capture_output=True,
-                            text=True
+                        from core.task_manager.binary_runner import CoreBinaryRunner
+                        from core.task_manager.models import OwnerType
+                        cmd_list = ["uv", "pip", "install", "--target", str(micro_venv_dir), "-r", str(requirements_file)]
+                        ret_code, stdout_out, stderr_out = CoreBinaryRunner.run_binary(
+                            cmd_list=cmd_list,
+                            timeout=120.0,
+                            owner_id=f"plugin_store.{plugin_id}",
+                            owner_type=OwnerType.PLUGIN
                         )
-                        logger.info(f"Successfully installed micro-venv dependencies for {plugin_id}")
-                    except subprocess.CalledProcessError as e:
-                        logger.error(f"Failed to install micro-venv dependencies for {plugin_id}: {e.stderr}")
+                        if ret_code == 0:
+                            logger.info(f"Successfully installed micro-venv dependencies for {plugin_id}")
+                        else:
+                            logger.error(f"Failed to install micro-venv dependencies for {plugin_id}: {stderr_out}")
+                    except Exception as e:
+                        logger.error(f"Failed to install micro-venv dependencies for {plugin_id}: {e}")
                         # Depending on strictness, we could return False here, but we will let it continue
                         # and log the error. Usually a broken requirements.txt means the plugin might fail to load.
 

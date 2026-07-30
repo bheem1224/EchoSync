@@ -76,6 +76,21 @@ def stream_audio():
                     stderr=subprocess.PIPE,
                     shell=False,
                 )
+                reg_id = None
+                try:
+                    from core.task_manager.supervisor import supervisor
+                    from core.task_manager.models import ProcessOwner, OwnerType
+                    owner_info = ProcessOwner(
+                        owner_id="local_server.stream",
+                        owner_type=OwnerType.CORE,
+                        pid=proc.pid,
+                        task_name="ffmpeg_transcode",
+                        metadata={"cmd": ffmpeg_cmd, "path": safe_path}
+                    )
+                    reg_id = supervisor.register_process(owner_info)
+                except Exception as reg_err:
+                    logger.warning(f"Could not register FFmpeg transcode process with supervisor: {reg_err}")
+
                 try:
                     while True:
                         chunk = proc.stdout.read(65536)
@@ -83,6 +98,11 @@ def stream_audio():
                             break
                         yield chunk
                 finally:
+                    if reg_id:
+                        try:
+                            supervisor.unregister_process(reg_id)
+                        except Exception:
+                            pass
                     proc.stdout.close()
                     proc.wait()
                     if proc.returncode not in (0, None):
