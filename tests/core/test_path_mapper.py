@@ -1,5 +1,5 @@
 import unittest
-from core.file_handling.path_mapper import PathMapper
+from core.utils import PathMapper
 
 class TestPathMapper(unittest.TestCase):
     def test_basic_mapping(self):

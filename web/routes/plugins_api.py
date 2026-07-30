@@ -288,7 +288,7 @@ def get_plugin_playlists(plugin_id):
         short_name = plugin_cls.name.split('.')[-1].lower() if hasattr(plugin_cls, 'name') and plugin_cls.name else ''
         if short_name in multi_account_plugins:
             try:
-                from core.file_handling.storage import get_storage_service
+                from services.storage_service import get_storage_service
                 storage = get_storage_service()
                 plex_user_map = _build_active_plex_user_map()
 

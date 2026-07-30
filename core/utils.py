@@ -1,46 +1,36 @@
+"""
+Flat utilities module for path mapping, Docker resolution, and string extraction.
+"""
 import os
-from typing import List, Dict, Union
+import re
+from typing import List, Dict, Union, Optional
+import logging
+
+logger = logging.getLogger("utils")
+
 
 class PathMapper:
     """
     Utility to map remote paths (e.g., from Docker containers) to local paths.
     """
     def __init__(self, mappings: Union[List[Dict[str, str]], Dict[str, Dict[str, str]]]):
-        """
-        Initialize with a list of path mappings.
-
-        Args:
-            mappings: List of dicts, e.g., [{"remote": "/data/media", "local": "/mnt/user/media"}]
-                      OR Dict of dicts (keys ignored), e.g., {"1": {"remote": "...", "local": "..."}}
-        """
         if isinstance(mappings, dict):
-            # If mappings is a dict (e.g. from config file where keys are IDs), extract values
-            # Ensure values are dicts before adding
             self.mappings = [m for m in mappings.values() if isinstance(m, dict)]
         else:
             self.mappings = mappings or []
 
     def _normalize(self, path: str) -> str:
-        """
-        Normalize path separators to forward slashes.
-        """
         if not path:
             return ""
         return path.replace('\\', '/')
 
     @classmethod
     def to_local(cls, remote_path: str) -> str:
-        """
-        Convenience method to map a remote path to a local path using current config.
-        """
         from core.settings import config_manager
         mappings = config_manager.get('path_mappings', [])
         return cls(mappings).map_to_local(remote_path)
 
     def map_to_local(self, remote_path: str) -> str:
-        """
-        Map a remote path to a local path based on configured mappings.
-        """
         if not remote_path:
             return ""
 
@@ -50,12 +40,10 @@ class PathMapper:
             if plugin_path and isinstance(plugin_path, str):
                 return plugin_path
         except Exception as e:
-            import logging
-            logging.getLogger("path_mapper").error(f"Error in RESOLVE_STORAGE_PATH hook: {e}")
+            logger.error(f"Error in RESOLVE_STORAGE_PATH hook: {e}")
 
         normalized_remote = self._normalize(remote_path)
 
-        # OPTIMIZATION: Use os.path or pathlib for filesystem operations
         for mapping in self.mappings:
             if not isinstance(mapping, dict):
                 continue
@@ -75,35 +63,30 @@ class PathMapper:
                 is_match = True
 
             if is_match:
-                # OPTIMIZATION: Use standard lib path joining instead of slow string concatenation
                 suffix = normalized_remote[len(search_prefix):].lstrip('/')
                 if not suffix:
-                    # if suffix is empty, just return the local prefix without appending a trailing slash
-                    # unless the local_prefix inherently had one we want to keep
                     return local_prefix.rstrip('/') if local_prefix != '/' else '/'
                 return os.path.join(local_prefix, suffix).replace('\\', '/')
 
         return normalized_remote
 
 
-def docker_resolve_path(path_str):
+def docker_resolve_path(path_str: str) -> str:
     """
-    Resolve absolute paths for Docker container access
-    In Docker, Windows drive paths (E:/) need to be mapped to WSL mount points (/mnt/e/)
+    Resolve absolute paths for Docker container access.
+    In Docker, Windows drive paths (E:/) need to be mapped to WSL mount points (/mnt/e/).
     """
-    import os
     if os.path.exists('/.dockerenv') and len(path_str) >= 3 and path_str[1] == ':' and path_str[0].isalpha():
-        # Convert Windows path (E:/path) to WSL mount path (/mnt/e/path)
         drive_letter = path_str[0].lower()
-        rest_of_path = path_str[2:].replace('\\', '/')  # Remove E: and convert backslashes
+        rest_of_path = path_str[2:].replace('\\', '/')
         return f"/host/mnt/{drive_letter}{rest_of_path}"
     return path_str
 
 
-def extract_filename(full_path):
+def extract_filename(full_path: str) -> str:
     """
     Extract filename by working backwards from the end until we hit a separator.
-    This is cross-platform compatible and handles both Windows and Unix path separators.
+    Handles both Windows and Unix path separators.
     """
     if not full_path:
         return ""
@@ -113,6 +96,7 @@ def extract_filename(full_path):
     else:
         return full_path
 
+
 def extract_primary_artist(artist_string: str) -> str:
     """
     Extract the primary artist from a collaboration string.
@@ -120,10 +104,9 @@ def extract_primary_artist(artist_string: str) -> str:
     """
     if not artist_string:
         return ""
-        
-    import re
+
     delimiters = [
-        r'\bfeat\.', r'\bft\.', r'\bfeaturing\b', 
+        r'\bfeat\.', r'\bft\.', r'\bfeaturing\b',
         r'\bwith\b', r'\bx\b', r'&', r','
     ]
     pattern = re.compile('|'.join(delimiters), re.IGNORECASE)

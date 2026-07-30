@@ -419,7 +419,7 @@ class AutoImportService:
             meta_config = config_manager.get('metadata_enhancement') or {}
             template = meta_config.get('naming_template', "{Artist}/{Album}/{Track} - {Title}.{ext}")
 
-            from core.file_handling.path_mapper import extract_primary_artist
+            from core.utils import extract_primary_artist
             raw_artist = metadata.get('artist') or "Unknown Artist"
             primary_artist = extract_primary_artist(raw_artist)
             artist = self._sanitize(primary_artist)

@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from core.file_handling.storage import get_storage_service
+from services.storage_service import get_storage_service
 from core.tiered_logger import get_logger
 
 logger = get_logger("accounts_route")

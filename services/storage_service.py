@@ -1,20 +1,6 @@
 """
-Replacement for the deprecated sdk.storage_service module.
-
-This module exposes a nearly-identical API to the old ``StorageService``
-stub that lived in ``sdk/storage_service.py`` but is implemented using the
-current ``core.settings.ConfigManager`` and the configuration database
-(``database.config_database``) directly.  All existing callers are migrated
-here so that the ``sdk`` package can be removed.
-
-New code should *not* depend on this module; instead it should use
-:mod:`core.settings` or :mod:`database.config_database` directly.  The
-helpers are provided solely to simplify the transition and keep route code
-short.
-
-Note that the legacy stub issued a ``DeprecationWarning`` on import; the
-replacement is considered the primary API for internal use and therefore
-does **not** warn.
+Storage Service module migrated to services/storage_service.py.
+Exposes StorageService and get_storage_service() for internal configuration database access.
 """
 
 from typing import Any, Dict, Iterable, List, Optional
@@ -27,10 +13,7 @@ class StorageService:
     """Helper class exposing a familiar storage API.
 
     All methods are thin wrappers around ``ConfigManager`` or the
-    ``ConfigDatabase`` database layer.  The purpose is to offer a drop-in
-    replacement for the old ``sdk.storage_service.StorageService`` so that
-    existing code (routes, providers, tests) can be updated with minimal
-    changes.
+    ``ConfigDatabase`` database layer.
     """
 
     def __init__(self):
@@ -49,7 +32,7 @@ class StorageService:
             return config_manager.set_service_credentials(
                 service_name, {key: value}, sensitive_keys=[key] if is_sensitive else None
             )
-        except Exception as e:  # pragma: no cover - very unlikely
+        except Exception as e:
             print(f"[ERROR] set_service_config failed: {e}")
             return False
 
@@ -59,8 +42,6 @@ class StorageService:
         service_type: Optional[str] = None,
         description: Optional[str] = None,
     ) -> bool:
-        # ConfigManager.set_service_credentials will register the service if
-        # it doesn't already exist (``register_if_missing`` defaults to True).
         return config_manager.set_service_credentials(service_name, {})
 
     # ----- account management ---------------------------------------------------
@@ -140,7 +121,7 @@ class StorageService:
             from database.config_database import get_config_database
             db = get_config_database()
             return db.save_account_token(account_id, access_token, refresh_token, token_type, expires_at, scope)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             print(f"[ERROR] save_account_token failed: {e}")
             return False
 
@@ -149,7 +130,7 @@ class StorageService:
             from database.config_database import get_config_database
             db = get_config_database()
             return db.mark_account_authenticated(account_id)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             print(f"[ERROR] mark_account_authenticated failed: {e}")
             return False
 
@@ -169,7 +150,6 @@ class StorageService:
             finally:
                 del frame
 
-            # Retrieve owner service name
             service_name = None
             with db._get_connection() as conn:
                 c = conn.cursor()
@@ -178,22 +158,20 @@ class StorageService:
                 if row:
                     service_name = db.get_service_name(row[0])
 
-            # If the caller does not match the service name (unless it's a core module), redact
             if service_name and not caller_name.startswith("core."):
                 caller_plugin_part = caller_name[8:] if caller_name.startswith("plugins.") else caller_name
                 owner_lower = service_name.lower()
                 caller_lower = caller_plugin_part.lower()
-                
-                # Check for match (e.g. "echosync.spotify" matches "spotify")
-                if not (caller_lower.startswith(owner_lower) or 
-                        caller_lower.endswith(f".{owner_lower}") or 
+
+                if not (caller_lower.startswith(owner_lower) or
+                        caller_lower.endswith(f".{owner_lower}") or
                         owner_lower.endswith(f".{caller_lower}")):
                     token['access_token'] = 'REDACTED'
                     if 'refresh_token' in token and token['refresh_token']:
                         token['refresh_token'] = 'REDACTED'
 
             return token
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             print(f"[ERROR] get_account_token failed: {e}")
             return None
 
@@ -204,7 +182,7 @@ class StorageService:
             from database.config_database import get_config_database
             db = get_config_database()
             return db.get_account_config(account_id, key)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             print(f"[ERROR] get_account_config failed: {e}")
             return None
 
@@ -215,7 +193,7 @@ class StorageService:
             from database.config_database import get_config_database
             db = get_config_database()
             return db.set_account_config(account_id, key, value, is_sensitive=is_sensitive)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             print(f"[ERROR] set_account_config failed: {e}")
             return False
 
@@ -224,7 +202,7 @@ class StorageService:
             from database.config_database import get_config_database
             db = get_config_database()
             return db.delete_account_config(account_id, key)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             print(f"[ERROR] delete_account_config failed: {e}")
             return False
 
@@ -245,7 +223,7 @@ class StorageService:
             from database.config_database import get_config_database
             db = get_config_database()
             return db.store_pkce_session(pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, ttl_seconds)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             print(f"[ERROR] store_pkce_session failed: {e}")
             return False
 
@@ -254,7 +232,7 @@ class StorageService:
             from database.config_database import get_config_database
             db = get_config_database()
             return db.get_pkce_session(pkce_id)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             print(f"[ERROR] get_pkce_session failed: {e}")
             return None
 
@@ -263,7 +241,7 @@ class StorageService:
             from database.config_database import get_config_database
             db = get_config_database()
             return db.delete_pkce_session(pkce_id)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             print(f"[ERROR] delete_pkce_session failed: {e}")
             return False
 
@@ -272,23 +250,20 @@ class StorageService:
             from database.config_database import get_config_database
             db = get_config_database()
             db.cleanup_expired_pkce_sessions()
-        except Exception:  # pragma: no cover
+        except Exception:
             pass
 
     # ----- database accessors --------------------------------------------------
 
     def get_working_database(self):
-        """SDK-compliant way to get the working database."""
         from database.working_database import get_working_database
         return get_working_database()
 
     def get_music_database(self):
-        """SDK-compliant way to get the music database."""
         from database.music_database import get_database
         return get_database()
 
 
-# global singleton -------------------------------------------------------------
 _storage_instance: Optional[StorageService] = None
 
 

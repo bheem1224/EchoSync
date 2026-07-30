@@ -7,7 +7,7 @@ from core.nexus_framework.plugin_SDK import PluginBase, MediaServerProvider
 from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.matching_engine.echo_sync_track import EchosyncTrack
 
-from core.file_handling.path_mapper import PathMapper
+from core.utils import PathMapper
 from core.health_check import HealthCheckResult
 from plexapi.server import PlexServer
 from plexapi.library import MusicSection

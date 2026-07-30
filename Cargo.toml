@@ -8,7 +8,9 @@ name = "echosync_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.21", features = ["extension-module"] }
+pyo3 = { version = "0.21", features = ["extension-module", "abi3-py38"] }
+rayon = "1.10"
+rusqlite = { version = "0.31", features = ["bundled"] }
+thiserror = "1.0"
 walkdir = "2"
 lofty = "0.21"
-rusqlite = { version = "0.31", features = ["bundled"] }

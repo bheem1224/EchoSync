@@ -94,7 +94,7 @@ async def start_services() -> None:
     logger.info("Provider clients initialization complete")
 
     # Start Download Manager only if explicitly enabled (default: off)
-    from core.file_handling.storage import get_storage_service
+    from services.storage_service import get_storage_service
     storage = get_storage_service()
     downloads_cfg = storage.get_service_config('system', 'downloads') or {}
     auto_start_downloads = downloads_cfg.get("auto_start", False)
@@ -126,7 +126,7 @@ async def start_services() -> None:
 
 async def backend_main() -> None:
     """Standalone entry point if someone wants to run services outside of Flask."""
-    from core.file_handling.storage import get_storage_service
+    from services.storage_service import get_storage_service
     storage = get_storage_service()
     logging_config = storage.get_service_config('system', 'logging') or {}
     log_file = logging_config.get("path", "logs/backend.log")

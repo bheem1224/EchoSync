@@ -1,13 +1,20 @@
+pub mod database;
+pub mod errors;
+pub mod file_handling;
+pub mod metadata;
+
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
-use walkdir::WalkDir;
-use lofty::probe::Probe;
+use pyo3::types::{PyDict, PyList, PyTuple};
 use lofty::file::{AudioFile, TaggedFileExt};
-use lofty::tag::{Accessor, TagExt, ItemKey};
+use lofty::probe::Probe;
+use lofty::tag::{Accessor, ItemKey};
 use rusqlite::{Connection, Result as SqlResult};
-use std::time::Duration;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use walkdir::WalkDir;
+
+pub use errors::EchoSyncError;
 
 /// Thread-safe cancellation token shared across Python/Rust FFI boundary.
 #[pyclass]
@@ -73,14 +80,51 @@ fn flush_batch(py: Python, batch: &[TrackData], callback: &PyObject) -> PyResult
         dict.set_item("file_size_bytes", data.file_size_bytes)?;
         py_list_elements.push(dict);
     }
-    
+
     let py_list = PyList::new_bound(py, py_list_elements);
     callback.call1(py, (py_list,))?;
     Ok(())
 }
 
+/// Telemetry Yielding Pattern (Event Bus Prep)
+/// Yields progress tuples `(processed: usize, total: usize, status: String)` back to Python via callback or return vector.
+#[pyfunction]
+#[pyo3(signature = (total_items, callback=None))]
+pub fn test_batch_process<'py>(
+    py: Python<'py>,
+    total_items: usize,
+    callback: Option<PyObject>,
+) -> PyResult<Vec<(usize, usize, String)>> {
+    let mut progress_records = Vec::with_capacity(total_items);
+
+    py.allow_threads(|| {
+        for i in 1..=total_items {
+            let status = if i == total_items {
+                "Completed".to_string()
+            } else {
+                format!("Processing item {}/{}", i, total_items)
+            };
+
+            progress_records.push((i, total_items, status.clone()));
+
+            if let Some(ref cb) = callback {
+                Python::with_gil(|py| -> PyResult<()> {
+                    let tuple = PyTuple::new_bound(
+                        py,
+                        &[i.into_py(py), total_items.into_py(py), status.into_py(py)],
+                    );
+                    cb.call1(py, (tuple,))?;
+                    Ok(())
+                })?;
+            }
+        }
+        Ok::<(), PyErr>(())
+    })?;
+
+    Ok(progress_records)
+}
+
 /// Scan a directory and flush metadata batches to a Python callback, respecting CancellationToken.
-/// Uses py.allow_threads to release the GIL during high-IO disk scanning.
 #[pyfunction]
 #[pyo3(signature = (path, callback, batch_size, cancel_token=None))]
 fn scan_directory<'py>(
@@ -105,26 +149,24 @@ fn scan_directory<'py>(
                         })?;
                         batch.clear();
                     }
-                    return Ok(());
+                    return Ok::<(), PyErr>(());
                 }
             }
 
             let path = entry.path();
             if path.is_file() {
-                // Attempt to parse audio file
                 let tagged_file = match Probe::open(path) {
                     Ok(probe) => match probe.read() {
                         Ok(file) => file,
-                        Err(_) => continue, // Skip files we cannot read properly
+                        Err(_) => continue,
                     },
-                    Err(_) => continue, // Skip files that aren't recognized audio formats
+                    Err(_) => continue,
                 };
 
                 let properties = tagged_file.properties();
                 let duration_ms = properties.duration().as_millis() as i32;
                 let bitrate = properties.audio_bitrate().unwrap_or(0) * 1000;
 
-                // Extract tags
                 let tag = match tagged_file.primary_tag() {
                     Some(primary_tag) => Some(primary_tag),
                     None => tagged_file.first_tag(),
@@ -144,19 +186,17 @@ fn scan_directory<'py>(
                     track_number = t.track().unwrap_or(0);
                     disc_number = t.disk().unwrap_or(1);
 
-                    // Get ISRC from items
                     if let Some(isrc_item) = t.get(&ItemKey::Isrc) {
                         isrc = isrc_item.value().text().map(|s| s.to_string());
                     }
                 }
-                
-                let ext = path.extension()
+
+                let ext = path
+                    .extension()
                     .map(|e| e.to_string_lossy().into_owned().to_lowercase())
                     .unwrap_or_else(|| "".to_string());
 
-                let file_size_bytes = std::fs::metadata(path)
-                    .map(|m| m.len())
-                    .unwrap_or(0);
+                let file_size_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
                 batch.push(TrackData {
                     title,
@@ -190,14 +230,15 @@ fn scan_directory<'py>(
             batch.clear();
         }
 
-        Ok(())
+        Ok::<(), PyErr>(())
     })
 }
 
-/// A Python module implemented in Rust.
+/// PyO3 Module Registration for echosync_core
 #[pymodule]
 fn echosync_core<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
     m.add_class::<CancellationToken>()?;
     m.add_function(wrap_pyfunction!(scan_directory, m)?)?;
+    m.add_function(wrap_pyfunction!(test_batch_process, m)?)?;
     Ok(())
 }

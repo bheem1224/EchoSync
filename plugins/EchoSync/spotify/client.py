@@ -167,7 +167,7 @@ class SpotifyClient(SyncServiceProvider):
         # Auto-detect active account if not provided
         if account_id is None:
             try:
-                from core.file_handling.storage import get_storage_service
+                from services.storage_service import get_storage_service
                 storage = get_storage_service()
                 accounts = storage.list_accounts(self.name) or []
                 

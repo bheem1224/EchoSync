@@ -492,7 +492,7 @@ class _SDK:
 
     @property
     def storage(self):
-        from core.file_handling.storage import get_storage_service
+        from services.storage_service import get_storage_service
         return get_storage_service()
 
     @property

@@ -6,7 +6,7 @@ from typing import List, Optional
 from database.music_database import get_database, Track
 from core.settings import config_manager
 from core.tiered_logger import get_logger
-from core.file_handling.path_mapper import extract_primary_artist
+from core.utils import extract_primary_artist
 from core.event_bus import event_bus
 
 logger = get_logger("services.library_reorganizer")

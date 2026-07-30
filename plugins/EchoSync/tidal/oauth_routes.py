@@ -2,7 +2,7 @@
 import logging
 from flask import Blueprint, request, jsonify, redirect
 from core.nexus_framework.plugin_SDK import sdk
-from core.file_handling.storage import get_storage_service
+from services.storage_service import get_storage_service
 from core.tiered_logger import get_logger
 import json
 import base64

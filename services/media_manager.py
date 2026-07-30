@@ -5,7 +5,7 @@ from typing import Dict, Optional, List, Any
 from sqlalchemy import func
 
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-from core.file_handling.path_mapper import PathMapper
+from core.utils import PathMapper
 from core.event_bus import event_bus
 from database.music_database import get_database, Track, Artist
 from core.settings import config_manager
@@ -180,7 +180,7 @@ class MediaManagerService:
         # 3. If not found, try to apply path mappings from the active media server
         try:
             from core.nexus_framework.plugin_loader import PluginRegistry
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
             import json
 
             storage = get_storage_service()

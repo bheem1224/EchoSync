@@ -82,7 +82,7 @@ def get_system_health() -> Dict[str, Any]:
             caps = get_plugin_capabilities(p_id)
             
             if caps and getattr(caps, 'requires_user_auth', False):
-                from core.file_handling.storage import get_storage_service
+                from services.storage_service import get_storage_service
                 storage = get_storage_service()
                 if storage.list_accounts(clean_name):
                     enabled_providers_count += 1

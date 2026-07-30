@@ -480,7 +480,7 @@ class RetroactiveEnhancer:
         """
         from sqlalchemy import or_, and_, func, Integer
         from database.music_database import get_database, Track, Artist, AudioFingerprint
-        from core.file_handling.path_mapper import PathMapper
+        from core.utils import PathMapper
         from core.matching_engine.scoring_profile import ExactSyncProfile
         from core.matching_engine.fingerprinting import FingerprintGenerator
         from core.matching_engine.echo_sync_track import EchosyncTrack

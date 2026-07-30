@@ -94,7 +94,7 @@ def _get_provider_for_account(provider_id, acc_id=None):
         
         if getattr(caps, 'supports_user_auth', False):
             if acc_id is None:
-                from core.file_handling.storage import get_storage_service
+                from services.storage_service import get_storage_service
                 storage = get_storage_service()
                 
                 # We need to find an account for this plugin. Use the stringified provider_id
