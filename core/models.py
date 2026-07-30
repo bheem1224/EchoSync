@@ -325,3 +325,47 @@ class TrackAudioFeatures:
     valence: Optional[float] = None         # 0.0–1.0  musical positiveness
     danceability: Optional[float] = None    # 0.0–1.0  suitability for dancing
     acousticness: Optional[float] = None    # 0.0–1.0  acoustic confidence score
+
+
+from pydantic import BaseModel, Field, ConfigDict
+
+class EchoSyncTrack(BaseModel):
+    """
+    EchoSyncTrack Pydantic validation model.
+    Strictly defines all fields provided by the Rust engine and database layer.
+    """
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+
+    sync_id: Optional[str] = None
+    title: Optional[str] = None
+    artist_name: Optional[str] = Field(default=None, alias="artist")
+    album_title: Optional[str] = Field(default=None, alias="album")
+    album_artist: Optional[str] = None
+    track_number: Optional[int] = Field(default=None, alias="track_no")
+    disc_number: Optional[int] = Field(default=None, alias="disc_no")
+    year: Optional[int] = None
+    genre: Optional[str] = None
+    isrc: Optional[str] = None
+    mbid: Optional[str] = None
+
+    # Technical audio stream properties
+    codec: Optional[str] = None
+    bit_depth: Optional[int] = None
+    sample_rate: Optional[int] = None
+    channels: Optional[int] = None
+    bitrate: Optional[int] = None
+    duration_ms: Optional[int] = None
+    file_path: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+
+    metadata_locked: bool = False
+    updated_at: Optional[datetime] = None
+
+    def compute_sync_id(self) -> str:
+        """Generate sync_id if not explicitly set."""
+        if self.sync_id:
+            return self.sync_id
+        if self.file_path:
+            return f"ss:track:file:{self.file_path}"
+        return f"ss:track:meta:{self.artist_name or 'unknown'}:{self.title or 'unknown'}"
+

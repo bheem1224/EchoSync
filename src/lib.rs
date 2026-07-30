@@ -11,10 +11,15 @@ use lofty::tag::{Accessor, ItemKey};
 use rusqlite::{Connection, Result as SqlResult};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use std::sync::mpsc::{channel, Receiver, Sender, RecvTimeoutError};
 use walkdir::WalkDir;
+use rayon::prelude::*;
 
 pub use errors::EchoSyncError;
+pub use file_handling::fs_ops::FsOperations;
+pub use file_handling::scanner::ProgressMsg;
+pub use metadata::{MetadataExtractor, TrackMetadata};
 
 /// Thread-safe cancellation token shared across Python/Rust FFI boundary.
 #[pyclass]
@@ -48,46 +53,63 @@ pub fn open_db_connection(db_path: &str) -> SqlResult<Connection> {
     Ok(conn)
 }
 
-struct TrackData {
-    title: Option<String>,
-    artist_name: Option<String>,
-    album_title: Option<String>,
-    duration_ms: i32,
-    track_number: u32,
-    disc_number: u32,
-    isrc: Option<String>,
-    bitrate: u32,
-    file_path: String,
-    file_format: String,
-    file_size_bytes: u64,
+fn track_metadata_to_pydict<'py>(py: Python<'py>, meta: &TrackMetadata) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new_bound(py);
+    dict.set_item("title", &meta.title)?;
+    dict.set_item("artist_name", &meta.artist)?;
+    dict.set_item("artist", &meta.artist)?;
+    dict.set_item("album_artist", &meta.album_artist)?;
+    dict.set_item("album_title", &meta.album)?;
+    dict.set_item("album", &meta.album)?;
+    dict.set_item("track_number", meta.track_no)?;
+    dict.set_item("track_no", meta.track_no)?;
+    dict.set_item("disc_number", meta.disc_no)?;
+    dict.set_item("disc_no", meta.disc_no)?;
+    dict.set_item("year", meta.year)?;
+    dict.set_item("genre", &meta.genre)?;
+    dict.set_item("mbid", &meta.mbid)?;
+    dict.set_item("codec", &meta.codec)?;
+    dict.set_item("bit_depth", meta.bit_depth)?;
+    dict.set_item("sample_rate", meta.sample_rate)?;
+    dict.set_item("channels", meta.channels)?;
+    dict.set_item("bitrate", meta.bitrate)?;
+    dict.set_item("duration_ms", meta.duration_ms)?;
+    dict.set_item("file_path", &meta.file_path)?;
+    dict.set_item("file_size_bytes", meta.file_size_bytes)?;
+    Ok(dict)
 }
 
-fn flush_batch(py: Python, batch: &[TrackData], callback: &PyObject) -> PyResult<()> {
-    let mut py_list_elements = Vec::with_capacity(batch.len());
-
-    for data in batch {
-        let dict = PyDict::new_bound(py);
-        dict.set_item("title", &data.title)?;
-        dict.set_item("artist_name", &data.artist_name)?;
-        dict.set_item("album_title", &data.album_title)?;
-        dict.set_item("duration_ms", data.duration_ms)?;
-        dict.set_item("track_number", data.track_number)?;
-        dict.set_item("disc_number", data.disc_number)?;
-        dict.set_item("isrc", &data.isrc)?;
-        dict.set_item("bitrate", data.bitrate)?;
-        dict.set_item("file_path", &data.file_path)?;
-        dict.set_item("file_format", &data.file_format)?;
-        dict.set_item("file_size_bytes", data.file_size_bytes)?;
-        py_list_elements.push(dict);
+/// Extract audiophile metadata and stream properties using lofty.
+#[pyfunction]
+pub fn extract_metadata<'py>(py: Python<'py>, path: String) -> PyResult<PyObject> {
+    match MetadataExtractor::extract(&path) {
+        Ok(meta) => {
+            let dict = track_metadata_to_pydict(py, &meta)?;
+            Ok(dict.into_py(py))
+        }
+        Err(err) => Err(pyo3::exceptions::PyValueError::new_err(err)),
     }
+}
 
-    let py_list = PyList::new_bound(py, py_list_elements);
-    callback.call1(py, (py_list,))?;
-    Ok(())
+/// Atomic file move with EXDEV cross-device link fallback.
+#[pyfunction]
+pub fn safe_move_file(src: String, dst: String) -> PyResult<()> {
+    FsOperations::safe_move(&src, &dst).map_err(|e| e.into())
+}
+
+/// High-speed copy file.
+#[pyfunction]
+pub fn copy_file(src: String, dst: String) -> PyResult<u64> {
+    FsOperations::copy_file(&src, &dst).map_err(|e| e.into())
+}
+
+/// Delete file safely.
+#[pyfunction]
+pub fn delete_file(path: String) -> PyResult<()> {
+    FsOperations::delete_file(&path).map_err(|e| e.into())
 }
 
 /// Telemetry Yielding Pattern (Event Bus Prep)
-/// Yields progress tuples `(processed: usize, total: usize, status: String)` back to Python via callback or return vector.
 #[pyfunction]
 #[pyo3(signature = (total_items, callback=None))]
 pub fn test_batch_process<'py>(
@@ -124,17 +146,159 @@ pub fn test_batch_process<'py>(
     Ok(progress_records)
 }
 
-/// Scan a directory and flush metadata batches to a Python callback, respecting CancellationToken.
+/// Parallel directory scanning & telemetry channel using Rayon and std::sync::mpsc.
+#[pyfunction]
+#[pyo3(signature = (path, callback=None, batch_interval_ms=50))]
+pub fn batch_process_directory<'py>(
+    py: Python<'py>,
+    path: String,
+    callback: Option<PyObject>,
+    batch_interval_ms: u64,
+) -> PyResult<()> {
+    let path_buf = std::path::PathBuf::from(&path);
+    if !path_buf.exists() {
+        return Err(pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+            "Path does not exist: {}",
+            path
+        )));
+    }
+
+    let entries: Vec<_> = WalkDir::new(&path_buf)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .collect();
+
+    let total = entries.len();
+    if total == 0 {
+        if let Some(ref cb) = callback {
+            Python::with_gil(|py| -> PyResult<()> {
+                let py_list = PyList::empty_bound(py);
+                cb.call1(py, (py_list,))?;
+                Ok(())
+            })?;
+        }
+        return Ok(());
+    }
+
+    let (tx, rx): (Sender<ProgressMsg>, Receiver<ProgressMsg>) = channel();
+
+    let tx_worker = tx.clone();
+    let worker_handle = std::thread::spawn(move || {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let counter = AtomicUsize::new(0);
+
+        entries.par_iter().for_each(|entry| {
+            let curr = counter.fetch_add(1, Ordering::SeqCst) + 1;
+            let file_name = entry
+                .path()
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let status = if curr == total {
+                "Completed".to_string()
+            } else {
+                format!("Processing {}", file_name)
+            };
+
+            let _ = tx_worker.send(ProgressMsg {
+                processed: curr,
+                total,
+                status,
+            });
+        });
+    });
+
+    drop(tx);
+
+    py.allow_threads(move || {
+        let mut buffer = Vec::new();
+        let interval = Duration::from_millis(batch_interval_ms);
+        let mut last_flush = Instant::now();
+
+        loop {
+            match rx.recv_timeout(Duration::from_millis(10)) {
+                Ok(msg) => {
+                    buffer.push(msg);
+                    while let Ok(pending_msg) = rx.try_recv() {
+                        buffer.push(pending_msg);
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    while let Ok(remaining_msg) = rx.try_recv() {
+                        buffer.push(remaining_msg);
+                    }
+                    break;
+                }
+            }
+
+            if (last_flush.elapsed() >= interval || !buffer.is_empty()) && !buffer.is_empty() {
+                Python::with_gil(|py| -> PyResult<()> {
+                    if let Some(ref cb) = &callback {
+                        let mut py_items = Vec::with_capacity(buffer.len());
+                        for item in &buffer {
+                            let tuple = PyTuple::new_bound(
+                                py,
+                                &[
+                                    item.processed.into_py(py),
+                                    item.total.into_py(py),
+                                    item.status.clone().into_py(py),
+                                ],
+                            );
+                            py_items.push(tuple);
+                        }
+                        let py_list = PyList::new_bound(py, py_items);
+                        cb.call1(py, (py_list,))?;
+                    }
+                    Ok(())
+                })?;
+                buffer.clear();
+                last_flush = Instant::now();
+            }
+        }
+
+        if !buffer.is_empty() {
+            Python::with_gil(|py| -> PyResult<()> {
+                if let Some(ref cb) = &callback {
+                    let mut py_items = Vec::with_capacity(buffer.len());
+                    for item in &buffer {
+                        let tuple = PyTuple::new_bound(
+                            py,
+                            &[
+                                item.processed.into_py(py),
+                                item.total.into_py(py),
+                                item.status.clone().into_py(py),
+                            ],
+                        );
+                        py_items.push(tuple);
+                    }
+                    let py_list = PyList::new_bound(py, py_items);
+                    cb.call1(py, (py_list,))?;
+                }
+                Ok(())
+            })?;
+        }
+
+        let _ = worker_handle.join();
+        Ok::<(), PyErr>(())
+    })?;
+
+    Ok(())
+}
+
+/// Scan a directory and flush metadata batches to a Python callback.
 #[pyfunction]
 #[pyo3(signature = (path, callback, batch_size, cancel_token=None))]
 fn scan_directory<'py>(
     py: Python<'py>,
-    path: &str,
+    path: String,
     callback: PyObject,
     batch_size: usize,
     cancel_token: Option<CancellationToken>,
 ) -> PyResult<()> {
-    let path_str = path.to_string();
+    let path_str = path;
 
     py.allow_threads(move || {
         let mut batch = Vec::new();
@@ -144,7 +308,13 @@ fn scan_directory<'py>(
                 if token.is_cancelled() {
                     if !batch.is_empty() {
                         Python::with_gil(|py| -> PyResult<()> {
-                            flush_batch(py, &batch, &callback)?;
+                            let mut py_list_elements = Vec::with_capacity(batch.len());
+                            for data in &batch {
+                                let dict = track_metadata_to_pydict(py, data)?;
+                                py_list_elements.push(dict);
+                            }
+                            let py_list = PyList::new_bound(py, py_list_elements);
+                            callback.call1(py, (py_list,))?;
                             Ok(())
                         })?;
                         batch.clear();
@@ -153,78 +323,37 @@ fn scan_directory<'py>(
                 }
             }
 
-            let path = entry.path();
-            if path.is_file() {
-                let tagged_file = match Probe::open(path) {
-                    Ok(probe) => match probe.read() {
-                        Ok(file) => file,
-                        Err(_) => continue,
-                    },
-                    Err(_) => continue,
-                };
+            let p = entry.path();
+            if p.is_file() {
+                if let Ok(meta) = MetadataExtractor::extract(p) {
+                    batch.push(meta);
 
-                let properties = tagged_file.properties();
-                let duration_ms = properties.duration().as_millis() as i32;
-                let bitrate = properties.audio_bitrate().unwrap_or(0) * 1000;
-
-                let tag = match tagged_file.primary_tag() {
-                    Some(primary_tag) => Some(primary_tag),
-                    None => tagged_file.first_tag(),
-                };
-
-                let mut title = None;
-                let mut artist_name = None;
-                let mut album_title = None;
-                let mut track_number = 0;
-                let mut disc_number = 1;
-                let mut isrc = None;
-
-                if let Some(t) = tag {
-                    title = t.title().as_deref().map(|s| s.to_string());
-                    artist_name = t.artist().as_deref().map(|s| s.to_string());
-                    album_title = t.album().as_deref().map(|s| s.to_string());
-                    track_number = t.track().unwrap_or(0);
-                    disc_number = t.disk().unwrap_or(1);
-
-                    if let Some(isrc_item) = t.get(&ItemKey::Isrc) {
-                        isrc = isrc_item.value().text().map(|s| s.to_string());
+                    if batch.len() >= batch_size {
+                        Python::with_gil(|py| -> PyResult<()> {
+                            let mut py_list_elements = Vec::with_capacity(batch.len());
+                            for data in &batch {
+                                let dict = track_metadata_to_pydict(py, data)?;
+                                py_list_elements.push(dict);
+                            }
+                            let py_list = PyList::new_bound(py, py_list_elements);
+                            callback.call1(py, (py_list,))?;
+                            Ok(())
+                        })?;
+                        batch.clear();
                     }
-                }
-
-                let ext = path
-                    .extension()
-                    .map(|e| e.to_string_lossy().into_owned().to_lowercase())
-                    .unwrap_or_else(|| "".to_string());
-
-                let file_size_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-
-                batch.push(TrackData {
-                    title,
-                    artist_name,
-                    album_title,
-                    duration_ms,
-                    track_number,
-                    disc_number,
-                    isrc,
-                    bitrate,
-                    file_path: path.to_string_lossy().into_owned(),
-                    file_format: ext,
-                    file_size_bytes,
-                });
-
-                if batch.len() >= batch_size {
-                    Python::with_gil(|py| -> PyResult<()> {
-                        flush_batch(py, &batch, &callback)?;
-                        Ok(())
-                    })?;
-                    batch.clear();
                 }
             }
         }
 
         if !batch.is_empty() {
             Python::with_gil(|py| -> PyResult<()> {
-                flush_batch(py, &batch, &callback)?;
+                let mut py_list_elements = Vec::with_capacity(batch.len());
+                for data in &batch {
+                    let dict = track_metadata_to_pydict(py, data)?;
+                    py_list_elements.push(dict);
+                }
+                let py_list = PyList::new_bound(py, py_list_elements);
+                callback.call1(py, (py_list,))?;
                 Ok(())
             })?;
             batch.clear();
@@ -236,9 +365,14 @@ fn scan_directory<'py>(
 
 /// PyO3 Module Registration for echosync_core
 #[pymodule]
-fn echosync_core<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
+fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CancellationToken>()?;
     m.add_function(wrap_pyfunction!(scan_directory, m)?)?;
     m.add_function(wrap_pyfunction!(test_batch_process, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_process_directory, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_metadata, m)?)?;
+    m.add_function(wrap_pyfunction!(safe_move_file, m)?)?;
+    m.add_function(wrap_pyfunction!(copy_file, m)?)?;
+    m.add_function(wrap_pyfunction!(delete_file, m)?)?;
     Ok(())
 }

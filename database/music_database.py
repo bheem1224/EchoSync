@@ -186,9 +186,13 @@ class Track(Base):
 
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     isrc: Mapped[Optional[str]] = mapped_column(String)
-    sync_id: Mapped[str] = mapped_column(String(8), unique=True, index=True, nullable=False, default=generate_nanoid)
+    sync_id: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False, default=generate_nanoid)
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
     metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
+
+    __table_args__ = (
+        UniqueConstraint("sync_id", name="uq_tracks_sync_id"),
+    )
 
     album: Mapped[Optional[Album]] = relationship(back_populates="tracks")
     artist: Mapped[Artist] = relationship(back_populates="tracks")
@@ -784,6 +788,10 @@ class MusicDatabase:
 
             # clean up artists with no remaining tracks
             session.query(Artist).filter(~Artist.tracks.any()).delete(synchronize_session=False)
+
+    def get_session(self) -> Session:
+        """Return a new SQLAlchemy Session instance."""
+        return self.SessionLocal()
 
     def dispose(self) -> None:
         self.engine.dispose()
