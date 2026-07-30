@@ -256,6 +256,25 @@ def create_app(testing: bool = False) -> Flask:
     # Start the job queue for async task execution
     if not testing:
         start_job_queue()
+        try:
+            from core.task_manager import supervisor, ProcessOwner, OwnerType
+            supervisor.register_process(ProcessOwner(
+                owner_id="core.web_server",
+                owner_type=OwnerType.CORE,
+                pid=os.getpid(),
+                task_name="Flask REST API Gateway",
+                metadata={"status": "running", "environment": "production" if not dev_mode else "development"}
+            ))
+            supervisor.register_process(ProcessOwner(
+                owner_id="core.task_queue",
+                owner_type=OwnerType.CORE,
+                pid=os.getpid(),
+                thread_id=threading.get_ident(),
+                task_name="Job Queue Dispatcher Thread",
+                metadata={"status": "active"}
+            ))
+        except Exception as sup_err:
+            print(f"[WARN] Failed to register core processes in ProcessSupervisor: {sup_err}")
     
     # Register system jobs with job_queue
     try:

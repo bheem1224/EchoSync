@@ -255,16 +255,25 @@ def register_external_identifier_sync_job(interval_seconds: int = 21600, enabled
             
             active_servers = []
             try:
-                # Use get_plugins_by_type to avoid calling is_configured(), which relies on
-                # stack-based caller resolution and fails when called from a core job frame
-                # (the resolver sees 'core.system_jobs' instead of the plugin namespace, so
-                # accounts.get_all() returns empty and is_configured() always returns False).
-                # Instead, check supports_library_scan on the class before instantiation.
+                from database.config_database import get_config_database
+                config_db = get_config_database()
                 for p_id in PluginRegistry.get_plugins_by_type('mediaserver', exclude_disabled=True):
                     plugin_cls = PluginRegistry.get_plugin_class(p_id)
+                    if not plugin_cls:
+                        continue
                     caps = getattr(plugin_cls, 'capabilities', None)
-                    if caps and getattr(caps, 'supports_library_scan', False):
+                    if not caps or not getattr(caps, 'supports_library_scan', False):
+                        continue
+
+                    p_name = getattr(plugin_cls, 'name', '') or str(p_id)
+                    svc_id = config_db.get_or_create_service_id(p_name)
+                    has_acc = bool(config_db.get_accounts(service_id=svc_id))
+                    has_url = bool(config_db.get_service_config(svc_id, 'server_url') or config_db.get_service_config(svc_id, 'url') or config_db.get_service_config(svc_id, 'host'))
+
+                    if has_acc or has_url:
                         active_servers.append(p_id)
+                    else:
+                        logger.debug(f"Skipping unconfigured media server provider '{p_name}' for external identifier sync")
             except Exception as e:
                 logger.error(f"Failed to get active media servers for external sync: {e}")
                 
