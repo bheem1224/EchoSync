@@ -652,6 +652,7 @@ class MusicDatabase:
             ).filter(
                 LocalMedia.file_path.isnot(None),
                 LocalMedia.file_path != '',
+                ~LocalMedia.file_path.like('virtual://%')
             ).scalar()
             return int(result or 0)
 
@@ -672,6 +673,7 @@ class MusicDatabase:
                 .filter(
                     LocalMedia.file_path.isnot(None),
                     LocalMedia.file_path != '',
+                    ~LocalMedia.file_path.like('virtual://%'),
                 )
                 .group_by(sqla_func.lower(LocalMedia.file_path))
                 .subquery()
