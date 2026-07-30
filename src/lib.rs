@@ -90,108 +90,124 @@ fn scan_directory<'py>(
     batch_size: usize,
     cancel_token: Option<CancellationToken>,
 ) -> PyResult<()> {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use pyo3::exceptions::PyRuntimeError;
+
+    let safe_batch_size = std::cmp::max(1, batch_size);
     let path_str = path.to_string();
 
-    py.allow_threads(move || {
-        let mut batch = Vec::new();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        py.allow_threads(move || -> PyResult<()> {
+            let mut batch = Vec::new();
 
-        for entry in WalkDir::new(&path_str).into_iter().filter_map(|e| e.ok()) {
-            if let Some(token) = &cancel_token {
-                if token.is_cancelled() {
-                    if !batch.is_empty() {
+            for entry in WalkDir::new(&path_str).into_iter().filter_map(|e| e.ok()) {
+                if let Some(token) = &cancel_token {
+                    if token.is_cancelled() {
+                        if !batch.is_empty() {
+                            Python::with_gil(|py| -> PyResult<()> {
+                                flush_batch(py, &batch, &callback)?;
+                                Ok(())
+                            })?;
+                            batch.clear();
+                        }
+                        return Ok(());
+                    }
+                }
+
+                let path = entry.path();
+                if path.is_file() {
+                    // Attempt to parse audio file
+                    let tagged_file = match Probe::open(path) {
+                        Ok(probe) => match probe.read() {
+                            Ok(file) => file,
+                            Err(_) => continue, // Skip files we cannot read properly
+                        },
+                        Err(_) => continue, // Skip files that aren't recognized audio formats
+                    };
+
+                    let properties = tagged_file.properties();
+                    let raw_ms = properties.duration().as_millis();
+                    let duration_ms: i32 = if raw_ms > i32::MAX as u128 {
+                        i32::MAX
+                    } else {
+                        raw_ms as i32
+                    };
+                    let bitrate = properties.audio_bitrate().unwrap_or(0).saturating_mul(1000);
+
+                    // Extract tags
+                    let tag = match tagged_file.primary_tag() {
+                        Some(primary_tag) => Some(primary_tag),
+                        None => tagged_file.first_tag(),
+                    };
+
+                    let mut title = None;
+                    let mut artist_name = None;
+                    let mut album_title = None;
+                    let mut track_number = 0;
+                    let mut disc_number = 1;
+                    let mut isrc = None;
+
+                    if let Some(t) = tag {
+                        title = t.title().as_deref().map(|s| s.to_string());
+                        artist_name = t.artist().as_deref().map(|s| s.to_string());
+                        album_title = t.album().as_deref().map(|s| s.to_string());
+                        track_number = t.track().unwrap_or(0);
+                        disc_number = t.disk().unwrap_or(1);
+
+                        // Get ISRC from items
+                        if let Some(isrc_item) = t.get(&ItemKey::Isrc) {
+                            isrc = isrc_item.value().text().map(|s| s.to_string());
+                        }
+                    }
+                    
+                    let ext = path.extension()
+                        .map(|e| e.to_string_lossy().into_owned().to_lowercase())
+                        .unwrap_or_else(|| "".to_string());
+
+                    let file_size_bytes = std::fs::metadata(path)
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+
+                    batch.push(TrackData {
+                        title,
+                        artist_name,
+                        album_title,
+                        duration_ms,
+                        track_number,
+                        disc_number,
+                        isrc,
+                        bitrate,
+                        file_path: path.to_string_lossy().into_owned(),
+                        file_format: ext,
+                        file_size_bytes,
+                    });
+
+                    if batch.len() >= safe_batch_size {
                         Python::with_gil(|py| -> PyResult<()> {
                             flush_batch(py, &batch, &callback)?;
                             Ok(())
                         })?;
                         batch.clear();
                     }
-                    return Ok(());
                 }
             }
 
-            let path = entry.path();
-            if path.is_file() {
-                // Attempt to parse audio file
-                let tagged_file = match Probe::open(path) {
-                    Ok(probe) => match probe.read() {
-                        Ok(file) => file,
-                        Err(_) => continue, // Skip files we cannot read properly
-                    },
-                    Err(_) => continue, // Skip files that aren't recognized audio formats
-                };
-
-                let properties = tagged_file.properties();
-                let duration_ms = properties.duration().as_millis() as i32;
-                let bitrate = properties.audio_bitrate().unwrap_or(0) * 1000;
-
-                // Extract tags
-                let tag = match tagged_file.primary_tag() {
-                    Some(primary_tag) => Some(primary_tag),
-                    None => tagged_file.first_tag(),
-                };
-
-                let mut title = None;
-                let mut artist_name = None;
-                let mut album_title = None;
-                let mut track_number = 0;
-                let mut disc_number = 1;
-                let mut isrc = None;
-
-                if let Some(t) = tag {
-                    title = t.title().as_deref().map(|s| s.to_string());
-                    artist_name = t.artist().as_deref().map(|s| s.to_string());
-                    album_title = t.album().as_deref().map(|s| s.to_string());
-                    track_number = t.track().unwrap_or(0);
-                    disc_number = t.disk().unwrap_or(1);
-
-                    // Get ISRC from items
-                    if let Some(isrc_item) = t.get(&ItemKey::Isrc) {
-                        isrc = isrc_item.value().text().map(|s| s.to_string());
-                    }
-                }
-                
-                let ext = path.extension()
-                    .map(|e| e.to_string_lossy().into_owned().to_lowercase())
-                    .unwrap_or_else(|| "".to_string());
-
-                let file_size_bytes = std::fs::metadata(path)
-                    .map(|m| m.len())
-                    .unwrap_or(0);
-
-                batch.push(TrackData {
-                    title,
-                    artist_name,
-                    album_title,
-                    duration_ms,
-                    track_number,
-                    disc_number,
-                    isrc,
-                    bitrate,
-                    file_path: path.to_string_lossy().into_owned(),
-                    file_format: ext,
-                    file_size_bytes,
-                });
-
-                if batch.len() >= batch_size {
-                    Python::with_gil(|py| -> PyResult<()> {
-                        flush_batch(py, &batch, &callback)?;
-                        Ok(())
-                    })?;
-                    batch.clear();
-                }
+            if !batch.is_empty() {
+                Python::with_gil(|py| -> PyResult<()> {
+                    flush_batch(py, &batch, &callback)?;
+                    Ok(())
+                })?;
+                batch.clear();
             }
-        }
 
-        if !batch.is_empty() {
-            Python::with_gil(|py| -> PyResult<()> {
-                flush_batch(py, &batch, &callback)?;
-                Ok(())
-            })?;
-            batch.clear();
-        }
+            Ok(())
+        })
+    }));
 
-        Ok(())
-    })
+    match result {
+        Ok(py_res) => py_res,
+        Err(_) => Err(PyRuntimeError::new_err("Rust FFI panic intercepted during scan_directory")),
+    }
 }
 
 /// A Python module implemented in Rust.
