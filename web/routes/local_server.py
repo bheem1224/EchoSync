@@ -62,7 +62,8 @@ def stream_audio():
         if ext in _TRANSCODE_FORMATS:
             logger.info(f"Transcoding {ext} → FLAC for {requested_path.name}")
 
-            safe_path = str(requested_path.resolve())
+            import os
+            safe_path = os.path.normpath(str(requested_path.resolve()))
             ffmpeg_cmd = [
                 "ffmpeg", "-hide_banner", "-loglevel", "error",
                 "-i", safe_path,

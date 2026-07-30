@@ -564,11 +564,19 @@ class PluginStore:
                             if not str(target_path).startswith(str(resolved_tmp_dir)):
                                 logger.error(f"Malicious path traversal in artifact: {zi.filename}")
                                 return False
-                    
-                    z.extractall(tmp_dir)
+                        z.extract(zi, tmp_dir)
 
                 # Validation: Direct check for manifest.json at root
-                manifest_file = tmp_dir / "manifest.json"
+                manifest_file = (tmp_dir / "manifest.json").resolve()
+                try:
+                    if not manifest_file.is_relative_to(resolved_tmp_dir):
+                        logger.error("Security violation: manifest.json resolves outside temporary directory")
+                        return False
+                except AttributeError:
+                    if not str(manifest_file).startswith(str(resolved_tmp_dir)):
+                        logger.error("Security violation: manifest.json resolves outside temporary directory")
+                        return False
+
                 if not manifest_file.exists():
                     logger.error(f"Validation failed: Clean artifact missing manifest.json at root for {plugin_id}")
                     # If this happens, we might be downloading a full repo zip by mistake
