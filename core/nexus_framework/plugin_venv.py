@@ -47,17 +47,18 @@ def setup_plugin_venv(plugins_dir: Path, requirements: Set[str]):
 
         def _install_deps():
             try:
-                # Run pip install with all requirements in a single batch
+                from core.task_manager.binary_runner import CoreBinaryRunner
+                from core.task_manager.models import OwnerType
                 cmd = [str(pip_executable), "install", *list(requirements)]
-                result = subprocess.run(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
+                ret_code, stdout_out, stderr_out = CoreBinaryRunner.run_binary(
+                    cmd_list=cmd,
+                    timeout=300.0,
+                    owner_id="plugin_venv.installer",
+                    owner_type=OwnerType.PLUGIN
                 )
 
-                if result.returncode != 0:
-                    logger.error(f"Failed to install some plugin dependencies. Pip output:\n{result.stderr}")
+                if ret_code != 0:
+                    logger.error(f"Failed to install some plugin dependencies. Pip output:\n{stderr_out}")
                 else:
                     logger.debug("Plugin dependencies verified successfully.")
 
