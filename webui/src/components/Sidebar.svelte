@@ -32,6 +32,7 @@
       guard: () => pluginCapabilities.some((c) => c?.search?.tracks) },
     { label: 'Discover',  href: '/discover',  icon: '✨',  locked: false },
     { label: 'Library',   href: '/library',   icon: '🎵',  locked: true  },
+    { label: 'Task Manager', href: '/tasks',  icon: '⚡',  locked: true  },
   ];
 
   // ── Derived: visible nav links (respects sidebarPrefs.hiddenRoutes) ──
@@ -60,7 +61,6 @@
     { label: 'Metadata',          href: '/settings/metadata' },
     { label: 'Search',            href: '/settings/search' },
     { label: 'Misc',              href: '/settings/misc' },
-    { label: 'Jobs',              href: '/settings/jobs' },
     { label: 'System',            href: '/settings/system' },
   ]);
 
