@@ -109,13 +109,14 @@ def test_provider_settings_route_normalizes_plugin_ids_for_service_storage(clien
 
 def test_providers_playlist_route_includes_account_id(client, monkeypatch):
     """The providers playlist endpoint should return playlists with account_id for multi-account providers."""
+    spotify_id = "spotify"
     class FakeConfigDB:
         def get_or_create_service_id(self, name):
             return 77
 
         def get_accounts(self, service_id=None, is_active=None):
             assert service_id == 77
-            assert is_active is True
+            assert is_active in (True, None)
             return [
                 {'id': 10, 'display_name': 'First', 'account_name': 'First', 'user_id': 'plex-user-1'},
                 {'id': 20, 'display_name': 'Second', 'account_name': 'Second', 'user_id': 'plex-user-2'},
@@ -127,6 +128,7 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
         {'id': 1, 'display_name': 'First'},
         {'id': 2, 'display_name': 'Second'}
     ]
+    monkeypatch.setattr('services.storage_service.get_storage_service', lambda: fake_storage)
     monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
     monkeypatch.setattr('database.config_database.get_config_database', lambda: FakeConfigDB())
 

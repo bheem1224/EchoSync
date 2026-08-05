@@ -19,7 +19,6 @@ dependencies = [
     "flask-cors>=4.0.0",
     "lrclibapi>=0.3.1",
     "maturin>=1.11.5",
-    "mutagen>=1.47.0",
     "pillow>=10.0.0",
     "plexapi>=4.17.0",
     "psutil>=6.0.0",

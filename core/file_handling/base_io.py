@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Union
 
 from core.tiered_logger import get_logger
-from .jail import file_jail, lock_manager, SecurityError  # noqa: F401 re-export
+
+class SecurityError(PermissionError):
+    pass
 
 logger = get_logger("core.file_handling.base_io")
 
@@ -77,33 +79,24 @@ def safe_move(src: Union[str, Path], dest: Union[str, Path]) -> Path:
     except Exception as e:
         logger.error(f"Error in BEFORE_FILE_RENAME hook: {e}")
 
-    file_jail.validate(resolved_src)
-    file_jail.validate(resolved_dest)
-
-    # Acquire locks in deterministic order to prevent ABBA deadlock
-    pair = sorted([resolved_src, resolved_dest], key=str)
-    lock_a = lock_manager.lock_for(pair[0])
-    lock_b = lock_manager.lock_for(pair[1])
-    with lock_a:
-        with lock_b:
-            try:
-                from core.hook_manager import hook_manager
-                plugin_io = hook_manager.apply_filters('CUSTOM_FILE_IO', None, src_path=str(resolved_src), dest_path=str(resolved_dest))
-                if plugin_io == "SKIP":
-                    logger.info(f"Plugin intercepted CUSTOM_FILE_IO for {resolved_dest}, skipping local move")
-                    return resolved_dest
-            except Exception as e:
-                logger.error(f"Error in CUSTOM_FILE_IO hook: {e}")
-
-            resolved_dest.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                shutil.move(str(resolved_src), str(resolved_dest))
-            except Exception as e:
-                # If shutil.move fails mid-copy (e.g. out of space across partitions), clean up corrupted destination
-                resolved_dest.unlink(missing_ok=True)
-                raise
-            logger.debug("safe_move: %s → %s", resolved_src, resolved_dest)
+    try:
+        from core.hook_manager import hook_manager
+        plugin_io = hook_manager.apply_filters('CUSTOM_FILE_IO', None, src_path=str(resolved_src), dest_path=str(resolved_dest))
+        if plugin_io == "SKIP":
+            logger.info(f"Plugin intercepted CUSTOM_FILE_IO for {resolved_dest}, skipping local move")
             return resolved_dest
+    except Exception as e:
+        logger.error(f"Error in CUSTOM_FILE_IO hook: {e}")
+
+    resolved_dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.move(str(resolved_src), str(resolved_dest))
+    except Exception as e:
+        # If shutil.move fails mid-copy (e.g. out of space across partitions), clean up corrupted destination
+        resolved_dest.unlink(missing_ok=True)
+        raise
+    logger.debug("safe_move: %s → %s", resolved_src, resolved_dest)
+    return resolved_dest
 
 
 def safe_delete(path: Union[str, Path]) -> None:
@@ -111,42 +104,35 @@ def safe_delete(path: Union[str, Path]) -> None:
     Securely delete the file at *path*. (Soft Delete enforced)
 
     - Instead of unlink/rmtree, moves file to .trash/ at the library root.
-    - Path is jail-checked.
-    - File lock is held during deletion.
-
-    Raises:
-        SecurityError: If the path escapes its allowed root.
     """
     from core.settings import config_manager
     resolved = resolve_path(path)
-    file_jail.validate(resolved)
 
-    with lock_manager.lock_for(resolved):
-        if resolved.exists():
-            try:
-                # Resolve the user's library mount
-                library_dir = config_manager.get('storage', {}).get('library_dir')
-                if not library_dir:
-                    logger.warning("No library_dir configured. Soft delete defaulting to current directory .trash")
-                    library_dir = "."
+    if resolved.exists():
+        try:
+            # Resolve the user's library mount
+            library_dir = config_manager.get('storage', {}).get('library_dir')
+            if not library_dir:
+                logger.warning("No library_dir configured. Soft delete defaulting to current directory .trash")
+                library_dir = "."
 
-                trash_dir = Path(library_dir) / ".trash"
-                trash_dir.mkdir(parents=True, exist_ok=True)
+            trash_dir = Path(library_dir) / ".trash"
+            trash_dir.mkdir(parents=True, exist_ok=True)
 
-                # Move to trash instead of permanent deletion
-                dest = trash_dir / resolved.name
-                # Ensure unique name in trash
-                counter = 1
-                while dest.exists():
-                    dest = trash_dir / f"{resolved.stem}_{counter}{resolved.suffix}"
-                    counter += 1
+            # Move to trash instead of permanent deletion
+            dest = trash_dir / resolved.name
+            # Ensure unique name in trash
+            counter = 1
+            while dest.exists():
+                dest = trash_dir / f"{resolved.stem}_{counter}{resolved.suffix}"
+                counter += 1
 
-                shutil.move(str(resolved), str(dest))
-                logger.debug("safe_delete (Soft Delete): %s -> %s", resolved, dest)
-            except Exception as e:
-                logger.error(f"Soft delete failed for {resolved}: {e}")
-        else:
-            logger.warning("safe_delete: file not found, skipping: %s", resolved)
+            shutil.move(str(resolved), str(dest))
+            logger.info(f"Soft deleted file: {resolved} -> {dest}")
+        except Exception as e:
+            logger.error(f"Error in safe_delete for {resolved}: {e}")
+    else:
+        logger.warning("safe_delete: file not found, skipping: %s", resolved)
 
 
 def safe_write_text(path: Union[str, Path], content: str, encoding: str = 'utf-8') -> None:

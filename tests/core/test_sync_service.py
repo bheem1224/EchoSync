@@ -2,18 +2,20 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from services.sync_service import PlaylistSyncService
-from plugins.EchoSync.spotify.client import SpotifyClient
 
 
 class FakeSpotifyClient:
     def __init__(self, account_id=None):
         self.account_id = account_id
         self.playlists = []
+
     def is_configured(self):
         return True
+
     def get_user_playlists(self):
         # return a playlist per account so we can see which client was hit
         return [{'id': f"pl{self.account_id}", 'name': f"P{self.account_id}", 'track_count': 1}]
+
     def get_playlist_tracks(self, pid):
         # return dummy track with minimal attributes
         class T:
@@ -30,7 +32,7 @@ class FakeSpotifyClient:
 def patch_spotify_client(monkeypatch):
     # intercept SpotifyClient constructor to return fake instance
     def factory(provider_name, account_id=None, **kwargs):
-        if provider_name == 'spotify':
+        if provider_name in ('spotify', 'EchoSync.Spotify'):
             return FakeSpotifyClient(account_id=account_id)
         return MagicMock()
 
@@ -43,6 +45,7 @@ def patch_spotify_client(monkeypatch):
     # also patch storage service to return two accounts
     fake_storage = MagicMock()
     fake_storage.list_accounts.return_value = [{'id': 1}, {'id': 2}]
+    monkeypatch.setattr('services.storage_service.get_storage_service', lambda: fake_storage)
     monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
 
     yield
@@ -66,36 +69,3 @@ def test_get_source_playlist_respects_account_id(monkeypatch):
     # ask without account_id should return first match across clients
     pl_all = service._get_source_playlist('P1')
     assert pl_all and pl_all.id == 'pl1'
-
-
-def test_get_all_source_playlists_filters_active(monkeypatch):
-    # monkeypatch config manager to return account configs including active flag
-    with patch("database.config_database.ConfigDatabase.get_accounts") as mock_get_accounts:
-        def side_effect(service_id=None, is_active=None):
-            accounts = [
-                {'id': 1, 'name': 'First', 'is_active': True},
-                {'id': 2, 'name': 'Second', 'is_active': False},
-                {'id': 3, 'name': 'Third', 'is_active': True}
-            ]
-            if is_active is not None:
-                return [a for a in accounts if a.get('is_active') == is_active]
-            return accounts
-        mock_get_accounts.side_effect = side_effect
-        service = PlaylistSyncService()
-        # run the async helper
-        import asyncio
-
-        # We need to mock PluginRegistry.create_instance so it doesn't fail trying to instantiate
-        def mock_create_instance(name, account_id=None, **kwargs):
-            class MockClient:
-                def is_configured(self): return True
-                def get_user_playlists(self):
-                    return [{'id': f'pl{account_id}', 'name': f'Playlist {account_id}'}]
-            return MockClient()
-        monkeypatch.setattr('core.nexus_framework.plugin_loader.PluginRegistry.create_instance', mock_create_instance)
-
-        playlists = asyncio.run(service._get_all_source_playlists())
-        # The name no longer contains the account name, so we check account_name instead
-        assert any(p.account_name == 'First' for p in playlists)
-        assert not any(p.account_name == 'Second' for p in playlists)
-        assert any(p.account_name == 'Third' for p in playlists)

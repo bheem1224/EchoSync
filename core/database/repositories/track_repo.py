@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from database.music_database import Track, LocalMedia, Artist
+from database import _canonicalize_path
 from core.models import EchoSyncTrack
 
 
@@ -44,17 +45,36 @@ class TrackRepository:
 
         track_values = []
         for t in tracks:
-            sync_id = t.compute_sync_id()
+            f_path = getattr(t, "file_path", None)
+            if not f_path and getattr(t, "media", None):
+                m_list = getattr(t, "media")
+                if m_list and hasattr(m_list[0], "file_path"):
+                    f_path = m_list[0].file_path
+
+            if hasattr(t, "compute_sync_id"):
+                sync_id = t.compute_sync_id()
+            elif getattr(t, "sync_id", None):
+                sync_id = t.sync_id
+            elif f_path:
+                sync_id = f"ss:track:file:{_canonicalize_path(f_path)}"
+            else:
+                title_val = getattr(t, "title", None) or getattr(t, "raw_title", "")
+                artist_val = getattr(t, "artist_name", None) or getattr(t, "artist", "")
+                sync_id = f"ss:track:meta:{title_val.lower()}:{artist_val.lower()}"
+
+            duration = getattr(t, "duration_ms", None) or getattr(t, "duration", None)
+            mbid = getattr(t, "mbid", None) or getattr(t, "musicbrainz_id", None)
+            track_title = getattr(t, "title", None) or getattr(t, "raw_title", None) or "Unknown Title"
             track_values.append({
                 "sync_id": sync_id,
-                "title": t.title or "Unknown Title",
-                "normalized_title": (t.title or "unknown title").lower(),
+                "title": track_title,
+                "normalized_title": track_title.lower(),
                 "artist_id": default_artist_id,
-                "duration": t.duration_ms,
-                "track_number": t.track_number,
-                "disc_number": t.disc_number,
-                "musicbrainz_id": t.mbid,
-                "isrc": t.isrc,
+                "duration": duration,
+                "track_number": getattr(t, "track_number", None),
+                "disc_number": getattr(t, "disc_number", None),
+                "musicbrainz_id": mbid,
+                "isrc": getattr(t, "isrc", None),
                 "added_at": now,
             })
 
@@ -83,18 +103,36 @@ class TrackRepository:
         # Also upsert LocalMedia technical records if file_path is present
         media_values = []
         for t in tracks:
-            if t.file_path:
-                # Query track ID for foreign key link
-                track_obj = session.query(Track).filter_by(sync_id=t.compute_sync_id()).first()
+            f_path = getattr(t, "file_path", None)
+            first_media = None
+            if not f_path and getattr(t, "media", None):
+                m_list = getattr(t, "media")
+                if m_list and hasattr(m_list[0], "file_path"):
+                    first_media = m_list[0]
+                    f_path = first_media.file_path
+            if f_path:
+                canon_path = _canonicalize_path(f_path)
+                if hasattr(t, "compute_sync_id"):
+                    s_id = t.compute_sync_id()
+                elif getattr(t, "sync_id", None):
+                    s_id = t.sync_id
+                elif f_path:
+                    s_id = f"ss:track:file:{canon_path}"
+                else:
+                    title_val = getattr(t, "title", None) or getattr(t, "raw_title", "")
+                    artist_val = getattr(t, "artist_name", None) or getattr(t, "artist", "")
+                    s_id = f"ss:track:meta:{title_val.lower()}:{artist_val.lower()}"
+                track_obj = session.query(Track).filter_by(sync_id=s_id).first()
                 if track_obj:
+                    m_obj = first_media if first_media is not None else t
                     media_values.append({
                         "track_id": track_obj.id,
-                        "file_path": t.file_path,
-                        "file_format": t.codec,
-                        "bitrate": t.bitrate,
-                        "sample_rate": t.sample_rate,
-                        "bit_depth": t.bit_depth,
-                        "file_size_bytes": t.file_size_bytes,
+                        "file_path": canon_path,
+                        "file_format": getattr(m_obj, "file_format", None) or getattr(m_obj, "codec", None),
+                        "bitrate": getattr(m_obj, "bitrate", None) or getattr(m_obj, "bitrate_kbps", None),
+                        "sample_rate": getattr(m_obj, "sample_rate", None) or getattr(m_obj, "sample_rate_hz", None),
+                        "bit_depth": getattr(m_obj, "bit_depth", None),
+                        "file_size_bytes": getattr(m_obj, "file_size_bytes", None),
                         "added_at": now,
                     })
 

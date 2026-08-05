@@ -289,7 +289,8 @@ class _FileSDKFacade:
             
             # Move instead of unlink
             dest = trash_dir / p.name
-            shutil.move(str(p), str(dest))
+            from core.io_gatekeeper import Gatekeeper
+            Gatekeeper.authorize_and_execute({"operation": "safe_move", "src": str(p), "dst": str(dest)})
             return True
         except Exception as e:
             from core.tiered_logger import get_logger

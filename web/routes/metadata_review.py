@@ -16,7 +16,7 @@ from core.matching_engine.track_parser import TrackParser
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.settings import config_manager
 from core.tiered_logger import get_logger
-from database import LibraryManager, get_database
+from database import get_database
 from database.working_database import ReviewTask, get_working_database
 from services.metadata_enhancer import get_metadata_enhancer, MetadataEnhancerService
 
@@ -297,9 +297,10 @@ def _build_track_from_metadata(file_path: Path, metadata: Dict[str, Any]):
 
 def _import_single_file(file_path: Path, metadata: Dict[str, Any]) -> int:
     db = get_database()
-    manager = LibraryManager(db.session_factory)
     track = _build_track_from_metadata(file_path, metadata)
-    return manager.bulk_import([track], total_count=1)
+    from core.database.repositories.track_repo import bulk_upsert_tracks
+    with db.session_scope() as session:
+        return bulk_upsert_tracks(session, [track])
       
 def _normalize_duration_seconds(metadata: Dict[str, Any], file_path: Path) -> Optional[int]:
     duration = _coerce_int(metadata.get("duration"))
@@ -459,9 +460,8 @@ def approve_review_queue_item(task_id: int):
             def _background_approval_task():
                 try:
                     import shutil
-                    from database.bulk_operations import _canonicalize_path
+                    from database import _canonicalize_path
                     from database.music_database import LocalMedia
-                    from core.file_handling.post_processor import PostProcessor
                     from core.matching_engine.echo_sync_track import EchosyncTrack
 
                     # 1. Resolve task details in fresh working DB session
@@ -550,23 +550,26 @@ def approve_review_queue_item(task_id: int):
                     if "{ext}" not in pattern:
                         pattern += "{ext}"
 
-                    post_processor = PostProcessor()
-                    new_rel = post_processor._generate_path_from_pattern(file_path_obj, staged_track, pattern)
-                    if new_rel:
-                        destination_path = Path(library_dir).resolve() / new_rel
-                    else:
-                        destination_path = file_path_obj
+                    artist_name = staged_track.artist_name or "Unknown Artist"
+                    album_title = staged_track.album_title or "Unknown Album"
+                    title = staged_track.title or "Unknown Title"
+                    ext = file_path_obj.suffix or ".mp3"
+                    new_rel = Path(artist_name) / album_title / f"{title}{ext}"
+                    destination_path = Path(library_dir).resolve() / new_rel
 
-                    # Handle duplicates if destination already exists
                     if destination_path.exists() and destination_path != file_path_obj:
-                        destination_path = post_processor._get_unique_filename(destination_path)
+                        counter = 1
+                        while destination_path.exists():
+                            destination_path = destination_path.with_name(f"{title}_{counter}{ext}")
+                            counter += 1
 
                     canonical_target_path = _canonicalize_path(str(destination_path))
 
                     # 4. Relocate file physically if path changes
                     if destination_path != file_path_obj:
                         destination_path.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.move(str(file_path_obj), str(destination_path))
+                        from core.io_gatekeeper import Gatekeeper
+                        Gatekeeper.authorize_and_execute({"operation": "safe_move", "src": str(file_path_obj), "dst": str(destination_path)})
                         logger.info(f"Relocated file: {file_path_obj} -> {destination_path}")
 
                     # 5. Community Contribution (AcoustID)

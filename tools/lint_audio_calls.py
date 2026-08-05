@@ -40,13 +40,7 @@ ROGUE_LIBS: frozenset[str] = frozenset({"mutagen", "tinytag", "taglib"})
 
 # Files that are ALLOWED to import these libraries directly.
 # Paths are relative to the project root (forward-slash notation).
-WHITELIST: frozenset[str] = frozenset({
-    "core/file_handling/tagging_io.py",       # owns mutagen for tag reads
-    "core/file_handling/post_processor.py",   # owns mutagen for tag writes
-    "core/matching_engine/fingerprinting.py", # needs mutagen for channel probing
-    "core/file_handling/audio_inspector.py",  # new central inspector (read-only delegation)
-    "web/routes/metadata.py",                 # cover-art binary extraction only (not tag reads)
-})
+WHITELIST: frozenset[str] = frozenset()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

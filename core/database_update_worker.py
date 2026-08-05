@@ -3,8 +3,8 @@
 import threading
 import time
 from typing import Optional, Dict
-from database import MusicDatabase, LibraryManager
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from database import MusicDatabase
+from core.orchestrator.ingestion import IngestionOrchestrator
 from core.tiered_logger import get_logger
 from core.scan_state import scan_state_manager
 import logging
@@ -22,7 +22,7 @@ logger = get_logger("database_update_worker")
 class DatabaseUpdateWorker:
     """
     Worker for updating Echosync database with media server library data.
-    Now acts as a lightweight orchestrator delegating heavy lifting to the echosync_core Rust engine.
+    Routes all telemetry batches strictly through IngestionOrchestrator using SQLAlchemy 2.0 UPSERTs.
     """
 
     def __init__(
@@ -61,21 +61,8 @@ class DatabaseUpdateWorker:
         logger.info(f"Starting database update worker for {self.server_type}")
         try:
             db = MusicDatabase(self.database_path)
-            library_manager = LibraryManager(db.session_factory)
-            
-            def _on_progress(progress: Dict[str, int]):
-                try:
-                    failed = progress.get("failed", 0)
-                    if failed > self.failed_operations:
-                        for _ in range(failed - self.failed_operations):
-                            scan_state_manager.add_error()
-                    self.processed_tracks = progress.get("processed", self.processed_tracks)
-                    self.successful_operations = progress.get("imported", 0) + progress.get("updated", 0)
-                    self.failed_operations = progress.get("failed", 0)
-                    self.processed_artists = progress.get("artists", self.processed_artists)
-                    self.processed_albums = progress.get("albums", self.processed_albums)
-                except Exception:
-                    pass
+            orchestrator = IngestionOrchestrator(batch_size=1000, session_factory=db.session_factory)
+            telemetry_cb = orchestrator.create_telemetry_callback()
 
             # --- RUST HIGH-PERFORMANCE SCANNING PATH ---
             if self.server_type == "EchoSync.Local Server" and self.scan_directory_path and echosync_core:
@@ -90,33 +77,11 @@ class DatabaseUpdateWorker:
                         count = len(batch_dicts)
                         total_scanned += count
                         scan_state_manager.add_processed(count)
-
-                        def _track_generator():
-                            for raw in batch_dicts:
-                                yield EchosyncTrack(
-                                    title=raw.get("title") or "Unknown Title",
-                                    artist_name=raw.get("artist_name") or "Unknown Artist",
-                                    album_title=raw.get("album_title"),
-                                    duration=raw.get("duration_ms") or 0, # CRITICAL: direct integer mapping
-                                    track_number=raw.get("track_number") or 0,
-                                    disc_number=raw.get("disc_number") or 1,
-                                    bitrate=raw.get("bitrate") or 0,
-                                    file_path=raw.get("file_path"),
-                                    file_format=raw.get("file_format"),
-                                    file_size_bytes=raw.get("file_size_bytes") or 0,
-                                    isrc=raw.get("isrc")
-                                )
-
-                        # Ingest the batched DTOs immediately
-                        library_manager.bulk_import(
-                            _track_generator(),
-                            progress_callback=_on_progress,
-                            identifiers_only=self.identifiers_only,
-                            source_name=self.server_type
-                        )
+                        telemetry_cb(batch_dicts)
 
                     # Scan directory using Rust PyO3 engine with callback batching and cancel token
                     echosync_core.scan_directory(self.scan_directory_path, flush_batch, 1000, self.cancel_token)
+                    flushed_count = telemetry_cb.flush()
 
                     scan_time = time.time() - start_time
                     logger.info(f"Rust core completed scanning {total_scanned} files in {scan_time:.3f}s")
@@ -130,18 +95,21 @@ class DatabaseUpdateWorker:
                     logger.error(f"Rust scanner panicked or failed: {rust_err}", exc_info=True)
                     return
 
-            # --- LEGACY REMOTE MEDIA CLIENT PATH ---
+            # --- REMOTE MEDIA CLIENT PATH ---
             else:
                 logger.debug(f"Fetching library from {self.server_type} via media_client...")
-                all_tracks_generator = self.media_client.get_all_tracks()
+                all_tracks = list(self.media_client.get_all_tracks())
 
-                imported_count = library_manager.bulk_import(
-                    all_tracks_generator,
-                    progress_callback=_on_progress,
-                    identifiers_only=self.identifiers_only,
-                    source_name=self.server_type
-                )
+                dicts = []
+                for t in all_tracks:
+                    if hasattr(t, "to_dict"):
+                        dicts.append(t.to_dict())
+                    elif hasattr(t, "model_dump"):
+                        dicts.append(t.model_dump())
+                    elif isinstance(t, dict):
+                        dicts.append(t)
 
+                imported_count = orchestrator.ingest_telemetry_batch(dicts)
                 logger.info(f"Successfully imported {imported_count} tracks from {self.server_type}")
                 self.processed_tracks = imported_count
                 self.successful_operations = imported_count

@@ -35,7 +35,6 @@ from typing import List, Dict, Any, Optional
 from watchdog.events import FileSystemEventHandler, FileSystemEvent  # type: ignore[import-untyped]
 from watchdog.observers import Observer  # type: ignore[import-untyped]
 
-from core.file_handling.local_io import LocalFileHandler
 from core.settings import config_manager
 from core.job_queue import register_job
 from core.tiered_logger import get_logger

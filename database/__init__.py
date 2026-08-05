@@ -30,13 +30,15 @@ from .music_database import (
     close_database
 )
 
-from .bulk_operations import LibraryManager
-
 from .engine import (
     execute_write,
     execute_write_sql,
     ensure_writer
 )
+
+def _canonicalize_path(p: str) -> str:
+    import os
+    return os.path.normpath(os.path.abspath(str(p)))
 
 __all__ = [
     'MusicDatabase',
@@ -46,12 +48,12 @@ __all__ = [
     'Track',
     'ExternalIdentifier',
     'AudioFingerprint',
-    'LibraryManager',
     'get_database',
     'close_database',
     'execute_write',
     'execute_write_sql',
-    'ensure_writer'
+    'ensure_writer',
+    '_canonicalize_path',
 ]
 
 __version__ = '1.0.0'

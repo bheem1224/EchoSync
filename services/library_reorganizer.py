@@ -61,7 +61,8 @@ class LibraryReorganizerService:
                         os.makedirs(quarantine_dir, exist_ok=True)
                         target_path = quarantine_dir / os.path.basename(media.file_path)
 
-                        shutil.move(media.file_path, target_path)
+                        from core.io_gatekeeper import Gatekeeper
+                        Gatekeeper.authorize_and_execute({"operation": "safe_move", "src": media.file_path, "dst": target_path})
                         logger.warning(f"Ejected media {media.id} to quarantine staging due to missing tags: {media.file_path}")
 
                         session.delete(media)
@@ -121,7 +122,8 @@ class LibraryReorganizerService:
                             counter += 1
 
                     try:
-                        shutil.move(str(current_path), str(dest_path))
+                        from core.io_gatekeeper import Gatekeeper
+                        Gatekeeper.authorize_and_execute({"operation": "safe_move", "src": str(current_path), "dst": str(dest_path)})
                         logger.info(f"Reorganized: {current_path} -> {dest_path}")
                     except Exception as e:
                         logger.error(f"Failed to move {current_path} to {dest_path}: {e}")

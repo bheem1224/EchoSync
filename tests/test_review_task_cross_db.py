@@ -126,7 +126,7 @@ def test_approve_review_queue_item(monkeypatch, mock_db, mock_work_db, tmp_path)
     
     # 2. LocalMedia and Track were created in music_library.db (mock_db)
     with mock_db.session_scope() as session:
-        from database.bulk_operations import _canonicalize_path
+        from database import _canonicalize_path
         media = session.query(LocalMedia).filter(LocalMedia.file_path == _canonicalize_path(str(expected_relocated_path))).first()
         assert media is not None
         

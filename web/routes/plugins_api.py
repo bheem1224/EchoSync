@@ -258,7 +258,7 @@ def rollback_plugin(plugin_id):
         return jsonify({'error': str(e)}), 500
 
 
-@bp.get("/<int:plugin_id>/playlists")
+@bp.get("/<plugin_id>/playlists")
 def get_plugin_playlists(plugin_id):
     """Fetch playlists from a specific plugin."""
     try:

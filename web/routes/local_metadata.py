@@ -57,6 +57,7 @@ def _track_to_dict(track: Track) -> dict:
     external clients a ready-to-use URL so they can begin playback without
     any additional lookup.
     """
+    first_media = track.media[0] if getattr(track, "media", None) else None
     return {
         "id":             track.id,
         "title":          track.title,
@@ -67,8 +68,8 @@ def _track_to_dict(track: Track) -> dict:
         "duration":       track.duration,           # milliseconds
         "track_number":   track.track_number,
         "disc_number":    track.disc_number,
-        "bitrate":        track.bitrate,
-        "file_format":    track.file_format,
+        "bitrate":        first_media.bitrate if first_media else getattr(track, "bitrate", None),
+        "file_format":    first_media.file_format if first_media else getattr(track, "file_format", None),
         "isrc":           track.isrc,
         "musicbrainz_id": track.musicbrainz_id,
         # CRITICAL: direct stream URL so external apps can play immediately

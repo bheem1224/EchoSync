@@ -7,8 +7,35 @@ from core.nexus_framework.plugin_SDK import PluginBase
 from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
 from core.matching_engine.echo_sync_track import EchosyncTrack
-from core.file_handling.audio_inspector import inspect_audio_file, SUPPORTED_AUDIO_EXTENSIONS
-from core.file_handling.local_io import LocalFileHandler
+SUPPORTED_AUDIO_EXTENSIONS = {
+    '.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape',
+    '.wav', '.dsd', '.dsf', '.dff',
+}
+
+def inspect_audio_file(path: Path):
+    import echosync_core
+    meta = echosync_core.extract_metadata(str(path))
+    class AudioResult:
+        def __init__(self, m):
+            self.title = m.get("title") or path.stem
+            self.artist = m.get("artist_name") or m.get("artist") or "Unknown Artist"
+            self.artist_source = "lofty"
+            self.album_artist = m.get("album_artist")
+            self.album = m.get("album_title") or m.get("album")
+            self.duration_ms = m.get("duration_ms")
+            self.isrc = m.get("isrc")
+            self.musicbrainz_id = m.get("mbid")
+            self.release_id = None
+            self.acoustid_id = None
+            self.year = m.get("year")
+            self.track_number = m.get("track_number") or m.get("track_no")
+            self.disc_number = m.get("disc_number") or m.get("disc_no")
+            self.bitrate_kbps = m.get("bitrate")
+            self.sample_rate_hz = m.get("sample_rate")
+            self.bit_depth = m.get("bit_depth")
+            self.file_format = m.get("codec") or path.suffix.lstrip('.')
+            self.file_size_bytes = m.get("file_size_bytes")
+    return AudioResult(meta)
 from core.tiered_logger import get_logger
 
 logger = get_logger("local_server_provider")

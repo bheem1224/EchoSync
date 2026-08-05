@@ -53,39 +53,3 @@ def test_echosync_track_isrc_validation_valid():
 def test_echosync_track_isrc_validation_invalid():
     track = EchosyncTrack(raw_title="Title", artist_name="Artist", album_title="Album", isrc="TamilKey.com")
     assert track.isrc is None
-
-
-def test_bulk_operations_isrc_healing(tmp_path):
-    from database.music_database import MusicDatabase, Track
-    from database.bulk_operations import LibraryManager
-    import os
-    
-    db_path = os.path.join(tmp_path, "library.db")
-    db = MusicDatabase(database_path=db_path)
-    from database.music_database import Base
-    Base.metadata.create_all(db.engine)
-    manager = LibraryManager(db.session_factory)
-    
-    # 1. Create a track with an invalid ISRC in the database
-    with db.session_scope() as session:
-        from database.music_database import Artist
-        artist = Artist(name="Test Artist")
-        session.add(artist)
-        session.flush()
-        track = Track(title="Test Title", artist_id=artist.id, isrc="TamilKey.com")
-        session.add(track)
-        
-    # Verify the database has the invalid ISRC initially
-    with db.session_scope() as session:
-        t = session.query(Track).first()
-        assert t.isrc == "TamilKey.com"
-        
-    # 2. Run bulk import with a track_data that will cause upsert to trigger database validation
-    t_data = EchosyncTrack(raw_title="Test Title", artist_name="Test Artist", album_title="")
-    manager.bulk_import([t_data])
-    
-    # Verify the ISRC in the database has been healed/cleared to None
-    with db.session_scope() as session:
-        t = session.query(Track).first()
-        assert t.isrc is None
-

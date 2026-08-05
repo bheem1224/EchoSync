@@ -17,7 +17,6 @@ import datetime
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import OperationalError
 from core.enums import Capability
-from core.file_handling.tagging_io import read_tags as _tagging_read, write_tags as _tagging_write
 from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
 from core.matching_engine.fingerprinting import FingerprintGenerator

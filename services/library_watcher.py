@@ -50,11 +50,9 @@ from watchdog.events import FileSystemEventHandler, FileSystemEvent  # type: ign
 from watchdog.observers import Observer  # type: ignore[import-untyped]
 
 from core.event_bus import event_bus
-from core.file_handling.local_io import LocalFileHandler
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
 from core.tiered_logger import get_logger
-from database.bulk_operations import LibraryManager
 from database.music_database import get_database
 
 logger = get_logger("library_watcher")

@@ -33,32 +33,11 @@ class FingerprintGenerator:
 
     @staticmethod
     def _get_channel_count(file_path: str) -> Optional[int]:
-        """Return the channel count for an audio file using mutagen, or None on failure."""
+        """Return the channel count for an audio file using echosync_core Rust metadata extractor, or None on failure."""
         try:
-            suffix = Path(file_path).suffix.lower()
-            if suffix == '.flac':
-                from mutagen.flac import FLAC
-                return FLAC(file_path).info.channels
-            elif suffix == '.mp3':
-                from mutagen.mp3 import MP3
-                return MP3(file_path).info.channels
-            elif suffix in ('.m4a', '.aac', '.alac'):
-                from mutagen.mp4 import MP4
-                return MP4(file_path).info.channels
-            elif suffix == '.ogg':
-                from mutagen.oggvorbis import OggVorbis
-                return OggVorbis(file_path).info.channels
-            elif suffix == '.opus':
-                from mutagen.oggopus import OggOpus
-                return OggOpus(file_path).info.channels
-            elif suffix == '.wma':
-                from mutagen.asf import ASF
-                return ASF(file_path).info.channels
-            elif suffix == '.wav':
-                from mutagen.wave import WAVE
-                return WAVE(file_path).info.channels
-            # .ape and any unknown formats: skip the check
-            return None
+            import echosync_core
+            meta = echosync_core.extract_metadata(file_path)
+            return meta.get("channels")
         except Exception as e:
             logger.debug("Could not probe channel count for %s: %s", file_path, e)
             return None

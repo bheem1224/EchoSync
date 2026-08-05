@@ -35,7 +35,6 @@ from time_utils import utc_isoformat, utc_now
 
 from .matching_engine import parse_file, EchosyncTrack
 from services.match_service import MatchService, MatchContext
-from .file_handling.post_processor import PostProcessor
 from core.tiered_logger import tiered_logger
 from core.error_handler import error_handler
 from core.tiered_logger import get_logger
@@ -80,7 +79,6 @@ class AutoImporter:
         self.log_imports = self.auto_import_config.get("log_imports", True)
 
         self.match_service = MatchService()
-        self.post_processor = PostProcessor()
 
         self._import_log: List[Dict] = []
 

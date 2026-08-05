@@ -142,13 +142,13 @@ class PlaylistSyncService:
 
             if not clients:
                 try:
-                    client = PluginRegistry.create_instance(spotify_id)
+                    client = PluginRegistry.create_instance('spotify')
                     clients = [client]
                 except Exception as e:
                     logger.error(f"Failed to create default spotify client: {e}")
         except Exception as e:
             try:
-                client = PluginRegistry.create_instance(spotify_id)
+                client = PluginRegistry.create_instance('spotify')
                 clients = [client]
             except Exception as create_err:
                 logger.error(f"Critical failure creating spotify client: {create_err}")

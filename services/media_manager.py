@@ -279,7 +279,8 @@ class MediaManagerService:
                                 continue
 
                             try:
-                                os.remove(track_path)
+                                from core.io_gatekeeper import Gatekeeper
+                                Gatekeeper.authorize_and_execute({"operation": "delete_file", "target": track_path})
                                 logger.info(f"Deleted physical file: {track_path}")
                             except Exception as e:
                                 logger.error(f"Failed to remove physical file {track_path}: {e}")
