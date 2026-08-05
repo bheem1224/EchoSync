@@ -79,26 +79,30 @@ class TrackRepository:
             })
 
         # --- SQLAlchemy 2.0 UPSERT Statement for Tracks ---
-        stmt = sqlite_insert(Track).values(track_values)
-
-        # Conflict resolution targeting sync_id unique index
-        upsert_stmt = stmt.on_conflict_do_update(
-            index_elements=["sync_id"],
-            set_={
-                # Technical / Stream telemetry - ALWAYS OVERWRITE
-                "duration": stmt.excluded.duration,
-
-                # Metadata fields - CONDITIONAL UPDATE (COALESCE preserves non-null existing data)
-                "title": func.coalesce(stmt.excluded.title, Track.title),
-                "track_number": func.coalesce(stmt.excluded.track_number, Track.track_number),
-                "disc_number": func.coalesce(stmt.excluded.disc_number, Track.disc_number),
-                "musicbrainz_id": func.coalesce(stmt.excluded.musicbrainz_id, Track.musicbrainz_id),
-                "isrc": func.coalesce(stmt.excluded.isrc, Track.isrc),
-            }
-        )
-
-        result = session.execute(upsert_stmt)
-        affected_rows = result.rowcount
+        affected_rows = 0
+        CHUNK_SIZE = 500
+        for i in range(0, len(track_values), CHUNK_SIZE):
+            chunk = track_values[i:i + CHUNK_SIZE]
+            stmt = sqlite_insert(Track).values(chunk)
+    
+            # Conflict resolution targeting sync_id unique index
+            upsert_stmt = stmt.on_conflict_do_update(
+                index_elements=["sync_id"],
+                set_={
+                    # Technical / Stream telemetry - ALWAYS OVERWRITE
+                    "duration": stmt.excluded.duration,
+    
+                    # Metadata fields - CONDITIONAL UPDATE (COALESCE preserves non-null existing data)
+                    "title": func.coalesce(stmt.excluded.title, Track.title),
+                    "track_number": func.coalesce(stmt.excluded.track_number, Track.track_number),
+                    "disc_number": func.coalesce(stmt.excluded.disc_number, Track.disc_number),
+                    "musicbrainz_id": func.coalesce(stmt.excluded.musicbrainz_id, Track.musicbrainz_id),
+                    "isrc": func.coalesce(stmt.excluded.isrc, Track.isrc),
+                }
+            )
+    
+            result = session.execute(upsert_stmt)
+            affected_rows += result.rowcount
 
         # Also upsert LocalMedia technical records if file_path is present
         media_values = []
@@ -137,18 +141,21 @@ class TrackRepository:
                     })
 
         if media_values:
-            media_stmt = sqlite_insert(LocalMedia).values(media_values)
-            media_upsert = media_stmt.on_conflict_do_update(
-                index_elements=["file_path"],
-                set_={
-                    "file_format": media_stmt.excluded.file_format,
-                    "bitrate": media_stmt.excluded.bitrate,
-                    "sample_rate": media_stmt.excluded.sample_rate,
-                    "bit_depth": media_stmt.excluded.bit_depth,
-                    "file_size_bytes": media_stmt.excluded.file_size_bytes,
-                }
-            )
-            session.execute(media_upsert)
+            CHUNK_SIZE = 500
+            for i in range(0, len(media_values), CHUNK_SIZE):
+                m_chunk = media_values[i:i + CHUNK_SIZE]
+                media_stmt = sqlite_insert(LocalMedia).values(m_chunk)
+                media_upsert = media_stmt.on_conflict_do_update(
+                    index_elements=["file_path"],
+                    set_={
+                        "file_format": media_stmt.excluded.file_format,
+                        "bitrate": media_stmt.excluded.bitrate,
+                        "sample_rate": media_stmt.excluded.sample_rate,
+                        "bit_depth": media_stmt.excluded.bit_depth,
+                        "file_size_bytes": media_stmt.excluded.file_size_bytes,
+                    }
+                )
+                session.execute(media_upsert)
 
         return affected_rows
 
