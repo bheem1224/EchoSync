@@ -380,6 +380,16 @@ class JobQueue:
         """Alias for cancel_job for backward compatibility."""
         return self.cancel_job(name)
 
+    def kill_jobs_by_plugin(self, plugin_id: str) -> int:
+        """Cancel all jobs associated with a specific plugin."""
+        count = 0
+        with self._lock:
+            names_to_cancel = [name for name, job in self._jobs.items() if job.plugin == plugin_id]
+            for name in names_to_cancel:
+                if self.cancel_job(name):
+                    count += 1
+        return count
+
     def list_jobs(self) -> List[Dict[str, Any]]:
         """Return a list of all registered jobs as dictionaries."""
         with self._lock:
