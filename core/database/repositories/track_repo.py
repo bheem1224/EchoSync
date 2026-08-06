@@ -10,7 +10,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from database.music_database import Track, LocalMedia, Artist
 from database import _canonicalize_path
 from core.models import EchoSyncTrack
-
+from sqlalchemy.orm import joinedload
+from sqlalchemy import or_, and_, Integer
 
 class TrackRepository:
     """
@@ -26,6 +27,55 @@ class TrackRepository:
             session.add(artist)
             session.flush()
         return artist.id
+
+    @classmethod
+    def get_tracks_for_enhancement(
+        cls, session: Session, batch_size: int = 100, check_all_files: bool = False
+    ) -> List[Track]:
+        query = session.query(Track).join(LocalMedia, LocalMedia.track_id == Track.id)
+        query = query.options(joinedload(Track.media_files))
+
+        if not check_all_files:
+            from core.hook_manager import hook_manager
+            required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
+
+            MAX_REATTEMPTS = 5
+            needs_identification = or_(
+                Track.musicbrainz_id.is_(None),
+                and_(
+                    Track.musicbrainz_id == "NOT_FOUND",
+                    func.coalesce(
+                        func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
+                        0,
+                    ).cast(Integer) < MAX_REATTEMPTS,
+                ),
+            )
+            conditions = [needs_identification]
+            for key in required_keys:
+                conditions.append(
+                    and_(
+                        Track.musicbrainz_id.isnot(None),
+                        Track.musicbrainz_id != "NOT_FOUND",
+                        func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
+                    )
+                )
+
+            _va_artist_ids_subq = (
+                session.query(Artist.id)
+                .filter(Artist.name.ilike('various artist%'))
+            )
+            conditions.append(
+                and_(
+                    Track.artist_id.in_(_va_artist_ids_subq),
+                    func.json_extract(
+                        Track.metadata_status, '$.artist_fixed_from_tags'
+                    ).is_(None),
+                )
+            )
+
+            query = query.filter(or_(*conditions))
+
+        return query.limit(batch_size).all()
 
     @classmethod
     def bulk_upsert_tracks(cls, session: Session, tracks: List[EchoSyncTrack]) -> int:

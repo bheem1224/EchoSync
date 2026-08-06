@@ -341,7 +341,7 @@ class JobQueue:
             owner = ProcessOwner(
                 owner_id=owner_id,
                 owner_type=owner_type,
-                pid=os.getpid(),
+                pid=None,
                 thread_id=threading.get_ident(),
                 task_name=job.name
             )

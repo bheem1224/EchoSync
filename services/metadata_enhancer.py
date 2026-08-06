@@ -478,13 +478,14 @@ class RetroactiveEnhancer:
         import re
         return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename).strip()
 
-    def enhance_library_metadata(self, batch_size=50) -> None:
+    def enhance_library_metadata(self, batch_size=50, check_all_files: bool = False) -> None:
         """Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
 
         Loops through batches until no more tracks require enhancement.  Each batch is
         committed in its own session so memory stays flat even on large libraries.
         """
         from sqlalchemy import or_, and_, func, Integer
+        from sqlalchemy.exc import OperationalError
         from database.music_database import get_database, Track, Artist, AudioFingerprint
         from core.utils import PathMapper
         from core.matching_engine.scoring_profile import ExactSyncProfile
@@ -510,41 +511,9 @@ class RetroactiveEnhancer:
             track_data_list = []
 
             with db.session_scope() as session:
-                needs_identification = or_(
-                    Track.musicbrainz_id.is_(None),
-                    and_(
-                        Track.musicbrainz_id == "NOT_FOUND",
-                        func.coalesce(
-                            func.json_extract(Track.metadata_status, '$.enhancement_attempts'),
-                            0,
-                        ).cast(Integer) < MAX_REATTEMPTS,
-                    ),
-                )
-                conditions = [needs_identification]
-                for key in required_keys:
-                    conditions.append(
-                        and_(
-                            Track.musicbrainz_id.isnot(None),
-                            Track.musicbrainz_id != "NOT_FOUND",
-                            func.json_extract(Track.metadata_status, f'$.{key}').is_(None),
-                        )
-                    )
-                _va_artist_ids_subq = (
-                    session.query(Artist.id)
-                    .filter(Artist.name.ilike('various artist%'))
-                )
-                conditions.append(
-                    and_(
-                        Track.artist_id.in_(_va_artist_ids_subq),
-                        func.json_extract(
-                            Track.metadata_status, '$.artist_fixed_from_tags'
-                        ).is_(None),
-                    )
-                )
                 try:
-                    tracks_to_process = (
-                        session.query(Track).filter(or_(*conditions)).limit(batch_size).all()
-                    )
+                    from core.database.repositories.track_repo import TrackRepository
+                    tracks_to_process = TrackRepository.get_tracks_for_enhancement(session, batch_size, check_all_files)
                 except OperationalError as _oe:
                     if "database is locked" in str(_oe).lower():
                         logger.critical(
@@ -605,6 +574,11 @@ class RetroactiveEnhancer:
 
                 for t_data in chunk:
                     local_path_str = PathMapper.to_local(t_data['file_path'])
+                    
+                    if not local_path_str or local_path_str == ".":
+                        logger.warning(f"Skipping track ID {t_data['id']}: No valid local media path resolved.")
+                        continue
+                        
                     local_path = Path(local_path_str)
                     
                     if not local_path.exists():

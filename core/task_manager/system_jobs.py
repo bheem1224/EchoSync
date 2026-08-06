@@ -633,15 +633,50 @@ def register_user_history_sync_job(interval_seconds: int = 43200, enabled: bool 
     )
 
 
-def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400, enabled: bool = True, batch_size: int = 100):
+def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400, enabled: bool = True, batch_size: int = 100, check_all_files: bool = False):
     """Register a daily job to fill in missing MusicBrainz IDs for library tracks."""
 
-    def run_metadata_enhancement(batch_size: int = 100, **kwargs):
+    def run_metadata_enhancement(batch_size: int = 100, check_all_files: bool = False, **kwargs):
+        def _worker(batch_size, check_all_files):
+            try:
+                from core.tiered_logger import get_logger
+                from services.metadata_enhancer import RetroactiveEnhancer
+                logger = get_logger("retroactive_metadata_worker")
+                logger.info("Starting scheduled retroactive metadata enhancement job (child process)")
+                RetroactiveEnhancer().enhance_library_metadata(batch_size=batch_size, check_all_files=check_all_files)
+                logger.info("Retroactive metadata enhancement job complete")
+            except Exception as e:
+                from core.tiered_logger import get_logger
+                get_logger("retroactive_metadata_worker").error(f"Job failed: {e}", exc_info=True)
+
         try:
-            logger.info("Starting scheduled retroactive metadata enhancement job")
-            from services.metadata_enhancer import get_metadata_enhancer, RetroactiveEnhancer
-            RetroactiveEnhancer().enhance_library_metadata(batch_size=batch_size)
-            logger.info("Retroactive metadata enhancement job complete")
+            import multiprocessing
+            from core.task_manager.supervisor import supervisor
+            from core.task_manager.models import ProcessOwner, OwnerType
+            
+            p = multiprocessing.Process(target=_worker, args=(batch_size, check_all_files), daemon=True)
+            p.start()
+            
+            reg_id = None
+            if p.pid:
+                owner = ProcessOwner(
+                    owner_id="core.system_job",
+                    owner_type=OwnerType.SYSTEM_JOB,
+                    pid=p.pid,
+                    task_name="retroactive_metadata_enhancement"
+                )
+                reg_id = supervisor.register_process(owner)
+                
+            p.join()
+            
+            if reg_id:
+                supervisor.unregister_process(reg_id)
+                
+            if p.exitcode and p.exitcode != 0:
+                if p.exitcode == -15:  # SIGTERM
+                    logger.info("Retroactive metadata enhancement job was terminated by supervisor")
+                else:
+                    raise RuntimeError(f"Child process exited with code {p.exitcode}")
         except Exception as e:
             logger.error(f"Retroactive metadata enhancement job failed: {e}", exc_info=True)
 
@@ -652,6 +687,7 @@ def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400,
         enabled=enabled,
         tags=["system", "metadata", "library"],
         max_retries=1,
+        params={"batch_size": batch_size, "check_all_files": check_all_files},
     )
 
     logger.info(
